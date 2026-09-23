@@ -34,7 +34,11 @@ android {
         compose = true
     }
 }
+
 dependencies {
+    // ═══════════════════════════════════════════════════════════
+    //  COMPOSE (Base)
+    // ═══════════════════════════════════════════════════════════
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
@@ -44,15 +48,49 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
-    // 🆕 Yeh 7 lines add karein (agar nahi hain)
+    // ═══════════════════════════════════════════════════════════
+    //  ICONS (Movie, Cut, Duplicate, Undo, Redo, Volume icons)
+    // ═══════════════════════════════════════════════════════════
     implementation("androidx.compose.material:material-icons-extended")
+
+    // ═══════════════════════════════════════════════════════════
+    //  NAVIGATION (Screen routing)
+    // ═══════════════════════════════════════════════════════════
+    implementation("androidx.navigation:navigation-compose:2.8.0")
+
+    // ═══════════════════════════════════════════════════════════
+    //  VIEWMODEL (State management)
+    // ═══════════════════════════════════════════════════════════
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
+
+    // ═══════════════════════════════════════════════════════════
+    //  COROUTINES (Background tasks)
+    // ═══════════════════════════════════════════════════════════
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // ═══════════════════════════════════════════════════════════
+    //  MEDIA3 (Video playback + Export)
+    // ═══════════════════════════════════════════════════════════
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("androidx.media3:media3-common:1.4.1")
+    implementation("androidx.media3:media3-transformer:1.4.1")
+    implementation("androidx.media3:media3-effect:1.4.1")
+
+    // ═══════════════════════════════════════════════════════════
+    //  COIL (Thumbnail loading)
+    // ═══════════════════════════════════════════════════════════
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-video:2.7.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
+    // ═══════════════════════════════════════════════════════════
+    //  PERMISSIONS (Accompanist)
+    // ═══════════════════════════════════════════════════════════
+    implementation("com.google.accompanist:accompanist-permissions:0.34.0")
+
+    // ═══════════════════════════════════════════════════════════
+    //  TESTING
+    // ═══════════════════════════════════════════════════════════
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
