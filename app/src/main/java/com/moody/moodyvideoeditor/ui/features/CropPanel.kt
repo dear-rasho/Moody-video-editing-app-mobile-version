@@ -2,12 +2,17 @@ package com.moody.moodyvideoeditor.ui.features
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -25,35 +30,79 @@ import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 
 @Composable
 fun CropPanel(
-    cropL: Float,
-    cropR: Float,
-    cropT: Float,
-    cropB: Float,
+    cropL: Float, cropR: Float, cropT: Float, cropB: Float,
+    hasClipSelected: Boolean,
     onCropChanged: (Float, Float, Float, Float) -> Unit,
+    onAspectSelected: (String) -> Unit,
     onReset: () -> Unit,
     onClose: () -> Unit
 ) {
     FeaturePanel(title = "✂️ Crop", onClose = onClose) {
-        CropSlider("Left", cropL) { onCropChanged(it, cropR, cropT, cropB) }
-        CropSlider("Right", cropR) { onCropChanged(cropL, it, cropT, cropB) }
-        CropSlider("Top", cropT) { onCropChanged(cropL, cropR, it, cropB) }
-        CropSlider("Bottom", cropB) { onCropChanged(cropL, cropR, cropT, it) }
 
-        Box(
-            modifier = Modifier
-                .height(30.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFFFF6B6B).copy(alpha = 0.2f))
-                .pointerInput(Unit) { detectTapGestures { onReset() } }
-                .padding(horizontal = 14.dp),
-            contentAlignment = Alignment.Center
-        ) {
+        if (!hasClipSelected) {
+            EmptyState()
+            return@FeaturePanel
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+            // ─── ASPECT PRESETS ─────────────────────
             Text(
-                text = "↺ Reset Crop",
-                color = Color(0xFFFF6B6B),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold
+                "Aspect Ratio",
+                color = Color(0xFF888888), fontSize = 9.sp,
+                fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp)
             )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf("Free", "1:1", "16:9", "9:16", "4:3", "3:4").forEach { a ->
+                    Box(
+                        modifier = Modifier
+                            .height(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF181818))
+                            .pointerInput(a) {
+                                detectTapGestures {
+                                    if (a == "Free") onReset()
+                                    else onAspectSelected(a)
+                                }
+                            }
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(a, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            // ─── SLIDERS ────────────────────────────
+            CropSlider("Left", cropL) { onCropChanged(it, cropR, cropT, cropB) }
+            CropSlider("Right", cropR) { onCropChanged(cropL, it, cropT, cropB) }
+            CropSlider("Top", cropT) { onCropChanged(cropL, cropR, it, cropB) }
+            CropSlider("Bottom", cropB) { onCropChanged(cropL, cropR, cropT, it) }
+
+            // ─── RESET ──────────────────────────────
+            Spacer(Modifier.height(4.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFFFF6B6B).copy(alpha = 0.15f))
+                    .pointerInput(Unit) { detectTapGestures { onReset() } },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "↺ Reset Crop",
+                    color = Color(0xFFFF6B6B), fontSize = 12.sp, fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
@@ -62,31 +111,47 @@ fun CropPanel(
 private fun CropSlider(label: String, value: Float, onChange: (Float) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
-            text = label,
-            color = Color(0xFF888888),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(50.dp)
+            label, color = Color(0xFF888888), fontSize = 10.sp,
+            fontWeight = FontWeight.Bold, modifier = Modifier.width(50.dp)
         )
         Slider(
-            value = value,
-            onValueChange = onChange,
-            valueRange = 0f..0.45f,
+            value = value, onValueChange = onChange, valueRange = 0f..0.45f,
             modifier = Modifier.weight(1f),
             colors = SliderDefaults.colors(
                 thumbColor = Color(0xFF7C3AED),
-                activeTrackColor = Color(0xFF7C3AED)
+                activeTrackColor = Color(0xFF7C3AED),
+                inactiveTrackColor = Color(0xFF303030)
             )
         )
         Text(
-            text = "${(value * 100).toInt()}%",
-            color = Color.White,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(40.dp)
+            "${(value * 100).toInt()}%", color = Color.White, fontSize = 10.sp,
+            fontWeight = FontWeight.Bold, modifier = Modifier.width(40.dp)
         )
+    }
+}
+
+@Composable
+private fun EmptyState() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF181818))
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text("👆", fontSize = 24.sp)
+        Text(
+            "No clip selected",
+            color = Color.White,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Text("Select a clip first.", color = Color(0xFF888888), fontSize = 10.sp)
     }
 }

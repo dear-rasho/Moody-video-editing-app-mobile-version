@@ -7,6 +7,7 @@ data class EditorClip(
     val id: String = UUID.randomUUID().toString(),
     val uri: Uri,
     val name: String,
+    val type: String = "video/mp4",        // 🆕 "video/mp4", "audio/mpeg", "text/plain", "effect/plain", "sticker/plain", "adjustment/plain", "overlay/plain", "chroma/plain"
     val sourceStartMs: Long,
     val sourceEndMs: Long,
     val timelineStartMs: Long,
@@ -26,16 +27,35 @@ data class EditorClip(
     val sourceTotalMs: Long = Long.MAX_VALUE,
     val linkedId: String? = null,
     val isMuted: Boolean = false,
+    val keyframes: Map<String, List<Keyframe>> = emptyMap(),
 
-    // 🆕 Feature states (per-clip)
+    // Feature states (per-clip)
     val filters: FilterState = FilterState(),
     val colorWheel: ColorWheelState = ColorWheelState(),
     val overlay: OverlayState = OverlayState(),
-    val effectKeys: List<String> = emptyList()
+    val effectKeys: List<String> = emptyList(),
+    val effectState: EffectState? = null,     // 🆕 JS effectState port
+    val textState: TextState? = null,
+    val stickerState: StickerState? = null,
+    val chroma: ChromaState? = null,
+    val freeze: FreezeState? = null,
+    val transition: TransitionState? = null,
+    val ratio: RatioState? = null
 ) {
     val sourceDurationMs: Long get() = sourceEndMs - sourceStartMs
     val durationMs: Long get() = (sourceDurationMs / speed).toLong()
     val timelineEndMs: Long get() = timelineStartMs + durationMs
+
+    val isVisualClip: Boolean
+        get() = !isAudio &&
+                (type.startsWith("video/") || type.startsWith("image/"))
+
+    val isTextClip: Boolean get() = type == "text/plain"
+    val isStickerClip: Boolean get() = type == "sticker/plain"
+    val isEffectClip: Boolean get() = type == "effect/plain"
+    val isAdjustmentClip: Boolean get() = type == "adjustment/plain"
+    val isOverlayClip: Boolean get() = type == "overlay/plain"
+    val isChromaClip: Boolean get() = type == "chroma/plain"
 
     companion object {
         const val MIN_DURATION_MS = 300L
@@ -75,18 +95,14 @@ data class AdjustmentData(
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  EditorState — UPDATED with textClips + stickerClips
+//  EditorState
 // ═══════════════════════════════════════════════════════════════
 data class EditorState(
     val clips: List<EditorClip> = emptyList(),
-    val textClips: List<TextClip> = emptyList(),
-    val stickerClips: List<StickerClip> = emptyList(),
     val currentIndex: Int = 0,
     val currentPosMs: Long = 0L,
     val isPlaying: Boolean = false,
     val selectedClipId: String? = null,
-    val selectedTextId: String? = null,
-    val selectedStickerId: String? = null,
     val selectedTrackIndex: Int = 0,
     val selectedIsAudio: Boolean = false,
     val visualLayerCount: Int = 3,
@@ -97,25 +113,23 @@ data class EditorState(
     val rotation: Int = 0,
     val aspectMode: Int = 0,
     val aspectRatio: String = "16:9",
-    val chromaColor: Int = 0xFF00FF00.toInt(),
-    val chromaSimilarity: Float = 30f,
-    val chromaSmoothness: Float = 20f,
-    val chromaSpill: Float = 50f,
-    val chromaIntensity: Float = 100f,
     val audioFx: String = "none",
     val soundFx: String = "none",
     val beatsDetected: Boolean = false,
     val beatsCount: Int = 0,
     val beatsFilter: String = "all",
     val canUndo: Boolean = false,
-    val canRedo: Boolean = false
+    val canRedo: Boolean = false,
+    val timelineZoom: Float = 1.0f       // 🆕 timeline zoom (0.5x .. 3x)
 ) {
     val totalDurationMs: Long get() = clips.maxOfOrNull { it.timelineEndMs } ?: 10000L
     val currentClip: EditorClip? get() = clips.getOrNull(currentIndex)
     val selectedClip: EditorClip? get() = clips.firstOrNull { it.id == selectedClipId }
-    val selectedText: TextClip? get() = textClips.firstOrNull { it.id == selectedTextId }
-    val selectedSticker: StickerClip? get() = stickerClips.firstOrNull { it.id == selectedStickerId }
 
     fun clipsOf(trackIndex: Int, isAudio: Boolean): List<EditorClip> =
         clips.filter { it.trackIndex == trackIndex && it.isAudio == isAudio }
+
+    fun selectedTextState(): TextState? = selectedClip?.textState
+    fun selectedStickerState(): StickerState? = selectedClip?.stickerState
+    fun selectedChroma(): ChromaState? = selectedClip?.chroma
 }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,6 +22,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.moody.moodyvideoeditor.data.RatioLibrary
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 
 @Composable
@@ -29,32 +31,54 @@ fun AspectRatioPanel(
     onRatioSelected: (String) -> Unit,
     onClose: () -> Unit
 ) {
-    val ratios = listOf("16:9", "9:16", "1:1", "4:5", "3:4", "21:9")
+    FeaturePanel(title = "🖼️ Aspect Ratio", onClose = onClose) {
 
-    FeaturePanel(title = "📐 Aspect Ratio", onClose = onClose) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            ratios.forEach { ratio ->
-                val isActive = currentRatio == ratio
-                Box(
-                    modifier = Modifier
-                        .height(36.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (isActive) Color(0xFF7C3AED) else Color(0xFF181818))
-                        .pointerInput(ratio) { detectTapGestures { onRatioSelected(ratio) } }
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = ratio,
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "Choose Frame Ratio",
+                color = Color(0xFF888888), fontSize = 9.sp,
+                fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp)
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                RatioLibrary.OPTIONS.forEach { r ->
+                    val isActive = currentRatio == r.key
+                    Column(
+                        modifier = Modifier
+                            .height(70.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isActive) Color(0xFF2A1F4D) else Color(0xFF181818))
+                            .pointerInput(r.key) { detectTapGestures { onRatioSelected(r.key) } }
+                            .padding(10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        // Mini visual box
+                        val boxMaxW = 36f
+                        val boxMaxH = 26f
+                        val ar = r.aspect
+                        val (w, h) = if (ar >= 1f) boxMaxW to (boxMaxW / ar) else (boxMaxH * ar) to boxMaxH
+                        Box(
+                            modifier = Modifier
+                                .height(h.dp)
+                                .padding(horizontal = 2.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(if (isActive) Color(0xFF7C3AED) else Color(0xFF444444))
+                                .fillMaxWidth(0.1f + (w / 100f))
+                                .height(h.dp)
+                        ) {}
+                        Text(
+                            r.key,
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }

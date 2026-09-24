@@ -4,9 +4,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Slider
@@ -27,65 +29,79 @@ import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 fun VolumePanel(
     volume: Float,
     isMuted: Boolean,
+    hasClipSelected: Boolean,
     onVolumeChanged: (Float) -> Unit,
     onMuteToggle: () -> Unit,
     onClose: () -> Unit
 ) {
-    FeaturePanel(
-        title = "🔊 Volume" + if (isMuted) " (Muted)" else "",
-        onClose = onClose
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text(
-                text = "Vol",
-                color = Color(0xFF888888),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.width(30.dp)
-            )
-            Slider(
-                value = if (isMuted) 0f else volume,
-                onValueChange = { onVolumeChanged(it) },
-                valueRange = 0f..1f,
-                modifier = Modifier.weight(1f),
-                colors = SliderDefaults.colors(
-                    thumbColor = Color(0xFF7C3AED),
-                    activeTrackColor = Color(0xFF7C3AED)
+    FeaturePanel(title = "🔊 Volume" + if (isMuted) " (Muted)" else "", onClose = onClose) {
+
+        if (!hasClipSelected) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("👆", fontSize = 24.sp)
+                Text(
+                    "No clip selected",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
                 )
-            )
-            Text(
-                text = "${((if (isMuted) 0f else volume) * 100).toInt()}%",
-                color = Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.width(45.dp)
-            )
+            }
+            return@FeaturePanel
         }
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(32.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(
-                    if (isMuted) Color(0xFFFF6B6B).copy(alpha = 0.2f)
-                    else Color(0xFF181818)
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Vol", color = Color(0xFF888888), fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.width(30.dp)
                 )
-                .pointerInput(isMuted) {
-                    detectTapGestures { onMuteToggle() }
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = if (isMuted) "🔇 Unmute" else "🔊 Mute",
-                color = if (isMuted) Color(0xFFFF6B6B) else Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold
-            )
+                Slider(
+                    value = if (isMuted) 0f else volume,
+                    onValueChange = { onVolumeChanged(it) },
+                    valueRange = 0f..1f,
+                    modifier = Modifier.weight(1f),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color(0xFF7C3AED),
+                        activeTrackColor = Color(0xFF7C3AED),
+                        inactiveTrackColor = Color(0xFF303030)
+                    )
+                )
+                Text(
+                    "${((if (isMuted) 0f else volume) * 100).toInt()}%",
+                    color = Color.White, fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.width(44.dp)
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (isMuted) Color(0xFFFF6B6B).copy(alpha = 0.2f) else Color(
+                            0xFF181818
+                        )
+                    )
+                    .pointerInput(isMuted) { detectTapGestures { onMuteToggle() } },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (isMuted) "🔇 Unmute" else "🔊 Mute",
+                    color = if (isMuted) Color(0xFFFF6B6B) else Color.White,
+                    fontSize = 12.sp, fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
