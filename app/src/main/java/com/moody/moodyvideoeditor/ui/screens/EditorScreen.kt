@@ -52,6 +52,7 @@ import com.moody.moodyvideoeditor.ui.components.FeatureShelf
 import com.moody.moodyvideoeditor.ui.components.PlaybackControls
 import com.moody.moodyvideoeditor.ui.components.PreviewCanvas
 import com.moody.moodyvideoeditor.ui.components.Timeline
+import com.moody.moodyvideoeditor.ui.components.TimelineToolbar
 import com.moody.moodyvideoeditor.ui.features.AdjustmentsPanel
 import com.moody.moodyvideoeditor.ui.features.AnimationsPanel
 import com.moody.moodyvideoeditor.ui.features.AspectRatioPanel
@@ -109,51 +110,90 @@ fun EditorScreen(
         onDispose { exoPlayer.release() }
     }
 
-    // Speed + volume
+    // Speed
     LaunchedEffect(state.selectedClipId, state.selectedClip?.speed) {
         val clip = state.selectedClip
-        if (clip != null) exoPlayer.setPlaybackSpeed(SpeedEngine.clampForExoPlayer(clip.speed))
-        else exoPlayer.setPlaybackSpeed(1.0f)
+        if (clip != null) {
+            exoPlayer.setPlaybackSpeed(SpeedEngine.clampForExoPlayer(clip.speed))
+        } else {
+            exoPlayer.setPlaybackSpeed(1.0f)
+        }
     }
     LaunchedEffect(state.volume, state.isMuted) {
         exoPlayer.volume = if (state.isMuted) 0f else state.volume
     }
 
-    // Load selected visual clip
-    LaunchedEffect(
-        state.selectedClipId,
-        state.selectedClip?.sourceStartMs,
-        state.selectedClip?.sourceEndMs
-    ) {
-        val clip = state.selectedClip ?: return@LaunchedEffect
-        if (!clip.isVisualClip) return@LaunchedEffect
-        val currentPos = exoPlayer.currentPosition
-        val mediaItem = MediaItem.Builder()
-            .setUri(clip.uri)
-            .setClippingConfiguration(
-                MediaItem.ClippingConfiguration.Builder()
-                    .setStartPositionMs(clip.sourceStartMs)
-                    .setEndPositionMs(clip.sourceEndMs)
-                    .build()
-            )
-            .build()
-        exoPlayer.setMediaItem(mediaItem)
-        exoPlayer.prepare()
-        exoPlayer.seekTo(
-            currentPos.coerceAtMost(
-                (clip.sourceEndMs - clip.sourceStartMs).coerceAtLeast(
-                    0L
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 AUTO-LOAD ACTIVE VISUAL CLIP AT PLAYHEAD
+    // ═══════════════════════════════════════════════════════════
+    LaunchedEffect(state.currentPosMs, state.clips) {
+        val playheadMs = state.currentPosMs
+
+        // Find active visual clip at playhead (topmost track)
+        val activeClip = state.clips
+            .filter {
+                it.isVisualClip &&
+                        playheadMs >= it.timelineStartMs &&
+                        playheadMs < it.timelineEndMs
+            }
+            .maxByOrNull { it.trackIndex }
+
+        if (activeClip == null) {
+            if (exoPlayer.isPlaying) exoPlayer.pause()
+            return@LaunchedEffect
+        }
+
+        // Load clip if different from currently loaded
+        val currentUri = exoPlayer.currentMediaItem?.localConfiguration?.uri
+        if (currentUri != activeClip.uri) {
+            val mediaItem = MediaItem.Builder()
+                .setUri(activeClip.uri)
+                .setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(activeClip.sourceStartMs)
+                        .setEndPositionMs(activeClip.sourceEndMs)
+                        .build()
                 )
-            )
+                .build()
+            exoPlayer.setMediaItem(mediaItem)
+            exoPlayer.prepare()
+        }
+
+        // Sync player position to playhead
+        val localMs = (playheadMs - activeClip.timelineStartMs) + activeClip.sourceStartMs
+        val clampedLocal = localMs.coerceIn(
+            activeClip.sourceStartMs,
+            activeClip.sourceEndMs
         )
-        exoPlayer.setPlaybackSpeed(SpeedEngine.clampForExoPlayer(clip.speed))
+        val drift = kotlin.math.abs(exoPlayer.currentPosition - clampedLocal)
+        if (drift > 200L) {
+            try {
+                exoPlayer.seekTo(clampedLocal)
+            } catch (_: Exception) {
+            }
+        }
+
+        exoPlayer.setPlaybackSpeed(SpeedEngine.clampForExoPlayer(activeClip.speed))
         exoPlayer.volume = if (state.isMuted) 0f else state.volume
     }
 
     // Playback tick
     LaunchedEffect(exoPlayer) {
         while (true) {
-            viewModel.setCurrentPos(exoPlayer.currentPosition)
+            viewModel.setCurrentPos(exoPlayer.currentPosition.let { p ->
+                // Convert player position back to timeline position
+                val playheadMs = state.currentPosMs
+                val activeClip = state.clips.firstOrNull {
+                    it.isVisualClip &&
+                            playheadMs >= it.timelineStartMs &&
+                            playheadMs < it.timelineEndMs
+                }
+                if (activeClip != null && exoPlayer.isPlaying) {
+                    (p - activeClip.sourceStartMs) + activeClip.timelineStartMs
+                } else {
+                    playheadMs
+                }
+            })
             viewModel.setPlaying(exoPlayer.isPlaying)
             delay(50)
         }
@@ -163,7 +203,9 @@ fun EditorScreen(
     LaunchedEffect(exoPlayer, state.selectedClipId) {
         while (true) {
             val clip = state.selectedClip
-            if (clip != null && clip.isVisualClip) TrimPlaybackEnforcer.enforce(exoPlayer, clip)
+            if (clip != null && clip.isVisualClip) {
+                TrimPlaybackEnforcer.enforce(exoPlayer, clip)
+            }
             delay(50)
         }
     }
@@ -181,7 +223,7 @@ fun EditorScreen(
                 val dur = VideoUtils.getVideoDuration(context, uri)
                 Triple(name, dur, dur)
             }
-            viewModel.addClipWithSource(uri, result.first, result.second, result.third)
+            viewModel.addClipSmart(uri, result.first, result.second)
         } catch (e: Exception) {
             e.printStackTrace()
         } finally {
@@ -191,19 +233,27 @@ fun EditorScreen(
 
     fun startExport() {
         if (state.clips.isEmpty()) {
-            exportMessage = "❌ No clips to export"; return
+            exportMessage = "❌ No clips to export"
+            return
         }
-        isExporting = true; exportProgress = 0f; exportMessage = "Starting FFmpeg…"
+        isExporting = true
+        exportProgress = 0f
+        exportMessage = "Starting FFmpeg…"
         val exporter = VideoExporter(
             context = context,
             onProgress = { p ->
-                exportProgress = p; exportMessage = "Processing… ${(p * 100).toInt()}%"
+                exportProgress = p
+                exportMessage = "Processing… ${(p * 100).toInt()}%"
             },
             onSuccess = {
-                isExporting = false; exportProgress = 1f; exportMessage =
-                "✅ Saved to Movies/MoodyEditor"
+                isExporting = false
+                exportProgress = 1f
+                exportMessage = "✅ Saved to Movies/MoodyEditor"
             },
-            onError = { msg -> isExporting = false; exportMessage = "❌ $msg" }
+            onError = { msg ->
+                isExporting = false
+                exportMessage = "❌ $msg"
+            }
         )
         exporter.export(
             clips = state.clips,
@@ -212,11 +262,9 @@ fun EditorScreen(
         )
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF121212))
-    ) {
+    Column(modifier = Modifier
+        .fillMaxSize()
+        .background(Color(0xFF121212))) {
 
         // ═══ HEADER ═══
         Row(
@@ -228,11 +276,7 @@ fun EditorScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(
-                    Icons.Filled.ArrowBack,
-                    "Back",
-                    tint = Color.White
-                )
+                Icon(Icons.Filled.ArrowBack, "Back", tint = Color.White)
             }
             Text(
                 "Editor",
@@ -242,7 +286,10 @@ fun EditorScreen(
                 modifier = Modifier.weight(1f)
             )
             Text(
-                "Export", color = Color(0xFF7C3AED), fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                "Export",
+                color = Color(0xFF7C3AED),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .padding(end = 12.dp)
                     .pointerInput(Unit) {
@@ -252,11 +299,9 @@ fun EditorScreen(
         }
 
         // ═══ PREVIEW ═══
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-        ) {
+        Box(modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f)) {
             PreviewCanvas(
                 exoPlayer = exoPlayer,
                 hasVideo = state.clips.any { it.isVisualClip },
@@ -274,32 +319,45 @@ fun EditorScreen(
             onAddAudioLayer = { viewModel.addAudioLayer() }
         )
 
-        // ═══ TIMELINE ═══
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(220.dp)
-        ) {
-            Timeline(
-                state = state,
-                onClipTapped = { clip -> viewModel.selectClip(clip) },
-                onTrackTapped = { ti, aud -> viewModel.selectTrack(ti, aud) },
-                onTrimLeft = { ns -> viewModel.trimClipLeft(ns) },
-                onTrimRight = { ne -> viewModel.trimClipRight(ne) },
-                onTrimCommit = { viewModel.commitTrim() },
-                onSeek = { t ->
-                    val sel = state.selectedClip
-                    if (sel != null && sel.isVisualClip) {
-                        val localMs = (t - sel.timelineStartMs).coerceIn(0L, sel.durationMs)
-                        exoPlayer.seekTo(localMs)
-                    } else exoPlayer.seekTo(t)
-                },
-                onMoveClip = { id, ti, aud, ms ->
-                    viewModel.ensureLayerExists(ti, aud)
-                    viewModel.moveClip(id, ti, aud, ms)
-                },
-                onDragEnd = { viewModel.commitTrim() }
-            )
+        // ═══ TIMELINE TOOLBAR + TIMELINE ═══
+        Box(modifier = Modifier
+            .fillMaxWidth()
+            .height(260.dp)) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                TimelineToolbar(
+                    onSelectBackward = { viewModel.selectBackward() },
+                    onSelectForward = { viewModel.selectForward() },
+                    onMagnet = { viewModel.closeGapsFromPlayhead() },
+                    zoomValue = state.timelineZoom,
+                    onZoomChange = { viewModel.setTimelineZoom(it) }
+                )
+                Timeline(
+                    state = state,
+                    onClipTapped = { clip ->
+                        viewModel.selectClip(clip)
+                        viewModel.clearMultiSelect()
+                    },
+                    onTrackTapped = { ti, aud -> viewModel.selectTrack(ti, aud) },
+                    onTrimLeft = { ns -> viewModel.trimClipLeft(ns) },
+                    onTrimRight = { ne -> viewModel.trimClipRight(ne) },
+                    onTrimCommit = { viewModel.commitTrim() },
+                    onSeek = { t ->
+                        val sel = state.selectedClip
+                        if (sel != null && sel.isVisualClip) {
+                            val localMs = (t - sel.timelineStartMs)
+                                .coerceIn(0L, sel.durationMs)
+                            exoPlayer.seekTo(localMs)
+                        } else {
+                            exoPlayer.seekTo(t)
+                        }
+                    },
+                    onMoveClip = { id, ti, aud, ms ->
+                        viewModel.ensureLayerExists(ti, aud)
+                        viewModel.moveClip(id, ti, aud, ms)
+                    },
+                    onDragEnd = { viewModel.commitTrim() }
+                )
+            }
         }
 
         // ═══ PLAYBACK CONTROLS ═══
@@ -307,14 +365,16 @@ fun EditorScreen(
             isPlaying = state.isPlaying,
             isMuted = state.isMuted,
             currentPosMs = state.currentPosMs,
-            totalDurationMs = state.selectedClip?.durationMs ?: state.totalDurationMs,
+            totalDurationMs = state.totalDurationMs,   // 🆕 overall timeline
             hasVideo = state.clips.any { it.isVisualClip },
             canUndo = state.canUndo,
             canRedo = state.canRedo,
+            hasKeyframeAtPlayhead = viewModel.hasKeyframeAtPlayhead(),
             onPlayPause = {
                 val clip = state.selectedClip
-                if (exoPlayer.isPlaying) exoPlayer.pause()
-                else {
+                if (exoPlayer.isPlaying) {
+                    exoPlayer.pause()
+                } else {
                     val ok = TrimPlaybackEnforcer.prepareOnPlay(exoPlayer, clip)
                     if (ok) exoPlayer.play()
                 }
@@ -324,7 +384,8 @@ fun EditorScreen(
             onDuplicate = { viewModel.duplicateCurrentClip() },
             onUndo = { viewModel.undo() },
             onRedo = { viewModel.redo() },
-            onMuteToggle = { viewModel.toggleMute() }
+            onMuteToggle = { viewModel.toggleMute() },
+            onKeyframe = { viewModel.toggleKeyframeAll() }
         )
 
         // ═══ PANEL ROUTING ═══
@@ -334,7 +395,6 @@ fun EditorScreen(
             when (activePanel) {
                 null -> FeatureShelf(onFeatureSelected = { activePanel = it })
 
-                // ─── TRIM ───────────────────────────────
                 "trim" -> TrimPanel(
                     clipName = selected?.name ?: "",
                     clipStartMs = selected?.timelineStartMs ?: 0L,
@@ -344,7 +404,8 @@ fun EditorScreen(
                     sourceOutMs = selected?.sourceEndMs ?: 0L,
                     hasClipSelected = selected?.isVisualClip == true,
                     playheadInsideClip = selected?.let {
-                        state.currentPosMs > it.timelineStartMs && state.currentPosMs < it.timelineEndMs
+                        state.currentPosMs > it.timelineStartMs &&
+                                state.currentPosMs < it.timelineEndMs
                     } ?: false,
                     onClose = { activePanel = null },
                     onTrimLeft = { viewModel.trimLeft() },
@@ -352,7 +413,6 @@ fun EditorScreen(
                     onSplit = { viewModel.splitCurrentClip() }
                 )
 
-                // ─── SPEED ──────────────────────────────
                 "speed" -> SpeedPanel(
                     clipName = selected?.name ?: "",
                     baseDurationMs = viewModel.getSelectedBaseDurationMs(),
@@ -363,7 +423,6 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                // ─── TEXT ───────────────────────────────
                 "text" -> TextPanel(
                     currentText = viewModel.getSelectedTextState(),
                     hasTextClipSelected = selected?.isTextClip == true,
@@ -373,7 +432,6 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                // ─── ANIMATIONS ─────────────────────────
                 "animations" -> AnimationsPanel(
                     currentAnimation = selected?.textState?.animation ?: "none",
                     currentDuration = selected?.textState?.animationDuration ?: 0.6f,
@@ -387,7 +445,6 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                // ─── FILTERS ────────────────────────────
                 "filters" -> FiltersPanel(
                     current = selected?.filters ?: FilterState(),
                     hasClipSelected = selected?.isVisualClip == true,
@@ -396,7 +453,6 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                // ─── EFFECTS ────────────────────────────
                 "effects" -> EffectsPanel(
                     currentEffectKey = selected?.effectKeys?.firstOrNull(),
                     hasClipSelected = true,
@@ -407,7 +463,6 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                // ─── ADJUSTMENTS ────────────────────────
                 "adjustments" -> AdjustmentsPanel(
                     adj = selected?.adjustments ?: AdjustmentData(),
                     onAdjChanged = { viewModel.updateSelectedAdjustment(it) },
@@ -415,7 +470,6 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                // ─── COLOR WHEELS ───────────────────────
                 "wheel" -> ColorWheelPanel(
                     state = selected?.colorWheel ?: ColorWheelState(),
                     hasClipSelected = selected?.isVisualClip == true,
@@ -424,7 +478,6 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                // ─── STICKERS ───────────────────────────
                 "stickers" -> StickersPanel(
                     current = viewModel.getSelectedStickerState(),
                     hasStickerSelected = selected?.isStickerClip == true,
@@ -435,7 +488,6 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                // ─── OVERLAYS ───────────────────────────
                 "overlays" -> OverlaysPanel(
                     current = selected?.overlay ?: OverlayState(),
                     hasClipSelected = true,
@@ -444,7 +496,6 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                // ─── TRANSITIONS ────────────────────────
                 "transitions" -> TransitionsPanel(
                     current = selected?.transition ?: TransitionState(),
                     hasPairAvailable = selected != null,
@@ -454,7 +505,6 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                // ─── CHROMA ─────────────────────────────
                 "chroma" -> ChromaKeyPanel(
                     state = selected?.chroma ?: ChromaState(),
                     hasClipSelected = true,
@@ -463,7 +513,6 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                // ─── CROP ───────────────────────────────
                 "crop" -> CropPanel(
                     cropL = selected?.cropL ?: 0f,
                     cropR = selected?.cropR ?: 0f,
@@ -479,35 +528,39 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                // ─── TRANSFORM ──────────────────────────
                 "transform" -> {
-                    val sel = state.selectedClip
-                    val currentTimeSec = sel?.let {
-                        ((state.currentPosMs - it.timelineStartMs).toFloat() / 1000f).coerceAtLeast(
-                            0f
-                        )
+                    val currentTimeSec = selected?.let {
+                        ((state.currentPosMs - it.timelineStartMs).toFloat() / 1000f)
+                            .coerceAtLeast(0f)
                     } ?: 0f
-                    val base = sel?.let { TransformApplier.baseOf(it) } ?: TransformValues()
+                    val clipDurSec = selected?.let { it.durationMs / 1000f } ?: 5f
+                    val base = selected?.let { TransformApplier.baseOf(it) }
+                        ?: TransformValues()
                     TransformPanel(
-                        clipName = sel?.name ?: "",
-                        hasClipSelected = sel != null,
+                        clipName = selected?.name ?: "",
+                        hasClipSelected = selected != null,
                         base = base,
-                        keyframeMap = sel?.keyframes ?: emptyMap(),
+                        keyframeMap = selected?.keyframes ?: emptyMap(),
                         currentTimeSec = currentTimeSec,
+                        clipDurationSec = clipDurSec,
                         onPropertyChanged = { prop, value ->
-                            viewModel.changeTransformProperty(
-                                prop,
-                                value
-                            )
+                            viewModel.changeTransformProperty(prop, value)
                         },
-                        onToggleKeyframe = { prop -> viewModel.toggleKeyframeAtPlayhead(prop) },
+                        onToggleKeyframe = { prop ->
+                            viewModel.toggleKeyframeAtPlayhead(prop)
+                        },
                         onSetEase = { ease -> viewModel.setEaseAtPlayhead(ease) },
                         onResetAll = { viewModel.resetAllTransform() },
+                        onUpdateKeyframe = { prop, oldT, newT, newV ->
+                            viewModel.updateKeyframeInGraph(prop, oldT, newT, newV)
+                        },
+                        onDeleteKeyframe = { prop, t ->
+                            viewModel.deleteKeyframeFromGraph(prop, t)
+                        },
                         onClose = { activePanel = null }
                     )
                 }
 
-                // ─── VOLUME ─────────────────────────────
                 "volume" -> VolumePanel(
                     volume = state.volume,
                     isMuted = state.isMuted,
@@ -517,21 +570,18 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                // ─── AUDIO FX ───────────────────────────
                 "audiofx" -> AudioFxPanel(
                     current = state.audioFx,
                     onSelected = { viewModel.setAudioFx(it) },
                     onClose = { activePanel = null }
                 )
 
-                // ─── SOUND FX ───────────────────────────
                 "soundfx" -> SoundFxPanel(
                     current = state.soundFx,
                     onSelected = { viewModel.setSoundFx(it) },
                     onClose = { activePanel = null }
                 )
 
-                // ─── BEATS ──────────────────────────────
                 "beats" -> BeatsPanel(
                     state = BeatsState(
                         detected = state.beatsDetected,
@@ -539,44 +589,46 @@ fun EditorScreen(
                         filter = state.beatsFilter
                     ),
                     onDetect = { filter ->
-                        val beats = BeatsEngine.detectSynthetic(state.totalDurationMs, filter)
+                        val beats = BeatsEngine.detectSynthetic(
+                            state.totalDurationMs, filter
+                        )
                         viewModel.updateBeats(beats)
                     },
                     onClear = { viewModel.clearBeats() },
                     onClose = { activePanel = null }
                 )
 
-                // ─── RATIO ──────────────────────────────
                 "ratio" -> AspectRatioPanel(
                     currentRatio = state.aspectRatio,
-                    onRatioSelected = { key -> viewModel.updateRatio(RatioLibrary.find(key)) },
+                    onRatioSelected = { key ->
+                        viewModel.updateRatio(RatioLibrary.find(key))
+                    },
                     onClose = { activePanel = null }
                 )
 
-                // ─── FREEZE ─────────────────────────────
                 "freeze" -> FreezePanel(
                     hasClipSelected = selected?.isVisualClip == true,
                     onFreeze = { dur -> viewModel.addFreezeFrame(dur) },
                     onClose = { activePanel = null }
                 )
 
-                // ─── MUSIC / MOTION (stubs) ─────────────
                 "music" -> MusicPanel(onClose = { activePanel = null })
                 "motion" -> MotionPanel(
                     current = "none",
                     onSelected = { },
-                    onClose = { activePanel = null })
+                    onClose = { activePanel = null }
+                )
 
-                // ─── DUPLICATE / DELETE ─────────────────
                 "duplicate" -> {
-                    viewModel.duplicateCurrentClip(); activePanel = null
+                    viewModel.duplicateCurrentClip()
+                    activePanel = null
                 }
 
                 "delete" -> {
-                    viewModel.deleteCurrentClip(); activePanel = null
+                    viewModel.deleteCurrentClip()
+                    activePanel = null
                 }
 
-                // ─── EXPORT ─────────────────────────────
                 "export" -> ExportPanel(
                     isExporting = isExporting,
                     exportProgress = exportProgress,

@@ -41,13 +41,15 @@ fun PlaybackControls(
     hasVideo: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
+    hasKeyframeAtPlayhead: Boolean = false,
     onPlayPause: () -> Unit,
     onSplit: () -> Unit,
     onDelete: () -> Unit,
     onDuplicate: () -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
-    onMuteToggle: () -> Unit
+    onMuteToggle: () -> Unit,
+    onKeyframe: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
@@ -59,7 +61,6 @@ fun PlaybackControls(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        // Mute
         IconButton(onClick = onMuteToggle, enabled = hasVideo) {
             Icon(
                 if (isMuted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
@@ -69,7 +70,6 @@ fun PlaybackControls(
             )
         }
 
-        // Split
         IconButton(onClick = onSplit, enabled = hasVideo) {
             Icon(
                 Icons.Filled.ContentCut, "Split",
@@ -78,7 +78,6 @@ fun PlaybackControls(
             )
         }
 
-        // Duplicate
         IconButton(onClick = onDuplicate, enabled = hasVideo) {
             Icon(
                 Icons.Filled.ContentCopy, "Duplicate",
@@ -87,7 +86,20 @@ fun PlaybackControls(
             )
         }
 
-        // Play/Pause
+        // ◆ Keyframe button
+        IconButton(onClick = onKeyframe, enabled = hasVideo) {
+            Text(
+                "◆",
+                color = when {
+                    hasKeyframeAtPlayhead -> Color(0xFF4F9DFF)
+                    hasVideo -> Color.White
+                    else -> Color(0xFF444444)
+                },
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
         IconButton(onClick = onPlayPause, enabled = hasVideo) {
             Icon(
                 if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
@@ -97,7 +109,6 @@ fun PlaybackControls(
             )
         }
 
-        // Undo
         IconButton(onClick = onUndo, enabled = canUndo) {
             Icon(
                 Icons.Filled.Undo, "Undo",
@@ -106,7 +117,6 @@ fun PlaybackControls(
             )
         }
 
-        // Redo
         IconButton(onClick = onRedo, enabled = canRedo) {
             Icon(
                 Icons.Filled.Redo, "Redo",
@@ -115,7 +125,6 @@ fun PlaybackControls(
             )
         }
 
-        // Delete
         IconButton(onClick = onDelete, enabled = hasVideo) {
             Icon(
                 Icons.Filled.Delete, "Delete",

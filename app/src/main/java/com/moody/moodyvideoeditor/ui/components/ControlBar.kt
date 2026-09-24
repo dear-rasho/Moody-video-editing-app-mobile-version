@@ -43,7 +43,6 @@ fun ControlBar(
         PillButton("＋V", onAddVisualLayer)
         PillButton("＋A", onAddAudioLayer)
         PillButton("16:9") {}
-        PillButton("🧲") {}
 
         Spacer(modifier = Modifier.weight(1f))
 

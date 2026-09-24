@@ -2,7 +2,6 @@ package com.moody.moodyvideoeditor.ui.features
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -28,26 +28,26 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.Keyframe
-import com.moody.moodyvideoeditor.data.KeyframeLibrary
+import com.moody.moodyvideoeditor.ui.components.EasingGraphPicker
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
+import com.moody.moodyvideoeditor.ui.components.KeyframeGraphDialog
 import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.utils.TransformValues
 import kotlin.math.abs
 
-/**
- * Transform panel — JS style.
- * Each property has: [◆] [Label] [−] [value input] [+]
- */
 @Composable
 fun TransformPanel(
     clipName: String,
@@ -55,12 +55,30 @@ fun TransformPanel(
     base: TransformValues,
     keyframeMap: Map<String, List<Keyframe>>,
     currentTimeSec: Float,
+    clipDurationSec: Float = 5f,
     onPropertyChanged: (String, Float) -> Unit,
     onToggleKeyframe: (String) -> Unit,
     onSetEase: (String) -> Unit,
     onResetAll: () -> Unit,
+    onUpdateKeyframe: (String, Float, Float, Float) -> Unit = { _, _, _, _ -> },
+    onDeleteKeyframe: (String, Float) -> Unit = { _, _ -> },
     onClose: () -> Unit
 ) {
+    var showGraph by remember { mutableStateOf(false) }
+    var graphsExpanded by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+
+    if (showGraph) {
+        KeyframeGraphDialog(
+            clipName = clipName,
+            keyframeMap = keyframeMap,
+            clipDurationSec = clipDurationSec,
+            onUpdateKeyframe = onUpdateKeyframe,
+            onDeleteKeyframe = onDeleteKeyframe,
+            onClose = { showGraph = false }
+        )
+    }
+
     FeaturePanel(title = "🔲 Transform", onClose = onClose) {
 
         if (!hasClipSelected) {
@@ -68,225 +86,223 @@ fun TransformPanel(
             return@FeaturePanel
         }
 
-        // ─── INFO BAR ────────────────────────────────
+        val hasAnyKf = KeyframeStore.hasAnyKeyframes(keyframeMap)
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFF181818))
-                .padding(8.dp)
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            if (event.type ==
+                                androidx.compose.ui.input.pointer.PointerEventType.Press
+                            ) {
+                                focusManager.clearFocus()
+                            }
+                        }
+                    }
+                }
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Layer:", color = Color(0xFF888888), fontSize = 10.sp)
-                Text(
-                    clipName, color = Color.White, fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold, maxLines = 1
+
+            // ═══════════════════════════════════════════════════════
+            //  📊 GRAPHS TOGGLE — AT TOP
+            // ═══════════════════════════════════════════════════════
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF181818))
+                    .pointerInput(Unit) {
+                        detectTapGestures {
+                            focusManager.clearFocus()
+                            graphsExpanded = !graphsExpanded
+                        }
+                    },
+                contentAlignment = Alignment.CenterStart
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (graphsExpanded) "▼" else "▶",
+                        color = Color(0xFF4F9DFF), fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "📊  Easing Graphs",
+                        color = Color.White, fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "Tap to ${if (graphsExpanded) "hide" else "show"}",
+                        color = Color(0xFF666666), fontSize = 9.sp
+                    )
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════
+            //  EASING GRAPHS PANEL (expandable)
+            // ═══════════════════════════════════════════════════════
+            if (graphsExpanded) {
+                Spacer(Modifier.height(6.dp))
+                EasingGraphPicker(
+                    currentEase = if (KeyframeStore.getPropsWithKeyframeAt(
+                            keyframeMap, currentTimeSec
+                        ).isNotEmpty()
+                    )
+                        KeyframeStore.getEaseAtTime(keyframeMap, currentTimeSec)
+                    else
+                        KeyframeStore.getEaseAtTime(keyframeMap, 0f),
+                    onPick = onSetEase
                 )
             }
-            Spacer(Modifier.height(2.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Time:", color = Color(0xFF888888), fontSize = 10.sp)
+
+            Spacer(Modifier.height(8.dp))
+
+            // ═══════════════════════════════════════════════════════
+            //  INFO BAR
+            // ═══════════════════════════════════════════════════════
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFF181818))
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    clipName.take(16), color = Color.White, fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)
+                )
                 Text(
                     String.format("%.2fs", currentTimeSec),
-                    color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold
+                    color = Color(0xFF4F9DFF), fontSize = 10.sp, fontWeight = FontWeight.Bold
                 )
-                Spacer(Modifier.width(8.dp))
-                Text("Tap ◆ to animate", color = Color(0xFF666666), fontSize = 9.sp)
             }
-        }
 
-        Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
 
-        // ─── PROPERTY ROWS ──────────────────────────
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 300.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            // Position
-            SectionLabel("Position")
-            PropRow(
-                label = "X",
-                propKey = "x",
-                value = base.x,
-                step = 1f,
-                minVal = -200f,
-                maxVal = 200f,
-                keyframeMap = keyframeMap,
-                currentTimeSec = currentTimeSec,
-                onChanged = { v -> onPropertyChanged("x", v) },
-                onToggleKeyframe = { onToggleKeyframe("x") }
-            )
-            PropRow(
-                label = "Y",
-                propKey = "y",
-                value = base.y,
-                step = 1f,
-                minVal = -200f,
-                maxVal = 200f,
-                keyframeMap = keyframeMap,
-                currentTimeSec = currentTimeSec,
-                onChanged = { v -> onPropertyChanged("y", v) },
-                onToggleKeyframe = { onToggleKeyframe("y") }
-            )
+            // ═══════════════════════════════════════════════════════
+            //  TRANSFORM PROPERTIES
+            // ═══════════════════════════════════════════════════════
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 180.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                SectionLabel("Position")
+                PropRow(
+                    "X", "x", base.x, 1f, -200f, 200f, keyframeMap, currentTimeSec,
+                    onChanged = { onPropertyChanged("x", it) },
+                    onToggleKf = { onToggleKeyframe("x") })
+                PropRow(
+                    "Y", "y", base.y, 1f, -200f, 200f, keyframeMap, currentTimeSec,
+                    onChanged = { onPropertyChanged("y", it) },
+                    onToggleKf = { onToggleKeyframe("y") })
 
-            // Scale
-            SectionLabel("Scale")
-            PropRow(
-                label = "Scale %",
-                propKey = "scale",
-                value = base.scale,
-                step = 1f,
-                minVal = 10f,
-                maxVal = 500f,
-                keyframeMap = keyframeMap,
-                currentTimeSec = currentTimeSec,
-                onChanged = { v -> onPropertyChanged("scale", v) },
-                onToggleKeyframe = { onToggleKeyframe("scale") }
-            )
+                SectionLabel("Scale")
+                PropRow(
+                    "Scale %", "scale", base.scale, 1f, 10f, 500f, keyframeMap, currentTimeSec,
+                    onChanged = { onPropertyChanged("scale", it) },
+                    onToggleKf = { onToggleKeyframe("scale") })
 
-            // Rotation
-            SectionLabel("Rotation")
-            PropRow(
-                label = "Angle °",
-                propKey = "rotation",
-                value = base.rotation,
-                step = 1f,
-                minVal = -360f,
-                maxVal = 360f,
-                keyframeMap = keyframeMap,
-                currentTimeSec = currentTimeSec,
-                onChanged = { v -> onPropertyChanged("rotation", v) },
-                onToggleKeyframe = { onToggleKeyframe("rotation") }
-            )
+                SectionLabel("Rotation")
+                PropRow(
+                    "Angle °",
+                    "rotation",
+                    base.rotation,
+                    1f,
+                    -360f,
+                    360f,
+                    keyframeMap,
+                    currentTimeSec,
+                    onChanged = { onPropertyChanged("rotation", it) },
+                    onToggleKf = { onToggleKeyframe("rotation") })
 
-            // Anchor
-            SectionLabel("Anchor")
-            PropRow(
-                label = "Anchor X",
-                propKey = "anchorX",
-                value = base.anchorX,
-                step = 1f,
-                minVal = 0f,
-                maxVal = 100f,
-                keyframeMap = keyframeMap,
-                currentTimeSec = currentTimeSec,
-                onChanged = { v -> onPropertyChanged("anchorX", v) },
-                onToggleKeyframe = { onToggleKeyframe("anchorX") }
-            )
-            PropRow(
-                label = "Anchor Y",
-                propKey = "anchorY",
-                value = base.anchorY,
-                step = 1f,
-                minVal = 0f,
-                maxVal = 100f,
-                keyframeMap = keyframeMap,
-                currentTimeSec = currentTimeSec,
-                onChanged = { v -> onPropertyChanged("anchorY", v) },
-                onToggleKeyframe = { onToggleKeyframe("anchorY") }
-            )
+                SectionLabel("Anchor")
+                PropRow(
+                    "Anchor X", "anchorX", base.anchorX, 1f, 0f, 100f, keyframeMap, currentTimeSec,
+                    onChanged = { onPropertyChanged("anchorX", it) },
+                    onToggleKf = { onToggleKeyframe("anchorX") })
+                PropRow(
+                    "Anchor Y", "anchorY", base.anchorY, 1f, 0f, 100f, keyframeMap, currentTimeSec,
+                    onChanged = { onPropertyChanged("anchorY", it) },
+                    onToggleKf = { onToggleKeyframe("anchorY") })
+            }
 
-            // Crop
-            SectionLabel("Crop %")
-            PropRow(
-                label = "Left",
-                propKey = "cropL",
-                value = base.cropL * 100f,
-                step = 1f,
-                minVal = 0f,
-                maxVal = 95f,
-                keyframeMap = keyframeMap,
-                currentTimeSec = currentTimeSec,
-                onChanged = { v -> onPropertyChanged("cropL", v / 100f) },
-                onToggleKeyframe = { onToggleKeyframe("cropL") }
-            )
-            PropRow(
-                label = "Right",
-                propKey = "cropR",
-                value = base.cropR * 100f,
-                step = 1f,
-                minVal = 0f,
-                maxVal = 95f,
-                keyframeMap = keyframeMap,
-                currentTimeSec = currentTimeSec,
-                onChanged = { v -> onPropertyChanged("cropR", v / 100f) },
-                onToggleKeyframe = { onToggleKeyframe("cropR") }
-            )
-            PropRow(
-                label = "Top",
-                propKey = "cropT",
-                value = base.cropT * 100f,
-                step = 1f,
-                minVal = 0f,
-                maxVal = 95f,
-                keyframeMap = keyframeMap,
-                currentTimeSec = currentTimeSec,
-                onChanged = { v -> onPropertyChanged("cropT", v / 100f) },
-                onToggleKeyframe = { onToggleKeyframe("cropT") }
-            )
-            PropRow(
-                label = "Bottom",
-                propKey = "cropB",
-                value = base.cropB * 100f,
-                step = 1f,
-                minVal = 0f,
-                maxVal = 95f,
-                keyframeMap = keyframeMap,
-                currentTimeSec = currentTimeSec,
-                onChanged = { v -> onPropertyChanged("cropB", v / 100f) },
-                onToggleKeyframe = { onToggleKeyframe("cropB") }
-            )
-        }
-
-        // ─── EASING (if keyframe at current time) ───
-        val selProps = KeyframeStore.getPropsWithKeyframeAt(keyframeMap, currentTimeSec)
-        if (selProps.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
-            EasingPicker(
-                currentEase = KeyframeStore.getEaseAtTime(keyframeMap, currentTimeSec),
-                onPick = onSetEase
-            )
-        }
 
-        // ─── RESET ──────────────────────────────────
-        Spacer(Modifier.height(8.dp))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(38.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFFFF6B6B).copy(alpha = 0.15f))
-                .pointerInput(Unit) { detectTapGestures { onResetAll() } },
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                "↺ Reset All Transform",
-                color = Color(0xFFFF6B6B), fontSize = 12.sp, fontWeight = FontWeight.Bold
-            )
+            // ═══════════════════════════════════════════════════════
+            //  OPEN FULL KEYFRAME GRAPH
+            // ═══════════════════════════════════════════════════════
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(38.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (hasAnyKf) Color(0xFF4F9DFF).copy(alpha = 0.20f)
+                        else Color(0xFF181818)
+                    )
+                    .pointerInput(hasAnyKf) {
+                        detectTapGestures {
+                            focusManager.clearFocus()
+                            if (hasAnyKf) showGraph = true
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (hasAnyKf) "📈  Full Keyframe Graph"
+                    else "📈  Add keyframes first",
+                    color = if (hasAnyKf) Color(0xFF4F9DFF) else Color(0xFF555555),
+                    fontSize = 11.sp, fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(Modifier.height(6.dp))
+
+            // ═══════════════════════════════════════════════════════
+            //  RESET
+            // ═══════════════════════════════════════════════════════
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(32.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFFFF6B6B).copy(alpha = 0.15f))
+                    .pointerInput(Unit) {
+                        detectTapGestures {
+                            focusManager.clearFocus()
+                            onResetAll()
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "↺ Reset All",
+                    color = Color(0xFFFF6B6B), fontSize = 10.sp, fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  Section Label
-// ═══════════════════════════════════════════════════════════════
 @Composable
 private fun SectionLabel(text: String) {
     Text(
-        text = text.uppercase(),
-        color = Color(0xFF4F9DFF),
-        fontSize = 9.sp,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+        text.uppercase(), color = Color(0xFF4F9DFF), fontSize = 8.sp,
+        fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, top = 2.dp)
     )
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  Property Row — [◆] [Label] [−] [value] [+]
-// ═══════════════════════════════════════════════════════════════
 @Composable
 private fun PropRow(
     label: String,
@@ -298,28 +314,32 @@ private fun PropRow(
     keyframeMap: Map<String, List<Keyframe>>,
     currentTimeSec: Float,
     onChanged: (Float) -> Unit,
-    onToggleKeyframe: () -> Unit
+    onToggleKf: () -> Unit
 ) {
     val hasKfAtTime = KeyframeStore.hasKeyframeAt(keyframeMap, propKey, currentTimeSec)
     val hasAnyKf = KeyframeStore.getKeyframes(keyframeMap, propKey).isNotEmpty()
 
-    // Local text state
     var inputText by remember(value) { mutableStateOf(formatNum(value)) }
+    var pendingText by remember(value) { mutableStateOf("") }
+    var hasFocus by remember { mutableStateOf(false) }
+
+    if (!hasFocus && inputText != formatNum(value)) {
+        inputText = formatNum(value)
+    }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(6.dp))
             .background(Color(0xFF181818))
-            .padding(horizontal = 6.dp, vertical = 4.dp),
+            .padding(horizontal = 3.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        // ─── Keyframe diamond ──────────────────────
         Box(
             modifier = Modifier
-                .size(28.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .size(22.dp)
+                .clip(RoundedCornerShape(5.dp))
                 .background(
                     when {
                         hasKfAtTime -> Color(0xFF4F9DFF).copy(alpha = 0.25f)
@@ -327,9 +347,7 @@ private fun PropRow(
                         else -> Color.Transparent
                     }
                 )
-                .pointerInput(propKey) {
-                    detectTapGestures { onToggleKeyframe() }
-                },
+                .pointerInput(propKey) { detectTapGestures { onToggleKf() } },
             contentAlignment = Alignment.Center
         ) {
             Text(
@@ -339,133 +357,107 @@ private fun PropRow(
                     hasAnyKf -> Color(0xFF4F9DFF).copy(alpha = 0.55f)
                     else -> Color(0xFF555555)
                 },
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
+                fontSize = 12.sp, fontWeight = FontWeight.Bold
             )
         }
 
-        // ─── Label ────────────────────────────────
         Text(
-            label,
-            color = Color(0xFFCCCCCC),
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            modifier = Modifier.width(62.dp)
+            label, color = Color(0xFFCCCCCC), fontSize = 10.sp,
+            fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.width(52.dp)
         )
 
-        // ─── Decrease button ──────────────────────
         Box(
             modifier = Modifier
-                .size(30.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .size(24.dp)
+                .clip(RoundedCornerShape(5.dp))
                 .background(Color(0xFF2A1414))
                 .pointerInput(propKey) {
                     detectTapGestures {
                         val nv = (value - step).coerceIn(minVal, maxVal)
+                        inputText = formatNum(nv)
                         onChanged(nv)
                     }
                 },
             contentAlignment = Alignment.Center
         ) {
-            Text("−", color = Color(0xFFFF6B6B), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("−", color = Color(0xFFFF6B6B), fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
 
-        // ─── Value input ──────────────────────────
         Box(
             modifier = Modifier
-                .weight(1f)
-                .height(34.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .width(68.dp)
+                .height(26.dp)
+                .clip(RoundedCornerShape(5.dp))
                 .background(Color(0xFF0F0F0F))
-                .padding(horizontal = 8.dp),
+                .padding(horizontal = 6.dp),
             contentAlignment = Alignment.Center
         ) {
             BasicTextField(
                 value = inputText,
                 onValueChange = { newText ->
-                    val filtered = newText.filter {
-                        it.isDigit() || it == '-' || it == '.'
-                    }
+                    val filtered = newText.filter { it.isDigit() || it == '-' || it == '.' }
                     inputText = filtered
-                    val parsed = filtered.toFloatOrNull()
-                    if (parsed != null) {
-                        val clamped = parsed.coerceIn(minVal, maxVal)
-                        onChanged(clamped)
-                    }
+                    pendingText = filtered
                 },
                 singleLine = true,
                 textStyle = TextStyle(
                     color = Color(0xFF4F9DFF),
-                    fontSize = 13.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
                 ),
                 cursorBrush = SolidColor(Color(0xFF4F9DFF)),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth()
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = ImeAction.Done
+                ),
+                keyboardActions = KeyboardActions(
+                    onDone = {
+                        val parsed = pendingText.toFloatOrNull()
+                        if (parsed != null) {
+                            val clamped = parsed.coerceIn(minVal, maxVal)
+                            inputText = formatNum(clamped)
+                            onChanged(clamped)
+                        }
+                        pendingText = ""
+                    }
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { focusState ->
+                        hasFocus = focusState.isFocused
+                        if (!focusState.isFocused && pendingText.isNotEmpty()) {
+                            val parsed = pendingText.toFloatOrNull()
+                            if (parsed != null) {
+                                val clamped = parsed.coerceIn(minVal, maxVal)
+                                inputText = formatNum(clamped)
+                                onChanged(clamped)
+                            }
+                            pendingText = ""
+                        }
+                    }
             )
         }
 
-        // ─── Increase button ──────────────────────
         Box(
             modifier = Modifier
-                .size(30.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .size(24.dp)
+                .clip(RoundedCornerShape(5.dp))
                 .background(Color(0xFF0F2A1A))
                 .pointerInput(propKey) {
                     detectTapGestures {
                         val nv = (value + step).coerceIn(minVal, maxVal)
+                        inputText = formatNum(nv)
                         onChanged(nv)
                     }
                 },
             contentAlignment = Alignment.Center
         ) {
-            Text("+", color = Color(0xFF22C55E), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("+", color = Color(0xFF22C55E), fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  Easing Picker
-// ═══════════════════════════════════════════════════════════════
-@Composable
-private fun EasingPicker(currentEase: String, onPick: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            "Easing (for keyframe at playhead)",
-            color = Color(0xFF888888), fontSize = 9.sp, fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(start = 4.dp)
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            KeyframeLibrary.EASING_OPTIONS.forEach { key ->
-                val isActive = currentEase == key
-                Box(
-                    modifier = Modifier
-                        .height(28.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(if (isActive) Color(0xFF4F9DFF) else Color(0xFF181818))
-                        .pointerInput(key) { detectTapGestures { onPick(key) } }
-                        .padding(horizontal = 10.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        KeyframeLibrary.EASING_LABELS[key] ?: key,
-                        color = if (isActive) Color.Black else Color.White,
-                        fontSize = 9.sp, fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════
 @Composable
 private fun EmptyState() {
     Column(

@@ -10,7 +10,7 @@ import kotlin.math.pow
  * Mirrors js/workspace/keyframeStore.js
  * - Keyframe CRUD
  * - Sampling (interpolation)
- * - 25 easing functions
+ * - 28 easing functions
  * - Auto-keyframe behavior
  */
 object KeyframeStore {
@@ -121,8 +121,6 @@ object KeyframeStore {
 
     // ═══════════════════════════════════════════════════════════
     //  AUTO-KEYFRAME — mirrors keyframeStore.js autoKeyframeIfActive()
-    //  If clip already has ≥1 keyframe → any change auto-creates
-    //  a keyframe at current time (strict 0.02s tolerance).
     // ═══════════════════════════════════════════════════════════
     fun autoKeyframeIfActive(
         map: KeyframeMap,
@@ -144,7 +142,7 @@ object KeyframeStore {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  SAMPLE — mirrors keyframeStore.js sample()
+    //  SAMPLE
     // ═══════════════════════════════════════════════════════════
     fun sample(map: KeyframeMap, prop: String, time: Float, baseValue: Float): Float {
         val list = getKeyframes(map, prop)
@@ -169,9 +167,6 @@ object KeyframeStore {
         return last.value
     }
 
-    /**
-     * Sample all props and merge with base values.
-     */
     fun sampleAll(
         map: KeyframeMap,
         time: Float,
@@ -226,6 +221,15 @@ object KeyframeStore {
             "quintInOut" ->
                 if (t < 0.5f) 16f * t.pow(5)
                 else 1f - (-2f * t + 2f).pow(5) / 2f
+
+            // 🆕 Circ family
+            "circIn" -> 1f - kotlin.math.sqrt(1f - t * t)
+            "circOut" -> kotlin.math.sqrt(1f - (t - 1f) * (t - 1f))
+            "circInOut" -> if (t < 0.5f) {
+                (1f - kotlin.math.sqrt(1f - 4f * t * t)) / 2f
+            } else {
+                (kotlin.math.sqrt(1f - (-2f * t + 2f) * (-2f * t + 2f)) + 1f) / 2f
+            }
 
             "expoIn" -> if (t == 0f) 0f else 2f.pow(10f * t - 10f)
             "expoOut" -> if (t == 1f) 1f else 1f - 2f.pow(-10f * t)

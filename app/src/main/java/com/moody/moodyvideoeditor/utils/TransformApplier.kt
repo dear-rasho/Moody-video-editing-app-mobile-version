@@ -7,14 +7,6 @@ import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.KeyframeMap
 import kotlin.math.abs
 
-/**
- * Mirrors js/workspace/transformApplier.js + previewCanvas.js
- * Applies transform to Compose DrawScope + provides identity check.
- */
-
-/**
- * Snapshot of all 10 transform props (post-keyframe sampling).
- */
 data class TransformValues(
     val x: Float = 50f,
     val y: Float = 50f,
@@ -40,30 +32,37 @@ data class TransformValues(
 object TransformApplier {
 
     /**
-     * Extract base transform from clip (works for video/image/text/sticker).
+     * Extract base transform from clip.
+     * Different clip types store values differently.
      */
     fun baseOf(clip: EditorClip): TransformValues {
-        // Text clip: pull from textState
+        // Text clip
         if (clip.isTextClip && clip.textState != null) {
             val st = clip.textState
             return TransformValues(
                 x = st.positionX, y = st.positionY,
                 scale = st.scale, rotation = st.rotation,
-                anchorX = st.anchorX, anchorY = st.anchorY
+                anchorX = st.anchorX, anchorY = st.anchorY,
+                cropL = clip.cropL, cropR = clip.cropR,
+                cropT = clip.cropT, cropB = clip.cropB
             )
         }
-        // Sticker clip: pull from stickerState
+        // Sticker clip
         if (clip.isStickerClip && clip.stickerState != null) {
             val ss = clip.stickerState
             return TransformValues(
                 x = ss.x, y = ss.y,
-                scale = ss.scale, rotation = ss.rotation
+                scale = ss.scale, rotation = ss.rotation,
+                anchorX = 50f, anchorY = 50f,
+                cropL = clip.cropL, cropR = clip.cropR,
+                cropT = clip.cropT, cropB = clip.cropB
             )
         }
-        // Normal clip: from scale/rotation/offset/crop fields
+        // Normal visual clip — offsetX/offsetY are normalized delta (-1..1)
         return TransformValues(
-            x = 50f, y = 50f,  // offsetX/offsetY are deltas
-            scale = clip.scale,
+            x = 50f + clip.offsetX * 100f,
+            y = 50f + clip.offsetY * 100f,
+            scale = clip.scale * 100f,
             rotation = clip.rotation,
             anchorX = 50f, anchorY = 50f,
             cropL = clip.cropL, cropR = clip.cropR,
@@ -72,68 +71,32 @@ object TransformApplier {
     }
 
     /**
-     * Live sample — for preview: given clip at time, return actual transform.
-     * Mirrors previewCanvas.js resolveLiveTransform()
+     * Sample keyframes at time — returns live transform.
      */
     fun resolveLive(clip: EditorClip, timeSec: Float): TransformValues {
         val base = baseOf(clip)
         val kfs: KeyframeMap = clip.keyframes
         return if (KeyframeStore.hasAnyKeyframes(kfs)) {
             KeyframeStore.sampleAll(kfs, timeSec, base)
-        } else {
-            base
-        }
+        } else base
     }
 
     /**
-     * Apply transform to Compose DrawScope (Preview + Canvas drawing).
+     * Draw with transform applied — for Canvas-only rendering (export).
      */
     fun DrawScope.applyTransform(W: Float, H: Float, t: TransformValues) {
         if (t.isIdentity()) return
-
         withTransform({
-            // 1) Pivot point (anchor)
             val originX = W * t.anchorX / 100f
             val originY = H * t.anchorY / 100f
-
-            // 2) Position offset
             val offsetX = (t.x - 50f) / 100f * W
             val offsetY = (t.y - 50f) / 100f * H
-
-            // 3) Apply order: translate → rotate → scale → translate back
             translate(originX + offsetX, originY + offsetY)
             if (t.rotation != 0f) rotate(t.rotation, Offset(originX, originY))
             if (t.scale != 100f) {
                 val sc = t.scale / 100f
                 scale(sc, sc, Offset(originX, originY))
             }
-        }) {
-            // children draw here (DrawScope.withTransform block)
-        }
-    }
-
-    /**
-     * Apply transform via translate/rotate/scale list — for graphicsLayer use.
-     * Returns translation, scale, rotation to feed into Modifier.graphicsLayer.
-     */
-    data class GraphicsValues(
-        val translationX: Float = 0f,
-        val translationY: Float = 0f,
-        val scaleX: Float = 1f,
-        val scaleY: Float = 1f,
-        val rotationZ: Float = 0f
-    )
-
-    fun asGraphics(W: Float, H: Float, t: TransformValues): GraphicsValues {
-        if (t.isIdentity()) return GraphicsValues()
-        val dx = (t.x - 50f) / 100f * W
-        val dy = (t.y - 50f) / 100f * H
-        return GraphicsValues(
-            translationX = dx,
-            translationY = dy,
-            scaleX = t.scale / 100f,
-            scaleY = t.scale / 100f,
-            rotationZ = t.rotation
-        )
+        }) { }
     }
 }

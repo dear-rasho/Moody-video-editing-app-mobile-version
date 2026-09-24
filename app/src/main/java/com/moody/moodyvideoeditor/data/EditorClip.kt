@@ -7,7 +7,7 @@ data class EditorClip(
     val id: String = UUID.randomUUID().toString(),
     val uri: Uri,
     val name: String,
-    val type: String = "video/mp4",        // 🆕 "video/mp4", "audio/mpeg", "text/plain", "effect/plain", "sticker/plain", "adjustment/plain", "overlay/plain", "chroma/plain"
+    val type: String = "video/mp4",
     val sourceStartMs: Long,
     val sourceEndMs: Long,
     val timelineStartMs: Long,
@@ -27,20 +27,23 @@ data class EditorClip(
     val sourceTotalMs: Long = Long.MAX_VALUE,
     val linkedId: String? = null,
     val isMuted: Boolean = false,
-    val keyframes: Map<String, List<Keyframe>> = emptyMap(),
 
     // Feature states (per-clip)
     val filters: FilterState = FilterState(),
     val colorWheel: ColorWheelState = ColorWheelState(),
     val overlay: OverlayState = OverlayState(),
     val effectKeys: List<String> = emptyList(),
-    val effectState: EffectState? = null,     // 🆕 JS effectState port
+    val effectState: EffectState? = null,
     val textState: TextState? = null,
     val stickerState: StickerState? = null,
+
     val chroma: ChromaState? = null,
     val freeze: FreezeState? = null,
     val transition: TransitionState? = null,
-    val ratio: RatioState? = null
+    val ratio: RatioState? = null,
+
+    // 🆕 Keyframes
+    val keyframes: Map<String, List<Keyframe>> = emptyMap()
 ) {
     val sourceDurationMs: Long get() = sourceEndMs - sourceStartMs
     val durationMs: Long get() = (sourceDurationMs / speed).toLong()
@@ -63,7 +66,7 @@ data class EditorClip(
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  AdjustmentData — UNCHANGED
+//  AdjustmentData
 // ═══════════════════════════════════════════════════════════════
 data class AdjustmentData(
     val brightness: Float = 0f,
@@ -95,7 +98,7 @@ data class AdjustmentData(
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  EditorState
+//  EditorState — WITH HELPER METHODS
 // ═══════════════════════════════════════════════════════════════
 data class EditorState(
     val clips: List<EditorClip> = emptyList(),
@@ -103,6 +106,7 @@ data class EditorState(
     val currentPosMs: Long = 0L,
     val isPlaying: Boolean = false,
     val selectedClipId: String? = null,
+    val multiSelectedIds: Set<String> = emptySet(),
     val selectedTrackIndex: Int = 0,
     val selectedIsAudio: Boolean = false,
     val visualLayerCount: Int = 3,
@@ -120,16 +124,58 @@ data class EditorState(
     val beatsFilter: String = "all",
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
-    val timelineZoom: Float = 1.0f       // 🆕 timeline zoom (0.5x .. 3x)
+    val timelineZoom: Float = 1.0f
 ) {
-    val totalDurationMs: Long get() = clips.maxOfOrNull { it.timelineEndMs } ?: 10000L
-    val currentClip: EditorClip? get() = clips.getOrNull(currentIndex)
-    val selectedClip: EditorClip? get() = clips.firstOrNull { it.id == selectedClipId }
+    val totalDurationMs: Long
+        get() = clips.maxOfOrNull { it.timelineEndMs } ?: 10000L
+
+    val currentClip: EditorClip?
+        get() = clips.getOrNull(currentIndex)
+
+    val selectedClip: EditorClip?
+        get() = clips.firstOrNull { it.id == selectedClipId }
 
     fun clipsOf(trackIndex: Int, isAudio: Boolean): List<EditorClip> =
         clips.filter { it.trackIndex == trackIndex && it.isAudio == isAudio }
 
-    fun selectedTextState(): TextState? = selectedClip?.textState
-    fun selectedStickerState(): StickerState? = selectedClip?.stickerState
-    fun selectedChroma(): ChromaState? = selectedClip?.chroma
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 TIMELINE HELPERS
+    // ═══════════════════════════════════════════════════════════
+    fun timelineVisualList(): List<List<EditorClip>> {
+        if (visualLayerCount <= 0) return emptyList()
+        val result = MutableList(visualLayerCount) { emptyList<EditorClip>() }
+        clips.filter { !it.isAudio }.forEach { c ->
+            if (c.trackIndex in 0 until visualLayerCount) {
+                result[c.trackIndex] = result[c.trackIndex] + c
+            }
+        }
+        return result
+    }
+
+    fun timelineAudioList(): List<List<EditorClip>> {
+        if (audioLayerCount <= 0) return emptyList()
+        val result = MutableList(audioLayerCount) { emptyList<EditorClip>() }
+        clips.filter { it.isAudio }.forEach { c ->
+            if (c.trackIndex in 0 until audioLayerCount) {
+                result[c.trackIndex] = result[c.trackIndex] + c
+            }
+        }
+        return result
+    }
+
+    fun audioOrVisualTracks(isAudio: Boolean): List<List<EditorClip>> =
+        if (isAudio) timelineAudioList() else timelineVisualList()
+
+    fun withTrackList(
+        isAudio: Boolean,
+        newList: List<List<EditorClip>>
+    ): EditorState {
+        val otherClips = clips.filter { it.isAudio != isAudio }
+        val newClips = newList.flatten()
+        return copy(
+            clips = otherClips + newClips,
+            visualLayerCount = if (isAudio) visualLayerCount else newList.size,
+            audioLayerCount = if (isAudio) newList.size else audioLayerCount
+        )
+    }
 }
