@@ -19,7 +19,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -31,58 +31,42 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
-import com.moody.moodyvideoeditor.utils.SpeedEngine
+import com.moody.moodyvideoeditor.utils.AnimationsEngine
 
 /**
- * Mirrors js/features/speed.js
- * Shows: info bar + presets + fine slider + reset.
+ * Mirrors js/features/animations.js
+ * Standalone animations panel — text clip ke animation property ko set karta hai.
  */
 @Composable
-fun SpeedPanel(
-    clipName: String,
-    baseDurationMs: Long,
-    currentSpeed: Float,
-    hasClipSelected: Boolean,
-    onSpeedChanged: (Float) -> Unit,
-    onReset: () -> Unit,
+fun AnimationsPanel(
+    currentAnimation: String,
+    currentDuration: Float,
+    hasTextClipSelected: Boolean,
+    onAnimationSelected: (String) -> Unit,
+    onDurationChanged: (Float) -> Unit,
+    onPreview: () -> Unit,
     onClose: () -> Unit
 ) {
-    FeaturePanel(title = "⏩ Speed · ${String.format("%.2f", currentSpeed)}x", onClose = onClose) {
-
-        // ─── NO CLIP ──────────────────────────────────
-        if (!hasClipSelected) {
+    FeaturePanel(
+        title = "🎞️ Animations (${AnimationsEngine.ALL_ANIMATIONS.size})",
+        onClose = onClose
+    ) {
+        if (!hasTextClipSelected) {
             EmptyState(
-                icon = "👆",
-                title = "No clip selected",
-                text = "Tap a video or audio clip on the timeline first."
+                icon = "📝",
+                title = "No text clip selected",
+                text = "Pehle Text panel se ek text clip add karo, phir yahan animation lagao."
             )
             return@FeaturePanel
         }
 
-        var sliderValue by remember(currentSpeed) { mutableFloatStateOf(currentSpeed) }
+        var selectedCategory by remember { mutableStateOf(AnimationsEngine.CATEGORIES[0].key) }
+        val currentCategory = AnimationsEngine.CATEGORIES.firstOrNull { it.key == selectedCategory }
+            ?: AnimationsEngine.CATEGORIES[0]
 
-        // ─── INFO BAR ─────────────────────────────────
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFF181818))
-                .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            InfoRow("Clip:", clipName)
-            InfoRow("Base:", "${baseDurationMs / 1000.0}s")
-            InfoRow(
-                "Duration:",
-                String.format("%.2fs", (baseDurationMs / currentSpeed) / 1000.0)
-            )
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        // ─── PRESETS ROW ──────────────────────────────
+        // ─── CATEGORY SHELF ─────────────────────────────
         Text(
-            "Presets",
+            "Category",
             color = Color(0xFF888888),
             fontSize = 9.sp,
             fontWeight = FontWeight.Bold,
@@ -96,26 +80,60 @@ fun SpeedPanel(
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            SpeedEngine.PRESETS.forEach { p ->
-                val isActive = kotlin.math.abs(currentSpeed - p) < 0.01f
+            AnimationsEngine.CATEGORIES.forEach { cat ->
+                val isActive = cat.key == selectedCategory
+                Box(
+                    modifier = Modifier
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isActive) Color(0xFF7C3AED) else Color(0xFF181818))
+                        .pointerInput(cat.key) { detectTapGestures { selectedCategory = cat.key } }
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "${cat.label} (${cat.animations.size})",
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // ─── ANIMATION CHIPS ─────────────────────────────
+        Text(
+            currentCategory.label,
+            color = Color(0xFF7C3AED),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 4.dp)
+        )
+        Spacer(Modifier.height(4.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            currentCategory.animations.forEach { anim ->
+                val isActive = currentAnimation == anim.key
                 Box(
                     modifier = Modifier
                         .height(34.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(
-                            if (isActive) Color(0xFF7C3AED) else Color(0xFF181818)
-                        )
-                        .pointerInput(p) {
-                            detectTapGestures {
-                                sliderValue = p
-                                onSpeedChanged(p)
-                            }
+                        .background(if (isActive) Color(0xFF7C3AED) else Color(0xFF181818))
+                        .pointerInput(anim.key) {
+                            detectTapGestures { onAnimationSelected(anim.key) }
                         }
-                        .padding(horizontal = 14.dp),
+                        .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "${p}x",
+                        anim.label,
                         color = Color.White,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
@@ -126,26 +144,23 @@ fun SpeedPanel(
 
         Spacer(Modifier.height(10.dp))
 
-        // ─── FINE SLIDER ──────────────────────────────
+        // ─── DURATION SLIDER ─────────────────────────────
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                "Fine",
+                "Duration",
                 color = Color(0xFF888888),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.width(36.dp)
+                modifier = Modifier.width(60.dp)
             )
             Slider(
-                value = sliderValue,
-                onValueChange = {
-                    sliderValue = it
-                    onSpeedChanged(it)
-                },
-                valueRange = SpeedEngine.MIN_SPEED..SpeedEngine.MAX_SPEED,
+                value = currentDuration,
+                onValueChange = onDurationChanged,
+                valueRange = 0.2f..3.0f,
                 modifier = Modifier.weight(1f),
                 colors = SliderDefaults.colors(
                     thumbColor = Color(0xFF7C3AED),
@@ -154,44 +169,33 @@ fun SpeedPanel(
                 )
             )
             Text(
-                String.format("%.2fx", sliderValue),
+                String.format("%.1fs", currentDuration),
                 color = Color.White,
-                fontSize = 11.sp,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.width(52.dp)
+                modifier = Modifier.width(40.dp)
             )
         }
 
         Spacer(Modifier.height(8.dp))
 
-        // ─── RESET ────────────────────────────────────
+        // ─── PREVIEW BUTTON ──────────────────────────────
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(36.dp)
+                .height(38.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFFFF6B6B).copy(alpha = 0.15f))
-                .pointerInput(Unit) { detectTapGestures { onReset() } },
+                .background(Color(0xFF22C55E).copy(alpha = 0.15f))
+                .pointerInput(Unit) { detectTapGestures { onPreview() } },
             contentAlignment = Alignment.Center
         ) {
             Text(
-                "↺ Reset Speed",
-                color = Color(0xFFFF6B6B),
+                "▶ Preview Animation",
+                color = Color(0xFF22C55E),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold
             )
         }
-    }
-}
-
-@Composable
-private fun InfoRow(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(label, color = Color(0xFF888888), fontSize = 10.sp)
-        Text(value, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }
 
