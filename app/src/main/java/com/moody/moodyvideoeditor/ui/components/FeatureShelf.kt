@@ -25,35 +25,38 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-data class Feature(
-    val key: String,
-    val label: String,
-    val icon: String
-)
+data class Feature(val key: String, val label: String, val icon: String)
 
 val FEATURES = listOf(
     Feature("trim", "Trim", "✂️"),
     Feature("speed", "Speed", "⏩"),
     Feature("text", "Text", "📝"),
+    Feature("animations", "Animate", "🎞️"),
     Feature("filters", "Filters", "🎨"),
     Feature("effects", "Effects", "✨"),
     Feature("adjustments", "Adjust", "🎚️"),
+    Feature("wheel", "Wheels", "🌈"),
     Feature("stickers", "Stickers", "😀"),
     Feature("overlays", "Overlays", "🎬"),
+    Feature("transitions", "Transitions", "⇄"),
+    Feature("chroma", "Chroma", "🟢"),
     Feature("transform", "Transform", "🔲"),
     Feature("crop", "Crop", "📐"),
     Feature("volume", "Volume", "🔊"),
-    Feature("ratio", "Ratio", "🖼️"),
+    Feature("audiofx", "Audio FX", "🎙️"),
+    Feature("soundfx", "Sound FX", "🔔"),
+    Feature("music", "Music", "🎵"),
     Feature("beats", "Beats", "🥁"),
-    Feature("audioeffect", "Audio FX", "🎙️"),
-    Feature("soundeffect", "Sound FX", "🔊"),
-    Feature("duplicate", "Dup", "📋")
+    Feature("motion", "Motion", "💫"),
+    Feature("freeze", "Freeze", "❄️"),
+    Feature("ratio", "Ratio", "🖼️"),
+    Feature("duplicate", "Dup", "📋"),
+    Feature("delete", "Delete", "🗑"),
+    Feature("export", "Export", "💾")
 )
 
 @Composable
-fun FeatureShelf(
-    onFeatureSelected: (String) -> Unit
-) {
+fun FeatureShelf(onFeatureSelected: (String) -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -62,13 +65,12 @@ fun FeatureShelf(
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(
-            text = "Tools",
+            "Tools",
             color = Color(0xFF888888),
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(start = 4.dp)
         )
-
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -76,17 +78,14 @@ fun FeatureShelf(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             FEATURES.forEach { feature ->
-                FeatureItem(
-                    feature = feature,
-                    onClick = { onFeatureSelected(feature.key) }
-                )
+                FeatureItem(feature) { onFeatureSelected(feature.key) }
             }
         }
     }
 }
 
 @Composable
-fun FeatureItem(feature: Feature, onClick: () -> Unit) {
+private fun FeatureItem(feature: Feature, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .width(72.dp)
@@ -97,10 +96,10 @@ fun FeatureItem(feature: Feature, onClick: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(text = feature.icon, fontSize = 22.sp)
+        Text(feature.icon, fontSize = 22.sp)
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = feature.label,
+            feature.label,
             color = Color.White,
             fontSize = 9.sp,
             fontWeight = FontWeight.Medium,

@@ -28,16 +28,31 @@ fun AdjustmentsPanel(
     brightness: Float,
     contrast: Float,
     saturation: Float,
+    exposure: Float,
+    temperature: Float,
+    tint: Float,
+    vignette: Float,
+    grain: Float,
     onBrightnessChanged: (Float) -> Unit,
     onContrastChanged: (Float) -> Unit,
     onSaturationChanged: (Float) -> Unit,
+    onExposureChanged: (Float) -> Unit,
+    onTemperatureChanged: (Float) -> Unit,
+    onTintChanged: (Float) -> Unit,
+    onVignetteChanged: (Float) -> Unit,
+    onGrainChanged: (Float) -> Unit,
     onReset: () -> Unit,
     onClose: () -> Unit
 ) {
     FeaturePanel(title = "🎚️ Adjustments", onClose = onClose) {
-        AdjustSlider("Bright", brightness, 0.5f..1.5f, onBrightnessChanged)
-        AdjustSlider("Contrast", contrast, 0.5f..1.5f, onContrastChanged)
-        AdjustSlider("Saturate", saturation, 0f..2f, onSaturationChanged)
+        AdjustRow("Bright", brightness, 0.5f..1.5f, onBrightnessChanged)
+        AdjustRow("Contrast", contrast, 0.5f..1.5f, onContrastChanged)
+        AdjustRow("Saturate", saturation, 0f..2f, onSaturationChanged)
+        AdjustRow("Exposure", exposure, 0.5f..1.5f, onExposureChanged)
+        AdjustRow("Temp", temperature, -100f..100f, onTemperatureChanged)
+        AdjustRow("Tint", tint, -100f..100f, onTintChanged)
+        AdjustRow("Vignette", vignette, 0f..100f, onVignetteChanged)
+        AdjustRow("Grain", grain, 0f..100f, onGrainChanged)
 
         Box(
             modifier = Modifier
@@ -49,7 +64,7 @@ fun AdjustmentsPanel(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "↺ Reset",
+                "↺ Reset All",
                 color = Color(0xFFFF6B6B),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold
@@ -59,7 +74,7 @@ fun AdjustmentsPanel(
 }
 
 @Composable
-private fun AdjustSlider(
+private fun AdjustRow(
     label: String,
     value: Float,
     range: ClosedFloatingPointRange<Float>,
@@ -87,11 +102,11 @@ private fun AdjustSlider(
             )
         )
         Text(
-            text = "${(value * 100).toInt()}%",
+            text = value.toInt().toString(),
             color = Color.White,
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(45.dp)
+            modifier = Modifier.width(40.dp)
         )
     }
 }

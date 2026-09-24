@@ -90,8 +90,7 @@ class VideoExporter(
         try {
             transformer?.cancel()
             transformer = null
-        } catch (_: Exception) {
-        }
+        } catch (_: Exception) {}
     }
 
     private fun createOutputFile(fileName: String): File {
