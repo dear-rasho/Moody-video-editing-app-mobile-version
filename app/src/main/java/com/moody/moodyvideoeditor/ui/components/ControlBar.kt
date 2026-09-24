@@ -25,7 +25,9 @@ import androidx.compose.ui.unit.sp
 
 @Composable
 fun ControlBar(
-    onMediaClick: () -> Unit
+    onMediaClick: () -> Unit,
+    onAddVisualLayer: () -> Unit = {},
+    onAddAudioLayer: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
@@ -37,16 +39,16 @@ fun ControlBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        PillButton(text = "＋ Media", onClick = onMediaClick)
-        PillButton(text = "16:9", onClick = {})
-        PillButton(text = "+V", onClick = {})
-        PillButton(text = "+A", onClick = {})
-        PillButton(text = "🧲", onClick = {})
+        PillButton("＋ Media", onMediaClick)
+        PillButton("＋V", onAddVisualLayer)
+        PillButton("＋A", onAddAudioLayer)
+        PillButton("16:9") {}
+        PillButton("🧲") {}
 
         Spacer(modifier = Modifier.weight(1f))
 
         Text(
-            text = "🔍 1.00x",
+            "🔍 1.00x",
             color = Color(0xFF888888),
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold
@@ -55,7 +57,7 @@ fun ControlBar(
 }
 
 @Composable
-fun PillButton(text: String, onClick: () -> Unit) {
+private fun PillButton(text: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .height(34.dp)
@@ -65,11 +67,6 @@ fun PillButton(text: String, onClick: () -> Unit) {
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = text,
-            color = Color.White,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold
-        )
+        Text(text, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }

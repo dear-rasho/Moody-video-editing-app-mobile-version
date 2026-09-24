@@ -49,7 +49,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
     // ═══════════════════════════════════════════════════════════
-    //  ICONS (Movie, Cut, Duplicate, Undo, Redo, Volume icons)
+    //  ICONS (Movie, Cut, Duplicate, Undo, Redo, Volume, etc.)
     // ═══════════════════════════════════════════════════════════
     implementation("androidx.compose.material:material-icons-extended")
 
@@ -62,6 +62,7 @@ dependencies {
     //  VIEWMODEL (State management)
     // ═══════════════════════════════════════════════════════════
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.4")
 
     // ═══════════════════════════════════════════════════════════
     //  COROUTINES (Background tasks)
@@ -78,13 +79,18 @@ dependencies {
     implementation("androidx.media3:media3-effect:1.4.1")
 
     // ═══════════════════════════════════════════════════════════
+    //  FFMPEG (Real video processing)
+    // ═══════════════════════════════════════════════════════════
+    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.7")
+
+    // ═══════════════════════════════════════════════════════════
     //  COIL (Thumbnail loading)
     // ═══════════════════════════════════════════════════════════
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-video:2.7.0")
 
     // ═══════════════════════════════════════════════════════════
-    //  PERMISSIONS (Accompanist)
+    //  PERMISSIONS
     // ═══════════════════════════════════════════════════════════
     implementation("com.google.accompanist:accompanist-permissions:0.34.0")
 

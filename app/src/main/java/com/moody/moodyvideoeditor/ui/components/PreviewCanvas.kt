@@ -1,5 +1,11 @@
 package com.moody.moodyvideoeditor.ui.components
 
+import android.graphics.Bitmap
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
+import android.view.LayoutInflater
+import android.view.TextureView
+import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,9 +24,11 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -30,6 +38,10 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.moody.moodyvideoeditor.R
+import com.moody.moodyvideoeditor.data.AdjustmentData
+import com.moody.moodyvideoeditor.utils.ColorMatrixBuilder
+import kotlin.random.Random
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -43,8 +55,11 @@ fun PreviewCanvas(
     textSize: Int,
     sticker: String,
     stickerX: Float,
-    stickerY: Float
+    stickerY: Float,
+    adjustments: AdjustmentData = AdjustmentData()
 ) {
+    val hasAdjustments = ColorMatrixBuilder.hasRealTimeAdjustments(adjustments)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -60,23 +75,62 @@ fun PreviewCanvas(
             contentAlignment = Alignment.Center
         ) {
             if (hasVideo) {
+                // ═══ VIDEO + COLOR MATRIX ═══
                 AndroidView(
                     factory = { ctx ->
-                        PlayerView(ctx).apply {
-                            player = exoPlayer
-                            useController = false
-                        }
+                        LayoutInflater.from(ctx)
+                            .inflate(R.layout.view_player, null) as PlayerView
                     },
                     update = { view ->
+                        view.player = exoPlayer
                         view.resizeMode = when (aspectMode) {
                             0 -> AspectRatioFrameLayout.RESIZE_MODE_FIT
                             1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
                             else -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                         }
                         view.rotation = rotation.toFloat()
+
+                        val surfaceView = view.videoSurfaceView
+                        if (surfaceView is TextureView) {
+                            if (hasAdjustments) {
+                                val cm = ColorMatrixBuilder.build(adjustments)
+                                val paint = Paint().apply {
+                                    colorFilter = ColorMatrixColorFilter(cm)
+                                }
+                                surfaceView.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
+                            } else {
+                                surfaceView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                            }
+                        }
                     },
                     modifier = Modifier.fillMaxSize()
                 )
+
+                // ═══ VIGNETTE OVERLAY ═══
+                if (adjustments.vignette > 0f) {
+                    val alpha = (adjustments.vignette / 100f).coerceIn(0f, 1f)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.radialGradient(
+                                    colors = listOf(
+                                        Color.Transparent,
+                                        Color.Black.copy(alpha = alpha * 0.9f)
+                                    ),
+                                    radius = 800f
+                                )
+                            )
+                    )
+                }
+
+                // ═══ NOISE OVERLAY ═══
+                if (adjustments.noise > 0f) {
+                    val noiseAlpha = (adjustments.noise / 200f).coerceIn(0f, 0.5f)
+                    NoiseOverlay(alpha = noiseAlpha)
+                }
+
+                // ═══ SHARPEN (approx via slight overlay) — skip for now ═══
             } else {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -117,23 +171,53 @@ fun PreviewCanvas(
                 )
             }
 
-            // Sticker overlay (position via fraction 0..1)
+            // Sticker overlay
             if (sticker.isNotBlank()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                ) {
+                Box(modifier = Modifier.fillMaxSize()) {
                     Text(
                         text = sticker,
                         fontSize = 48.sp,
-                        modifier = Modifier
-                            .offset(
-                                x = (stickerX * 300).dp - 24.dp,
-                                y = (stickerY * 160).dp - 24.dp
-                            )
+                        modifier = Modifier.offset(
+                            x = (stickerX * 300).dp - 24.dp,
+                            y = (stickerY * 160).dp - 24.dp
+                        )
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Noise overlay — random static dots
+ */
+@Composable
+private fun NoiseOverlay(alpha: Float) {
+    val noiseBrush = remember(alpha) {
+        // Generate random dot positions
+        val rand = Random(System.currentTimeMillis())
+        val count = 400
+        val dots = List(count) {
+            Triple(
+                rand.nextFloat(),
+                rand.nextFloat(),
+                rand.nextFloat() // opacity per dot
+            )
+        }
+        dots
+    }
+
+    androidx.compose.foundation.Canvas(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        val w = size.width
+        val h = size.height
+        noiseBrush.forEach { (x, y, op) ->
+            drawCircle(
+                color = Color.White.copy(alpha = alpha * op),
+                radius = 1.5f,
+                center = androidx.compose.ui.geometry.Offset(x * w, y * h)
+            )
         }
     }
 }

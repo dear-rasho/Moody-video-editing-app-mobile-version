@@ -2,6 +2,7 @@ package com.moody.moodyvideoeditor.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,111 +33,120 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.data.EditorState
 
 @Composable
 fun Timeline(
-    clips: List<EditorClip>,
-    currentIndex: Int,
-    currentPosMs: Long,
-    onClipTapped: (Int, Long) -> Unit
+    state: EditorState,
+    onClipTapped: (EditorClip) -> Unit
 ) {
-    val totalMs = clips.maxOfOrNull { it.timelineEndMs } ?: 1L
+    val totalMs = state.totalDurationMs.coerceAtLeast(1L)
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF0A0A0A))
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+            .padding(4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = "Timeline",
-                color = Color(0xFF888888),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold
+        Text(
+            "Timeline · Tap clip to select",
+            color = Color(0xFF888888),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+
+        // ═══ VISUAL LAYERS (V1, V2, V3) — shown top-down
+        for (i in (state.visualLayerCount - 1) downTo 0) {
+            TrackRow(
+                label = "V${i + 1}",
+                clips = state.clipsOf(i, isAudio = false),
+                totalMs = totalMs,
+                selectedClipId = state.selectedClipId,
+                isSelectedLayer = state.selectedTrackIndex == i && !state.selectedIsAudio,
+                onClipTapped = onClipTapped
             )
-            if (clips.isNotEmpty()) {
-                Text(
-                    text = "${clips.size} clip${if (clips.size != 1) "s" else ""}",
-                    color = Color(0xFF666666),
-                    fontSize = 9.sp
-                )
-            }
         }
 
-        // V1 Track
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TrackLabel("V1")
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFF1A1A1A))
-            ) {
-                ClipTrack(
-                    clips = clips,
-                    currentIndex = currentIndex,
-                    currentPosMs = currentPosMs,
-                    totalMs = totalMs,
-                    onClipTapped = onClipTapped
-                )
-            }
-        }
-
-        // A1 Track (static)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(22.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TrackLabel("A1")
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .background(Color(0xFF1A1A1A), RoundedCornerShape(4.dp))
+        // ═══ AUDIO LAYERS (A1, A2)
+        for (i in 0 until state.audioLayerCount) {
+            TrackRow(
+                label = "A${i + 1}",
+                clips = state.clipsOf(i, isAudio = true),
+                totalMs = totalMs,
+                selectedClipId = state.selectedClipId,
+                isSelectedLayer = state.selectedTrackIndex == i && state.selectedIsAudio,
+                onClipTapped = onClipTapped,
+                isAudio = true
             )
         }
     }
 }
 
 @Composable
-private fun TrackLabel(text: String) {
-    Box(
+private fun TrackRow(
+    label: String,
+    clips: List<EditorClip>,
+    totalMs: Long,
+    selectedClipId: String?,
+    isSelectedLayer: Boolean,
+    onClipTapped: (EditorClip) -> Unit,
+    isAudio: Boolean = false
+) {
+    Row(
         modifier = Modifier
-            .width(28.dp)
-            .fillMaxHeight()
-            .padding(end = 4.dp)
-            .background(Color(0xFF181818), RoundedCornerShape(4.dp)),
-        contentAlignment = Alignment.Center
+            .fillMaxWidth()
+            .height(if (isAudio) 26.dp else 32.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = text,
-            color = Color(0xFF888888),
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold
-        )
+        // Track label
+        Box(
+            modifier = Modifier
+                .width(34.dp)
+                .fillMaxHeight()
+                .padding(end = 2.dp)
+                .background(
+                    if (isSelectedLayer) Color(0xFF7C3AED).copy(alpha = 0.3f)
+                    else Color(0xFF181818),
+                    RoundedCornerShape(4.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                label,
+                color = if (isSelectedLayer) Color(0xFF7C3AED) else Color(0xFF888888),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        // Track content
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(4.dp))
+                .background(Color(0xFF1A1A1A))
+        ) {
+            ClipTrack(
+                clips = clips,
+                totalMs = totalMs,
+                selectedClipId = selectedClipId,
+                onClipTapped = onClipTapped,
+                isAudio = isAudio
+            )
+        }
     }
 }
 
 @Composable
 private fun ClipTrack(
     clips: List<EditorClip>,
-    currentIndex: Int,
-    currentPosMs: Long,
     totalMs: Long,
-    onClipTapped: (Int, Long) -> Unit
+    selectedClipId: String?,
+    onClipTapped: (EditorClip) -> Unit,
+    isAudio: Boolean
 ) {
     var widthPx by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
@@ -146,56 +157,41 @@ private fun ClipTrack(
             .onSizeChanged { widthPx = it.width }
     ) {
         if (widthPx > 0 && totalMs > 0) {
-            clips.forEachIndexed { index, clip ->
+            clips.forEach { clip ->
                 val startFrac = clip.timelineStartMs.toFloat() / totalMs
                 val endFrac = clip.timelineEndMs.toFloat() / totalMs
                 val startPx = startFrac * widthPx
-                val widthPxClip = ((endFrac - startFrac) * widthPx).coerceAtLeast(6f)
+                val widthPxClip = ((endFrac - startFrac) * widthPx).coerceAtLeast(8f)
 
-                val isActive = index == currentIndex
-                val color = if (isActive) Color(0xFF7C3AED) else Color(0xFF5B21B6)
+                val isSelected = clip.id == selectedClipId
+                val color = when {
+                    isSelected -> Color(0xFFFFD166)
+                    isAudio -> Color(0xFF10B981)
+                    else -> Color(0xFF7C3AED)
+                }
 
                 Box(
                     modifier = Modifier
                         .offset(x = with(density) { startPx.toDp() })
                         .width(with(density) { widthPxClip.toDp() })
                         .fillMaxHeight()
-                        .padding(2.dp)
-                        .clip(RoundedCornerShape(4.dp))
+                        .padding(1.dp)
+                        .clip(RoundedCornerShape(3.dp))
                         .background(color)
-                        .pointerInput(index, clip.id) {
-                            detectTapGestures { offset ->
-                                val frac = (offset.x / widthPxClip).coerceIn(0f, 1f)
-                                val posMs = (frac * clip.durationMs).toLong()
-                                onClipTapped(index, posMs)
-                            }
+                        .pointerInput(clip.id) {
+                            detectTapGestures { onClipTapped(clip) }
                         },
                     contentAlignment = Alignment.CenterStart
                 ) {
                     Text(
-                        text = "${index + 1}",
+                        text = clip.name.take(10),
                         color = Color.White,
-                        fontSize = 10.sp,
+                        fontSize = 8.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 4.dp)
+                        modifier = Modifier.padding(horizontal = 3.dp),
+                        maxLines = 1
                     )
                 }
-            }
-
-            val active = clips.getOrNull(currentIndex)
-            if (active != null && active.durationMs > 0) {
-                val sF = active.timelineStartMs.toFloat() / totalMs
-                val dF = active.durationMs.toFloat() / totalMs
-                val pF = (currentPosMs.toFloat() / active.durationMs).coerceIn(0f, 1f)
-                val playPx = (sF + dF * pF) * widthPx
-
-                Box(
-                    modifier = Modifier
-                        .offset(x = with(density) { playPx.toDp() } - 1.dp)
-                        .width(2.dp)
-                        .fillMaxHeight()
-                        .background(Color.Red)
-                )
             }
         }
     }

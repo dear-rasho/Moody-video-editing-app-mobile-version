@@ -1,7 +1,7 @@
 @file:OptIn(androidx.media3.common.util.UnstableApi::class)
 
 package com.moody.moodyvideoeditor.ui.screens
-
+import com.moody.moodyvideoeditor.data.AdjustmentData
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,7 +45,29 @@ import com.moody.moodyvideoeditor.ui.components.FeatureShelf
 import com.moody.moodyvideoeditor.ui.components.PlaybackControls
 import com.moody.moodyvideoeditor.ui.components.PreviewCanvas
 import com.moody.moodyvideoeditor.ui.components.Timeline
-import com.moody.moodyvideoeditor.ui.features.*
+import com.moody.moodyvideoeditor.ui.features.AdjustmentsPanel
+import com.moody.moodyvideoeditor.ui.features.AspectRatioPanel
+import com.moody.moodyvideoeditor.ui.features.AudioFxPanel
+import com.moody.moodyvideoeditor.ui.features.BeatsPanel
+import com.moody.moodyvideoeditor.ui.features.ChromaKeyPanel
+import com.moody.moodyvideoeditor.ui.features.ColorWheelPanel
+import com.moody.moodyvideoeditor.ui.features.CropPanel
+import com.moody.moodyvideoeditor.ui.features.EffectsPanel
+import com.moody.moodyvideoeditor.ui.features.ExportPanel
+import com.moody.moodyvideoeditor.ui.features.FiltersPanel
+import com.moody.moodyvideoeditor.ui.features.FreezePanel
+import com.moody.moodyvideoeditor.ui.features.MotionPanel
+import com.moody.moodyvideoeditor.ui.features.MusicPanel
+import com.moody.moodyvideoeditor.ui.features.OverlaysPanel
+import com.moody.moodyvideoeditor.ui.features.SoundFxPanel
+import com.moody.moodyvideoeditor.ui.features.SpeedPanel
+import com.moody.moodyvideoeditor.ui.features.StickersPanel
+import com.moody.moodyvideoeditor.ui.features.TextAnimationsPanel
+import com.moody.moodyvideoeditor.ui.features.TextPanel
+import com.moody.moodyvideoeditor.ui.features.TransformPanel
+import com.moody.moodyvideoeditor.ui.features.TransitionsPanel
+import com.moody.moodyvideoeditor.ui.features.TrimPanel
+import com.moody.moodyvideoeditor.ui.features.VolumePanel
 import com.moody.moodyvideoeditor.utils.VideoExporter
 import com.moody.moodyvideoeditor.utils.VideoUtils
 import com.moody.moodyvideoeditor.viewmodel.EditorViewModel
@@ -70,15 +92,21 @@ fun EditorScreen(
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
     }
-    DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
+    DisposableEffect(Unit) {
+        onDispose { exoPlayer.release() }
+    }
 
-    LaunchedEffect(state.speed) { exoPlayer.setPlaybackSpeed(state.speed) }
+    // Apply speed + volume
+    LaunchedEffect(state.speed) {
+        exoPlayer.setPlaybackSpeed(state.speed)
+    }
     LaunchedEffect(state.volume, state.isMuted) {
         exoPlayer.volume = if (state.isMuted) 0f else state.volume
     }
 
-    LaunchedEffect(state.currentIndex, state.clips.size) {
-        val clip = state.currentClip ?: return@LaunchedEffect
+    // Load clip when selected
+    LaunchedEffect(state.selectedClipId) {
+        val clip = state.selectedClip ?: return@LaunchedEffect
         val mediaItem = MediaItem.Builder()
             .setUri(clip.uri)
             .setClippingConfiguration(
@@ -95,33 +123,27 @@ fun EditorScreen(
         exoPlayer.volume = if (state.isMuted) 0f else state.volume
     }
 
+    // Tick loop
     LaunchedEffect(exoPlayer) {
         while (true) {
             viewModel.setCurrentPos(exoPlayer.currentPosition)
             viewModel.setPlaying(exoPlayer.isPlaying)
-            if (!exoPlayer.isPlaying && exoPlayer.playbackState == ExoPlayer.STATE_ENDED) {
-                val next = state.currentIndex + 1
-                if (next < state.clips.size) {
-                    viewModel.setCurrentIndex(next)
-                    exoPlayer.play()
-                }
-            }
             delay(50)
         }
     }
 
+    // Media picker
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? -> uri?.let { pendingUri = it } }
+    ) { uri: Uri? ->
+        uri?.let { pendingUri = it }
+    }
 
     LaunchedEffect(pendingUri) {
         val uri = pendingUri ?: return@LaunchedEffect
         try {
             val result = withContext(Dispatchers.IO) {
-                Pair(
-                    VideoUtils.getFileName(context, uri),
-                    VideoUtils.getVideoDuration(context, uri)
-                )
+                Pair(VideoUtils.getFileName(context, uri), VideoUtils.getVideoDuration(context, uri))
             }
             viewModel.addClip(uri, result.first, result.second)
         } catch (_: Exception) {
@@ -132,26 +154,44 @@ fun EditorScreen(
 
     fun startExport() {
         if (state.clips.isEmpty()) {
-            exportMessage = "❌ No clips to export"; return
+            exportMessage = "❌ No clips to export"
+            return
         }
         isExporting = true
         exportProgress = 0f
-        exportMessage = "Starting…"
+        exportMessage = "Starting FFmpeg…"
+
         val exporter = VideoExporter(
             context = context,
-            onProgress = { p -> exportProgress = p },
-            onSuccess = { isExporting = false; exportProgress = 1f; exportMessage = "✅ Saved" },
-            onError = { msg -> isExporting = false; exportMessage = "❌ $msg" }
+            onProgress = { p ->
+                exportProgress = p
+                exportMessage = "Processing… ${(p * 100).toInt()}%"
+            },
+            onSuccess = {
+                isExporting = false
+                exportProgress = 1f
+                exportMessage = "✅ Saved to Movies/MoodyEditor"
+            },
+            onError = { msg ->
+                isExporting = false
+                exportMessage = "❌ $msg"
+            }
         )
-        exporter.export(state.clips, "MoodyExport_${System.currentTimeMillis()}")
+       exporter.export(
+    clips = state.clips,
+    fileName = "MoodyExport_${System.currentTimeMillis()}",
+    adjustments = state.selectedClip?.adjustments ?: com.moody.moodyvideoeditor.data.AdjustmentData()
+)
     }
 
-    Column(Modifier
-        .fillMaxSize()
-        .background(Color(0xFF121212))) {
-        // HEADER
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF121212))
+    ) {
+        // ═══ HEADER ═══
         Row(
-            Modifier
+            modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp)
                 .background(Color(0xFF0A0A0A))
@@ -159,11 +199,7 @@ fun EditorScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(
-                    Icons.Filled.ArrowBack,
-                    "Back",
-                    tint = Color.White
-                )
+                Icon(Icons.Filled.ArrowBack, "Back", tint = Color.White)
             }
             Text(
                 "Editor",
@@ -173,55 +209,73 @@ fun EditorScreen(
                 modifier = Modifier.weight(1f)
             )
             Text(
-                "Export", color = Color(0xFF7C3AED), fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                "Export",
+                color = Color(0xFF7C3AED),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .padding(end = 12.dp)
-                    .pointerInput(Unit) { detectTapGestures { activePanel = "export" } }
+                    .pointerInput(Unit) {
+                        detectTapGestures { activePanel = "export" }
+                    }
             )
         }
 
-        // PREVIEW
-        Box(Modifier
-            .fillMaxWidth()
-            .weight(1f)) {
+        // ═══ PREVIEW ═══
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
             PreviewCanvas(
-                exoPlayer = exoPlayer,
-                hasVideo = state.clips.isNotEmpty(),
-                rotation = state.rotation,
-                aspectMode = state.aspectMode,
-                text = state.text,
-                textColor = Color(state.textColor),
-                textSize = state.textSize,
-                sticker = state.sticker,
-                stickerX = state.stickerX,
-                stickerY = state.stickerY
-            )
+    exoPlayer = exoPlayer,
+    hasVideo = state.clips.isNotEmpty(),
+    rotation = state.rotation,
+    aspectMode = state.aspectMode,
+    text = state.text,
+    textColor = Color(state.textColor),
+    textSize = state.textSize,
+    sticker = state.sticker,
+    stickerX = state.stickerX,
+    stickerY = state.stickerY,
+    adjustments = state.selectedClip?.adjustments ?: AdjustmentData()
+)
         }
 
-        ControlBar(onMediaClick = { picker.launch("video/*") })
+        // ═══ CONTROL BAR ═══
+        ControlBar(
+            onMediaClick = { picker.launch("video/*") },
+            onAddVisualLayer = { viewModel.addVisualLayer() },
+            onAddAudioLayer = { viewModel.addAudioLayer() }
+        )
 
-        Box(Modifier
-            .fillMaxWidth()
-            .height(140.dp)) {
+        // ═══ TIMELINE ═══
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(220.dp)
+        ) {
             Timeline(
-                clips = state.clips,
-                currentIndex = state.currentIndex,
-                currentPosMs = state.currentPosMs,
-                onClipTapped = { idx, pos ->
-                    viewModel.setCurrentIndex(idx)
-                    viewModel.setCurrentPos(pos)
-                    exoPlayer.seekTo(pos)
+                state = state,
+                onClipTapped = { clip ->
+                    viewModel.selectClip(clip)
+                    exoPlayer.seekTo(clip.sourceStartMs)
                 }
             )
         }
 
+        // ═══ PLAYBACK CONTROLS ═══
         PlaybackControls(
-            isPlaying = state.isPlaying, isMuted = state.isMuted,
+            isPlaying = state.isPlaying,
+            isMuted = state.isMuted,
             currentPosMs = state.currentPosMs,
-            totalDurationMs = state.clips.getOrNull(state.currentIndex)?.durationMs ?: 0L,
+            totalDurationMs = state.selectedClip?.durationMs ?: state.totalDurationMs,
             hasVideo = state.clips.isNotEmpty(),
-            canUndo = state.canUndo, canRedo = state.canRedo,
-            onPlayPause = { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() },
+            canUndo = state.canUndo,
+            canRedo = state.canRedo,
+            onPlayPause = {
+                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+            },
             onSplit = { viewModel.splitCurrentClip() },
             onDelete = { viewModel.deleteCurrentClip() },
             onDuplicate = { viewModel.duplicateCurrentClip() },
@@ -230,180 +284,202 @@ fun EditorScreen(
             onMuteToggle = { viewModel.toggleMute() }
         )
 
-        // PANEL AREA
-        Box(Modifier.fillMaxWidth()) {
+        // ═══ FEATURE PANEL / SHELF ═══
+        Box(modifier = Modifier.fillMaxWidth()) {
             when (activePanel) {
-                null -> FeatureShelf(onFeatureSelected = { activePanel = it })
+                null -> FeatureShelf(onFeatureSelected = { key -> activePanel = key })
+
                 "trim" -> TrimPanel(
-                    { activePanel = null },
-                    { viewModel.trimLeft() },
-                    { viewModel.trimRight() },
-                    { viewModel.splitCurrentClip() })
+                    onClose = { activePanel = null },
+                    onTrimLeft = { viewModel.trimLeft() },
+                    onTrimRight = { viewModel.trimRight() },
+                    onSplit = { viewModel.splitCurrentClip() }
+                )
 
                 "speed" -> SpeedPanel(
-                    state.speed,
-                    { viewModel.setSpeed(it) },
-                    { activePanel = null })
+                    currentSpeed = state.speed,
+                    onSpeedChanged = { viewModel.setSpeed(it) },
+                    onClose = { activePanel = null }
+                )
 
                 "text" -> TextPanel(
-                    state.text, Color(state.textColor), state.textSize,
-                    { t, c, s ->
-                        viewModel.setText(t); viewModel.setTextColor(c.toArgb()); viewModel.setTextSize(
-                        s
-                    )
+                    currentText = state.text,
+                    currentColor = Color(state.textColor),
+                    currentSize = state.textSize,
+                    onTextChanged = { t, c, s ->
+                        viewModel.setText(t)
+                        viewModel.setTextColor(c.toArgb())
+                        viewModel.setTextSize(s)
                     },
-                    { viewModel.setText("") }, { activePanel = null }
+                    onClear = { viewModel.setText("") },
+                    onClose = { activePanel = null }
                 )
 
                 "animations" -> TextAnimationsPanel(
-                    state.textAnimation,
-                    { viewModel.setTextAnimation(it) },
-                    { activePanel = null })
+                    current = state.textAnimation,
+                    onSelected = { viewModel.setTextAnimation(it) },
+                    onClose = { activePanel = null }
+                )
 
                 "filters" -> FiltersPanel(
-                    state.filter,
-                    { viewModel.setFilter(it) },
-                    { activePanel = null })
+                    currentFilter = state.filter,
+                    onFilterSelected = { viewModel.setFilter(it) },
+                    onClose = { activePanel = null }
+                )
 
                 "effects" -> EffectsPanel(
-                    state.effect,
-                    { viewModel.setEffect(it) },
-                    { activePanel = null })
+                    currentEffect = state.effect,
+                    onEffectSelected = { viewModel.setEffect(it) },
+                    onClose = { activePanel = null }
+                )
 
                 "adjustments" -> AdjustmentsPanel(
-                    state.brightness,
-                    state.contrast,
-                    state.saturation,
-                    state.exposure,
-                    state.temperature,
-                    state.tint,
-                    state.vignette,
-                    state.grain,
-                    { viewModel.setBrightness(it) },
-                    { viewModel.setContrast(it) },
-                    { viewModel.setSaturation(it) },
-                    { viewModel.setExposure(it) },
-                    { viewModel.setTemperature(it) },
-                    { viewModel.setTint(it) },
-                    { viewModel.setVignette(it) },
-                    { viewModel.setGrain(it) },
-                    { viewModel.resetAdjustments() },
-                    { activePanel = null }
-                )
+    adj = state.selectedClip?.adjustments ?: AdjustmentData(),
+    onAdjChanged = { newAdj ->
+        // Update selected clip's adjustments
+        viewModel.updateSelectedAdjustments(newAdj)
+    },
+    onReset = { viewModel.resetAdjustments() },
+    onClose = { activePanel = null }
+)
 
-                "wheel" -> ColorWheelPanel(
-                    state.shadowsHue,
-                    state.shadowsSat,
-                    state.midtonesHue,
-                    state.midtonesSat,
-                    state.highlightsHue,
-                    state.highlightsSat,
-                    state.hdrWhite,
-                    { h, s -> viewModel.setShadows(h, s) },
-                    { h, s -> viewModel.setMidtones(h, s) },
-                    { h, s -> viewModel.setHighlights(h, s) },
-                    { viewModel.setHdrWhite(it) },
-                    { activePanel = null }
-                )
-
+               "wheel" -> ColorWheelPanel(
+    shadowsHue = state.shadowsHue,
+    shadowsSat = state.shadowsSat,
+    midtonesHue = state.midtonesHue,
+    midtonesSat = state.midtonesSat,
+    highlightsHue = state.highlightsHue,
+    highlightsSat = state.highlightsSat,
+    hdrWhite = state.hdrWhite,
+    onShadowsChanged = { h, s -> viewModel.setShadowsHue(h, s) },
+    onMidtonesChanged = { h, s -> viewModel.setMidtonesHue(h, s) },
+    onHighlightsChanged = { h, s -> viewModel.setHighlightsHue(h, s) },
+    onHdrChanged = { viewModel.setHdrWhite(it) },
+    onClose = { activePanel = null }
+)
                 "stickers" -> StickersPanel(
-                    state.sticker,
-                    { viewModel.setSticker(it) },
-                    { viewModel.setSticker("") },
-                    { activePanel = null })
+                    currentSticker = state.sticker,
+                    onStickerSelected = { viewModel.setSticker(it) },
+                    onClear = { viewModel.setSticker("") },
+                    onClose = { activePanel = null }
+                )
 
                 "overlays" -> OverlaysPanel(
-                    state.overlay,
-                    { viewModel.setOverlay(it) },
-                    { activePanel = null })
+                    currentOverlay = state.overlay,
+                    onOverlaySelected = { viewModel.setOverlay(it) },
+                    onClose = { activePanel = null }
+                )
 
                 "transitions" -> TransitionsPanel(
-                    state.transition,
-                    { viewModel.setTransition(it) },
-                    { activePanel = null })
+                    current = state.transition,
+                    onSelected = { viewModel.setTransition(it) },
+                    onClose = { activePanel = null }
+                )
 
                 "chroma" -> ChromaKeyPanel(
-                    state.chromaColor, state.chromaSimilarity, state.chromaSmoothness,
-                    state.chromaSpill, state.chromaIntensity,
-                    { viewModel.setChromaColor(it) }, { viewModel.setChromaSimilarity(it) },
-                    { viewModel.setChromaSmoothness(it) }, { viewModel.setChromaSpill(it) },
-                    { viewModel.setChromaIntensity(it) }, { activePanel = null }
+                    chromaColor = state.chromaColor,
+                    similarity = state.chromaSimilarity,
+                    smoothness = state.chromaSmoothness,
+                    spill = state.chromaSpill,
+                    intensity = state.chromaIntensity,
+                    onColorChanged = { viewModel.setChromaColor(it) },
+                    onSimilarityChanged = { viewModel.setChromaSimilarity(it) },
+                    onSmoothnessChanged = { viewModel.setChromaSmoothness(it) },
+                    onSpillChanged = { viewModel.setChromaSpill(it) },
+                    onIntensityChanged = { viewModel.setChromaIntensity(it) },
+                    onClose = { activePanel = null }
                 )
 
                 "transform" -> TransformPanel(
-                    state.currentClip?.scale ?: 1f, state.currentClip?.rotation ?: 0f,
-                    state.currentClip?.offsetX ?: 0f, state.currentClip?.offsetY ?: 0f,
-                    { viewModel.setClipScale(it) }, { viewModel.setClipRotation(it) },
-                    { x, y -> viewModel.setClipOffset(x, y) },
-                    {
-                        viewModel.setClipScale(1f); viewModel.setClipRotation(0f); viewModel.setClipOffset(
-                        0f,
-                        0f
-                    )
+                    currentScale = state.selectedClip?.scale ?: 1f,
+                    currentRotation = state.selectedClip?.rotation ?: 0f,
+                    currentOffsetX = state.selectedClip?.offsetX ?: 0f,
+                    currentOffsetY = state.selectedClip?.offsetY ?: 0f,
+                    onScaleChanged = { viewModel.setClipScale(it) },
+                    onRotationChanged = { viewModel.setClipRotation(it) },
+                    onOffsetChanged = { x, y -> viewModel.setClipOffset(x, y) },
+                    onReset = {
+                        viewModel.setClipScale(1f)
+                        viewModel.setClipRotation(0f)
+                        viewModel.setClipOffset(0f, 0f)
                     },
-                    { activePanel = null }
+                    onClose = { activePanel = null }
                 )
 
                 "crop" -> CropPanel(
-                    state.currentClip?.cropL ?: 0f, state.currentClip?.cropR ?: 0f,
-                    state.currentClip?.cropT ?: 0f, state.currentClip?.cropB ?: 0f,
-                    { l, r, t, b -> viewModel.setCrop(l, r, t, b) },
-                    { viewModel.setCrop(0f, 0f, 0f, 0f) }, { activePanel = null }
+                    cropL = state.selectedClip?.cropL ?: 0f,
+                    cropR = state.selectedClip?.cropR ?: 0f,
+                    cropT = state.selectedClip?.cropT ?: 0f,
+                    cropB = state.selectedClip?.cropB ?: 0f,
+                    onCropChanged = { l, r, t, b -> viewModel.setCrop(l, r, t, b) },
+                    onReset = { viewModel.setCrop(0f, 0f, 0f, 0f) },
+                    onClose = { activePanel = null }
                 )
 
                 "volume" -> VolumePanel(
-                    state.volume,
-                    state.isMuted,
-                    { viewModel.setVolume(it) },
-                    { viewModel.toggleMute() },
-                    { activePanel = null })
+                    volume = state.volume,
+                    isMuted = state.isMuted,
+                    onVolumeChanged = { viewModel.setVolume(it) },
+                    onMuteToggle = { viewModel.toggleMute() },
+                    onClose = { activePanel = null }
+                )
 
                 "audiofx" -> AudioFxPanel(
-                    state.audioFx,
-                    { viewModel.setAudioFx(it) },
-                    { activePanel = null })
+                    current = state.audioFx,
+                    onSelected = { viewModel.setAudioFx(it) },
+                    onClose = { activePanel = null }
+                )
 
                 "soundfx" -> SoundFxPanel(
-                    state.soundFx,
-                    { viewModel.setSoundFx(it) },
-                    { activePanel = null })
+                    current = state.soundFx,
+                    onSelected = { viewModel.setSoundFx(it) },
+                    onClose = { activePanel = null }
+                )
 
-                "music" -> MusicPanel({ activePanel = null })
+                "music" -> MusicPanel(onClose = { activePanel = null })
+
                 "beats" -> BeatsPanel(
-                    state.beatsDetected,
-                    state.beatsCount,
-                    state.beatsFilter,
-                    { viewModel.setBeats(120, it) },
-                    { viewModel.clearBeats() },
-                    { activePanel = null })
+                    detected = state.beatsDetected,
+                    count = state.beatsCount,
+                    filter = state.beatsFilter,
+                    onDetect = { viewModel.setBeats(120, it) },
+                    onClear = { viewModel.clearBeats() },
+                    onClose = { activePanel = null }
+                )
 
                 "motion" -> MotionPanel(
-                    state.motion,
-                    { viewModel.setMotion(it) },
-                    { activePanel = null })
+                    current = state.motion,
+                    onSelected = { viewModel.setMotion(it) },
+                    onClose = { activePanel = null }
+                )
 
-                "freeze" -> FreezePanel({ activePanel = null })
+                "freeze" -> FreezePanel(onClose = { activePanel = null })
+
                 "ratio" -> AspectRatioPanel(
-                    state.aspectRatio,
-                    { viewModel.setAspectRatio(it) },
-                    { activePanel = null })
+                    currentRatio = state.aspectRatio,
+                    onRatioSelected = { viewModel.setAspectRatio(it) },
+                    onClose = { activePanel = null }
+                )
 
                 "duplicate" -> {
-                    viewModel.duplicateCurrentClip(); activePanel = null
+                    viewModel.duplicateCurrentClip()
+                    activePanel = null
                 }
 
                 "delete" -> {
-                    viewModel.deleteCurrentClip(); activePanel = null
+                    viewModel.deleteCurrentClip()
+                    activePanel = null
                 }
 
                 "export" -> ExportPanel(
-                    isExporting,
-                    exportProgress,
-                    exportMessage,
-                    { startExport() },
-                    { activePanel = null })
+                    isExporting = isExporting,
+                    exportProgress = exportProgress,
+                    exportMessage = exportMessage,
+                    onStartExport = { startExport() },
+                    onClose = { activePanel = null }
+                )
 
-                else -> FeatureShelf(onFeatureSelected = { activePanel = it })
+                else -> FeatureShelf(onFeatureSelected = { key -> activePanel = key })
             }
         }
     }
