@@ -47,6 +47,7 @@ import com.moody.moodyvideoeditor.utils.EffectsEngine
 import com.moody.moodyvideoeditor.utils.OverlayEngine
 import com.moody.moodyvideoeditor.utils.TransformApplier
 import com.moody.moodyvideoeditor.utils.TransformValues
+import com.moody.moodyvideoeditor.utils.TransitionEngine
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -61,21 +62,19 @@ fun PreviewCanvas(
 ) {
     val density = LocalDensity.current
 
-    // ═══ Active visual clip ═══
-    // ✅ Naya — hidden tracks skip
     // ═══ Active visual clip — hidden tracks skipped ═══
     val activeVisual = clips
         .filter {
             it.isVisualClip &&
                     currentPosMs >= it.timelineStartMs &&
                     currentPosMs < it.timelineEndMs &&
-                    !hiddenVisualTracks.contains(it.trackIndex)   // 🆕
+                    !hiddenVisualTracks.contains(it.trackIndex)
         }
         .maxByOrNull { it.trackIndex }
 
     val videoTrackIdx = activeVisual?.trackIndex ?: 0
 
-    // ═══ Sample live transform for active video ═══
+    // ═══ Sample live transform ═══
     val videoTransform: TransformValues = activeVisual?.let {
         val timeSec = ((currentPosMs - it.timelineStartMs) / 1000f).coerceAtLeast(0f)
         TransformApplier.resolveLive(it, timeSec)
@@ -141,7 +140,6 @@ fun PreviewCanvas(
             contentAlignment = Alignment.Center
         ) {
             if (hasVideo && activeVisual != null) {
-                // ═══ Apply combined transform + motion to video ═══
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -149,7 +147,6 @@ fun PreviewCanvas(
                             val w = size.width
                             val h = size.height
 
-                            // Crop scale & shift
                             val cropSx =
                                 1f / (1f - videoTransform.cropL - videoTransform.cropR).coerceAtLeast(
                                     0.05f
@@ -161,11 +158,9 @@ fun PreviewCanvas(
                             val cropTx = -(videoTransform.cropL - videoTransform.cropR) / 2f * w
                             val cropTy = -(videoTransform.cropT - videoTransform.cropB) / 2f * h
 
-                            // Position offset
                             val posTx = (videoTransform.x - 50f) / 100f * w
                             val posTy = (videoTransform.y - 50f) / 100f * h
 
-                            // Motion from effects
                             val finalTx = posTx + cropTx + combinedMotion.tx
                             val finalTy = posTy + cropTy + combinedMotion.ty
 
@@ -253,7 +248,33 @@ fun PreviewCanvas(
                 }
             }
 
-            // ═══ TEXT overlays (with live transform) ═══
+            // ═══════════════════════════════════════════════════
+            //  🆕 TRANSITION RENDER
+            // ═══════════════════════════════════════════════════
+            val activeTransitionClip = clips.firstOrNull { c ->
+                !c.isAudio &&
+                        c.transition != null &&
+                        c.transition.isActive &&
+                        currentPosMs >= c.timelineStartMs &&
+                        currentPosMs < c.timelineStartMs + c.transition.durationMs
+            }
+
+            if (activeTransitionClip != null &&
+                activeTransitionClip.transition != null
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    TransitionEngine.draw(
+                        scope = this,
+                        W = size.width,
+                        H = size.height,
+                        timeMs = currentPosMs,
+                        state = activeTransitionClip.transition,
+                        clipStartMs = activeTransitionClip.timelineStartMs
+                    )
+                }
+            }
+
+            // ═══ TEXT overlays ═══
             clips.filter {
                 it.isTextClip &&
                         currentPosMs >= it.timelineStartMs &&
@@ -271,7 +292,7 @@ fun PreviewCanvas(
                 )
             }
 
-            // ═══ STICKER overlays (with live transform) ═══
+            // ═══ STICKER overlays ═══
             clips.filter {
                 it.isStickerClip &&
                         currentPosMs >= it.timelineStartMs &&
@@ -315,7 +336,7 @@ private fun EmptyPreview(hint: String) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  TEXT with transform
+//  TEXT
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun TextOverlayWithTransform(
@@ -374,13 +395,11 @@ private fun TextOverlayWithTransform(
                 val w = size.width
                 val h = size.height
 
-                // Crop
                 val cropSx = 1f / (1f - sampled.cropL - sampled.cropR).coerceAtLeast(0.05f)
                 val cropSy = 1f / (1f - sampled.cropT - sampled.cropB).coerceAtLeast(0.05f)
                 val cropTx = -(sampled.cropL - sampled.cropR) / 2f * w
                 val cropTy = -(sampled.cropT - sampled.cropB) / 2f * h
 
-                // Position
                 val posTx = (sampled.x - 50f) / 100f * w
                 val posTy = (sampled.y - 50f) / 100f * h
 
@@ -400,7 +419,7 @@ private fun TextOverlayWithTransform(
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  STICKER with transform
+//  STICKER
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun StickerOverlayWithTransform(

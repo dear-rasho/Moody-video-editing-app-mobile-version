@@ -41,6 +41,32 @@ class EditorViewModel : ViewModel() {
     private val history = HistoryManager()
 
     // ═══════════════════════════════════════════════════════════
+    //  🆕 PHASE 2.6 — Drag baseline (sandboxing)
+    // ═══════════════════════════════════════════════════════════
+    private var dragBaseline: List<EditorClip>? = null
+
+    fun beginDrag() {
+        dragBaseline = _state.value.clips
+    }
+
+    fun cancelDrag() {
+        dragBaseline?.let { baseline ->
+            _state.update { s -> s.copy(clips = baseline) }
+        }
+        dragBaseline = null
+        updateHistoryFlags()
+    }
+
+    fun commitDrag() {
+        val baseline = dragBaseline
+        if (baseline != null && baseline != _state.value.clips) {
+            history.push(baseline)
+        }
+        dragBaseline = null
+        updateHistoryFlags()
+    }
+
+    // ═══════════════════════════════════════════════════════════
     private fun pushHistory() {
         history.push(_state.value.clips)
         updateHistoryFlags()
@@ -241,18 +267,26 @@ class EditorViewModel : ViewModel() {
         val idx = list.indexOfFirst { it.id == clipId }
         if (idx < 0) return
 
-        // Strict isolation — clip ka original type use karo
         val isAudio = clip.isAudio
         val targetTrack = targetTrackIndex.coerceAtLeast(0)
         val targetStart = newTimelineMs.coerceAtLeast(0L)
         val targetEnd = targetStart + clip.durationMs
+        val trackDelta = targetTrack - clip.trackIndex
 
-        // STEP 1 — Topmost track dhundho (vertical push chain)
+        // 🆕 Linked clip dhundho BEFORE shifting
+        val linkedClip = clip.linkedId?.let { linkId ->
+            list.firstOrNull { it.linkedId == linkId && it.id != clipId }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        //  STEP 1 — Push overlapping clips for MOVING clip
+        // ═══════════════════════════════════════════════════════════
         var maxShiftedTrack = targetTrack - 1
         var probeTrack = targetTrack
         while (true) {
             val hasOverlap = list.any { c ->
                 c.id != clipId &&
+                        (linkedClip == null || c.id != linkedClip.id) &&
                         c.isAudio == isAudio &&
                         c.trackIndex == probeTrack &&
                         c.timelineStartMs < targetEnd &&
@@ -263,9 +297,9 @@ class EditorViewModel : ViewModel() {
             probeTrack++
         }
 
-        // STEP 2 — Push overlapping clips UP by 1
         for (i in list.indices) {
             if (list[i].id == clipId) continue
+            if (linkedClip != null && list[i].id == linkedClip.id) continue
             if (list[i].isAudio != isAudio) continue
             val t = list[i].trackIndex
             if (t < targetTrack || t > maxShiftedTrack) continue
@@ -276,21 +310,63 @@ class EditorViewModel : ViewModel() {
             }
         }
 
-        // STEP 3 — Moving clip place karo
+        // STEP 2 — Moving clip place karo
         list[idx] = list[idx].copy(
             trackIndex = targetTrack,
             timelineStartMs = targetStart
         )
 
-        // STEP 4 — Linked clip time sync (video ↔ audio)
-        if (clip.linkedId != null) {
-            val li = list.indexOfFirst { it.linkedId == clip.linkedId && it.id != clipId }
+        // ═══════════════════════════════════════════════════════════
+        //  STEP 3 — Linked clip: same track delta + same time
+        // ═══════════════════════════════════════════════════════════
+        if (linkedClip != null) {
+            val li = list.indexOfFirst { it.id == linkedClip.id }
             if (li >= 0) {
-                list[li] = list[li].copy(timelineStartMs = targetStart)
+                val linkedIsAudio = linkedClip.isAudio
+                val linkedNewTrack = (linkedClip.trackIndex + trackDelta).coerceAtLeast(0)
+                val linkedTargetEnd = targetStart + linkedClip.durationMs
+
+                // Push overlapping clips of linked's type
+                var linkedMaxShift = linkedNewTrack - 1
+                var linkedProbe = linkedNewTrack
+                while (true) {
+                    val hasOverlap = list.any { c ->
+                        c.id != clipId &&
+                                c.id != linkedClip.id &&
+                                c.isAudio == linkedIsAudio &&
+                                c.trackIndex == linkedProbe &&
+                                c.timelineStartMs < linkedTargetEnd &&
+                                targetStart < c.timelineEndMs
+                    }
+                    if (!hasOverlap) break
+                    linkedMaxShift = linkedProbe
+                    linkedProbe++
+                }
+
+                for (i in list.indices) {
+                    if (list[i].id == clipId) continue
+                    if (list[i].id == linkedClip.id) continue
+                    if (list[i].isAudio != linkedIsAudio) continue
+                    val t = list[i].trackIndex
+                    if (t < linkedNewTrack || t > linkedMaxShift) continue
+                    val overlaps = list[i].timelineStartMs < linkedTargetEnd &&
+                            targetStart < list[i].timelineEndMs
+                    if (overlaps) {
+                        list[i] = list[i].copy(trackIndex = t + 1)
+                    }
+                }
+
+                // Place linked clip
+                list[li] = list[li].copy(
+                    trackIndex = linkedNewTrack,
+                    timelineStartMs = targetStart
+                )
             }
         }
 
-        // STEP 5 — Layer counts recalc
+        // ═══════════════════════════════════════════════════════════
+        //  STEP 4 — Layer counts recalc
+        // ═══════════════════════════════════════════════════════════
         val maxVisual = list.filter { !it.isAudio }.maxOfOrNull { it.trackIndex } ?: 0
         val maxAudio = list.filter { it.isAudio }.maxOfOrNull { it.trackIndex } ?: 0
 
@@ -304,6 +380,38 @@ class EditorViewModel : ViewModel() {
                 audioLayerCount = maxOf(it.audioLayerCount, maxAudio + 1)
             )
         }
+        updateHistoryFlags()
+    }
+
+    // ═══════════════════════════════════════════════════════════
+//  🆕 PHASE 2.7 — Track Header Swap (carousel ripple)
+// ═══════════════════════════════════════════════════════════
+    fun swapTracks(fromTrack: Int, toTrack: Int, isAudio: Boolean) {
+        if (fromTrack == toTrack) return
+
+        val list = _state.value.clips.toMutableList()
+
+        // Build old -> new track mapping (carousel shift)
+        val newTrackOf = mutableMapOf<Int, Int>()
+        if (fromTrack < toTrack) {
+            // Moving UP visually = higher index
+            newTrackOf[fromTrack] = toTrack
+            for (t in fromTrack + 1..toTrack) newTrackOf[t] = t - 1
+        } else {
+            // Moving DOWN = lower index
+            newTrackOf[fromTrack] = toTrack
+            for (t in toTrack until fromTrack) newTrackOf[t] = t + 1
+        }
+
+        pushHistory()
+        for (i in list.indices) {
+            if (list[i].isAudio != isAudio) continue
+            val old = list[i].trackIndex
+            val new = newTrackOf[old] ?: old
+            if (new != old) list[i] = list[i].copy(trackIndex = new)
+        }
+
+        _state.update { it.copy(clips = list) }
         updateHistoryFlags()
     }
 
@@ -861,6 +969,22 @@ class EditorViewModel : ViewModel() {
     fun removeTransition() {
         val sel = _state.value.selectedClip ?: return
         updateClipDirect(sel.id) { it.copy(transition = null) }
+    }
+
+    fun removeTransitionFor(clipId: String) {
+        updateClipDirect(clipId) { it.copy(transition = null) }
+    }
+
+    fun setTransitionDuration(clipId: String, durationMs: Long) {
+        updateClipDirect(clipId) { clip ->
+            clip.transition?.let { t ->
+                clip.copy(
+                    transition = t.copy(
+                        durationMs = durationMs.coerceIn(200L, 3000L)
+                    )
+                )
+            } ?: clip
+        }
     }
 
     fun updateRatio(state: RatioState) = _state.update {

@@ -81,13 +81,13 @@ import com.moody.moodyvideoeditor.utils.CropEngine
 import com.moody.moodyvideoeditor.utils.SpeedEngine
 import com.moody.moodyvideoeditor.utils.TransformApplier
 import com.moody.moodyvideoeditor.utils.TransformValues
-import com.moody.moodyvideoeditor.utils.TrimPlaybackEnforcer
 import com.moody.moodyvideoeditor.utils.VideoExporter
 import com.moody.moodyvideoeditor.utils.VideoUtils
 import com.moody.moodyvideoeditor.viewmodel.EditorViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
 @Composable
 fun EditorScreen(
@@ -103,6 +103,9 @@ fun EditorScreen(
     var isExporting by remember { mutableStateOf(false) }
     var exportProgress by remember { mutableFloatStateOf(0f) }
     var exportMessage by remember { mutableStateOf("") }
+
+    // 🆕 Playback flag — independent from ExoPlayer
+    var isPlaybackActive by remember { mutableStateOf(false) }
 
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
@@ -122,14 +125,13 @@ fun EditorScreen(
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 VOLUME — mute + audio-track-mute aware
+    //  VOLUME
     // ═══════════════════════════════════════════════════════════
     val activeClipTrackMuted = remember(state.selectedClip, state.mutedAudioTracks) {
         val sel = state.selectedClip
         sel != null && sel.isAudio && state.mutedAudioTracks.contains(sel.trackIndex)
     }
 
-    // Also: if ANY active audio clip's track is muted at playhead → mute
     val anyActiveAudioMuted = remember(state.clips, state.currentPosMs, state.mutedAudioTracks) {
         state.clips.any { c ->
             c.isAudio &&
@@ -149,7 +151,7 @@ fun EditorScreen(
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  AUTO-LOAD ACTIVE VISUAL CLIP
+    //  AUTO-LOAD ACTIVE VISUAL CLIP — no pause on gap
     // ═══════════════════════════════════════════════════════════
     LaunchedEffect(state.currentPosMs, state.clips, state.hiddenVisualTracks) {
         val playheadMs = state.currentPosMs
@@ -164,6 +166,7 @@ fun EditorScreen(
             .maxByOrNull { it.trackIndex }
 
         if (activeClip == null) {
+            // No clip at playhead — pause ExoPlayer ONLY, timer keeps going
             if (exoPlayer.isPlaying) exoPlayer.pause()
             return@LaunchedEffect
         }
@@ -188,49 +191,44 @@ fun EditorScreen(
             activeClip.sourceStartMs,
             activeClip.sourceEndMs
         )
-        val drift = kotlin.math.abs(exoPlayer.currentPosition - clampedLocal)
-        if (drift > 200L) {
+        val drift = abs(exoPlayer.currentPosition - clampedLocal)
+        if (drift > 150L) {
             try {
                 exoPlayer.seekTo(clampedLocal)
             } catch (_: Exception) {
             }
         }
 
-        exoPlayer.setPlaybackSpeed(SpeedEngine.clampForExoPlayer(activeClip.speed))
+        // 🆕 Auto-resume ExoPlayer if user is playing
+        if (isPlaybackActive && !exoPlayer.isPlaying) {
+            exoPlayer.setPlaybackSpeed(SpeedEngine.clampForExoPlayer(activeClip.speed))
+            exoPlayer.play()
+        }
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 TIMER-BASED PLAYBACK — full timeline end tak
+    //  🆕 TIMER-BASED PLAYBACK — uses isPlaybackActive flag
     // ═══════════════════════════════════════════════════════════
-    LaunchedEffect(exoPlayer) {
+    LaunchedEffect(Unit) {
         var lastWallMs = System.currentTimeMillis()
         while (true) {
             val now = System.currentTimeMillis()
             val wallDelta = now - lastWallMs
             lastWallMs = now
 
-            if (exoPlayer.isPlaying) {
+            if (isPlaybackActive) {
                 val totalDur = state.totalDurationMs.coerceAtLeast(1000L)
                 val next = state.currentPosMs + wallDelta
                 if (next >= totalDur) {
                     viewModel.setCurrentPos(totalDur)
+                    isPlaybackActive = false
                     exoPlayer.pause()
                 } else {
                     viewModel.setCurrentPos(next)
                 }
             }
-            viewModel.setPlaying(exoPlayer.isPlaying)
-            delay(33)   // ~30fps
-        }
-    }
-    // Trim enforcer
-    LaunchedEffect(exoPlayer, state.selectedClipId) {
-        while (true) {
-            val clip = state.selectedClip
-            if (clip != null && clip.isVisualClip) {
-                TrimPlaybackEnforcer.enforce(exoPlayer, clip)
-            }
-            delay(50)
+            viewModel.setPlaying(isPlaybackActive)
+            delay(33)
         }
     }
 
@@ -377,7 +375,7 @@ fun EditorScreen(
                     onTrimRight = { ne -> viewModel.trimClipRight(ne) },
                     onTrimCommit = { viewModel.commitTrim() },
                     onSeek = { t ->
-                        // 🆕 Always pause + update playhead instantly
+                        isPlaybackActive = false
                         if (exoPlayer.isPlaying) exoPlayer.pause()
                         viewModel.setCurrentPos(t)
 
@@ -394,12 +392,23 @@ fun EditorScreen(
                         viewModel.ensureLayerExists(ti, aud)
                         viewModel.moveClip(id, ti, aud, ms)
                     },
-                    onDragEnd = { viewModel.commitTrim() },
+                    onDragStart = { viewModel.beginDrag() },
+                    onDragEnd = { viewModel.commitDrag() },
+                    onDragCancel = { viewModel.cancelDrag() },
                     onToggleVisualVisibility = { idx ->
                         viewModel.toggleVisualTrackVisibility(idx)
                     },
                     onToggleAudioMute = { idx ->
                         viewModel.toggleAudioTrackMute(idx)
+                    },
+                    onSwapTracks = { from, to, isAudio ->
+                        viewModel.swapTracks(from, to, isAudio)
+                    },
+                    onTransitionDelete = { clipId ->
+                        viewModel.removeTransitionFor(clipId)
+                    },
+                    onTransitionDurationChange = { clipId, ms ->
+                        viewModel.setTransitionDuration(clipId, ms)
                     }
                 )
             }
@@ -407,7 +416,7 @@ fun EditorScreen(
 
         // ═══ PLAYBACK CONTROLS ═══
         PlaybackControls(
-            isPlaying = state.isPlaying,
+            isPlaying = isPlaybackActive,
             isMuted = state.isMuted,
             currentPosMs = state.currentPosMs,
             totalDurationMs = state.totalDurationMs,
@@ -416,15 +425,25 @@ fun EditorScreen(
             canRedo = state.canRedo,
             hasKeyframeAtPlayhead = viewModel.hasKeyframeAtPlayhead(),
             onPlayPause = {
-                if (exoPlayer.isPlaying) {
+                if (isPlaybackActive) {
+                    isPlaybackActive = false
                     exoPlayer.pause()
                 } else {
-                    // 🆕 Resume from playhead position
                     val totalDur = state.totalDurationMs
                     if (state.currentPosMs >= totalDur) {
                         viewModel.setCurrentPos(0L)
                     }
-                    exoPlayer.play()
+                    isPlaybackActive = true
+                    // Attempt to start ExoPlayer if there's an active clip
+                    val activeClip = state.clips.firstOrNull {
+                        it.isVisualClip &&
+                                state.currentPosMs >= it.timelineStartMs &&
+                                state.currentPosMs < it.timelineEndMs &&
+                                !state.hiddenVisualTracks.contains(it.trackIndex)
+                    }
+                    if (activeClip != null) {
+                        exoPlayer.play()
+                    }
                 }
             },
             onSplit = { viewModel.splitCurrentClip() },
