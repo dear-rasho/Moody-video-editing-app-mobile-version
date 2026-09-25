@@ -42,7 +42,7 @@ data class EditorClip(
     val transition: TransitionState? = null,
     val ratio: RatioState? = null,
 
-    // 🆕 Keyframes
+    // Keyframes
     val keyframes: Map<String, List<Keyframe>> = emptyMap()
 ) {
     val sourceDurationMs: Long get() = sourceEndMs - sourceStartMs
@@ -98,7 +98,7 @@ data class AdjustmentData(
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  EditorState — WITH HELPER METHODS
+//  EditorState
 // ═══════════════════════════════════════════════════════════════
 data class EditorState(
     val clips: List<EditorClip> = emptyList(),
@@ -126,7 +126,14 @@ data class EditorState(
     val canRedo: Boolean = false,
     val timelineZoom: Float = 0f,
     val hiddenVisualTracks: Set<Int> = emptySet(),
-    val mutedAudioTracks: Set<Int> = emptySet()
+    val mutedAudioTracks: Set<Int> = emptySet(),
+
+    // 🆕 Export settings
+    val exportResolution: String = "720p",
+    val exportFps: Int = 30,
+    val exportBitrateKbps: Int = 8000,
+    val exportFormat: String = "mp4",
+    val exportFolderUri: String? = null
 ) {
     val totalDurationMs: Long
         get() = clips.maxOfOrNull { it.timelineEndMs } ?: 10000L
@@ -141,7 +148,7 @@ data class EditorState(
         clips.filter { it.trackIndex == trackIndex && it.isAudio == isAudio }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 TIMELINE HELPERS
+    //  TIMELINE HELPERS
     // ═══════════════════════════════════════════════════════════
     fun timelineVisualList(): List<List<EditorClip>> {
         if (visualLayerCount <= 0) return emptyList()

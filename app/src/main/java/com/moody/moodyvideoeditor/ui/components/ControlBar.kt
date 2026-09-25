@@ -27,7 +27,9 @@ import androidx.compose.ui.unit.sp
 fun ControlBar(
     onMediaClick: () -> Unit,
     onAddVisualLayer: () -> Unit = {},
-    onAddAudioLayer: () -> Unit = {}
+    onAddAudioLayer: () -> Unit = {},
+    currentRatio: String = "16:9",
+    onRatioClick: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
@@ -42,7 +44,8 @@ fun ControlBar(
         PillButton("＋ Media", onMediaClick)
         PillButton("＋V", onAddVisualLayer)
         PillButton("＋A", onAddAudioLayer)
-        PillButton("16:9") {}
+        // 🆕 Ratio button — shows current ratio, tap opens ratio panel
+        PillButton("🖼️ $currentRatio", onRatioClick)
 
         Spacer(modifier = Modifier.weight(1f))
 

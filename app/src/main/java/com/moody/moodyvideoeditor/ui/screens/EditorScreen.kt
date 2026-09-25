@@ -2,6 +2,7 @@
 
 package com.moody.moodyvideoeditor.ui.screens
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -104,7 +105,6 @@ fun EditorScreen(
     var exportProgress by remember { mutableFloatStateOf(0f) }
     var exportMessage by remember { mutableStateOf("") }
 
-    // 🆕 Playback flag — independent from ExoPlayer
     var isPlaybackActive by remember { mutableStateOf(false) }
 
     val exoPlayer = remember {
@@ -124,9 +124,7 @@ fun EditorScreen(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  VOLUME
-    // ═══════════════════════════════════════════════════════════
+    // Volume
     val activeClipTrackMuted = remember(state.selectedClip, state.mutedAudioTracks) {
         val sel = state.selectedClip
         sel != null && sel.isAudio && state.mutedAudioTracks.contains(sel.trackIndex)
@@ -150,9 +148,7 @@ fun EditorScreen(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  AUTO-LOAD ACTIVE VISUAL CLIP — no pause on gap
-    // ═══════════════════════════════════════════════════════════
+    // Auto-load active visual clip
     LaunchedEffect(state.currentPosMs, state.clips, state.hiddenVisualTracks) {
         val playheadMs = state.currentPosMs
 
@@ -166,7 +162,6 @@ fun EditorScreen(
             .maxByOrNull { it.trackIndex }
 
         if (activeClip == null) {
-            // No clip at playhead — pause ExoPlayer ONLY, timer keeps going
             if (exoPlayer.isPlaying) exoPlayer.pause()
             return@LaunchedEffect
         }
@@ -199,16 +194,13 @@ fun EditorScreen(
             }
         }
 
-        // 🆕 Auto-resume ExoPlayer if user is playing
         if (isPlaybackActive && !exoPlayer.isPlaying) {
             exoPlayer.setPlaybackSpeed(SpeedEngine.clampForExoPlayer(activeClip.speed))
             exoPlayer.play()
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 TIMER-BASED PLAYBACK — uses isPlaybackActive flag
-    // ═══════════════════════════════════════════════════════════
+    // Timer-based playback
     LaunchedEffect(Unit) {
         var lastWallMs = System.currentTimeMillis()
         while (true) {
@@ -236,6 +228,23 @@ fun EditorScreen(
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? -> uri?.let { pendingUri = it } }
+
+    // Folder picker
+    val folderPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        uri?.let { folderUri ->
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    folderUri,
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+            }
+            viewModel.setExportFolderUri(folderUri.toString())
+        }
+    }
 
     LaunchedEffect(pendingUri) {
         val uri = pendingUri ?: return@LaunchedEffect
@@ -270,7 +279,7 @@ fun EditorScreen(
             onSuccess = {
                 isExporting = false
                 exportProgress = 1f
-                exportMessage = "✅ Saved to Movies/MoodyEditor"
+                exportMessage = "✅ Saved successfully"
             },
             onError = { msg ->
                 isExporting = false
@@ -280,7 +289,13 @@ fun EditorScreen(
         exporter.export(
             clips = state.clips,
             fileName = "MoodyExport_${System.currentTimeMillis()}",
-            adjustments = state.selectedClip?.adjustments ?: AdjustmentData()
+            adjustments = state.selectedClip?.adjustments ?: AdjustmentData(),
+            aspectRatio = state.aspectRatio,
+            resolution = state.exportResolution,
+            fps = state.exportFps,
+            bitrateKbps = state.exportBitrateKbps,
+            format = state.exportFormat,
+            customFolderUri = state.exportFolderUri
         )
     }
 
@@ -290,7 +305,7 @@ fun EditorScreen(
             .background(Color(0xFF121212))
     ) {
 
-        // ═══ HEADER ═══
+        // HEADER
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -322,7 +337,7 @@ fun EditorScreen(
             )
         }
 
-        // ═══ PREVIEW ═══
+        // PREVIEW
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -335,18 +350,38 @@ fun EditorScreen(
                 aspectMode = state.aspectMode,
                 clips = state.clips,
                 currentPosMs = state.currentPosMs,
-                hiddenVisualTracks = state.hiddenVisualTracks
+                hiddenVisualTracks = state.hiddenVisualTracks,
+                aspectRatioKey = state.aspectRatio,
+                selectedClipId = state.selectedClipId,
+                onClipSelected = { clipId ->
+                    val clip = state.clips.firstOrNull { it.id == clipId }
+                    if (clip != null) viewModel.selectClip(clip)
+                },
+                onTextPositionChanged = { clipId, x, y ->
+                    viewModel.updateTextPositionDirect(clipId, x, y)
+                },
+                onTextTransformChanged = { clipId, s, r ->
+                    viewModel.updateTextTransformDirect(clipId, s, r)
+                },
+                onStickerPositionChanged = { clipId, x, y ->
+                    viewModel.updateStickerPositionDirect(clipId, x, y)
+                },
+                onStickerTransformChanged = { clipId, s, r ->
+                    viewModel.updateStickerTransformDirect(clipId, s, r)
+                }
             )
         }
 
-        // ═══ CONTROL BAR ═══
+        // CONTROL BAR
         ControlBar(
             onMediaClick = { picker.launch("video/*") },
             onAddVisualLayer = { viewModel.addVisualLayer() },
-            onAddAudioLayer = { viewModel.addAudioLayer() }
+            onAddAudioLayer = { viewModel.addAudioLayer() },
+            currentRatio = state.aspectRatio,
+            onRatioClick = { activePanel = "ratio" }
         )
 
-        // ═══ TIMELINE TOOLBAR + TIMELINE ═══
+        // TIMELINE TOOLBAR + TIMELINE
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -414,7 +449,7 @@ fun EditorScreen(
             }
         }
 
-        // ═══ PLAYBACK CONTROLS ═══
+        // PLAYBACK CONTROLS
         PlaybackControls(
             isPlaying = isPlaybackActive,
             isMuted = state.isMuted,
@@ -434,16 +469,13 @@ fun EditorScreen(
                         viewModel.setCurrentPos(0L)
                     }
                     isPlaybackActive = true
-                    // Attempt to start ExoPlayer if there's an active clip
                     val activeClip = state.clips.firstOrNull {
                         it.isVisualClip &&
                                 state.currentPosMs >= it.timelineStartMs &&
                                 state.currentPosMs < it.timelineEndMs &&
                                 !state.hiddenVisualTracks.contains(it.trackIndex)
                     }
-                    if (activeClip != null) {
-                        exoPlayer.play()
-                    }
+                    if (activeClip != null) exoPlayer.play()
                 }
             },
             onSplit = { viewModel.splitCurrentClip() },
@@ -455,7 +487,7 @@ fun EditorScreen(
             onKeyframe = { viewModel.toggleKeyframeAll() }
         )
 
-        // ═══ PANEL ROUTING ═══
+        // PANEL ROUTING
         Box(modifier = Modifier.fillMaxWidth()) {
             val selected = state.selectedClip
 
@@ -563,14 +595,25 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                "transitions" -> TransitionsPanel(
-                    current = selected?.transition ?: TransitionState(),
-                    hasPairAvailable = selected != null,
-                    hintText = "Select a clip to set its incoming transition.",
-                    onTransitionChanged = { viewModel.updateTransition(it) },
-                    onRemove = { viewModel.removeTransition() },
-                    onClose = { activePanel = null }
-                )
+                "transitions" -> {
+                    val hasPair = selected != null && state.clips.any { other ->
+                        other.id != selected.id &&
+                                other.isAudio == selected.isAudio &&
+                                abs(other.timelineEndMs - selected.timelineStartMs) < 100L
+                    }
+                    TransitionsPanel(
+                        current = selected?.transition ?: TransitionState(),
+                        hasPairAvailable = selected != null,
+                        hintText = when {
+                            selected == null -> "Pehle timeline pe ek clip select karo."
+                            !hasPair -> "Is clip ke pehle adjacent clip chahiye."
+                            else -> "Transition lagao"
+                        },
+                        onTransitionChanged = { viewModel.updateTransition(it) },
+                        onRemove = { viewModel.removeTransition() },
+                        onClose = { activePanel = null }
+                    )
+                }
 
                 "chroma" -> ChromaKeyPanel(
                     state = selected?.chroma ?: ChromaState(),
@@ -700,6 +743,19 @@ fun EditorScreen(
                     isExporting = isExporting,
                     exportProgress = exportProgress,
                     exportMessage = exportMessage,
+                    currentResolution = state.exportResolution,
+                    currentFps = state.exportFps,
+                    currentBitrate = state.exportBitrateKbps,
+                    currentFormat = state.exportFormat,
+                    aspectRatio = state.aspectRatio,
+                    timelineDurationMs = state.totalDurationMs,
+                    currentFolderUri = state.exportFolderUri,
+                    onResolutionChange = { viewModel.setExportResolution(it) },
+                    onFpsChange = { viewModel.setExportFps(it) },
+                    onBitrateChange = { viewModel.setExportBitrate(it) },
+                    onFormatChange = { viewModel.setExportFormat(it) },
+                    onChooseFolder = { folderPicker.launch(null) },
+                    onResetFolder = { viewModel.setExportFolderUri(null) },
                     onStartExport = { startExport() },
                     onClose = { activePanel = null }
                 )

@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.ReturnCode
@@ -23,7 +24,13 @@ class VideoExporter(
     fun export(
         clips: List<EditorClip>,
         fileName: String,
-        adjustments: AdjustmentData = AdjustmentData()
+        adjustments: AdjustmentData = AdjustmentData(),
+        aspectRatio: String = "16:9",
+        resolution: String = "720p",
+        fps: Int = 30,
+        bitrateKbps: Int = 8000,
+        format: String = "mp4",
+        customFolderUri: String? = null
     ) {
         if (clips.isEmpty()) {
             onError("No content to export")
@@ -40,16 +47,19 @@ class VideoExporter(
         val totalDurationMs = clips.maxOfOrNull { it.timelineEndMs } ?: 5000L
 
         when {
-            // ─── VIDEO / IMAGE PATH ───────────────────
             visualClips.isNotEmpty() -> {
-                val outputFile = createOutputFile(fileName)
+                val outputFile = createOutputFile(fileName, format)
                 val videoFilters = FFmpegFilters.build(adjustments)
+
+                val (targetW, targetH) = ExportSettings.targetDimensions(
+                    resolution, aspectRatio
+                )
 
                 ffmpeg = FFmpegExecutor(
                     context = context,
                     onProgress = onProgress,
                     onSuccess = { file ->
-                        val galleryUri = saveToGallery(file)
+                        val galleryUri = saveToGallery(file, customFolderUri)
                         if (galleryUri != null) onSuccess(galleryUri)
                         else onSuccess(Uri.fromFile(file))
                     },
@@ -58,18 +68,23 @@ class VideoExporter(
                 ffmpeg?.export(
                     clips = visualClips,
                     outputFile = outputFile,
-                    videoFilters = videoFilters
+                    videoFilters = videoFilters,
+                    targetW = targetW,
+                    targetH = targetH,
+                    fps = fps,
+                    bitrateKbps = bitrateKbps
                 )
             }
 
-            // ─── SYNTHETIC PATH (text / sticker only) ─
             textClips.isNotEmpty() || stickerClips.isNotEmpty() -> {
                 exportSynthetic(
                     textClips = textClips,
                     stickerClips = stickerClips,
                     overlayClips = overlayClips,
                     totalDurationMs = totalDurationMs,
-                    fileName = fileName
+                    fileName = fileName,
+                    aspectRatio = aspectRatio,
+                    customFolderUri = customFolderUri
                 )
             }
 
@@ -77,22 +92,24 @@ class VideoExporter(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  SYNTHETIC EXPORT — black canvas + drawtext + emoji overlay
-    // ═══════════════════════════════════════════════════════════
     private fun exportSynthetic(
         textClips: List<EditorClip>,
         stickerClips: List<EditorClip>,
         overlayClips: List<EditorClip>,
         totalDurationMs: Long,
-        fileName: String
+        fileName: String,
+        aspectRatio: String = "16:9",
+        customFolderUri: String? = null
     ) {
-        val outputFile = createOutputFile(fileName)
+        val outputFile = createOutputFile(fileName, "mp4")
         val durSec = (totalDurationMs / 1000.0).coerceAtLeast(1.0)
+        val (targetW, targetH) = ExportSettings.targetDimensions(
+            aspectRatio = aspectRatio,
+            resolution = "720p"
+        )
 
         val filterChain = mutableListOf<String>()
 
-        // 1) Text drawtext filters (one per text clip)
         textClips.forEachIndexed { idx, clip ->
             val st = clip.textState ?: return@forEachIndexed
             if (st.content.isBlank()) return@forEachIndexed
@@ -100,21 +117,15 @@ class VideoExporter(
             val startSec = clip.timelineStartMs / 1000.0
             val endSec = clip.timelineEndMs / 1000.0
 
-            // Escape special chars for FFmpeg drawtext
             val escaped = st.content
                 .replace("\\", "\\\\")
                 .replace(":", "\\:")
                 .replace("'", "\\'")
                 .replace("%", "\\%")
 
-            // Position: center by default
             val posX = "w*${st.positionX / 100.0}-text_w/2"
             val posY = "h*${st.positionY / 100.0}-text_h/2"
-
-            // Convert color to 0xRRGGBB
             val textColor = String.format("0x%06X", (st.color and 0xFFFFFF))
-
-            // Text size scaled for 1280x720 output
             val fontSize = (st.fontSize * 2).coerceIn(16, 200)
 
             filterChain.add(
@@ -126,7 +137,6 @@ class VideoExporter(
             )
         }
 
-        // 2) Sticker emojis (best-effort drawtext)
         stickerClips.forEach { clip ->
             val ss = clip.stickerState ?: return@forEach
             if (ss.emoji.isBlank()) return@forEach
@@ -141,7 +151,7 @@ class VideoExporter(
 
             val posX = "w*${ss.x / 100.0}-text_w/2"
             val posY = "h*${ss.y / 100.0}-text_h/2"
-            val fontSize = (48 * 2).coerceIn(48, 300)
+            val fontSize = 96
 
             filterChain.add(
                 "drawtext=text='$escaped':" +
@@ -151,7 +161,6 @@ class VideoExporter(
             )
         }
 
-        // 3) Overlays (vignette, blackBars) — simple ones via filters
         overlayClips.forEach { clip ->
             val ov = clip.overlay ?: return@forEach
             when (ov.type) {
@@ -167,16 +176,15 @@ class VideoExporter(
         }
 
         val vf = if (filterChain.isEmpty()) {
-            "color=c=black:s=1280x720:d=$durSec"
+            "color=c=black:s=${targetW}x${targetH}:d=$durSec"
         } else {
             filterChain.joinToString(",")
         }
 
-        // Build FFmpeg command
         val args = mutableListOf(
             "-y",
             "-f", "lavfi",
-            "-i", "color=c=black:s=1280x720:d=$durSec",
+            "-i", "color=c=black:s=${targetW}x${targetH}:d=$durSec",
             "-vf", vf,
             "-c:v", "mpeg4",
             "-qscale:v", "4",
@@ -189,7 +197,7 @@ class VideoExporter(
                 args.joinToString(" "),
                 { s ->
                     if (ReturnCode.isSuccess(s.returnCode)) {
-                        val galleryUri = saveToGallery(outputFile)
+                        val galleryUri = saveToGallery(outputFile, customFolderUri)
                         if (galleryUri != null) onSuccess(galleryUri)
                         else onSuccess(Uri.fromFile(outputFile))
                     } else {
@@ -226,13 +234,36 @@ class VideoExporter(
         }
     }
 
-    private fun createOutputFile(fileName: String): File {
+    private fun createOutputFile(fileName: String, format: String): File {
         val dir = File(context.cacheDir, "MoodyExports")
         if (!dir.exists()) dir.mkdirs()
-        return File(dir, "$fileName.mp4")
+        val ext = if (format == "mov") "mov" else "mp4"
+        return File(dir, "$fileName.$ext")
     }
 
-    private fun saveToGallery(sourceFile: File): Uri? {
+    private fun saveToGallery(sourceFile: File, customFolderUri: String? = null): Uri? {
+        // 🆕 Custom folder via SAF
+        if (customFolderUri != null) {
+            try {
+                val treeUri = Uri.parse(customFolderUri)
+                val docUri = DocumentsContract.createDocument(
+                    context.contentResolver,
+                    treeUri,
+                    "video/mp4",
+                    sourceFile.name
+                )
+                if (docUri != null) {
+                    context.contentResolver.openOutputStream(docUri)?.use { out ->
+                        sourceFile.inputStream().use { it.copyTo(out) }
+                    }
+                    return docUri
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        // Default: MediaStore
         return try {
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, sourceFile.name)

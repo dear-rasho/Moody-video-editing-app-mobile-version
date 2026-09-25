@@ -23,7 +23,11 @@ class FFmpegExecutor(
         clips: List<EditorClip>,
         outputFile: File,
         videoFilters: String = "",
-        audioFilters: String = ""
+        audioFilters: String = "",
+        targetW: Int = 1280,
+        targetH: Int = 720,
+        fps: Int = 30,
+        bitrateKbps: Int = 8000
     ) {
         if (clips.isEmpty()) {
             onError("No clips to export")
@@ -42,9 +46,17 @@ class FFmpegExecutor(
         }
 
         if (localFiles.size == 1) {
-            exportSingleClip(clips[0], localFiles[0], outputFile, videoFilters, audioFilters)
+            exportSingleClip(
+                clips[0], localFiles[0], outputFile,
+                videoFilters, audioFilters, targetW, targetH,
+                fps, bitrateKbps
+            )
         } else {
-            exportMultipleClips(clips, localFiles, outputFile, videoFilters, audioFilters)
+            exportMultipleClips(
+                clips, localFiles, outputFile,
+                videoFilters, audioFilters, targetW, targetH,
+                fps, bitrateKbps
+            )
         }
     }
 
@@ -76,7 +88,11 @@ class FFmpegExecutor(
         localFile: File,
         outputFile: File,
         videoFilters: String,
-        audioFilters: String
+        audioFilters: String,
+        targetW: Int,
+        targetH: Int,
+        fps: Int,
+        bitrateKbps: Int
     ) {
         try {
             val args = mutableListOf<String>()
@@ -102,10 +118,13 @@ class FFmpegExecutor(
             if (videoFilters.isNotBlank()) {
                 vf.add(videoFilters)
             }
-            if (vf.isNotEmpty()) {
-                args.add("-vf")
-                args.add(vf.joinToString(","))
-            }
+            // 🆕 Scale + pad to target ratio
+            vf.add(
+                "scale=$targetW:$targetH:force_original_aspect_ratio=decrease," +
+                        "pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2,setsar=1"
+            )
+            args.add("-vf")
+            args.add(vf.joinToString(","))
 
             // Audio filters
             val af = mutableListOf<String>()
@@ -123,8 +142,10 @@ class FFmpegExecutor(
             // ⚠️ Safe codec (h264_mediacodec sab devices pe nahi chalta)
             args.add("-c:v")
             args.add("mpeg4")
-            args.add("-qscale:v")
-            args.add("4")
+            args.add("-b:v")
+            args.add("${bitrateKbps}k")
+            args.add("-r")
+            args.add(fps.toString())
             args.add("-c:a")
             args.add("aac")
             args.add("-b:a")
@@ -147,7 +168,11 @@ class FFmpegExecutor(
         localFiles: List<File>,
         outputFile: File,
         videoFilters: String,
-        audioFilters: String
+        audioFilters: String,
+        targetW: Int,
+        targetH: Int,
+        fps: Int,
+        bitrateKbps: Int
     ) {
         try {
             val args = mutableListOf<String>()
@@ -173,11 +198,12 @@ class FFmpegExecutor(
                 if (videoFilters.isNotBlank()) {
                     vFilter += ",$videoFilters"
                 }
-                vFilter += ",scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1[v$idx]"
+                vFilter += ",scale=$targetW:$targetH:force_original_aspect_ratio=decrease,pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2,setsar=1[v$idx]"
                 filterParts.add(vFilter)
 
                 // Audio filter per clip
-                var aFilter = "[$idx:a]atrim=start=$ssSec:duration=$durationSec,asetpts=PTS-STARTPTS"
+                var aFilter =
+                    "[$idx:a]atrim=start=$ssSec:duration=$durationSec,asetpts=PTS-STARTPTS"
                 if (clip.speed != 1.0f) {
                     aFilter += ",atempo=${clip.speed.coerceIn(0.5f, 2.0f)}"
                 }
@@ -200,8 +226,10 @@ class FFmpegExecutor(
             args.add("[outa]")
             args.add("-c:v")
             args.add("mpeg4")
-            args.add("-qscale:v")
-            args.add("4")
+            args.add("-b:v")
+            args.add("${bitrateKbps}k")
+            args.add("-r")
+            args.add(fps.toString())
             args.add("-c:a")
             args.add("aac")
             args.add("-b:a")
@@ -241,7 +269,8 @@ class FFmpegExecutor(
                             val p = ((timeMs / 10000.0).coerceIn(0.0, 0.95)).toFloat()
                             onProgress(p)
                         }
-                    } catch (_: Exception) {}
+                    } catch (_: Exception) {
+                    }
                 }
             )
             currentSession = session
@@ -253,6 +282,7 @@ class FFmpegExecutor(
     fun cancel() {
         try {
             currentSession?.let { FFmpegKit.cancel(it.sessionId) }
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
     }
 }

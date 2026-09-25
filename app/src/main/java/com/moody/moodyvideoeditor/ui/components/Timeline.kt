@@ -128,11 +128,11 @@ fun Timeline(
     }
 
     val actualMs = state.totalDurationMs
-    val playheadBuffer = state.currentPosMs + 10_000L
     val hasClips = state.clips.isNotEmpty()
 
+    // 🆕 FIXED — no playhead-based growth. Clips always same size during playback.
     val totalMs = if (hasClips) {
-        maxOf(actualMs, playheadBuffer, 1000L)
+        (actualMs + 5_000L).coerceAtLeast(1_000L)   // fixed 5s padding
     } else {
         TimelineZoom.MIN_TIMELINE_MS
     }

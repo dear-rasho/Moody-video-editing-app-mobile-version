@@ -41,7 +41,27 @@ class EditorViewModel : ViewModel() {
     private val history = HistoryManager()
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 PHASE 2.6 — Drag baseline (sandboxing)
+    private fun pushHistory() {
+        history.push(_state.value.clips)
+        updateHistoryFlags()
+    }
+
+    private fun updateHistoryFlags() {
+        _state.update {
+            it.copy(canUndo = history.canUndo(), canRedo = history.canRedo())
+        }
+    }
+
+    private fun updateClipDirect(clipId: String, transform: (EditorClip) -> EditorClip) {
+        val list = _state.value.clips.toMutableList()
+        val idx = list.indexOfFirst { it.id == clipId }
+        if (idx < 0) return
+        list[idx] = transform(list[idx])
+        _state.update { it.copy(clips = list) }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  DRAG SANDBOXING
     // ═══════════════════════════════════════════════════════════
     private var dragBaseline: List<EditorClip>? = null
 
@@ -64,26 +84,6 @@ class EditorViewModel : ViewModel() {
         }
         dragBaseline = null
         updateHistoryFlags()
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    private fun pushHistory() {
-        history.push(_state.value.clips)
-        updateHistoryFlags()
-    }
-
-    private fun updateHistoryFlags() {
-        _state.update {
-            it.copy(canUndo = history.canUndo(), canRedo = history.canRedo())
-        }
-    }
-
-    private fun updateClipDirect(clipId: String, transform: (EditorClip) -> EditorClip) {
-        val list = _state.value.clips.toMutableList()
-        val idx = list.indexOfFirst { it.id == clipId }
-        if (idx < 0) return
-        list[idx] = transform(list[idx])
-        _state.update { it.copy(clips = list) }
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -124,7 +124,23 @@ class EditorViewModel : ViewModel() {
             )
         }
 
-    // 🆕 Phase 2.3 — Track visibility / mute
+    // 🆕 Export settings
+    fun setExportResolution(res: String) =
+        _state.update { it.copy(exportResolution = res) }
+
+    fun setExportFps(fps: Int) =
+        _state.update { it.copy(exportFps = fps) }
+
+    fun setExportBitrate(kbps: Int) =
+        _state.update { it.copy(exportBitrateKbps = kbps.coerceIn(1000, 50000)) }
+
+    fun setExportFormat(fmt: String) =
+        _state.update { it.copy(exportFormat = fmt) }
+
+    fun setExportFolderUri(uri: String?) =
+        _state.update { it.copy(exportFolderUri = uri) }
+
+    // 🆕 Track visibility / mute
     fun toggleVisualTrackVisibility(trackIndex: Int) {
         _state.update { s ->
             val new = s.hiddenVisualTracks.toMutableSet()
@@ -180,7 +196,7 @@ class EditorViewModel : ViewModel() {
 
     fun addClipSmart(uri: Uri, name: String, durationMs: Long) {
         val s = _state.value
-        val durMs = durationMs.coerceAtLeast(500L)
+        val durMs = if (durationMs < 100L) 5_000L else durationMs.coerceAtLeast(1_000L)
 
         val visualPlacement = TimelineTools.findPlacement(
             visualTracks = s.timelineVisualList(),
@@ -258,7 +274,7 @@ class EditorViewModel : ViewModel() {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  MOVE CLIP — Vertical push + strict isolation
+    //  MOVE CLIP
     // ═══════════════════════════════════════════════════════════
     fun moveClip(clipId: String, targetTrackIndex: Int, newIsAudio: Boolean, newTimelineMs: Long) {
         val s = _state.value
@@ -273,14 +289,11 @@ class EditorViewModel : ViewModel() {
         val targetEnd = targetStart + clip.durationMs
         val trackDelta = targetTrack - clip.trackIndex
 
-        // 🆕 Linked clip dhundho BEFORE shifting
         val linkedClip = clip.linkedId?.let { linkId ->
             list.firstOrNull { it.linkedId == linkId && it.id != clipId }
         }
 
-        // ═══════════════════════════════════════════════════════════
-        //  STEP 1 — Push overlapping clips for MOVING clip
-        // ═══════════════════════════════════════════════════════════
+        // STEP 1 — Push overlapping clips
         var maxShiftedTrack = targetTrack - 1
         var probeTrack = targetTrack
         while (true) {
@@ -310,15 +323,13 @@ class EditorViewModel : ViewModel() {
             }
         }
 
-        // STEP 2 — Moving clip place karo
+        // STEP 2 — Place moving clip
         list[idx] = list[idx].copy(
             trackIndex = targetTrack,
             timelineStartMs = targetStart
         )
 
-        // ═══════════════════════════════════════════════════════════
-        //  STEP 3 — Linked clip: same track delta + same time
-        // ═══════════════════════════════════════════════════════════
+        // STEP 3 — Linked clip sync
         if (linkedClip != null) {
             val li = list.indexOfFirst { it.id == linkedClip.id }
             if (li >= 0) {
@@ -326,7 +337,6 @@ class EditorViewModel : ViewModel() {
                 val linkedNewTrack = (linkedClip.trackIndex + trackDelta).coerceAtLeast(0)
                 val linkedTargetEnd = targetStart + linkedClip.durationMs
 
-                // Push overlapping clips of linked's type
                 var linkedMaxShift = linkedNewTrack - 1
                 var linkedProbe = linkedNewTrack
                 while (true) {
@@ -356,7 +366,6 @@ class EditorViewModel : ViewModel() {
                     }
                 }
 
-                // Place linked clip
                 list[li] = list[li].copy(
                     trackIndex = linkedNewTrack,
                     timelineStartMs = targetStart
@@ -364,9 +373,7 @@ class EditorViewModel : ViewModel() {
             }
         }
 
-        // ═══════════════════════════════════════════════════════════
-        //  STEP 4 — Layer counts recalc
-        // ═══════════════════════════════════════════════════════════
+        // Layer count
         val maxVisual = list.filter { !it.isAudio }.maxOfOrNull { it.trackIndex } ?: 0
         val maxAudio = list.filter { it.isAudio }.maxOfOrNull { it.trackIndex } ?: 0
 
@@ -384,21 +391,17 @@ class EditorViewModel : ViewModel() {
     }
 
     // ═══════════════════════════════════════════════════════════
-//  🆕 PHASE 2.7 — Track Header Swap (carousel ripple)
-// ═══════════════════════════════════════════════════════════
+    //  TRACK SWAP
+    // ═══════════════════════════════════════════════════════════
     fun swapTracks(fromTrack: Int, toTrack: Int, isAudio: Boolean) {
         if (fromTrack == toTrack) return
 
         val list = _state.value.clips.toMutableList()
-
-        // Build old -> new track mapping (carousel shift)
         val newTrackOf = mutableMapOf<Int, Int>()
         if (fromTrack < toTrack) {
-            // Moving UP visually = higher index
             newTrackOf[fromTrack] = toTrack
             for (t in fromTrack + 1..toTrack) newTrackOf[t] = t - 1
         } else {
-            // Moving DOWN = lower index
             newTrackOf[fromTrack] = toTrack
             for (t in toTrack until fromTrack) newTrackOf[t] = t + 1
         }
@@ -615,7 +618,6 @@ class EditorViewModel : ViewModel() {
 
     fun commitTrim() = pushHistory()
 
-    // ═══════════════════════════════════════════════════════════
     fun deleteCurrentClip() {
         val sel = _state.value.selectedClip ?: return
         pushHistory()
@@ -638,7 +640,6 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
-    // ═══════════════════════════════════════════════════════════
     fun addFreezeFrame(durationMs: Long) {
         val sel = _state.value.selectedClip ?: return
         if (sel.isAudio) return
@@ -651,7 +652,6 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
-    // ═══════════════════════════════════════════════════════════
     fun setSpeed(speed: Float) {
         val sel = _state.value.selectedClip ?: return
         val clamped = speed.coerceIn(SpeedEngine.MIN_SPEED, SpeedEngine.MAX_SPEED)
@@ -721,6 +721,51 @@ class EditorViewModel : ViewModel() {
         updateSelectedText(st.copy(animation = animation))
     }
 
+    // 🆕 Preview direct manipulation (keyframe-aware)
+    fun updateTextPositionDirect(clipId: String, x: Float, y: Float) {
+        val s = _state.value
+        val clip = s.clips.firstOrNull { it.id == clipId } ?: return
+        if (!clip.isTextClip) return
+        val currentTimeSec = ((s.currentPosMs - clip.timelineStartMs).toFloat() / 1000f)
+            .coerceAtLeast(0f)
+        val hasAnyKf = KeyframeStore.hasAnyKeyframes(clip.keyframes)
+
+        updateClipDirect(clipId) { c ->
+            val st = c.textState ?: return@updateClipDirect c
+            var kf = c.keyframes
+            if (hasAnyKf) {
+                kf = KeyframeStore.autoKeyframeIfActive(kf, "x", currentTimeSec, x)
+                kf = KeyframeStore.autoKeyframeIfActive(kf, "y", currentTimeSec, y)
+                c.copy(textState = st.copy(positionX = x, positionY = y), keyframes = kf)
+            } else {
+                c.copy(textState = st.copy(positionX = x, positionY = y))
+            }
+        }
+    }
+
+    fun updateTextTransformDirect(clipId: String, scale: Float, rotation: Float) {
+        val s = _state.value
+        val clip = s.clips.firstOrNull { it.id == clipId } ?: return
+        if (!clip.isTextClip) return
+        val currentTimeSec = ((s.currentPosMs - clip.timelineStartMs).toFloat() / 1000f)
+            .coerceAtLeast(0f)
+        val hasAnyKf = KeyframeStore.hasAnyKeyframes(clip.keyframes)
+
+        updateClipDirect(clipId) { c ->
+            val st = c.textState ?: return@updateClipDirect c
+            var kf = c.keyframes
+            if (hasAnyKf) {
+                kf = KeyframeStore.autoKeyframeIfActive(kf, "scale", currentTimeSec, scale)
+                kf = KeyframeStore.autoKeyframeIfActive(kf, "rotation", currentTimeSec, rotation)
+                c.copy(textState = st.copy(scale = scale, rotation = rotation), keyframes = kf)
+            } else {
+                c.copy(textState = st.copy(scale = scale, rotation = rotation))
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  STICKER
     // ═══════════════════════════════════════════════════════════
     fun addOrUpdateSticker(emoji: String) {
         val sel = _state.value.selectedClip
@@ -769,6 +814,48 @@ class EditorViewModel : ViewModel() {
         list.removeAll { it.id == sel.id }
         _state.update { it.copy(clips = list, selectedClipId = null) }
         updateHistoryFlags()
+    }
+
+    fun updateStickerPositionDirect(clipId: String, x: Float, y: Float) {
+        val s = _state.value
+        val clip = s.clips.firstOrNull { it.id == clipId } ?: return
+        if (!clip.isStickerClip) return
+        val currentTimeSec = ((s.currentPosMs - clip.timelineStartMs).toFloat() / 1000f)
+            .coerceAtLeast(0f)
+        val hasAnyKf = KeyframeStore.hasAnyKeyframes(clip.keyframes)
+
+        updateClipDirect(clipId) { c ->
+            val ss = c.stickerState ?: return@updateClipDirect c
+            var kf = c.keyframes
+            if (hasAnyKf) {
+                kf = KeyframeStore.autoKeyframeIfActive(kf, "x", currentTimeSec, x)
+                kf = KeyframeStore.autoKeyframeIfActive(kf, "y", currentTimeSec, y)
+                c.copy(stickerState = ss.copy(x = x, y = y), keyframes = kf)
+            } else {
+                c.copy(stickerState = ss.copy(x = x, y = y))
+            }
+        }
+    }
+
+    fun updateStickerTransformDirect(clipId: String, scale: Float, rotation: Float) {
+        val s = _state.value
+        val clip = s.clips.firstOrNull { it.id == clipId } ?: return
+        if (!clip.isStickerClip) return
+        val currentTimeSec = ((s.currentPosMs - clip.timelineStartMs).toFloat() / 1000f)
+            .coerceAtLeast(0f)
+        val hasAnyKf = KeyframeStore.hasAnyKeyframes(clip.keyframes)
+
+        updateClipDirect(clipId) { c ->
+            val ss = c.stickerState ?: return@updateClipDirect c
+            var kf = c.keyframes
+            if (hasAnyKf) {
+                kf = KeyframeStore.autoKeyframeIfActive(kf, "scale", currentTimeSec, scale)
+                kf = KeyframeStore.autoKeyframeIfActive(kf, "rotation", currentTimeSec, rotation)
+                c.copy(stickerState = ss.copy(scale = scale, rotation = rotation), keyframes = kf)
+            } else {
+                c.copy(stickerState = ss.copy(scale = scale, rotation = rotation))
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════════════════
