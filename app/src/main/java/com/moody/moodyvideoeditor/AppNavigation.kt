@@ -15,6 +15,7 @@ object AppRoutes {
 }
 
 @Composable
+
 fun AppNavigation(navController: NavHostController = rememberNavController()) {
     NavHost(
         navController = navController,
@@ -29,6 +30,12 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
         composable(AppRoutes.EDITOR) {
             EditorScreen(
                 onBack = { navController.popBackStack() }
+            )
+        }
+        composable(AppRoutes.CODE_MODE) {
+            EditorScreen(
+                onBack = { navController.popBackStack() },
+                startInCodeMode = true   // 🆕 naya parameter
             )
         }
     }

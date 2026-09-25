@@ -25,6 +25,7 @@ import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.utils.SpeedEngine
 import com.moody.moodyvideoeditor.utils.TimelineEngine
 import com.moody.moodyvideoeditor.utils.TimelineTools
+import com.moody.moodyvideoeditor.utils.TimelineZoom
 import com.moody.moodyvideoeditor.utils.TransformApplier
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -87,8 +88,38 @@ class EditorViewModel : ViewModel() {
         }
     }
 
-    fun setTimelineZoom(z: Float) =
-        _state.update { it.copy(timelineZoom = z.coerceIn(0.5f, 3.0f)) }
+    fun setTimelineZoom(slider: Float) =
+        _state.update {
+            it.copy(
+                timelineZoom = slider.coerceIn(
+                    TimelineZoom.SLIDER_MIN,
+                    TimelineZoom.SLIDER_MAX
+                )
+            )
+        }
+
+    // 🆕 Phase 2.3 — Track visibility / mute
+    fun toggleVisualTrackVisibility(trackIndex: Int) {
+        _state.update { s ->
+            val new = s.hiddenVisualTracks.toMutableSet()
+            if (trackIndex in new) new.remove(trackIndex) else new.add(trackIndex)
+            s.copy(hiddenVisualTracks = new)
+        }
+    }
+
+    fun toggleAudioTrackMute(trackIndex: Int) {
+        _state.update { s ->
+            val new = s.mutedAudioTracks.toMutableSet()
+            if (trackIndex in new) new.remove(trackIndex) else new.add(trackIndex)
+            s.copy(mutedAudioTracks = new)
+        }
+    }
+
+    fun isVisualTrackHidden(trackIndex: Int): Boolean =
+        _state.value.hiddenVisualTracks.contains(trackIndex)
+
+    fun isAudioTrackMuted(trackIndex: Int): Boolean =
+        _state.value.mutedAudioTracks.contains(trackIndex)
 
     // ═══════════════════════════════════════════════════════════
     fun addClipWithSource(uri: Uri, name: String, duration: Long, sourceTotalMs: Long) {
@@ -114,13 +145,13 @@ class EditorViewModel : ViewModel() {
                 selectedTrackIndex = 0, selectedIsAudio = false,
                 visualLayerCount = maxOf(it.visualLayerCount, 3),
                 audioLayerCount = maxOf(it.audioLayerCount, 2),
-                multiSelectedIds = emptySet()
+                multiSelectedIds = emptySet(),
+                timelineZoom = 0f
             )
         }
         updateHistoryFlags()
     }
 
-    /** 🆕 Smart placement for BOTH video and audio */
     fun addClipSmart(uri: Uri, name: String, durationMs: Long) {
         val s = _state.value
         val durMs = durationMs.coerceAtLeast(500L)
@@ -182,7 +213,8 @@ class EditorViewModel : ViewModel() {
                 selectedClipId = videoClip.id,
                 selectedTrackIndex = visualPlacement.trackIndex,
                 selectedIsAudio = false,
-                multiSelectedIds = emptySet()
+                multiSelectedIds = emptySet(),
+                timelineZoom = 0f
             )
         }
         updateHistoryFlags()
@@ -199,46 +231,77 @@ class EditorViewModel : ViewModel() {
         }
     }
 
-    fun moveClip(clipId: String, newTrackIndex: Int, newIsAudio: Boolean, newTimelineMs: Long) {
-        val clip = _state.value.clips.firstOrNull { it.id == clipId } ?: return
-        val list = _state.value.clips.toMutableList()
+    // ═══════════════════════════════════════════════════════════
+    //  MOVE CLIP — Vertical push + strict isolation
+    // ═══════════════════════════════════════════════════════════
+    fun moveClip(clipId: String, targetTrackIndex: Int, newIsAudio: Boolean, newTimelineMs: Long) {
+        val s = _state.value
+        val clip = s.clips.firstOrNull { it.id == clipId } ?: return
+        val list = s.clips.toMutableList()
         val idx = list.indexOfFirst { it.id == clipId }
         if (idx < 0) return
-        val clampedStart = newTimelineMs.coerceAtLeast(0L)
-        val oldTrack = clip.trackIndex
-        val oldAudio = clip.isAudio
 
+        // Strict isolation — clip ka original type use karo
+        val isAudio = clip.isAudio
+        val targetTrack = targetTrackIndex.coerceAtLeast(0)
+        val targetStart = newTimelineMs.coerceAtLeast(0L)
+        val targetEnd = targetStart + clip.durationMs
+
+        // STEP 1 — Topmost track dhundho (vertical push chain)
+        var maxShiftedTrack = targetTrack - 1
+        var probeTrack = targetTrack
+        while (true) {
+            val hasOverlap = list.any { c ->
+                c.id != clipId &&
+                        c.isAudio == isAudio &&
+                        c.trackIndex == probeTrack &&
+                        c.timelineStartMs < targetEnd &&
+                        targetStart < c.timelineEndMs
+            }
+            if (!hasOverlap) break
+            maxShiftedTrack = probeTrack
+            probeTrack++
+        }
+
+        // STEP 2 — Push overlapping clips UP by 1
+        for (i in list.indices) {
+            if (list[i].id == clipId) continue
+            if (list[i].isAudio != isAudio) continue
+            val t = list[i].trackIndex
+            if (t < targetTrack || t > maxShiftedTrack) continue
+            val overlaps = list[i].timelineStartMs < targetEnd &&
+                    targetStart < list[i].timelineEndMs
+            if (overlaps) {
+                list[i] = list[i].copy(trackIndex = t + 1)
+            }
+        }
+
+        // STEP 3 — Moving clip place karo
         list[idx] = list[idx].copy(
-            trackIndex = newTrackIndex,
-            isAudio = newIsAudio,
-            timelineStartMs = clampedStart
+            trackIndex = targetTrack,
+            timelineStartMs = targetStart
         )
 
+        // STEP 4 — Linked clip time sync (video ↔ audio)
         if (clip.linkedId != null) {
-            val li = list.indexOfFirst {
-                it.linkedId == clip.linkedId && it.id != clipId
+            val li = list.indexOfFirst { it.linkedId == clip.linkedId && it.id != clipId }
+            if (li >= 0) {
+                list[li] = list[li].copy(timelineStartMs = targetStart)
             }
-            if (li >= 0) list[li] = list[li].copy(timelineStartMs = clampedStart)
-        }
-        if (oldTrack != newTrackIndex || oldAudio != newIsAudio) {
-            TimelineEngine.recalcTrackTimings(list, oldTrack, oldAudio)
-            TimelineEngine.recalcTrackTimings(list, newTrackIndex, newIsAudio)
         }
 
-        // 🆕 Auto-grow layer count
-        val maxVisualTrack = list.filter { !it.isAudio }
-            .maxOfOrNull { it.trackIndex } ?: 0
-        val maxAudioTrack = list.filter { it.isAudio }
-            .maxOfOrNull { it.trackIndex } ?: 0
+        // STEP 5 — Layer counts recalc
+        val maxVisual = list.filter { !it.isAudio }.maxOfOrNull { it.trackIndex } ?: 0
+        val maxAudio = list.filter { it.isAudio }.maxOfOrNull { it.trackIndex } ?: 0
 
         _state.update {
             it.copy(
                 clips = list,
                 selectedClipId = clipId,
-                selectedTrackIndex = newTrackIndex,
-                selectedIsAudio = newIsAudio,
-                visualLayerCount = maxOf(it.visualLayerCount, maxVisualTrack + 1),
-                audioLayerCount = maxOf(it.audioLayerCount, maxAudioTrack + 1)
+                selectedTrackIndex = targetTrack,
+                selectedIsAudio = isAudio,
+                visualLayerCount = maxOf(it.visualLayerCount, maxVisual + 1),
+                audioLayerCount = maxOf(it.audioLayerCount, maxAudio + 1)
             )
         }
         updateHistoryFlags()

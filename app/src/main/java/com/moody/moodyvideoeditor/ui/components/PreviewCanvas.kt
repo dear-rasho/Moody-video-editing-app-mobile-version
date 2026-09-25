@@ -56,16 +56,20 @@ fun PreviewCanvas(
     rotation: Int,
     aspectMode: Int,
     clips: List<EditorClip>,
-    currentPosMs: Long
+    currentPosMs: Long,
+    hiddenVisualTracks: Set<Int> = emptySet()
 ) {
     val density = LocalDensity.current
 
     // ═══ Active visual clip ═══
+    // ✅ Naya — hidden tracks skip
+    // ═══ Active visual clip — hidden tracks skipped ═══
     val activeVisual = clips
         .filter {
             it.isVisualClip &&
                     currentPosMs >= it.timelineStartMs &&
-                    currentPosMs < it.timelineEndMs
+                    currentPosMs < it.timelineEndMs &&
+                    !hiddenVisualTracks.contains(it.trackIndex)   // 🆕
         }
         .maxByOrNull { it.trackIndex }
 
@@ -82,7 +86,8 @@ fun PreviewCanvas(
         .filter {
             it.isAdjustmentClip &&
                     currentPosMs >= it.timelineStartMs &&
-                    currentPosMs < it.timelineEndMs
+                    currentPosMs < it.timelineEndMs &&
+                    !hiddenVisualTracks.contains(it.trackIndex)
         }
         .maxByOrNull { it.trackIndex }
         ?.adjustments
@@ -252,7 +257,8 @@ fun PreviewCanvas(
             clips.filter {
                 it.isTextClip &&
                         currentPosMs >= it.timelineStartMs &&
-                        currentPosMs < it.timelineEndMs
+                        currentPosMs < it.timelineEndMs &&
+                        !hiddenVisualTracks.contains(it.trackIndex)
             }.sortedBy { it.trackIndex }.forEach { tc ->
                 val st = tc.textState ?: return@forEach
                 val localTimeSec = ((currentPosMs - tc.timelineStartMs) / 1000f).coerceAtLeast(0f)
@@ -269,7 +275,8 @@ fun PreviewCanvas(
             clips.filter {
                 it.isStickerClip &&
                         currentPosMs >= it.timelineStartMs &&
-                        currentPosMs < it.timelineEndMs
+                        currentPosMs < it.timelineEndMs &&
+                        !hiddenVisualTracks.contains(it.trackIndex)
             }.sortedBy { it.trackIndex }.forEach { sc ->
                 val ss = sc.stickerState ?: return@forEach
                 val localTimeSec = ((currentPosMs - sc.timelineStartMs) / 1000f).coerceAtLeast(0f)

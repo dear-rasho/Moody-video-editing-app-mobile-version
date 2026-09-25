@@ -35,9 +35,7 @@ object TimelinePlayheadController {
         labelWidthPx + playheadContentPx(currentPosMs, totalMs, contentWidthPx) -
                 hScrollValue.toFloat()
 
-    fun seekTimeFromClick(
-        clickX: Float, contentWidthPx: Float, totalMs: Long
-    ): Long {
+    fun seekTimeFromClick(clickX: Float, contentWidthPx: Float, totalMs: Long): Long {
         if (totalMs <= 0L || contentWidthPx <= 0f) return 0L
         val clampedX = clickX.coerceAtLeast(0f)
         val frac = (clampedX / contentWidthPx).coerceIn(0f, 1f)

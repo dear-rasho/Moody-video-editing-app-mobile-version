@@ -2,9 +2,11 @@ package com.moody.moodyvideoeditor.ui.components
 
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,13 +26,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -40,16 +46,29 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.EditorState
+import com.moody.moodyvideoeditor.utils.TimelineRuler
+import com.moody.moodyvideoeditor.utils.TimelineZoom
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-private val TRACK_LABEL_WIDTH = 32.dp
+// ═══════════════════════════════════════════════════════════════
+//  CONSTANTS
+// ═══════════════════════════════════════════════════════════════
+private val TRACK_LABEL_WIDTH = 54.dp
 private val RULER_HEIGHT = 22.dp
 private val VISUAL_TRACK_HEIGHT = 34.dp
 private val AUDIO_TRACK_HEIGHT = 28.dp
 private const val DP_PER_SECOND = 20f
-private const val SNAP_THRESHOLD_MS = 100L
 
+private const val SNAP_ENTER_PX = 14f
+private const val SNAP_RELEASE_PX = 28f
+private const val SNAP_MIN_GAP_MS = 50L
+
+private data class SnapTarget(val timeMs: Long, val label: String)
+
+// ═══════════════════════════════════════════════════════════════
+//  MAIN TIMELINE
+// ═══════════════════════════════════════════════════════════════
 @Composable
 fun Timeline(
     state: EditorState,
@@ -60,21 +79,46 @@ fun Timeline(
     onTrimCommit: () -> Unit,
     onSeek: (Long) -> Unit,
     onMoveClip: (String, Int, Boolean, Long) -> Unit = { _, _, _, _ -> },
-    onDragEnd: () -> Unit = {}
+    onDragEnd: () -> Unit = {},
+    onToggleVisualVisibility: (Int) -> Unit = {},
+    onToggleAudioMute: (Int) -> Unit = {}
 ) {
-    val totalMs = state.totalDurationMs.coerceAtLeast(10000L)
+    val density = LocalDensity.current
     val hScroll = rememberScrollState()
     val vScroll = rememberScrollState()
-    val density = LocalDensity.current
 
-    val contentWidthDp: Dp = with(density) {
-        ((totalMs / 1000f) * DP_PER_SECOND).dp
-    }
-    val contentWidthPx = with(density) { contentWidthDp.toPx() }
     val labelWidthPx = with(density) { TRACK_LABEL_WIDTH.toPx() }
 
     var viewportWidthPx by remember { mutableFloatStateOf(0f) }
     var lastUserScrollMs by remember { mutableLongStateOf(0L) }
+
+    // Smart zoom — slider 0 = Fit
+    val slider = state.timelineZoom.coerceIn(
+        TimelineZoom.SLIDER_MIN, TimelineZoom.SLIDER_MAX
+    )
+    val viewportContentWidthDp = if (viewportWidthPx > 0f) {
+        with(density) {
+            (viewportWidthPx - labelWidthPx).coerceAtLeast(100f).toDp().value
+        }
+    } else {
+        360f
+    }
+
+    // 🆕 totalMs = actual clips duration (no 40 min minimum when clips exist)
+    val actualMs = state.totalDurationMs
+    val playheadBuffer = state.currentPosMs + 10_000L
+    val hasClips = state.clips.isNotEmpty()
+
+    val totalMs = if (hasClips) {
+        maxOf(actualMs, playheadBuffer, 1000L)
+    } else {
+        TimelineZoom.MIN_TIMELINE_MS
+    }
+    val totalSec = totalMs / 1000f
+
+    val pps = TimelineZoom.ppsForSlider(slider, totalSec, viewportContentWidthDp)
+    val contentWidthDp: Dp = (totalSec * pps).dp
+    val contentWidthPx = with(density) { contentWidthDp.toPx() }
 
     LaunchedEffect(hScroll.isScrollInProgress) {
         if (hScroll.isScrollInProgress) {
@@ -141,11 +185,15 @@ fun Timeline(
                             }
                         }
                 ) {
-                    val marksCount = 12
-                    for (i in 0..marksCount) {
-                        val frac = i.toFloat() / marksCount
-                        val timeMs = (frac * totalMs).toLong()
+                    val stepSec = TimelineRuler.pickStepSec(
+                        zoom = (pps / DP_PER_SECOND).coerceAtLeast(0.01f)
+                    )
+                    val marks = TimelineRuler.marks(totalMs, stepSec)
+
+                    marks.forEach { timeMs ->
+                        val frac = timeMs.toFloat() / totalMs.toFloat()
                         val xDp = contentWidthDp * frac
+
                         Box(
                             modifier = Modifier
                                 .offset(x = xDp)
@@ -154,8 +202,9 @@ fun Timeline(
                                 .background(Color(0xFF444444))
                                 .align(Alignment.BottomStart)
                         )
+
                         Text(
-                            text = formatRulerTime(timeMs),
+                            text = TimelineRuler.formatLabel(timeMs, stepSec),
                             color = Color(0xFF888888),
                             fontSize = 8.sp,
                             fontWeight = FontWeight.Bold,
@@ -167,10 +216,11 @@ fun Timeline(
         }
 
         // ═══ TRACKS + PLAYHEAD ═══
-        Box(modifier = Modifier
-            .fillMaxWidth()
-            .weight(1f)) {
-
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -199,7 +249,9 @@ fun Timeline(
                         onMoveClip = onMoveClip,
                         onDragEnd = onDragEnd,
                         visualLayerCount = state.visualLayerCount,
-                        audioLayerCount = state.audioLayerCount
+                        audioLayerCount = state.audioLayerCount,
+                        isHidden = state.hiddenVisualTracks.contains(i),
+                        onToggleVisibility = onToggleVisualVisibility
                     )
                 }
                 for (i in 0 until state.audioLayerCount) {
@@ -225,7 +277,9 @@ fun Timeline(
                         onMoveClip = onMoveClip,
                         onDragEnd = onDragEnd,
                         visualLayerCount = state.visualLayerCount,
-                        audioLayerCount = state.audioLayerCount
+                        audioLayerCount = state.audioLayerCount,
+                        isMuted = state.mutedAudioTracks.contains(i),
+                        onToggleMute = onToggleAudioMute
                     )
                 }
                 Box(Modifier.height(40.dp))
@@ -243,6 +297,8 @@ fun Timeline(
     }
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  VISUAL TRACK ROW
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun VisualTrackRow(
@@ -267,31 +323,58 @@ private fun VisualTrackRow(
     onMoveClip: (String, Int, Boolean, Long) -> Unit,
     onDragEnd: () -> Unit,
     visualLayerCount: Int,
-    audioLayerCount: Int
+    audioLayerCount: Int,
+    isHidden: Boolean,
+    onToggleVisibility: (Int) -> Unit
 ) {
     val isSelectedLayer = selectedTrackIndex == trackIndex && !selectedIsAudio
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(VISUAL_TRACK_HEIGHT),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
+        // Label + 👁 side-by-side
+        Row(
             modifier = Modifier
                 .width(TRACK_LABEL_WIDTH)
                 .fillMaxHeight()
-                .pointerInput(trackIndex) {
-                    detectTapGestures { onTrackTapped(trackIndex, false) }
-                },
-            contentAlignment = Alignment.Center
+                .padding(horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
         ) {
             Text(
                 "V${trackIndex + 1}",
-                color = if (isSelectedLayer) Color(0xFF7C3AED) else Color(0xFF888888),
+                color = when {
+                    isHidden -> Color(0xFF555555)
+                    isSelectedLayer -> Color(0xFF7C3AED)
+                    else -> Color(0xFF888888)
+                },
                 fontSize = 9.sp,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .padding(end = 2.dp)
+                    .pointerInput(trackIndex) {
+                        detectTapGestures { onTrackTapped(trackIndex, false) }
+                    }
             )
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .pointerInput(trackIndex) {
+                        detectTapGestures { onToggleVisibility(trackIndex) }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (isHidden) "🚫" else "👁",
+                    fontSize = 10.sp,
+                    color = if (isHidden) Color(0xFF555555) else Color(0xFFAAAAAA)
+                )
+            }
         }
+
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -300,23 +383,34 @@ private fun VisualTrackRow(
                 .horizontalScroll(hScroll)
         ) {
             TrackContent(
-                clips = clips, allClips = allClips, totalMs = totalMs,
-                contentWidthDp = contentWidthDp, contentWidthPx = contentWidthPx,
+                clips = clips,
+                allClips = allClips,
+                totalMs = totalMs,
+                contentWidthDp = contentWidthDp,
+                contentWidthPx = contentWidthPx,
                 selectedClipId = selectedClipId,
                 multiSelectedIds = multiSelectedIds,
-                isAudio = false, trackIndex = trackIndex,
+                isAudio = false,
+                trackIndex = trackIndex,
                 currentPosMs = currentPosMs,
                 onClipTapped = onClipTapped,
-                onTrimLeft = onTrimLeft, onTrimRight = onTrimRight,
+                onTrimLeft = onTrimLeft,
+                onTrimRight = onTrimRight,
                 onTrimCommit = onTrimCommit,
-                onSeek = onSeek, onMoveClip = onMoveClip, onDragEnd = onDragEnd,
+                onSeek = onSeek,
+                onMoveClip = onMoveClip,
+                onDragEnd = onDragEnd,
                 visualLayerCount = visualLayerCount,
-                audioLayerCount = audioLayerCount
+                audioLayerCount = audioLayerCount,
+                trackHidden = isHidden
             )
         }
     }
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  AUDIO TRACK ROW
+// ═══════════════════════════════════════════════════════════════
 @Composable
 private fun AudioTrackRow(
     trackIndex: Int,
@@ -340,31 +434,57 @@ private fun AudioTrackRow(
     onMoveClip: (String, Int, Boolean, Long) -> Unit,
     onDragEnd: () -> Unit,
     visualLayerCount: Int,
-    audioLayerCount: Int
+    audioLayerCount: Int,
+    isMuted: Boolean,
+    onToggleMute: (Int) -> Unit
 ) {
     val isSelectedLayer = selectedTrackIndex == trackIndex && selectedIsAudio
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(AUDIO_TRACK_HEIGHT),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
+        Row(
             modifier = Modifier
                 .width(TRACK_LABEL_WIDTH)
                 .fillMaxHeight()
-                .pointerInput(trackIndex) {
-                    detectTapGestures { onTrackTapped(trackIndex, true) }
-                },
-            contentAlignment = Alignment.Center
+                .padding(horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
         ) {
             Text(
                 "A${trackIndex + 1}",
-                color = if (isSelectedLayer) Color(0xFF10B981) else Color(0xFF888888),
+                color = when {
+                    isMuted -> Color(0xFF555555)
+                    isSelectedLayer -> Color(0xFF10B981)
+                    else -> Color(0xFF888888)
+                },
                 fontSize = 9.sp,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .padding(end = 2.dp)
+                    .pointerInput(trackIndex) {
+                        detectTapGestures { onTrackTapped(trackIndex, true) }
+                    }
             )
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .pointerInput(trackIndex) {
+                        detectTapGestures { onToggleMute(trackIndex) }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (isMuted) "🔇" else "🔊",
+                    fontSize = 10.sp,
+                    color = if (isMuted) Color(0xFF555555) else Color(0xFFAAAAAA)
+                )
+            }
         }
+
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -373,23 +493,33 @@ private fun AudioTrackRow(
                 .horizontalScroll(hScroll)
         ) {
             TrackContent(
-                clips = clips, allClips = allClips, totalMs = totalMs,
-                contentWidthDp = contentWidthDp, contentWidthPx = contentWidthPx,
+                clips = clips,
+                allClips = allClips,
+                totalMs = totalMs,
+                contentWidthDp = contentWidthDp,
+                contentWidthPx = contentWidthPx,
                 selectedClipId = selectedClipId,
                 multiSelectedIds = multiSelectedIds,
-                isAudio = true, trackIndex = trackIndex,
+                isAudio = true,
+                trackIndex = trackIndex,
                 currentPosMs = currentPosMs,
                 onClipTapped = onClipTapped,
-                onTrimLeft = onTrimLeft, onTrimRight = onTrimRight,
+                onTrimLeft = onTrimLeft,
+                onTrimRight = onTrimRight,
                 onTrimCommit = onTrimCommit,
-                onSeek = onSeek, onMoveClip = onMoveClip, onDragEnd = onDragEnd,
+                onSeek = onSeek,
+                onMoveClip = onMoveClip,
+                onDragEnd = onDragEnd,
                 visualLayerCount = visualLayerCount,
-                audioLayerCount = audioLayerCount
+                audioLayerCount = audioLayerCount,
+                trackHidden = isMuted
             )
         }
     }
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  TRACK CONTENT
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun TrackContent(
@@ -411,12 +541,22 @@ private fun TrackContent(
     onMoveClip: (String, Int, Boolean, Long) -> Unit,
     onDragEnd: () -> Unit,
     visualLayerCount: Int,
-    audioLayerCount: Int
+    audioLayerCount: Int,
+    trackHidden: Boolean = false
 ) {
     val density = LocalDensity.current
 
-    // 🆕 Snap guide state — green vertical line during trim
     var snapGuideX by remember { mutableFloatStateOf(-1f) }
+    var snapLabel by remember { mutableStateOf<String?>(null) }
+
+    // 🆕 Phase 2.5 — smooth drag local state
+    var draggingClipId by remember { mutableStateOf<String?>(null) }
+    var dragDeltaX by remember { mutableFloatStateOf(0f) }
+    var dragDeltaY by remember { mutableFloatStateOf(0f) }
+    var dragTargetTrack by remember { mutableIntStateOf(trackIndex) }
+    var dragTargetTimeMs by remember { mutableLongStateOf(0L) }
+
+    val trackAlpha = if (trackHidden) 0.3f else 1f
 
     Box(
         modifier = Modifier
@@ -425,18 +565,11 @@ private fun TrackContent(
             .pointerInput(clips, totalMs, contentWidthPx) {
                 detectTapGestures { offset ->
                     if (contentWidthPx <= 0f || totalMs <= 0L) return@detectTapGestures
-                    val pxPerMs = contentWidthPx / totalMs.toFloat()
-                    val timeMs = (offset.x / pxPerMs).toLong()
-                    val hitClip = clips.any {
-                        timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs
-                    }
-                    if (!hitClip) {
-                        onSeek(
-                            TimelinePlayheadController.seekTimeFromClick(
-                                offset.x, contentWidthPx, totalMs
-                            )
+                    onSeek(
+                        TimelinePlayheadController.seekTimeFromClick(
+                            offset.x, contentWidthPx, totalMs
                         )
-                    }
+                    )
                 }
             }
     ) {
@@ -444,11 +577,65 @@ private fun TrackContent(
 
         val pxPerMs = contentWidthPx / totalMs.toFloat()
         val stepPx = with(density) { 30.dp.toPx() }
-        val handleWidthPx = with(density) { 18.dp.toPx() }
+        val handleWidthPx = with(density) { 24.dp.toPx() }   // 🆕 18 → 24
 
+        val enterMs = (SNAP_ENTER_PX / pxPerMs).toLong().coerceAtLeast(SNAP_MIN_GAP_MS)
+        val releaseMs = (SNAP_RELEASE_PX / pxPerMs).toLong().coerceAtLeast(enterMs * 2)
+
+        // ═══════════════════════════════════════════════════════
+        //  👻 GHOST — semi-transparent copy at original position
+        // ═══════════════════════════════════════════════════════
+        draggingClipId?.let { dragId ->
+            val ghost = clips.firstOrNull { it.id == dragId }
+            if (ghost != null) {
+                val ghostStartPx = ghost.timelineStartMs.toFloat() / totalMs * contentWidthPx
+                val ghostEndPx = ghost.timelineEndMs.toFloat() / totalMs * contentWidthPx
+                val ghostWidthPx = (ghostEndPx - ghostStartPx).coerceAtLeast(20f)
+                val ghostColor = when {
+                    ghost.isAudio -> Color(0xFF10B981)
+                    ghost.isTextClip -> Color(0xFFEC4899)
+                    ghost.isStickerClip -> Color(0xFFF59E0B)
+                    ghost.isEffectClip -> Color(0xFFA855F7)
+                    ghost.isAdjustmentClip -> Color(0xFF06B6D4)
+                    ghost.isOverlayClip -> Color(0xFF3B82F6)
+                    ghost.isChromaClip -> Color(0xFF22C55E)
+                    else -> Color(0xFF2563EB)
+                }
+                Box(
+                    modifier = Modifier
+                        .offset(x = with(density) { ghostStartPx.toDp() })
+                        .width(with(density) { ghostWidthPx.toDp() })
+                        .fillMaxHeight()
+                        .padding(vertical = 2.dp)
+                        .zIndex(2f)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(ghostColor.copy(alpha = 0.15f))
+                        .border(
+                            width = 1.5.dp,
+                            color = ghostColor.copy(alpha = 0.7f),
+                            shape = RoundedCornerShape(4.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "↺ ${ghost.name.take(16)}",
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  CLIPS
+        // ═══════════════════════════════════════════════════════
         clips.forEach { clip ->
             val isSelected = clip.id == selectedClipId
             val isMulti = multiSelectedIds.contains(clip.id)
+            val isDragging = clip.id == draggingClipId
+
             val startPx = clip.timelineStartMs.toFloat() / totalMs * contentWidthPx
             val endPx = clip.timelineEndMs.toFloat() / totalMs * contentWidthPx
             val clipWidthPx = (endPx - startPx).coerceAtLeast(20f)
@@ -470,48 +657,166 @@ private fun TrackContent(
                     .width(with(density) { clipWidthPx.toDp() })
                     .fillMaxHeight()
                     .padding(vertical = 2.dp)
-                    .zIndex(if (isSelected) 10f else if (isMulti) 9f else 1f)
+                    .zIndex(
+                        if (isDragging) 30f
+                        else if (isSelected) 10f
+                        else if (isMulti) 9f
+                        else 1f
+                    )
+                    .graphicsLayer {
+                        // 🆕 Phase 2.5 — smooth local drag offset
+                        if (isDragging) {
+                            translationX = dragDeltaX
+                            translationY = dragDeltaY
+                            alpha = 0.85f
+                            scaleX = 1.03f
+                            scaleY = 1.03f
+                        }
+                    }
                     .clip(RoundedCornerShape(4.dp))
                     .background(
                         when {
-                            isSelected -> Color(0xFFFFD166)
                             isMulti -> Color(0xFF4F9DFF)
-                            else -> barColor
+                            else -> barColor   // 🆕 selected bhi normal color
                         }
                     )
+                    .then(
+                        if (isSelected) {
+                            Modifier.border(
+                                width = 2.dp,
+                                color = Color.White,
+                                shape = RoundedCornerShape(4.dp)
+                            )
+                        } else Modifier
+                    )
+                    .graphicsLayer { alpha = trackAlpha }
                     .pointerInput(clip.id, contentWidthPx, totalMs) {
-                        var accumX = 0f
-                        var accumY = 0f
+                        var accumulatedX = 0f
+                        var accumulatedY = 0f
                         var startTimeMs = 0L
                         var startTrack = 0
-                        var startIsAudio = false
 
                         detectDragGestures(
                             onDragStart = {
-                                accumX = 0f; accumY = 0f
+                                accumulatedX = 0f
+                                accumulatedY = 0f
                                 startTimeMs = clip.timelineStartMs
                                 startTrack = clip.trackIndex
-                                startIsAudio = clip.isAudio
+
+                                // 🆕 Start local drag
+                                draggingClipId = clip.id
+                                dragDeltaX = 0f
+                                dragDeltaY = 0f
+                                dragTargetTrack = startTrack
+                                dragTargetTimeMs = startTimeMs
                             },
                             onDrag = { change, drag ->
                                 change.consume()
-                                accumX += drag.x; accumY += drag.y
-                                val dMs = (accumX / pxPerMs).toLong()
-                                val newTime = (startTimeMs + dMs).coerceAtLeast(0L)
-                                val steps = (accumY / stepPx).roundToInt()
-                                var newTrack = startTrack
-                                val newAudio = startIsAudio
-                                if (!startIsAudio) {
-                                    newTrack = (startTrack - steps)
-                                        .coerceIn(0, visualLayerCount - 1)
-                                } else {
-                                    newTrack = (startTrack + steps)
-                                        .coerceIn(0, audioLayerCount - 1)
+
+                                // 🆕 Smooth local update
+                                accumulatedX += drag.x
+                                accumulatedY += drag.y
+                                dragDeltaX = accumulatedX
+                                dragDeltaY = accumulatedY
+
+                                // Virtual position
+                                val virtualStartMs = (startTimeMs +
+                                        (accumulatedX / pxPerMs).toLong())
+                                    .coerceAtLeast(0L)
+
+                                // Snap detection — horizontal
+                                val virtualEndMs = virtualStartMs + clip.durationMs
+                                val targets = mutableListOf<SnapTarget>()
+                                allClips.filter { it.id != clip.id }.forEach { other ->
+                                    if (other.isAudio != clip.isAudio) return@forEach
+                                    targets.add(
+                                        SnapTarget(
+                                            other.timelineStartMs,
+                                            "Start of ${other.name.take(14)}"
+                                        )
+                                    )
+                                    targets.add(
+                                        SnapTarget(
+                                            other.timelineEndMs,
+                                            "End of ${other.name.take(14)}"
+                                        )
+                                    )
                                 }
-                                onMoveClip(clip.id, newTrack, newAudio, newTime)
+                                targets.add(SnapTarget(currentPosMs, "Playhead"))
+
+                                var bestTarget: SnapTarget? = null
+                                var bestDist = enterMs
+                                targets.forEach { t ->
+                                    // Start edge snap
+                                    val dStart = abs(t.timeMs - virtualStartMs)
+                                    if (dStart < bestDist) {
+                                        bestDist = dStart
+                                        bestTarget = t
+                                    }
+                                    // End edge snap
+                                    val dEnd = abs(t.timeMs - virtualEndMs)
+                                    if (dEnd < bestDist) {
+                                        bestDist = dEnd
+                                        bestTarget = t
+                                    }
+                                }
+
+                                val finalTimeMs: Long
+                                if (bestTarget != null) {
+                                    // Check if start or end is closer
+                                    val dStart = abs(bestTarget!!.timeMs - virtualStartMs)
+                                    val dEnd = abs(bestTarget!!.timeMs - virtualEndMs)
+                                    finalTimeMs = if (dStart <= dEnd) {
+                                        bestTarget!!.timeMs
+                                    } else {
+                                        bestTarget!!.timeMs - clip.durationMs
+                                    }
+                                    snapGuideX = (bestTarget!!.timeMs.toFloat() /
+                                            totalMs.toFloat()) * contentWidthPx
+                                    snapLabel = "Snap: ${bestTarget!!.label}"
+                                } else {
+                                    finalTimeMs = virtualStartMs
+                                    snapGuideX = -1f
+                                    snapLabel = null
+                                }
+                                dragTargetTimeMs = finalTimeMs
+
+                                // Vertical track calculation
+                                val steps = (accumulatedY / stepPx).roundToInt()
+                                var newTrack = if (clip.isAudio) {
+                                    (startTrack + steps).coerceAtLeast(0)
+                                } else {
+                                    (startTrack - steps).coerceAtLeast(0)
+                                }
+                                dragTargetTrack = newTrack
                             },
-                            onDragEnd = { onDragEnd() },
-                            onDragCancel = { onDragEnd() }
+                            onDragEnd = {
+                                // 🆕 Commit on end only — smooth
+                                if (dragTargetTrack != clip.trackIndex ||
+                                    dragTargetTimeMs != clip.timelineStartMs
+                                ) {
+                                    onMoveClip(
+                                        clip.id,
+                                        dragTargetTrack,
+                                        clip.isAudio,
+                                        dragTargetTimeMs
+                                    )
+                                }
+                                draggingClipId = null
+                                dragDeltaX = 0f
+                                dragDeltaY = 0f
+                                snapGuideX = -1f
+                                snapLabel = null
+                                onDragEnd()
+                            },
+                            onDragCancel = {
+                                draggingClipId = null
+                                dragDeltaX = 0f
+                                dragDeltaY = 0f
+                                snapGuideX = -1f
+                                snapLabel = null
+                                onDragEnd()
+                            }
                         )
                     }
                     .pointerInput(clip.id) {
@@ -525,8 +830,9 @@ private fun TrackContent(
                     fontWeight = FontWeight.Bold, maxLines = 1
                 )
 
-                if (isSelected) {
-                    // LEFT handle — GREEN
+                // Trim handles (only when selected AND not dragging)
+                if (isSelected && !isDragging) {
+                    // LEFT handle
                     Box(
                         modifier = Modifier
                             .align(Alignment.CenterStart)
@@ -537,11 +843,14 @@ private fun TrackContent(
                                 var accumX = 0f
                                 var startMs = 0L
                                 var endMs = 0L
+                                var activeTarget: SnapTarget? = null
+
                                 detectDragGestures(
                                     onDragStart = {
                                         accumX = 0f
                                         startMs = clip.sourceStartMs
                                         endMs = clip.sourceEndMs
+                                        activeTarget = null
                                     },
                                     onDrag = { change, drag ->
                                         change.consume()
@@ -550,40 +859,69 @@ private fun TrackContent(
                                         val newStart = (startMs + dMs)
                                             .coerceIn(0L, endMs - EditorClip.MIN_DURATION_MS)
 
-                                        // 🆕 Snap detection
                                         val newStartTimelineMs =
                                             clip.timelineStartMs + (newStart - clip.sourceStartMs)
-                                        var snapTarget: Long? = null
+
+                                        val targets = mutableListOf<SnapTarget>()
                                         allClips.filter { it.id != clip.id }.forEach { other ->
-                                            val oS = other.timelineStartMs
-                                            val oE = other.timelineEndMs
-                                            if (abs(newStartTimelineMs - oS) < SNAP_THRESHOLD_MS) {
-                                                snapTarget = oS
-                                            } else if (abs(newStartTimelineMs - oE) < SNAP_THRESHOLD_MS) {
-                                                snapTarget = oE
+                                            targets.add(
+                                                SnapTarget(
+                                                    other.timelineStartMs,
+                                                    "Start of ${other.name.take(14)}"
+                                                )
+                                            )
+                                            targets.add(
+                                                SnapTarget(
+                                                    other.timelineEndMs,
+                                                    "End of ${other.name.take(14)}"
+                                                )
+                                            )
+                                        }
+                                        targets.add(SnapTarget(currentPosMs, "Playhead"))
+
+                                        var bestTarget: SnapTarget? = null
+                                        var bestDist = enterMs
+                                        targets.forEach { t ->
+                                            val d = abs(t.timeMs - newStartTimelineMs)
+                                            if (activeTarget != null &&
+                                                activeTarget!!.timeMs == t.timeMs &&
+                                                d <= releaseMs
+                                            ) {
+                                                bestTarget = t
+                                                bestDist = d
+                                                return@forEach
+                                            }
+                                            if (d < bestDist) {
+                                                bestDist = d
+                                                bestTarget = t
                                             }
                                         }
-                                        if (abs(newStartTimelineMs - currentPosMs) < SNAP_THRESHOLD_MS) {
-                                            snapTarget = currentPosMs
-                                        }
 
-                                        if (snapTarget != null) {
-                                            val deltaMs = snapTarget!! - clip.timelineStartMs
+                                        if (bestTarget != null) {
+                                            activeTarget = bestTarget
+                                            val deltaMs = bestTarget!!.timeMs - clip.timelineStartMs
                                             val finalSourceStart = clip.sourceStartMs + deltaMs
                                             onTrimLeft(finalSourceStart.coerceAtLeast(0L))
-                                            snapGuideX = (snapTarget!!.toFloat() /
+                                            snapGuideX = (bestTarget!!.timeMs.toFloat() /
                                                     totalMs.toFloat()) * contentWidthPx
+                                            snapLabel = "Snap: ${bestTarget!!.label}"
                                         } else {
+                                            activeTarget = null
                                             onTrimLeft(newStart)
                                             snapGuideX = -1f
+                                            snapLabel = null
                                         }
                                     },
                                     onDragEnd = {
                                         snapGuideX = -1f
+                                        snapLabel = null
+                                        activeTarget = null
                                         onTrimCommit()
                                     },
                                     onDragCancel = {
                                         snapGuideX = -1f
+                                        snapLabel = null
+                                        activeTarget = null
                                         onTrimCommit()
                                     }
                                 )
@@ -592,14 +930,15 @@ private fun TrackContent(
                     ) {
                         Box(
                             modifier = Modifier
-                                .width(5.dp)
+                                .width(6.dp)
                                 .fillMaxHeight()
-                                .clip(RoundedCornerShape(2.dp))
-                                .background(Color(0xFF22C55E))
+                                .padding(vertical = 4.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(Color.White)   // 🆕 White handle
                         )
                     }
 
-                    // RIGHT handle — GREEN
+                    // RIGHT handle
                     Box(
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
@@ -610,11 +949,14 @@ private fun TrackContent(
                                 var accumX = 0f
                                 var startMs = 0L
                                 var endMs = 0L
+                                var activeTarget: SnapTarget? = null
+
                                 detectDragGestures(
                                     onDragStart = {
                                         accumX = 0f
                                         startMs = clip.sourceStartMs
                                         endMs = clip.sourceEndMs
+                                        activeTarget = null
                                     },
                                     onDrag = { change, drag ->
                                         change.consume()
@@ -623,42 +965,74 @@ private fun TrackContent(
                                         val maxEnd = if (clip.sourceTotalMs != Long.MAX_VALUE)
                                             clip.sourceTotalMs else Long.MAX_VALUE
                                         val newEnd = (endMs + dMs)
-                                            .coerceIn(startMs + EditorClip.MIN_DURATION_MS, maxEnd)
+                                            .coerceIn(
+                                                startMs + EditorClip.MIN_DURATION_MS,
+                                                maxEnd
+                                            )
 
-                                        // 🆕 Snap detection
                                         val newEndTimelineMs =
                                             clip.timelineStartMs + (newEnd - clip.sourceStartMs)
-                                        var snapTarget: Long? = null
+
+                                        val targets = mutableListOf<SnapTarget>()
                                         allClips.filter { it.id != clip.id }.forEach { other ->
-                                            val oS = other.timelineStartMs
-                                            val oE = other.timelineEndMs
-                                            if (abs(newEndTimelineMs - oS) < SNAP_THRESHOLD_MS) {
-                                                snapTarget = oS
-                                            } else if (abs(newEndTimelineMs - oE) < SNAP_THRESHOLD_MS) {
-                                                snapTarget = oE
+                                            targets.add(
+                                                SnapTarget(
+                                                    other.timelineStartMs,
+                                                    "Start of ${other.name.take(14)}"
+                                                )
+                                            )
+                                            targets.add(
+                                                SnapTarget(
+                                                    other.timelineEndMs,
+                                                    "End of ${other.name.take(14)}"
+                                                )
+                                            )
+                                        }
+                                        targets.add(SnapTarget(currentPosMs, "Playhead"))
+
+                                        var bestTarget: SnapTarget? = null
+                                        var bestDist = enterMs
+                                        targets.forEach { t ->
+                                            val d = abs(t.timeMs - newEndTimelineMs)
+                                            if (activeTarget != null &&
+                                                activeTarget!!.timeMs == t.timeMs &&
+                                                d <= releaseMs
+                                            ) {
+                                                bestTarget = t
+                                                bestDist = d
+                                                return@forEach
+                                            }
+                                            if (d < bestDist) {
+                                                bestDist = d
+                                                bestTarget = t
                                             }
                                         }
-                                        if (abs(newEndTimelineMs - currentPosMs) < SNAP_THRESHOLD_MS) {
-                                            snapTarget = currentPosMs
-                                        }
 
-                                        if (snapTarget != null) {
-                                            val deltaMs = snapTarget!! - clip.timelineStartMs
+                                        if (bestTarget != null) {
+                                            activeTarget = bestTarget
+                                            val deltaMs = bestTarget!!.timeMs - clip.timelineStartMs
                                             val finalSourceEnd = clip.sourceStartMs + deltaMs
                                             onTrimRight(finalSourceEnd.coerceAtMost(maxEnd))
-                                            snapGuideX = (snapTarget!!.toFloat() /
+                                            snapGuideX = (bestTarget!!.timeMs.toFloat() /
                                                     totalMs.toFloat()) * contentWidthPx
+                                            snapLabel = "Snap: ${bestTarget!!.label}"
                                         } else {
+                                            activeTarget = null
                                             onTrimRight(newEnd)
                                             snapGuideX = -1f
+                                            snapLabel = null
                                         }
                                     },
                                     onDragEnd = {
                                         snapGuideX = -1f
+                                        snapLabel = null
+                                        activeTarget = null
                                         onTrimCommit()
                                     },
                                     onDragCancel = {
                                         snapGuideX = -1f
+                                        snapLabel = null
+                                        activeTarget = null
                                         onTrimCommit()
                                     }
                                 )
@@ -667,10 +1041,11 @@ private fun TrackContent(
                     ) {
                         Box(
                             modifier = Modifier
-                                .width(5.dp)
+                                .width(6.dp)
                                 .fillMaxHeight()
-                                .clip(RoundedCornerShape(2.dp))
-                                .background(Color(0xFF22C55E))
+                                .padding(vertical = 4.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(Color.White)
                         )
                     }
                 }
@@ -690,24 +1065,35 @@ private fun TrackContent(
             )
         }
 
-        // 🆕 GREEN SNAP GUIDE LINE
+        // ═══════════════════════════════════════════════════════
+        //  🆕 CYAN SNAP LINE (vertical through track)
+        // ═══════════════════════════════════════════════════════
         if (snapGuideX >= 0f) {
             Box(
                 modifier = Modifier
-                    .offset(x = with(density) { snapGuideX.toDp() })
+                    .offset(x = with(density) { (snapGuideX - 1f).toDp() })
                     .width(2.dp)
                     .fillMaxHeight()
-                    .background(Color(0xFF22C55E))
-                    .zIndex(50f)
+                    .background(Color(0xFF60EFFF))
+                    .zIndex(60f)
             )
+            snapLabel?.let { label ->
+                Text(
+                    text = label,
+                    color = Color.Black,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .offset(
+                            x = with(density) { (snapGuideX + 4).toDp() },
+                            y = 4.dp
+                        )
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF60EFFF))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                        .zIndex(61f)
+                )
+            }
         }
     }
-}
-
-private fun formatRulerTime(ms: Long): String {
-    val totalSec = ms / 1000
-    if (totalSec < 60) return "${totalSec}s"
-    val m = totalSec / 60
-    val s = totalSec % 60
-    return "%d:%02d".format(m, s)
 }

@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -24,13 +24,18 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.moody.moodyvideoeditor.utils.TimelineZoom
 
 @Composable
 fun TimelineToolbar(
     onSelectBackward: () -> Unit,
     onSelectForward: () -> Unit,
     onMagnet: () -> Unit,
-    zoomValue: Float,
+    onAddVisualLayer: () -> Unit = {},     // 🆕
+    onAddAudioLayer: () -> Unit = {},      // 🆕
+    zoomSlider: Float,
+    totalSec: Float,
+    viewportContentWidthDp: Float,
     onZoomChange: (Float) -> Unit
 ) {
     Column(
@@ -40,7 +45,6 @@ fun TimelineToolbar(
             .padding(horizontal = 6.dp, vertical = 3.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        // ─── Row 1: Buttons ──────────────────────
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -49,16 +53,18 @@ fun TimelineToolbar(
             IconBtn("⏪") { onSelectBackward() }
             IconBtn("⏩") { onSelectForward() }
             IconBtn("🧲") { onMagnet() }
+            // 🆕 Layer add buttons
+            IconBtn("＋V") { onAddVisualLayer() }
+            IconBtn("＋A") { onAddAudioLayer() }
             Spacer(Modifier.weight(1f))
             Text(
-                "${(zoomValue * 100).toInt()}%",
+                TimelineZoom.formatLabel(zoomSlider, totalSec, viewportContentWidthDp),
                 color = Color(0xFFCCCCCC),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold
             )
         }
 
-        // ─── Row 2: Thin slider ─────────────────
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -66,9 +72,9 @@ fun TimelineToolbar(
         ) {
             Text("🔍", fontSize = 10.sp, color = Color(0xFF888888))
             Slider(
-                value = zoomValue,
+                value = zoomSlider,
                 onValueChange = onZoomChange,
-                valueRange = 0.5f..3.0f,
+                valueRange = TimelineZoom.SLIDER_MIN..TimelineZoom.SLIDER_MAX,
                 modifier = Modifier
                     .weight(1f)
                     .height(20.dp),
@@ -87,12 +93,14 @@ fun TimelineToolbar(
 private fun IconBtn(text: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .size(30.dp)
+            .height(30.dp)
+            .widthIn(min = 30.dp)      // 🆕 wider for +V, +A
             .clip(RoundedCornerShape(6.dp))
             .background(Color(0xFF181818))
-            .pointerInput(text) { detectTapGestures { onClick() } },
+            .pointerInput(text) { detectTapGestures { onClick() } }
+            .padding(horizontal = 6.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(text, fontSize = 13.sp, color = Color.White)
+        Text(text, fontSize = 12.sp, color = Color.White)
     }
 }

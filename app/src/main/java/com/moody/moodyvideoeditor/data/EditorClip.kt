@@ -124,7 +124,9 @@ data class EditorState(
     val beatsFilter: String = "all",
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
-    val timelineZoom: Float = 1.0f
+    val timelineZoom: Float = 0f,
+    val hiddenVisualTracks: Set<Int> = emptySet(),
+    val mutedAudioTracks: Set<Int> = emptySet()
 ) {
     val totalDurationMs: Long
         get() = clips.maxOfOrNull { it.timelineEndMs } ?: 10000L
