@@ -8,7 +8,9 @@ enum class CmdType {
     TRANSITION, TRANSITION_ALL, TRANSITION_AT, TRANSITION_LAYER,
     TEXT, STICKER, CHROMA, AUDIO_FX, ANIMATION,
     COLOR_WHEEL, FONT, ALIGN, ANCHOR, KEYFRAME,
-    RATIO, TIGHTEN, GRAPH, CLEAR_KEYFRAMES, UNKNOWN
+    RATIO, TIGHTEN, GRAPH, CLEAR_KEYFRAMES,
+    TEMPLATE,   // 🆕
+    UNKNOWN
 }
 
 data class ParsedCommand(
@@ -166,7 +168,13 @@ object PromptEngine {
                 raw = text
             )
         }
-
+        // 🆕 TEMPLATE: template motiv / template cinematic
+        if (lower.startsWith("template ")) {
+            val tId = lower.substring(9).trim()
+            if (tId.isNotBlank()) {
+                return ParsedCommand(CmdType.TEMPLATE, tId, raw = text)
+            }
+        }
         // TRANSITION ALL
         Regex("""^transition\s+all\s+([a-z\s]+?)(?:\s+([\d.]+))?$""", RegexOption.IGNORE_CASE)
             .find(lower)?.let { m ->

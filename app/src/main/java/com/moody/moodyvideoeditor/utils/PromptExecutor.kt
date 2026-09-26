@@ -1,6 +1,5 @@
 package com.moody.moodyvideoeditor.utils
 
-import android.util.Log
 import com.moody.moodyvideoeditor.data.ChromaState
 import com.moody.moodyvideoeditor.data.RatioLibrary
 import com.moody.moodyvideoeditor.data.TextState
@@ -41,7 +40,24 @@ object PromptExecutor {
 
         val state = viewModel.state.value
         val selected = state.selectedClip
-
+        // ═══════════════════════════════════════════════════════
+        //  PRIORITY 0 — TEMPLATES (before everything else)
+        // ═══════════════════════════════════════════════════════
+        for (cmd in parsed.commands) {
+            if (cmd.type == CmdType.TEMPLATE) {
+                val tmpl = TypographyTemplates.find(cmd.key)
+                if (tmpl != null) {
+                    viewModel.applyTemplate(
+                        templateId = cmd.key,
+                        startMs = viewModel.state.value.currentPosMs,
+                        canvasWidthPx = 720f
+                    )
+                    applied.add("template ${tmpl.label} (${tmpl.nodes.size} layers)")
+                } else {
+                    errors.add("Template not found: ${cmd.key}")
+                }
+            }
+        }
         // ═══════════════════════════════════════════════════════
         //  PRIORITY 1 — GLOBAL (Ratio, Tighten, Clear)
         // ═══════════════════════════════════════════════════════
@@ -100,8 +116,35 @@ object PromptExecutor {
         }
 
         // ═══════════════════════════════════════════════════════
-        //  PRIORITY 3 — TEXT + STICKER (timestamp-aware)
+        //  PRIORITY 3 — TEXT + STICKER (timestamp + AUTO-STACKING)
         // ═══════════════════════════════════════════════════════
+
+        // 🆕 Group texts by [startMs-endMs] block for auto-stacking
+        val textCommands = parsed.commands.filter { it.type == CmdType.TEXT }
+        val groupedTexts = textCommands
+            .filter { it.startMs != null && it.endMs != null }
+            .groupBy { "${it.startMs}_${it.endMs}" }
+
+        val textPositions = mutableMapOf<ParsedCommand, Pair<Float, Float>>()
+
+        for ((_, group) in groupedTexts) {
+            val count = group.size
+            if (count == 0) continue
+
+            // 🆕 Distribute Y positions: top (15%) to bottom (85%)
+            val topMargin = 15f
+            val bottomMargin = 85f
+            val spacing = if (count > 1) (bottomMargin - topMargin) / (count - 1)
+            else 50f
+
+            group.forEachIndexed { index, cmd ->
+                val y = if (count == 1) 50f
+                else topMargin + index * spacing
+                textPositions[cmd] = 50f to y
+            }
+        }
+
+        // Now create all texts
         for (cmd in parsed.commands) {
             when (cmd.type) {
                 CmdType.TEXT -> {
@@ -114,13 +157,16 @@ object PromptExecutor {
                     val startMs = cmd.startMs
                     val endMs = cmd.endMs
 
-                    Log.d(
-                        TAG,
-                        "TEXT cmd: content='$content' startMs=$startMs endMs=$endMs"
-                    )
-
                     if (startMs != null && endMs != null) {
-                        // 🆕 Timestamped → strict time-based placement
+                        // 🆕 Apply auto-stack position if user didn't specify
+                        val userSetPosition =
+                            cmd.extra?.contains("position", ignoreCase = true) == true
+                        if (!userSetPosition) {
+                            textPositions[cmd]?.let { (x, y) ->
+                                textState = textState.copy(positionX = x, positionY = y)
+                            }
+                        }
+
                         viewModel.createTextClipAtTime(
                             textState = textState,
                             startMs = startMs,
@@ -130,7 +176,6 @@ object PromptExecutor {
                             "text @${startMs / 1000}s-${endMs / 1000}s \"$content\""
                         )
                     } else {
-                        // Manual — use playhead
                         viewModel.createTextClip(textState)
                         applied.add("text \"$content\"")
                     }
@@ -140,11 +185,6 @@ object PromptExecutor {
                     val emoji = cmd.stringValue ?: continue
                     val startMs = cmd.startMs
                     val endMs = cmd.endMs
-
-                    Log.d(
-                        TAG,
-                        "STICKER cmd: emoji='$emoji' startMs=$startMs endMs=$endMs"
-                    )
 
                     if (startMs != null && endMs != null) {
                         viewModel.createStickerAtTime(

@@ -647,6 +647,14 @@ fun EditorScreen(
                     onTextChanged = { viewModel.updateSelectedText(it) },
                     onCreateNew = { viewModel.createTextClip() },
                     onRemove = { viewModel.removeSelectedText() },
+                    onApplyTemplate = { templateId ->
+                        viewModel.applyTemplate(
+                            templateId = templateId,
+                            startMs = state.currentPosMs,
+                            canvasWidthPx = 720f
+                        )
+                        activePanel = null
+                    },
                     onClose = { activePanel = null }
                 )
 

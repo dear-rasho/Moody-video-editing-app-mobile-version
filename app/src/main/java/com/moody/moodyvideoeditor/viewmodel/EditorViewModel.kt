@@ -27,6 +27,7 @@ import com.moody.moodyvideoeditor.utils.TimelineEngine
 import com.moody.moodyvideoeditor.utils.TimelineTools
 import com.moody.moodyvideoeditor.utils.TimelineZoom
 import com.moody.moodyvideoeditor.utils.TransformApplier
+import com.moody.moodyvideoeditor.utils.TypographyTemplates
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -754,6 +755,64 @@ class EditorViewModel : ViewModel() {
                 selectedClipId = clip.id,
                 selectedTrackIndex = trackIdx,
                 selectedIsAudio = false
+            )
+        }
+        updateHistoryFlags()
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 PHASE 2 — Template application
+    // ═══════════════════════════════════════════════════════════
+    fun applyTemplate(
+        templateId: String,
+        customTexts: Map<String, String> = emptyMap(),
+        startMs: Long = _state.value.currentPosMs,
+        canvasWidthPx: Float = 720f     // default canvas width for size calc
+    ) {
+        val template = TypographyTemplates.find(templateId) ?: return
+
+        pushHistory()
+
+        val list = _state.value.clips.toMutableList()
+        var newLayerCount = _state.value.visualLayerCount
+
+        for ((index, node) in template.nodes.withIndex()) {
+            val state = TypographyTemplates.toTextState(
+                node = node,
+                canvasWidthPx = canvasWidthPx,
+                customText = customTexts[node.nodeId]
+            ).copy(templateId = templateId)
+
+            val clipStart = startMs + node.timingOffsetMs
+            val clipEnd = clipStart + node.durationMs
+
+            // Auto-place: find track with no overlap in this range
+            val trackIdx = findOrCreateVisualTrack(
+                preferredTrack = 0,
+                startMs = clipStart,
+                durMs = clipEnd - clipStart
+            )
+
+            val clip = EditorClip(
+                id = UUID.randomUUID().toString(),
+                uri = Uri.EMPTY,
+                name = "📝 ${state.content.take(16).ifBlank { "Text" }}",
+                type = "text/plain",
+                sourceStartMs = 0L,
+                sourceEndMs = clipEnd - clipStart,
+                timelineStartMs = clipStart,
+                trackIndex = trackIdx,
+                isAudio = false,
+                textState = state
+            )
+            list.add(clip)
+            newLayerCount = maxOf(newLayerCount, trackIdx + 1)
+        }
+
+        _state.update {
+            it.copy(
+                clips = list,
+                visualLayerCount = newLayerCount
             )
         }
         updateHistoryFlags()

@@ -42,7 +42,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -59,6 +61,7 @@ import com.moody.moodyvideoeditor.utils.ColorMatrixBuilder
 import com.moody.moodyvideoeditor.utils.EffectsEngine
 import com.moody.moodyvideoeditor.utils.OverlayEngine
 import com.moody.moodyvideoeditor.utils.RatioHelper
+import com.moody.moodyvideoeditor.utils.TextScaler
 import com.moody.moodyvideoeditor.utils.Transform2D
 import com.moody.moodyvideoeditor.utils.TransformApplier
 import com.moody.moodyvideoeditor.utils.TransformValues
@@ -97,7 +100,6 @@ fun PreviewCanvas(
 
     val videoTrackIdx = activeVisual?.trackIndex ?: 0
 
-    // ═══ TRANSITION DETECTION ═══
     val activeTransitionClip = remember(currentPosMs, clips) {
         clips.firstOrNull { c ->
             !c.isAudio &&
@@ -150,13 +152,11 @@ fun PreviewCanvas(
         }
     }
 
-    // ═══ TRANSFORM ═══
     val videoTransform: TransformValues = activeVisual?.let {
         val timeSec = ((currentPosMs - it.timelineStartMs) / 1000f).coerceAtLeast(0f)
         TransformApplier.resolveLive(it, timeSec)
     } ?: TransformValues()
 
-    // ═══ ADJUSTMENT ═══
     val activeAdjustment = clips
         .filter {
             it.isAdjustmentClip &&
@@ -167,7 +167,6 @@ fun PreviewCanvas(
         .maxByOrNull { it.trackIndex }
         ?.adjustments
 
-    // ═══ EFFECTS ═══
     val activeEffects = EffectsEngine.getEffectsAbove(clips, currentPosMs, videoTrackIdx)
     val timeSec = currentPosMs / 1000f
 
@@ -227,9 +226,7 @@ fun PreviewCanvas(
         val sideBar = ((windowW - canvasW) / 2f).coerceAtLeast(0f)
         val topBar = ((windowH - canvasH) / 2f).coerceAtLeast(0f)
 
-        // ═══════════════════════════════════════════════════════════
-        //  MEDIA LAYER — Video OR Image
-        // ═══════════════════════════════════════════════════════════
+        // ═══ MEDIA LAYER ═══
         Box(modifier = Modifier.fillMaxSize()) {
             if (activeVisual != null) {
                 val isImage = activeVisual.type.startsWith("image/")
@@ -280,7 +277,6 @@ fun PreviewCanvas(
                         }
                 ) {
                     if (isImage) {
-                        // ═══ IMAGE — force BitmapFactory to handle .jfif/.jpg/.png etc ═══
                         val imageRequest = remember(activeVisual.uri) {
                             ImageRequest.Builder(context)
                                 .data(activeVisual.uri)
@@ -296,7 +292,6 @@ fun PreviewCanvas(
                             modifier = Modifier.fillMaxSize()
                         )
                     } else if (hasVideo) {
-                        // ═══ VIDEO ═══
                         AndroidView(
                             factory = { ctx ->
                                 LayoutInflater.from(ctx)
@@ -330,9 +325,7 @@ fun PreviewCanvas(
             }
         }
 
-        // ═══════════════════════════════════════════════════════════
-        //  CANVAS LAYER (ratio-sized, centered)
-        // ═══════════════════════════════════════════════════════════
+        // ═══ CANVAS LAYER ═══
         Box(
             modifier = Modifier
                 .width(canvasW.dp)
@@ -456,7 +449,6 @@ fun PreviewCanvas(
             )
         }
 
-        // Canvas border
         Box(
             modifier = Modifier
                 .width(canvasW.dp)
@@ -490,10 +482,90 @@ private fun InteractiveTextOverlay(
 
     val localTimeSec = ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
     val sampled = TransformApplier.resolveLive(clip, localTimeSec)
+
+    val animDur = textState.animationDuration.coerceAtLeast(0.1f)
+    val progress = (localTimeSec / animDur).coerceIn(0f, 1f)
     val frame = com.moody.moodyvideoeditor.utils.AnimationsEngine.computeFrame(
-        textState.animation,
-        (localTimeSec / textState.animationDuration.coerceAtLeast(0.1f)).coerceIn(0f, 1f),
-        localTimeSec
+        textState.animation, progress, localTimeSec
+    )
+
+    // Typewriter — slice
+    val displayContent = if (textState.animation.equals("typewriter", ignoreCase = true)) {
+        val total = textState.content.length
+        val visible = (progress * total).toInt().coerceIn(0, total)
+        textState.content.substring(0, visible)
+    } else textState.content
+
+    if (displayContent.isEmpty() && textState.animation.equals("typewriter", ignoreCase = true)) {
+        return
+    }
+
+    val density = LocalDensity.current
+
+    val effFontSize = TextScaler.fontSize(textState.fontSize, canvasW)
+    val effLetterSpacing = TextScaler.letterSpacing(textState.letterSpacing, canvasW)
+    val effLineHeight = TextScaler.lineHeight(effFontSize, textState.lineHeight)
+    val effMaxWidth = TextScaler.maxTextWidth(canvasW, textState.maxWidth)
+
+    val strokeWidthPx = with(density) {
+        maxOf(1f, textState.strokeWidth).dp.toPx()
+    }
+    val glowRadiusDp = textState.glowRadius.coerceIn(4f, 60f)
+
+    // ═══════════════════════════════════════════════════════════
+    //  AUTO-SHRINK: measure natural width first, then fit
+    // ═══════════════════════════════════════════════════════════
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+
+    val naturalMeasure = remember(displayContent, effFontSize, effLetterSpacing) {
+        measurer.measure(
+            text = displayContent,
+            style = androidx.compose.ui.text.TextStyle(
+                fontSize = effFontSize.sp,
+                letterSpacing = effLetterSpacing.sp
+            ),
+            constraints = androidx.compose.ui.unit.Constraints(
+                maxWidth = Int.MAX_VALUE
+            ),
+            maxLines = 1,
+            softWrap = false
+        )
+    }
+
+    val allowedWidthPx = with(density) { effMaxWidth.dp.toPx() }
+
+    val finalFontSize = if (naturalMeasure.size.width > allowedWidthPx) {
+        val ratio = allowedWidthPx / naturalMeasure.size.width.toFloat()
+        (effFontSize * ratio).coerceAtLeast(10f)
+    } else {
+        effFontSize
+    }
+
+    val finalMeasure = remember(displayContent, finalFontSize, effLetterSpacing, effLineHeight) {
+        measurer.measure(
+            text = displayContent,
+            style = androidx.compose.ui.text.TextStyle(
+                fontSize = finalFontSize.sp,
+                letterSpacing = effLetterSpacing.sp,
+                lineHeight = effLineHeight.sp
+            ),
+            constraints = androidx.compose.ui.unit.Constraints(
+                maxWidth = Int.MAX_VALUE
+            ),
+            softWrap = false
+        )
+    }
+
+    val textWidthDp = with(density) { finalMeasure.size.width.toDp().value }
+    val textHeightDp = with(density) { finalMeasure.size.height.toDp().value }
+
+    val (clampedX, clampedY) = TextScaler.clampPosition(
+        x = sampled.x,
+        y = sampled.y,
+        textWidthDp = textWidthDp,
+        textHeightDp = textHeightDp,
+        canvasWidthDp = canvasW,
+        canvasHeightDp = canvasH
     )
 
     val family = com.moody.moodyvideoeditor.utils.FontLibrary.familyFor(textState.fontFamily)
@@ -514,11 +586,16 @@ private fun InteractiveTextOverlay(
         )
     } else null
 
-    val shadow = if (textState.shadowEnabled) androidx.compose.ui.graphics.Shadow(
-        color = Color(textState.shadowColor),
-        offset = Offset(textState.shadowOffsetX, textState.shadowOffsetY),
-        blurRadius = textState.shadowBlur
-    ) else null
+    val textAlignValue = when (textState.alignment) {
+        "left" -> androidx.compose.ui.text.style.TextAlign.Left
+        "right" -> androidx.compose.ui.text.style.TextAlign.Right
+        else -> androidx.compose.ui.text.style.TextAlign.Center
+    }
+
+    val weight = if (textState.fontWeight == "bold") FontWeight.Bold else FontWeight.Normal
+    val fontSty = if (textState.fontStyle == "italic")
+        androidx.compose.ui.text.font.FontStyle.Italic
+    else androidx.compose.ui.text.font.FontStyle.Normal
 
     Box(
         modifier = Modifier
@@ -527,8 +604,8 @@ private fun InteractiveTextOverlay(
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
 
-                    val baseX = sampled.x
-                    val baseY = sampled.y
+                    val baseX = clampedX
+                    val baseY = clampedY
                     val baseScale = sampled.scale
                     val baseRot = sampled.rotation
 
@@ -578,12 +655,17 @@ private fun InteractiveTextOverlay(
                             c2.consume()
                         }
 
-                        val dxPct = accumPanX / size.width * 100f
-                        val dyPct = accumPanY / size.height * 100f
-                        onPositionChanged(
-                            (baseX + dxPct).coerceIn(0f, 100f),
-                            (baseY + dyPct).coerceIn(0f, 100f)
+                        val rawX = baseX + accumPanX / size.width * 100f
+                        val rawY = baseY + accumPanY / size.height * 100f
+                        val (cx, cy) = TextScaler.clampPosition(
+                            x = rawX,
+                            y = rawY,
+                            textWidthDp = textWidthDp,
+                            textHeightDp = textHeightDp,
+                            canvasWidthDp = canvasW,
+                            canvasHeightDp = canvasH
                         )
+                        onPositionChanged(cx, cy)
                         onTransformChanged(
                             (baseScale * accumZoom).coerceIn(10f, 500f),
                             baseRot + accumRot
@@ -599,8 +681,8 @@ private fun InteractiveTextOverlay(
         Box(
             modifier = Modifier
                 .graphicsLayer {
-                    val posTx = (sampled.x - 50f) / 100f * canvasW
-                    val posTy = (sampled.y - 50f) / 100f * canvasH
+                    val posTx = (clampedX - 50f) / 100f * canvasW
+                    val posTy = (clampedY - 50f) / 100f * canvasH
                     translationX = posTx + frame.translateX
                     translationY = posTy + frame.translateY
                     scaleX = (sampled.scale / 100f) * frame.scaleX
@@ -618,25 +700,114 @@ private fun InteractiveTextOverlay(
                         )
                     } else Modifier
                 )
-                .padding(6.dp)
+                .padding(6.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = textState.content,
-                color = if (gradient != null) Color.Unspecified else solidColor,
-                fontSize = textState.fontSize.sp,
-                fontWeight = if (textState.fontWeight == "bold") FontWeight.Bold
-                else FontWeight.Normal,
-                fontStyle = if (textState.fontStyle == "italic")
-                    androidx.compose.ui.text.font.FontStyle.Italic
-                else androidx.compose.ui.text.font.FontStyle.Normal,
-                fontFamily = family,
-                textAlign = when (textState.alignment) {
-                    "left" -> androidx.compose.ui.text.style.TextAlign.Left
-                    "right" -> androidx.compose.ui.text.style.TextAlign.Right
-                    else -> androidx.compose.ui.text.style.TextAlign.Center
-                },
-                style = androidx.compose.ui.text.TextStyle(brush = gradient, shadow = shadow)
-            )
+            Box(contentAlignment = Alignment.Center) {
+
+                // ═══ GLOW ═══
+                if (textState.glowEnabled) {
+                    val glowColor = Color(textState.glowColor)
+                    val offsets = listOf(
+                        Offset(-1.5f, 0f), Offset(1.5f, 0f),
+                        Offset(0f, -1.5f), Offset(0f, 1.5f),
+                        Offset(-1f, -1f), Offset(1f, 1f),
+                        Offset(-1f, 1f), Offset(1f, -1f),
+                        Offset(-2.5f, 0f), Offset(2.5f, 0f),
+                        Offset(0f, -2.5f), Offset(0f, 2.5f)
+                    )
+                    // Outer halo
+                    offsets.forEach { off ->
+                        Text(
+                            text = displayContent,
+                            color = glowColor.copy(alpha = 0.3f),
+                            fontSize = finalFontSize.sp,
+                            fontWeight = weight,
+                            fontStyle = fontSty,
+                            fontFamily = family,
+                            textAlign = textAlignValue,
+                            softWrap = false,
+                            maxLines = 1,
+                            overflow = TextOverflow.Visible,
+                            style = androidx.compose.ui.text.TextStyle(
+                                letterSpacing = effLetterSpacing.sp,
+                                lineHeight = effLineHeight.sp
+                            ),
+                            modifier = Modifier.graphicsLayer {
+                                translationX = off.x * 2f
+                                translationY = off.y * 2f
+                            }
+                        )
+                    }
+                    // Inner halo
+                    offsets.forEach { off ->
+                        Text(
+                            text = displayContent,
+                            color = glowColor.copy(alpha = 0.6f),
+                            fontSize = finalFontSize.sp,
+                            fontWeight = weight,
+                            fontStyle = fontSty,
+                            fontFamily = family,
+                            textAlign = textAlignValue,
+                            softWrap = false,
+                            maxLines = 1,
+                            overflow = TextOverflow.Visible,
+                            style = androidx.compose.ui.text.TextStyle(
+                                letterSpacing = effLetterSpacing.sp,
+                                lineHeight = effLineHeight.sp
+                            ),
+                            modifier = Modifier.graphicsLayer {
+                                translationX = off.x
+                                translationY = off.y
+                            }
+                        )
+                    }
+                }
+
+                // ═══ STROKE ═══
+                if (textState.strokeEnabled && strokeWidthPx > 0f) {
+                    Text(
+                        text = displayContent,
+                        color = Color(textState.strokeColor),
+                        fontSize = finalFontSize.sp,
+                        fontWeight = weight,
+                        fontStyle = fontSty,
+                        fontFamily = family,
+                        textAlign = textAlignValue,
+                        softWrap = false,
+                        maxLines = 1,
+                        overflow = TextOverflow.Visible,
+                        style = androidx.compose.ui.text.TextStyle(
+                            drawStyle = androidx.compose.ui.graphics.drawscope.Stroke(
+                                width = strokeWidthPx,
+                                join = androidx.compose.ui.graphics.StrokeJoin.Round,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round
+                            ),
+                            letterSpacing = effLetterSpacing.sp,
+                            lineHeight = effLineHeight.sp
+                        )
+                    )
+                }
+
+                // ═══ FILL ═══
+                Text(
+                    text = displayContent,
+                    color = if (gradient != null) Color.Unspecified else solidColor,
+                    fontSize = finalFontSize.sp,
+                    fontWeight = weight,
+                    fontStyle = fontSty,
+                    fontFamily = family,
+                    textAlign = textAlignValue,
+                    softWrap = false,
+                    maxLines = 1,
+                    overflow = TextOverflow.Visible,
+                    style = androidx.compose.ui.text.TextStyle(
+                        brush = gradient,
+                        letterSpacing = effLetterSpacing.sp,
+                        lineHeight = effLineHeight.sp
+                    )
+                )
+            }
         }
     }
 }
@@ -661,6 +832,22 @@ private fun InteractiveStickerOverlay(
     val localTimeSec = ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
     val sampled = TransformApplier.resolveLive(clip, localTimeSec)
 
+    val baseStickerSize = 48f
+    val effStickerSize = TextScaler.fontSize(
+        baseSize = baseStickerSize.toInt(),
+        canvasWidthDp = canvasW
+    )
+
+    val stickerSizeDp = effStickerSize * (sampled.scale / 100f)
+    val (clampedX, clampedY) = TextScaler.clampPosition(
+        x = sampled.x,
+        y = sampled.y,
+        textWidthDp = stickerSizeDp,
+        textHeightDp = stickerSizeDp,
+        canvasWidthDp = canvasW,
+        canvasHeightDp = canvasH
+    )
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -668,8 +855,8 @@ private fun InteractiveStickerOverlay(
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
 
-                    val baseX = sampled.x
-                    val baseY = sampled.y
+                    val baseX = clampedX
+                    val baseY = clampedY
                     val baseScale = sampled.scale
                     val baseRot = sampled.rotation
 
@@ -719,12 +906,17 @@ private fun InteractiveStickerOverlay(
                             c2.consume()
                         }
 
-                        val dxPct = accumPanX / size.width * 100f
-                        val dyPct = accumPanY / size.height * 100f
-                        onPositionChanged(
-                            (baseX + dxPct).coerceIn(0f, 100f),
-                            (baseY + dyPct).coerceIn(0f, 100f)
+                        val rawX = baseX + accumPanX / size.width * 100f
+                        val rawY = baseY + accumPanY / size.height * 100f
+                        val (cx, cy) = TextScaler.clampPosition(
+                            x = rawX,
+                            y = rawY,
+                            textWidthDp = stickerSizeDp,
+                            textHeightDp = stickerSizeDp,
+                            canvasWidthDp = canvasW,
+                            canvasHeightDp = canvasH
                         )
+                        onPositionChanged(cx, cy)
                         onTransformChanged(
                             (baseScale * accumZoom).coerceIn(10f, 500f),
                             baseRot + accumRot
@@ -740,8 +932,8 @@ private fun InteractiveStickerOverlay(
         Box(
             modifier = Modifier
                 .graphicsLayer {
-                    val posTx = (sampled.x - 50f) / 100f * canvasW
-                    val posTy = (sampled.y - 50f) / 100f * canvasH
+                    val posTx = (clampedX - 50f) / 100f * canvasW
+                    val posTy = (clampedY - 50f) / 100f * canvasH
                     translationX = posTx
                     translationY = posTy
                     scaleX = sampled.scale / 100f
@@ -760,7 +952,7 @@ private fun InteractiveStickerOverlay(
                 )
                 .padding(6.dp)
         ) {
-            Text(text = stickerState.emoji, fontSize = 48.sp)
+            Text(text = stickerState.emoji, fontSize = effStickerSize.sp)
         }
     }
 }
