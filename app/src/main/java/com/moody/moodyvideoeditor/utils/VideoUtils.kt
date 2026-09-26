@@ -77,6 +77,54 @@ object VideoUtils {
         return 0L
     }
 
+
+    fun getMimeType(context: Context, uri: Uri): String {
+        try {
+            val type = context.contentResolver.getType(uri)
+            if (!type.isNullOrBlank()) return type
+        } catch (_: Exception) {
+        }
+
+        val name = getFileName(context, uri).lowercase()
+        return when {
+            // VIDEO
+            name.endsWith(".mp4") -> "video/mp4"
+            name.endsWith(".m4v") -> "video/mp4"
+            name.endsWith(".mov") -> "video/quicktime"
+            name.endsWith(".mkv") -> "video/x-matroska"
+            name.endsWith(".webm") -> "video/webm"
+            name.endsWith(".avi") -> "video/x-msvideo"
+            name.endsWith(".3gp") -> "video/3gpp"
+            name.endsWith(".3g2") -> "video/3gpp2"
+            name.endsWith(".flv") -> "video/x-flv"
+            name.endsWith(".wmv") -> "video/x-ms-wmv"
+            name.endsWith(".mpg") || name.endsWith(".mpeg") -> "video/mpeg"
+            name.endsWith(".ts") -> "video/mp2t"
+
+            // IMAGE
+            name.endsWith(".jpg") -> "image/jpeg"
+            name.endsWith(".jpeg") -> "image/jpeg"
+            name.endsWith(".jpe") -> "image/jpeg"
+            name.endsWith(".jfif") -> "image/jpeg"
+            name.endsWith(".jif") -> "image/jpeg"
+            name.endsWith(".jfi") -> "image/jpeg"
+            name.endsWith(".png") -> "image/png"
+            name.endsWith(".apng") -> "image/apng"
+            name.endsWith(".webp") -> "image/webp"
+            name.endsWith(".gif") -> "image/gif"
+            name.endsWith(".bmp") -> "image/bmp"
+            name.endsWith(".heic") -> "image/heic"
+            name.endsWith(".heif") -> "image/heif"
+            name.endsWith(".avif") -> "image/avif"
+            name.endsWith(".tif") || name.endsWith(".tiff") -> "image/tiff"
+            name.endsWith(".svg") -> "image/svg+xml"
+
+            else -> "video/mp4"
+        }
+    }
+
+    fun isImage(mimeType: String): Boolean = mimeType.startsWith("image/")
+    fun isVideo(mimeType: String): Boolean = mimeType.startsWith("video/")
     fun formatDuration(ms: Long): String {
         val totalSec = ms / 1000
         val min = totalSec / 60

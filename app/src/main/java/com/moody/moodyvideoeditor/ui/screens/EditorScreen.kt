@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Icon
@@ -31,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -69,6 +71,7 @@ import com.moody.moodyvideoeditor.ui.features.FreezePanel
 import com.moody.moodyvideoeditor.ui.features.MotionPanel
 import com.moody.moodyvideoeditor.ui.features.MusicPanel
 import com.moody.moodyvideoeditor.ui.features.OverlaysPanel
+import com.moody.moodyvideoeditor.ui.features.PromptPanel
 import com.moody.moodyvideoeditor.ui.features.SoundFxPanel
 import com.moody.moodyvideoeditor.ui.features.SpeedPanel
 import com.moody.moodyvideoeditor.ui.features.StickersPanel
@@ -79,6 +82,8 @@ import com.moody.moodyvideoeditor.ui.features.TrimPanel
 import com.moody.moodyvideoeditor.ui.features.VolumePanel
 import com.moody.moodyvideoeditor.utils.BeatsEngine
 import com.moody.moodyvideoeditor.utils.CropEngine
+import com.moody.moodyvideoeditor.utils.PromptEngine
+import com.moody.moodyvideoeditor.utils.PromptExecutor
 import com.moody.moodyvideoeditor.utils.SpeedEngine
 import com.moody.moodyvideoeditor.utils.TransformApplier
 import com.moody.moodyvideoeditor.utils.TransformValues
@@ -104,6 +109,9 @@ fun EditorScreen(
     var isExporting by remember { mutableStateOf(false) }
     var exportProgress by remember { mutableFloatStateOf(0f) }
     var exportMessage by remember { mutableStateOf("") }
+
+    var promptFeedback by remember { mutableStateOf("") }
+    var promptFeedbackType by remember { mutableStateOf("none") }
 
     var isPlaybackActive by remember { mutableStateOf(false) }
 
@@ -200,33 +208,36 @@ fun EditorScreen(
         }
     }
 
-    // Timer-based playback
-    LaunchedEffect(Unit) {
+    // 🆕 Timer-based playback — reads fresh values
+    LaunchedEffect(isPlaybackActive) {
+        if (!isPlaybackActive) return@LaunchedEffect
+
         var lastWallMs = System.currentTimeMillis()
-        while (true) {
+        while (isPlaybackActive) {
             val now = System.currentTimeMillis()
             val wallDelta = now - lastWallMs
             lastWallMs = now
 
-            if (isPlaybackActive) {
-                val totalDur = state.totalDurationMs.coerceAtLeast(1000L)
-                val next = state.currentPosMs + wallDelta
-                if (next >= totalDur) {
-                    viewModel.setCurrentPos(totalDur)
-                    isPlaybackActive = false
-                    exoPlayer.pause()
-                } else {
-                    viewModel.setCurrentPos(next)
-                }
+            val s = viewModel.state.value
+            val totalDur = s.totalDurationMs.coerceAtLeast(1000L)
+            val next = s.currentPosMs + wallDelta
+
+            if (next >= totalDur) {
+                viewModel.setCurrentPos(totalDur)
+                isPlaybackActive = false
+                exoPlayer.pause()
+            } else {
+                viewModel.setCurrentPos(next)
             }
-            viewModel.setPlaying(isPlaybackActive)
             delay(33)
         }
     }
 
     // Media picker
+    // 🆕 Use OpenMultipleDocuments to allow video + image
+    // Media picker — videos + images
     val picker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? -> uri?.let { pendingUri = it } }
 
     // Folder picker
@@ -245,20 +256,96 @@ fun EditorScreen(
             viewModel.setExportFolderUri(folderUri.toString())
         }
     }
-
     LaunchedEffect(pendingUri) {
         val uri = pendingUri ?: return@LaunchedEffect
         try {
             val result = withContext(Dispatchers.IO) {
                 val name = VideoUtils.getFileName(context, uri)
-                val dur = VideoUtils.getVideoDuration(context, uri)
-                Triple(name, dur, dur)
+                var mime = VideoUtils.getMimeType(context, uri)
+                val nameLower = name.lowercase()
+
+                // 🆕 Force .jfif / .jif / .jfi as image/jpeg
+                val isJfifVariant = nameLower.endsWith(".jfif") ||
+                        nameLower.endsWith(".jif") ||
+                        nameLower.endsWith(".jfi")
+
+                if (isJfifVariant) {
+                    mime = "image/jpeg"
+                }
+
+                val isImage = mime.startsWith("image/")
+
+                // 🆕 Copy .jfif to cache as .jpg so Coil can decode
+                val finalUri: Uri = if (isJfifVariant) {
+                    try {
+                        val cacheFile = java.io.File(
+                            context.cacheDir,
+                            "img_${System.currentTimeMillis()}.jpg"
+                        )
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            cacheFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        Uri.fromFile(cacheFile)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        uri
+                    }
+                } else uri
+
+                val dur = if (isImage) 5000L
+                else VideoUtils.getVideoDuration(context, uri)
+
+                try {
+                    context.contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: Exception) {
+                }
+
+                MediaInfo(name, dur, mime, finalUri)
             }
-            viewModel.addClipSmart(uri, result.first, result.second)
+            viewModel.addClipSmart(
+                uri = result.finalUri,
+                name = result.name,
+                durationMs = result.durationMs,
+                mediaType = result.mimeType
+            )
         } catch (e: Exception) {
             e.printStackTrace()
         } finally {
             pendingUri = null
+        }
+    }
+    fun runPrompt(input: String) {
+        try {
+            val parsed = PromptEngine.parse(input)
+            val report = PromptExecutor.execute(parsed, viewModel)
+
+            promptFeedbackType = report.statusType
+
+            val sb = StringBuilder()
+            if (report.successCount > 0) {
+                sb.append("✅ Applied ${report.successCount}:\n")
+                sb.append(report.applied.joinToString("\n") { "  • $it" })
+            }
+            if (report.unknownCount > 0) {
+                if (sb.isNotEmpty()) sb.append("\n\n")
+                sb.append("⚠️ Unknown (${report.unknownCount}):\n")
+                sb.append(report.unknown.joinToString("\n") { "  • $it" })
+            }
+            if (report.errorCount > 0) {
+                if (sb.isNotEmpty()) sb.append("\n\n")
+                sb.append("❌ Errors (${report.errorCount}):\n")
+                sb.append(report.errors.joinToString("\n") { "  • $it" })
+            }
+            if (sb.isEmpty()) sb.append("Nothing to apply")
+            promptFeedback = sb.toString()
+        } catch (e: Exception) {
+            promptFeedback = "❌ ${e.message}"
+            promptFeedbackType = "error"
         }
     }
 
@@ -324,17 +411,24 @@ fun EditorScreen(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f)
             )
-            Text(
-                "Export",
-                color = Color(0xFF7C3AED),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
+            Box(
                 modifier = Modifier
-                    .padding(end = 12.dp)
+                    .padding(top = 10.dp, end = 10.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF7C3AED).copy(alpha = 0.2f))
                     .pointerInput(Unit) {
                         detectTapGestures { activePanel = "export" }
                     }
-            )
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "💾 Export",
+                    color = Color(0xFF7C3AED),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
 
         // PREVIEW
@@ -374,7 +468,18 @@ fun EditorScreen(
 
         // CONTROL BAR
         ControlBar(
-            onMediaClick = { picker.launch("video/*") },
+            onMediaClick = {
+                // 🆕 Broad filter — covers .jfif, .jif, .jfi etc
+                picker.launch(
+                    arrayOf(
+                        "video/*",
+                        "image/*",
+                        "image/jpeg",
+                        "image/jpg",
+                        "application/octet-stream"
+                    )
+                )
+            },
             onAddVisualLayer = { viewModel.addVisualLayer() },
             onAddAudioLayer = { viewModel.addAudioLayer() },
             currentRatio = state.aspectRatio,
@@ -413,6 +518,7 @@ fun EditorScreen(
                         isPlaybackActive = false
                         if (exoPlayer.isPlaying) exoPlayer.pause()
                         viewModel.setCurrentPos(t)
+                        viewModel.clearSelection()
 
                         val sel = state.selectedClip
                         if (sel != null && sel.isVisualClip) {
@@ -455,7 +561,7 @@ fun EditorScreen(
             isMuted = state.isMuted,
             currentPosMs = state.currentPosMs,
             totalDurationMs = state.totalDurationMs,
-            hasVideo = state.clips.any { it.isVisualClip },
+            hasVideo = state.clips.isNotEmpty(),
             canUndo = state.canUndo,
             canRedo = state.canRedo,
             hasKeyframeAtPlayhead = viewModel.hasKeyframeAtPlayhead(),
@@ -464,18 +570,20 @@ fun EditorScreen(
                     isPlaybackActive = false
                     exoPlayer.pause()
                 } else {
-                    val totalDur = state.totalDurationMs
-                    if (state.currentPosMs >= totalDur) {
-                        viewModel.setCurrentPos(0L)
+                    if (state.clips.isNotEmpty()) {
+                        val totalDur = state.totalDurationMs
+                        if (state.currentPosMs >= totalDur) {
+                            viewModel.setCurrentPos(0L)
+                        }
+                        isPlaybackActive = true
+                        val activeClip = state.clips.firstOrNull {
+                            it.isVisualClip &&
+                                    state.currentPosMs >= it.timelineStartMs &&
+                                    state.currentPosMs < it.timelineEndMs &&
+                                    !state.hiddenVisualTracks.contains(it.trackIndex)
+                        }
+                        if (activeClip != null) exoPlayer.play()
                     }
-                    isPlaybackActive = true
-                    val activeClip = state.clips.firstOrNull {
-                        it.isVisualClip &&
-                                state.currentPosMs >= it.timelineStartMs &&
-                                state.currentPosMs < it.timelineEndMs &&
-                                !state.hiddenVisualTracks.contains(it.trackIndex)
-                    }
-                    if (activeClip != null) exoPlayer.play()
                 }
             },
             onSplit = { viewModel.splitCurrentClip() },
@@ -493,6 +601,17 @@ fun EditorScreen(
 
             when (activePanel) {
                 null -> FeatureShelf(onFeatureSelected = { activePanel = it })
+
+                "code" -> PromptPanel(
+                    feedback = promptFeedback,
+                    feedbackType = promptFeedbackType,
+                    onApply = { input -> runPrompt(input) },
+                    onClear = {
+                        promptFeedback = ""
+                        promptFeedbackType = "none"
+                    },
+                    onClose = { activePanel = null }
+                )
 
                 "trim" -> TrimPanel(
                     clipName = selected?.name ?: "",
@@ -765,3 +884,10 @@ fun EditorScreen(
         }
     }
 }
+
+private data class MediaInfo(
+    val name: String,
+    val durationMs: Long,
+    val mimeType: String,
+    val finalUri: Uri
+)

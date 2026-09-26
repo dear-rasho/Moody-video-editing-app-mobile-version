@@ -52,6 +52,7 @@ val FEATURES = listOf(
     Feature("ratio", "Ratio", "🖼️"),
     Feature("duplicate", "Dup", "📋"),
     Feature("delete", "Delete", "🗑"),
+    Feature("code", "Code", "💻"),
     Feature("export", "Export", "💾")
 )
 

@@ -49,7 +49,8 @@ class VideoExporter(
         when {
             visualClips.isNotEmpty() -> {
                 val outputFile = createOutputFile(fileName, format)
-                val videoFilters = FFmpegFilters.build(adjustments)
+                val adjustmentFilters = FFmpegFilters.build(adjustments)
+                val textStickerFilters = buildTextStickerFilters(textClips, stickerClips)
 
                 val (targetW, targetH) = ExportSettings.targetDimensions(
                     resolution, aspectRatio
@@ -68,11 +69,12 @@ class VideoExporter(
                 ffmpeg?.export(
                     clips = visualClips,
                     outputFile = outputFile,
-                    videoFilters = videoFilters,
+                    videoFilters = adjustmentFilters,
                     targetW = targetW,
                     targetH = targetH,
                     fps = fps,
-                    bitrateKbps = bitrateKbps
+                    bitrateKbps = bitrateKbps,
+                    textFilters = textStickerFilters
                 )
             }
 
@@ -92,27 +94,18 @@ class VideoExporter(
         }
     }
 
-    private fun exportSynthetic(
+    private fun buildTextStickerFilters(
         textClips: List<EditorClip>,
-        stickerClips: List<EditorClip>,
-        overlayClips: List<EditorClip>,
-        totalDurationMs: Long,
-        fileName: String,
-        aspectRatio: String = "16:9",
-        customFolderUri: String? = null
-    ) {
-        val outputFile = createOutputFile(fileName, "mp4")
-        val durSec = (totalDurationMs / 1000.0).coerceAtLeast(1.0)
-        val (targetW, targetH) = ExportSettings.targetDimensions(
-            aspectRatio = aspectRatio,
-            resolution = "720p"
-        )
+        stickerClips: List<EditorClip>
+    ): String {
+        val filters = mutableListOf<String>()
 
-        val filterChain = mutableListOf<String>()
+        val fontPath = FontFileHelper.getFontPath(context)
+        val fontPart = fontPath?.let { "fontfile='${FontFileHelper.escapeFontPath(it)}':" } ?: ""
 
-        textClips.forEachIndexed { idx, clip ->
-            val st = clip.textState ?: return@forEachIndexed
-            if (st.content.isBlank()) return@forEachIndexed
+        textClips.forEach { clip ->
+            val st = clip.textState ?: return@forEach
+            if (st.content.isBlank()) return@forEach
 
             val startSec = clip.timelineStartMs / 1000.0
             val endSec = clip.timelineEndMs / 1000.0
@@ -122,14 +115,17 @@ class VideoExporter(
                 .replace(":", "\\:")
                 .replace("'", "\\'")
                 .replace("%", "\\%")
+                .replace("\n", " ")
 
-            val posX = "w*${st.positionX / 100.0}-text_w/2"
-            val posY = "h*${st.positionY / 100.0}-text_h/2"
+            val posX = "(w-text_w)*${st.positionX / 100.0}"
+            val posY = "(h-text_h)*${st.positionY / 100.0}"
+
             val textColor = String.format("0x%06X", (st.color and 0xFFFFFF))
-            val fontSize = (st.fontSize * 2).coerceIn(16, 200)
+            val fontSize = (st.fontSize * 1.5).toInt().coerceIn(16, 200)
 
-            filterChain.add(
-                "drawtext=text='$escaped':" +
+            filters.add(
+                "drawtext=$fontPart" +
+                        "text='$escaped':" +
                         "fontsize=$fontSize:" +
                         "fontcolor=$textColor:" +
                         "x=$posX:y=$posY:" +
@@ -149,13 +145,85 @@ class VideoExporter(
                 .replace(":", "\\:")
                 .replace("'", "\\'")
 
-            val posX = "w*${ss.x / 100.0}-text_w/2"
-            val posY = "h*${ss.y / 100.0}-text_h/2"
-            val fontSize = 96
+            val posX = "(w-text_w)*${ss.x / 100.0}"
+            val posY = "(h-text_h)*${ss.y / 100.0}"
+
+            filters.add(
+                "drawtext=$fontPart" +
+                        "text='$escaped':" +
+                        "fontsize=96:" +
+                        "x=$posX:y=$posY:" +
+                        "enable='between(t,$startSec,$endSec)'"
+            )
+        }
+
+        return filters.joinToString(",")
+    }
+
+    private fun exportSynthetic(
+        textClips: List<EditorClip>,
+        stickerClips: List<EditorClip>,
+        overlayClips: List<EditorClip>,
+        totalDurationMs: Long,
+        fileName: String,
+        aspectRatio: String = "16:9",
+        customFolderUri: String? = null
+    ) {
+        val outputFile = createOutputFile(fileName, "mp4")
+        val durSec = (totalDurationMs / 1000.0).coerceAtLeast(1.0)
+        val (targetW, targetH) = ExportSettings.targetDimensions("720p", aspectRatio)
+
+        val filterChain = mutableListOf<String>()
+
+        val fontPath = FontFileHelper.getFontPath(context)
+        val fontPart = fontPath?.let { "fontfile='${FontFileHelper.escapeFontPath(it)}':" } ?: ""
+
+        textClips.forEach { clip ->
+            val st = clip.textState ?: return@forEach
+            if (st.content.isBlank()) return@forEach
+            val startSec = clip.timelineStartMs / 1000.0
+            val endSec = clip.timelineEndMs / 1000.0
+
+            val escaped = st.content
+                .replace("\\", "\\\\")
+                .replace(":", "\\:")
+                .replace("'", "\\'")
+                .replace("%", "\\%")
+                .replace("\n", " ")
+
+            val posX = "(w-text_w)*${st.positionX / 100.0}"
+            val posY = "(h-text_h)*${st.positionY / 100.0}"
+            val textColor = String.format("0x%06X", (st.color and 0xFFFFFF))
+            val fontSize = (st.fontSize * 1.5).toInt().coerceIn(16, 200)
 
             filterChain.add(
-                "drawtext=text='$escaped':" +
+                "drawtext=$fontPart" +
+                        "text='$escaped':" +
                         "fontsize=$fontSize:" +
+                        "fontcolor=$textColor:" +
+                        "x=$posX:y=$posY:" +
+                        "enable='between(t,$startSec,$endSec)'"
+            )
+        }
+
+        stickerClips.forEach { clip ->
+            val ss = clip.stickerState ?: return@forEach
+            if (ss.emoji.isBlank()) return@forEach
+            val startSec = clip.timelineStartMs / 1000.0
+            val endSec = clip.timelineEndMs / 1000.0
+
+            val escaped = ss.emoji
+                .replace("\\", "\\\\")
+                .replace(":", "\\:")
+                .replace("'", "\\'")
+
+            val posX = "(w-text_w)*${ss.x / 100.0}"
+            val posY = "(h-text_h)*${ss.y / 100.0}"
+
+            filterChain.add(
+                "drawtext=$fontPart" +
+                        "text='$escaped':" +
+                        "fontsize=96:" +
                         "x=$posX:y=$posY:" +
                         "enable='between(t,$startSec,$endSec)'"
             )
@@ -188,6 +256,8 @@ class VideoExporter(
             "-vf", vf,
             "-c:v", "mpeg4",
             "-qscale:v", "4",
+            "-pix_fmt", "yuv420p",
+            "-b:v", "5000k",
             "-movflags", "+faststart",
             outputFile.absolutePath
         )
@@ -202,7 +272,7 @@ class VideoExporter(
                         else onSuccess(Uri.fromFile(outputFile))
                     } else {
                         val logs = s.allLogsAsString ?: "Unknown error"
-                        onError("Synthetic export failed: ${logs.takeLast(300)}")
+                        onError("Synthetic export failed: ${logs.takeLast(1500)}")
                     }
                 },
                 { _ -> },
@@ -242,14 +312,20 @@ class VideoExporter(
     }
 
     private fun saveToGallery(sourceFile: File, customFolderUri: String? = null): Uri? {
-        // 🆕 Custom folder via SAF
         if (customFolderUri != null) {
             try {
                 val treeUri = Uri.parse(customFolderUri)
+                val parentDocId = DocumentsContract.getTreeDocumentId(treeUri)
+                val parentDocUri = DocumentsContract.buildDocumentUriUsingTree(
+                    treeUri, parentDocId
+                )
+                val mimeType = if (sourceFile.name.endsWith(".mov")) "video/quicktime"
+                else "video/mp4"
+
                 val docUri = DocumentsContract.createDocument(
                     context.contentResolver,
-                    treeUri,
-                    "video/mp4",
+                    parentDocUri,
+                    mimeType,
                     sourceFile.name
                 )
                 if (docUri != null) {
@@ -263,7 +339,6 @@ class VideoExporter(
             }
         }
 
-        // Default: MediaStore
         return try {
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, sourceFile.name)

@@ -8,27 +8,21 @@ import android.view.LayoutInflater
 import android.view.TextureView
 import android.view.View
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -46,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -55,6 +50,9 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import coil.compose.rememberAsyncImagePainter
+import coil.decode.BitmapFactoryDecoder
+import coil.request.ImageRequest
 import com.moody.moodyvideoeditor.R
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.utils.ColorMatrixBuilder
@@ -99,6 +97,7 @@ fun PreviewCanvas(
 
     val videoTrackIdx = activeVisual?.trackIndex ?: 0
 
+    // ═══ TRANSITION DETECTION ═══
     val activeTransitionClip = remember(currentPosMs, clips) {
         clips.firstOrNull { c ->
             !c.isAudio &&
@@ -151,11 +150,13 @@ fun PreviewCanvas(
         }
     }
 
+    // ═══ TRANSFORM ═══
     val videoTransform: TransformValues = activeVisual?.let {
         val timeSec = ((currentPosMs - it.timelineStartMs) / 1000f).coerceAtLeast(0f)
         TransformApplier.resolveLive(it, timeSec)
     } ?: TransformValues()
 
+    // ═══ ADJUSTMENT ═══
     val activeAdjustment = clips
         .filter {
             it.isAdjustmentClip &&
@@ -166,6 +167,7 @@ fun PreviewCanvas(
         .maxByOrNull { it.trackIndex }
         ?.adjustments
 
+    // ═══ EFFECTS ═══
     val activeEffects = EffectsEngine.getEffectsAbove(clips, currentPosMs, videoTrackIdx)
     val timeSec = currentPosMs / 1000f
 
@@ -225,9 +227,13 @@ fun PreviewCanvas(
         val sideBar = ((windowW - canvasW) / 2f).coerceAtLeast(0f)
         val topBar = ((windowH - canvasH) / 2f).coerceAtLeast(0f)
 
-        // ═══ VIDEO LAYER ═══
+        // ═══════════════════════════════════════════════════════════
+        //  MEDIA LAYER — Video OR Image
+        // ═══════════════════════════════════════════════════════════
         Box(modifier = Modifier.fillMaxSize()) {
-            if (hasVideo && activeVisual != null) {
+            if (activeVisual != null) {
+                val isImage = activeVisual.type.startsWith("image/")
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -273,39 +279,60 @@ fun PreviewCanvas(
                             clip = true
                         }
                 ) {
-                    AndroidView(
-                        factory = { ctx ->
-                            LayoutInflater.from(ctx)
-                                .inflate(R.layout.view_player, null) as PlayerView
-                        },
-                        update = { view ->
-                            view.player = exoPlayer
-                            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                            view.rotation = rotation.toFloat()
+                    if (isImage) {
+                        // ═══ IMAGE — force BitmapFactory to handle .jfif/.jpg/.png etc ═══
+                        val imageRequest = remember(activeVisual.uri) {
+                            ImageRequest.Builder(context)
+                                .data(activeVisual.uri)
+                                .decoderFactory(BitmapFactoryDecoder.Factory())
+                                .crossfade(false)
+                                .build()
+                        }
+                        val imgPainter = rememberAsyncImagePainter(imageRequest)
+                        Image(
+                            painter = imgPainter,
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else if (hasVideo) {
+                        // ═══ VIDEO ═══
+                        AndroidView(
+                            factory = { ctx ->
+                                LayoutInflater.from(ctx)
+                                    .inflate(R.layout.view_player, null) as PlayerView
+                            },
+                            update = { view ->
+                                view.player = exoPlayer
+                                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                view.rotation = rotation.toFloat()
 
-                            val surfaceView = view.videoSurfaceView
-                            if (surfaceView is TextureView) {
-                                if (applyMatrix) {
-                                    val paint = Paint().apply {
-                                        colorFilter = ColorMatrixColorFilter(combinedMatrix)
+                                val surfaceView = view.videoSurfaceView
+                                if (surfaceView is TextureView) {
+                                    if (applyMatrix) {
+                                        val paint = Paint().apply {
+                                            colorFilter = ColorMatrixColorFilter(combinedMatrix)
+                                        }
+                                        surfaceView.setLayerType(
+                                            View.LAYER_TYPE_HARDWARE, paint
+                                        )
+                                    } else {
+                                        surfaceView.setLayerType(
+                                            View.LAYER_TYPE_HARDWARE, null
+                                        )
                                     }
-                                    surfaceView.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
-                                } else {
-                                    surfaceView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
                                 }
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                 }
-            } else if (hasVideo) {
-                EmptyPreview("Move playhead onto a video clip")
-            } else {
-                EmptyPreview("Tap + Media below to pick a video")
             }
         }
 
-        // ═══ CANVAS LAYER (ratio-sized, centered) ═══
+        // ═══════════════════════════════════════════════════════════
+        //  CANVAS LAYER (ratio-sized, centered)
+        // ═══════════════════════════════════════════════════════════
         Box(
             modifier = Modifier
                 .width(canvasW.dp)
@@ -352,7 +379,7 @@ fun PreviewCanvas(
                 )
             }
 
-            // ═══ TEXT ═══
+            // TEXT
             clips.filter {
                 it.isTextClip &&
                         currentPosMs >= it.timelineStartMs &&
@@ -373,7 +400,7 @@ fun PreviewCanvas(
                 )
             }
 
-            // ═══ STICKER ═══
+            // STICKER
             clips.filter {
                 it.isStickerClip &&
                         currentPosMs >= it.timelineStartMs &&
@@ -395,7 +422,7 @@ fun PreviewCanvas(
             }
         }
 
-        // ═══ MASKS ═══
+        // MASKS
         if (sideBar > 0.5f) {
             Box(
                 modifier = Modifier
@@ -429,6 +456,7 @@ fun PreviewCanvas(
             )
         }
 
+        // Canvas border
         Box(
             modifier = Modifier
                 .width(canvasW.dp)
@@ -734,33 +762,5 @@ private fun InteractiveStickerOverlay(
         ) {
             Text(text = stickerState.emoji, fontSize = 48.sp)
         }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  EMPTY PREVIEW
-// ═══════════════════════════════════════════════════════════════
-@Composable
-private fun EmptyPreview(hint: String) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = Icons.Filled.Movie,
-            contentDescription = null,
-            tint = Color(0xFF444444),
-            modifier = Modifier.size(56.dp)
-        )
-        Spacer(modifier = Modifier.height(10.dp))
-        Text(
-            "Video Preview",
-            color = Color(0xFF888888),
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(hint, color = Color(0xFF666666), fontSize = 11.sp)
     }
 }

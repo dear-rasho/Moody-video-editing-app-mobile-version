@@ -2,6 +2,7 @@ package com.moody.moodyvideoeditor.utils
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegSession
 import com.arthenica.ffmpegkit.ReturnCode
@@ -16,9 +17,6 @@ class FFmpegExecutor(
 ) {
     private var currentSession: FFmpegSession? = null
 
-    // ═══════════════════════════════════════════════════════════
-    //  PUBLIC — Export
-    // ═══════════════════════════════════════════════════════════
     fun export(
         clips: List<EditorClip>,
         outputFile: File,
@@ -27,14 +25,14 @@ class FFmpegExecutor(
         targetW: Int = 1280,
         targetH: Int = 720,
         fps: Int = 30,
-        bitrateKbps: Int = 8000
+        bitrateKbps: Int = 8000,
+        textFilters: String = ""
     ) {
         if (clips.isEmpty()) {
             onError("No clips to export")
             return
         }
 
-        // ⚠️ CRITICAL: content:// URI ko real file mein copy karo
         val localFiles = mutableListOf<File>()
         for (clip in clips) {
             val f = copyUriToCache(clip.uri, "clip_${clip.id}.mp4")
@@ -48,21 +46,18 @@ class FFmpegExecutor(
         if (localFiles.size == 1) {
             exportSingleClip(
                 clips[0], localFiles[0], outputFile,
-                videoFilters, audioFilters, targetW, targetH,
-                fps, bitrateKbps
+                videoFilters, audioFilters, targetW, targetH, fps, bitrateKbps,
+                textFilters
             )
         } else {
             exportMultipleClips(
                 clips, localFiles, outputFile,
-                videoFilters, audioFilters, targetW, targetH,
-                fps, bitrateKbps
+                videoFilters, audioFilters, targetW, targetH, fps, bitrateKbps,
+                textFilters
             )
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  URI → FILE
-    // ═══════════════════════════════════════════════════════════
     private fun copyUriToCache(uri: Uri, fileName: String): File? {
         return try {
             val file = File(context.cacheDir, fileName)
@@ -80,9 +75,6 @@ class FFmpegExecutor(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  SINGLE CLIP
-    // ═══════════════════════════════════════════════════════════
     private fun exportSingleClip(
         clip: EditorClip,
         localFile: File,
@@ -92,7 +84,8 @@ class FFmpegExecutor(
         targetW: Int,
         targetH: Int,
         fps: Int,
-        bitrateKbps: Int
+        bitrateKbps: Int,
+        textFilters: String
     ) {
         try {
             val args = mutableListOf<String>()
@@ -100,7 +93,6 @@ class FFmpegExecutor(
             args.add("-i")
             args.add(localFile.absolutePath)
 
-            // Trim
             if (clip.sourceStartMs > 0) {
                 args.add("-ss")
                 args.add((clip.sourceStartMs / 1000.0).toString())
@@ -110,7 +102,6 @@ class FFmpegExecutor(
                 args.add(((clip.sourceEndMs - clip.sourceStartMs) / 1000.0).toString())
             }
 
-            // Video filters
             val vf = mutableListOf<String>()
             if (clip.speed != 1.0f) {
                 vf.add("setpts=${1.0f / clip.speed}*PTS")
@@ -118,15 +109,16 @@ class FFmpegExecutor(
             if (videoFilters.isNotBlank()) {
                 vf.add(videoFilters)
             }
-            // 🆕 Scale + pad to target ratio
             vf.add(
                 "scale=$targetW:$targetH:force_original_aspect_ratio=decrease," +
                         "pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2,setsar=1"
             )
+            if (textFilters.isNotBlank()) {
+                vf.add(textFilters)
+            }
             args.add("-vf")
             args.add(vf.joinToString(","))
 
-            // Audio filters
             val af = mutableListOf<String>()
             if (clip.speed != 1.0f) {
                 af.add("atempo=${clip.speed.coerceIn(0.5f, 2.0f)}")
@@ -139,9 +131,16 @@ class FFmpegExecutor(
                 args.add(af.joinToString(","))
             }
 
-            // ⚠️ Safe codec (h264_mediacodec sab devices pe nahi chalta)
             args.add("-c:v")
-            args.add("mpeg4")
+            args.add("mpeg4")   // fallback — hamesha available
+            args.add("-preset")
+            args.add("medium")
+            args.add("-profile:v")
+            args.add("baseline")
+            args.add("-level")
+            args.add("3.1")
+            args.add("-pix_fmt")
+            args.add("yuv420p")
             args.add("-b:v")
             args.add("${bitrateKbps}k")
             args.add("-r")
@@ -160,9 +159,6 @@ class FFmpegExecutor(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  MULTIPLE CLIPS
-    // ═══════════════════════════════════════════════════════════
     private fun exportMultipleClips(
         clips: List<EditorClip>,
         localFiles: List<File>,
@@ -172,7 +168,8 @@ class FFmpegExecutor(
         targetW: Int,
         targetH: Int,
         fps: Int,
-        bitrateKbps: Int
+        bitrateKbps: Int,
+        textFilters: String
     ) {
         try {
             val args = mutableListOf<String>()
@@ -190,7 +187,6 @@ class FFmpegExecutor(
                 val ssSec = clip.sourceStartMs / 1000.0
                 val durationSec = (clip.sourceEndMs - clip.sourceStartMs) / 1000.0
 
-                // Video filter per clip
                 var vFilter = "[$idx:v]trim=start=$ssSec:duration=$durationSec,setpts=PTS-STARTPTS"
                 if (clip.speed != 1.0f) {
                     vFilter += ",setpts=${1.0f / clip.speed}*PTS"
@@ -201,7 +197,6 @@ class FFmpegExecutor(
                 vFilter += ",scale=$targetW:$targetH:force_original_aspect_ratio=decrease,pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2,setsar=1[v$idx]"
                 filterParts.add(vFilter)
 
-                // Audio filter per clip
                 var aFilter =
                     "[$idx:a]atrim=start=$ssSec:duration=$durationSec,asetpts=PTS-STARTPTS"
                 if (clip.speed != 1.0f) {
@@ -216,16 +211,28 @@ class FFmpegExecutor(
                 concatInputs.add("[v$idx][a$idx]")
             }
 
-            filterParts.add("${concatInputs.joinToString("")}concat=n=${clips.size}:v=1:a=1[outv][outa]")
+            filterParts.add("${concatInputs.joinToString("")}concat=n=${clips.size}:v=1:a=1[concatv][outa]")
+
+            val postFilter = if (textFilters.isNotBlank()) {
+                filterParts.add("[concatv]$textFilters[outv]")
+                "[outv]"
+            } else {
+                "[concatv]"
+            }
 
             args.add("-filter_complex")
             args.add(filterParts.joinToString(";"))
             args.add("-map")
-            args.add("[outv]")
+            args.add(postFilter)
             args.add("-map")
             args.add("[outa]")
+
             args.add("-c:v")
             args.add("mpeg4")
+            args.add("-qscale:v")
+            args.add("4")
+            args.add("-pix_fmt")
+            args.add("yuv420p")
             args.add("-b:v")
             args.add("${bitrateKbps}k")
             args.add("-r")
@@ -244,21 +251,33 @@ class FFmpegExecutor(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  EXECUTE
-    // ═══════════════════════════════════════════════════════════
     private fun execute(args: List<String>) {
         try {
+            val fullCmd = args.joinToString(" ")
+            Log.e("FFMPEG_CMD", "========= COMMAND =========")
+            Log.e("FFMPEG_CMD", fullCmd)
+            Log.e("FFMPEG_CMD", "=============================")
+
             val session = FFmpegKit.executeAsync(
-                args.joinToString(" "),
+                fullCmd,
                 { s ->
                     if (ReturnCode.isSuccess(s.returnCode)) {
                         onSuccess(File(args.last()))
                     } else if (ReturnCode.isCancel(s.returnCode)) {
                         onError("Export cancelled")
                     } else {
-                        val output = s.allLogsAsString ?: "Unknown error"
-                        onError("FFmpeg failed: ${output.takeLast(300)}")
+                        val output = s.allLogsAsString ?: ""
+
+                        // Full log to Logcat
+                        Log.e("FFMPEG_FULL", output)
+
+                        // Extract last non-blank lines = actual error
+                        val lastLines = output.lines()
+                            .filter { it.isNotBlank() }
+                            .takeLast(6)
+                            .joinToString("\n")
+
+                        onError("FFmpeg error:\n$lastLines")
                     }
                 },
                 { _ -> },

@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import java.util.UUID
+import kotlin.math.abs
 
 class EditorViewModel : ViewModel() {
 
@@ -194,7 +195,12 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
-    fun addClipSmart(uri: Uri, name: String, durationMs: Long) {
+    fun addClipSmart(
+        uri: Uri,
+        name: String,
+        durationMs: Long,
+        mediaType: String = "video/mp4"   // 🆕
+    ) {
         val s = _state.value
         val durMs = if (durationMs < 100L) 5_000L else durationMs.coerceAtLeast(1_000L)
 
@@ -213,16 +219,21 @@ class EditorViewModel : ViewModel() {
 
         pushHistory()
         val linkId = "lk-${System.currentTimeMillis()}"
+        // 🆕 Image: default 5s, no linked audio
+        val isImage = mediaType.startsWith("image/")
+        val finalDurMs = if (isImage && durationMs < 100L) 5000L else durMs
+
         val videoClip = EditorClip(
-            uri = uri, name = name, type = "video/mp4",
-            sourceStartMs = 0L, sourceEndMs = durMs,
+            uri = uri, name = name, type = mediaType,
+            sourceStartMs = 0L, sourceEndMs = finalDurMs,
             timelineStartMs = s.currentPosMs,
             trackIndex = visualPlacement.trackIndex,
             isAudio = false,
-            sourceTotalMs = durMs,
-            linkedId = linkId
+            sourceTotalMs = finalDurMs,
+            linkedId = if (isImage) null else linkId   // 🆕 no audio link for images
         )
-        val audioClip = videoClip.copy(
+        // 🆕 Only create audio clip for videos
+        val audioClip = if (isImage) null else videoClip.copy(
             id = UUID.randomUUID().toString(),
             name = "$name (audio)", type = "audio/mpeg",
             trackIndex = audioPlacement.trackIndex,
@@ -236,11 +247,14 @@ class EditorViewModel : ViewModel() {
             newVisualList[visualPlacement.trackIndex] =
                 newVisualList[visualPlacement.trackIndex] + videoClip
 
-            val newAudioList = st.timelineAudioList().toMutableList()
-            while (newAudioList.size <= audioPlacement.trackIndex)
-                newAudioList.add(emptyList())
-            newAudioList[audioPlacement.trackIndex] =
-                newAudioList[audioPlacement.trackIndex] + audioClip
+            val newAudioList = if (audioClip != null) {
+                val list = st.timelineAudioList().toMutableList()
+                while (list.size <= audioPlacement.trackIndex)
+                    list.add(emptyList())
+                list[audioPlacement.trackIndex] =
+                    list[audioPlacement.trackIndex] + audioClip
+                list
+            } else st.timelineAudioList()
 
             st.copy(
                 clips = newVisualList.flatten() + newAudioList.flatten(),
@@ -500,6 +514,15 @@ class EditorViewModel : ViewModel() {
         _state.update { it.copy(multiSelectedIds = emptySet()) }
     }
 
+    fun clearSelection() {
+        _state.update {
+            it.copy(
+                selectedClipId = null,
+                multiSelectedIds = emptySet()
+            )
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════
     //  TRIM
     // ═══════════════════════════════════════════════════════════
@@ -689,6 +712,91 @@ class EditorViewModel : ViewModel() {
         )
         pushHistory()
         addClipOnNewLayer(clip, (s.selectedClip?.trackIndex ?: 0) + 1)
+        updateHistoryFlags()
+    }
+
+    // 🆕 Timestamped text clip creation
+    // 🆕 Timestamped text — FORCE new top layer
+    // 🆕 Timestamped text — auto-fit into existing track if no overlap
+    fun createTextClipAtTime(
+        textState: TextState,
+        startMs: Long,
+        endMs: Long
+    ) {
+        val s = _state.value
+        val durMs = (endMs - startMs).coerceAtLeast(500L)
+
+        // 🆕 Find track with no overlap in this time range (V1, V2, ...)
+        val trackIdx = findOrCreateVisualTrack(
+            preferredTrack = 0,
+            startMs = startMs,
+            durMs = durMs
+        )
+
+        val clip = EditorClip(
+            id = UUID.randomUUID().toString(),
+            uri = Uri.EMPTY,
+            name = "📝 ${textState.content.take(18).ifBlank { "Text" }}",
+            type = "text/plain",
+            sourceStartMs = 0L,
+            sourceEndMs = durMs,
+            timelineStartMs = startMs,   // exact timestamp
+            trackIndex = trackIdx,
+            isAudio = false,
+            textState = textState
+        )
+        pushHistory()
+        val list = s.clips.toMutableList()
+        list.add(clip)
+        _state.update {
+            it.copy(
+                clips = list,
+                selectedClipId = clip.id,
+                selectedTrackIndex = trackIdx,
+                selectedIsAudio = false
+            )
+        }
+        updateHistoryFlags()
+    }
+
+    // 🆕 Timestamped sticker — auto-fit into existing track if no overlap
+    fun createStickerAtTime(
+        emoji: String,
+        startMs: Long,
+        endMs: Long
+    ) {
+        val s = _state.value
+        val durMs = (endMs - startMs).coerceAtLeast(500L)
+
+        val trackIdx = findOrCreateVisualTrack(
+            preferredTrack = 0,
+            startMs = startMs,
+            durMs = durMs
+        )
+
+        val clip = EditorClip(
+            id = UUID.randomUUID().toString(),
+            uri = Uri.EMPTY,
+            name = emoji,
+            type = "sticker/plain",
+            sourceStartMs = 0L,
+            sourceEndMs = durMs,
+            timelineStartMs = startMs,
+            trackIndex = trackIdx,
+            isAudio = false,
+            stickerState = StickerState(emoji = emoji)
+        )
+        pushHistory()
+        val list = s.clips.toMutableList()
+        list.add(clip)
+        _state.update {
+            it.copy(
+                clips = list,
+                selectedClipId = clip.id,
+                selectedTrackIndex = trackIdx,
+                selectedIsAudio = false
+            )
+        }
         updateHistoryFlags()
     }
 
@@ -935,6 +1043,119 @@ class EditorViewModel : ViewModel() {
             return
         }
         updateClipDirect(sel.id) { it.copy(adjustments = newAdj) }
+    }
+
+    fun updateClipAdjustment(clipId: String, newAdj: AdjustmentData) {
+        updateClipDirect(clipId) { it.copy(adjustments = newAdj) }
+    }
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 Code Mode helpers — transition all / at / layer
+    // ═══════════════════════════════════════════════════════════
+
+    fun applyTransitionAll(key: String, durationSec: Float) {
+        val durMs = (durationSec * 1000f).toLong().coerceIn(200L, 3000L)
+        val list = _state.value.clips.toMutableList()
+
+        // For each visual track, find consecutive clips and mark the RIGHT one
+        for (i in list.indices) {
+            val clip = list[i]
+            if (clip.isAudio) continue
+            val hasLeft = list.any { other ->
+                other.id != clip.id &&
+                        !other.isAudio &&
+                        other.trackIndex == clip.trackIndex &&
+                        abs(other.timelineEndMs - clip.timelineStartMs) < 100L
+            }
+            if (hasLeft) {
+                list[i] = list[i].copy(
+                    transition = TransitionState(key = key, durationMs = durMs)
+                )
+            }
+        }
+        pushHistory()
+        _state.update { it.copy(clips = list) }
+        updateHistoryFlags()
+    }
+
+    fun applyTransitionAt(key: String, timeSec: Float, durationSec: Float) {
+        val durMs = (durationSec * 1000f).toLong().coerceIn(200L, 3000L)
+        val targetMs = (timeSec * 1000f).toLong()
+        val list = _state.value.clips.toMutableList()
+
+        for (i in list.indices) {
+            val clip = list[i]
+            if (clip.isAudio) continue
+            if (abs(clip.timelineStartMs - targetMs) < 200L) {
+                list[i] = list[i].copy(
+                    transition = TransitionState(key = key, durationMs = durMs)
+                )
+            }
+        }
+        pushHistory()
+        _state.update { it.copy(clips = list) }
+        updateHistoryFlags()
+    }
+
+    fun applyLayerTransitions(pattern: String, trackIdx: Int, isAudio: Boolean) {
+        // pattern: "dissolve, slide left, zoom in" or with "loop" or "null"
+        val parts = pattern.split(",").map { it.trim() }
+        val hasLoop = parts.lastOrNull()?.lowercase() == "loop"
+        val patternList = parts.filter { it.lowercase() != "loop" }
+
+        if (patternList.isEmpty()) return
+
+        val list = _state.value.clips.toMutableList()
+        val trackClips = list
+            .filterIndexed { idx, c -> c.trackIndex == trackIdx && c.isAudio == isAudio }
+            .mapIndexed { originalIdx, c -> originalIdx to c }
+            .sortedBy { it.second.timelineStartMs }
+            .map { it.second }
+
+        var patternIdx = 0
+        var junctionCount = 0
+
+        for (i in 1 until trackClips.size) {
+            val curr = trackClips[i]
+            val prev = trackClips[i - 1]
+
+            // Only apply if adjacent
+            if (abs(prev.timelineEndMs - curr.timelineStartMs) >= 100L) continue
+
+            val patternItem = patternList[patternIdx % patternList.size]
+            if (patternItem.lowercase() == "null") {
+                // Skip
+            } else {
+                val key = patternItem.lowercase().replace(" ", "")
+                val finalKey = when (key) {
+                    "dissolve" -> "dissolve"
+                    "slideleft" -> "slideLeft"
+                    "slideright" -> "slideRight"
+                    "zoomin" -> "zoomIn"
+                    "zoomout" -> "zoomOut"
+                    "fade" -> "fade"
+                    "wipeleft" -> "wipeLeft"
+                    "wiperight" -> "wipeRight"
+                    "circlein" -> "circleIn"
+                    else -> key
+                }
+
+                val globalIdx = list.indexOfFirst { it.id == curr.id }
+                if (globalIdx >= 0) {
+                    list[globalIdx] = list[globalIdx].copy(
+                        transition = TransitionState(key = finalKey, durationMs = 500L)
+                    )
+                }
+            }
+
+            junctionCount++
+            if (!hasLoop || patternIdx < patternList.size - 1 || hasLoop) {
+                patternIdx++
+            }
+        }
+
+        pushHistory()
+        _state.update { it.copy(clips = list) }
+        updateHistoryFlags()
     }
 
     fun resetAdjustments() {
@@ -1285,18 +1506,18 @@ class EditorViewModel : ViewModel() {
     ) {
         val sel = _state.value.selectedClip ?: return
         val list = KeyframeStore.getKeyframes(sel.keyframes, prop).toMutableList()
-        val idx = list.indexOfFirst { kotlin.math.abs(it.time - oldTime) < 0.08f }
+        val idx = list.indexOfFirst { abs(it.time - oldTime) < 0.08f }
         if (idx < 0) return
 
         val clipDurSec = sel.durationMs / 1000f
         val t = newTime.coerceIn(0f, clipDurSec)
 
         val filtered = list.filterIndexed { i, kf ->
-            i == idx || kotlin.math.abs(kf.time - t) > 0.08f
+            i == idx || abs(kf.time - t) > 0.08f
         }.toMutableList()
 
         val realIdx = filtered.indexOfFirst {
-            kotlin.math.abs(it.time - oldTime) < 0.08f
+            abs(it.time - oldTime) < 0.08f
         }
         if (realIdx >= 0) {
             filtered[realIdx] = Keyframe(t, newValue, list[idx].ease)
