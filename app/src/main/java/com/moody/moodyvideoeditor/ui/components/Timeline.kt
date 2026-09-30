@@ -875,6 +875,8 @@ private fun TrackContent(
                 val ghostColor = when {
                     ghost.isAudioFxClip -> Color(0xFFA855F7)
                     ghost.isSoundFxClip -> Color(0xFF3B82F6)
+                    ghost.isFilterLayerClip -> Color(0xFFEC4899)
+                    ghost.isEffectClip -> Color(0xFFA855F7)
                     ghost.isAudio -> Color(0xFF10B981)
                     ghost.isTextClip -> Color(0xFFEC4899)
                     ghost.isStickerClip -> Color(0xFFF59E0B)
@@ -919,10 +921,10 @@ private fun TrackContent(
             val startPx = clip.timelineStartMs.toFloat() / totalMs * contentWidthPx
             val endPx = clip.timelineEndMs.toFloat() / totalMs * contentWidthPx
             val clipWidthPx = (endPx - startPx).coerceAtLeast(20f)
-
             val barColor = when {
                 clip.isAudioFxClip -> Color(0xFFA855F7)
                 clip.isSoundFxClip -> Color(0xFF3B82F6)
+                clip.isFilterLayerClip -> Color(0xFFEC4899)
                 clip.isAudio -> Color(0xFF10B981)
                 clip.isTextClip -> Color(0xFFEC4899)
                 clip.isStickerClip -> Color(0xFFF59E0B)
@@ -1134,11 +1136,13 @@ private fun TrackContent(
                             .width(with(density) { handleWidthPx.toDp() })
                             .fillMaxHeight()
                             .zIndex(5f)
-                            .pointerInput(clip.id + "-L", contentWidthPx, totalMs) {
+                            .pointerInput(clip.id + "-L") {
                                 var accumX = 0f
                                 var startMs = 0L
                                 var endMs = 0L
                                 var activeTarget: SnapTarget? = null
+                                // 🆕 Snapshot pxPerMs at drag start
+                                var dragPxPerMs = 0.01f
 
                                 detectDragGestures(
                                     onDragStart = { _: Offset ->
@@ -1146,11 +1150,14 @@ private fun TrackContent(
                                         startMs = clip.sourceStartMs
                                         endMs = clip.sourceEndMs
                                         activeTarget = null
+                                        dragPxPerMs = if (totalMs > 0L && contentWidthPx > 0f)
+                                            contentWidthPx / totalMs.toFloat()
+                                        else 0.01f
                                     },
                                     onDrag = { change, drag ->
                                         change.consume()
                                         accumX += drag.x
-                                        val dMs = (accumX / pxPerMs).toLong()
+                                        val dMs = (accumX / dragPxPerMs).toLong()
                                         val newStart = (startMs + dMs)
                                             .coerceIn(0L, endMs - EditorClip.MIN_DURATION_MS)
 
@@ -1239,11 +1246,13 @@ private fun TrackContent(
                             .width(with(density) { handleWidthPx.toDp() })
                             .fillMaxHeight()
                             .zIndex(5f)
-                            .pointerInput(clip.id + "-R", contentWidthPx, totalMs) {
+                            .pointerInput(clip.id + "-R") {
                                 var accumX = 0f
                                 var startMs = 0L
                                 var endMs = 0L
                                 var activeTarget: SnapTarget? = null
+                                // 🆕 Snapshot pxPerMs at drag start
+                                var dragPxPerMs = 0.01f
 
                                 detectDragGestures(
                                     onDragStart = { _: Offset ->
@@ -1251,11 +1260,14 @@ private fun TrackContent(
                                         startMs = clip.sourceStartMs
                                         endMs = clip.sourceEndMs
                                         activeTarget = null
+                                        dragPxPerMs = if (totalMs > 0L && contentWidthPx > 0f)
+                                            contentWidthPx / totalMs.toFloat()
+                                        else 0.01f
                                     },
                                     onDrag = { change, drag ->
                                         change.consume()
                                         accumX += drag.x
-                                        val dMs = (accumX / pxPerMs).toLong()
+                                        val dMs = (accumX / dragPxPerMs).toLong()
                                         val maxEnd = if (clip.sourceTotalMs != Long.MAX_VALUE)
                                             clip.sourceTotalMs else Long.MAX_VALUE
                                         val newEnd = (endMs + dMs)

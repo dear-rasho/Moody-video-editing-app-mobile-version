@@ -270,7 +270,6 @@ class EditorViewModel : ViewModel() {
 
         val deltaScale = if (anchorBase.scale < 0.001f) 1f
         else (newScale / anchorBase.scale)
-
         val deltaRot = newRotation - anchorBase.rotation
 
         var cx = 0f
@@ -303,19 +302,14 @@ class EditorViewModel : ViewModel() {
         val list = _state.value.clips.toMutableList()
         for (i in list.indices) {
             val snap = baseline[list[i].id] ?: continue
-
             val relX = snap.posX - cx
             val relY = snap.posY - cy
-
             val rotX = relX * cosR - relY * sinR
             val rotY = relX * sinR + relY * cosR
-
             val scaledX = rotX * deltaScale
             val scaledY = rotY * deltaScale
-
             val finalX = cx + scaledX + tx
             val finalY = cy + scaledY + ty
-
             val newClipScale = (snap.scale * deltaScale).coerceIn(10f, 500f)
             val newClipRot = snap.rotation + deltaRot
 
@@ -398,6 +392,9 @@ class EditorViewModel : ViewModel() {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  ADD CLIPS
+    // ═══════════════════════════════════════════════════════════
     fun addClipWithSource(uri: Uri, name: String, duration: Long, sourceTotalMs: Long) {
         pushHistory()
         val linkId = "lk-${System.currentTimeMillis()}"
@@ -446,10 +443,7 @@ class EditorViewModel : ViewModel() {
         val isAudioFile = mediaType.startsWith("audio/")
         val finalDurMs = if (isImage && durationMs < 100L) 5000L else durMs
 
-        // ═══════════════════════════════════════════════════════
-        //  🆕 AUDIO-ONLY IMPORT (.mp3, .wav, etc.)
-        //  Single audio clip — no video pair
-        // ═══════════════════════════════════════════════════════
+        // Audio-only import
         if (isAudioFile) {
             val audioPlacement = TimelineTools.findPlacement(
                 visualTracks = s.timelineAudioList(),
@@ -496,9 +490,7 @@ class EditorViewModel : ViewModel() {
             return
         }
 
-        // ═══════════════════════════════════════════════════════
-        //  VIDEO / IMAGE IMPORT
-        // ═══════════════════════════════════════════════════════
+        // Video / Image import
         val visualPlacement = TimelineTools.findPlacement(
             visualTracks = s.timelineVisualList(),
             visualLayerCount = s.visualLayerCount,
@@ -572,6 +564,19 @@ class EditorViewModel : ViewModel() {
         }
     }
 
+    // 🆕 Clear BOTH selection
+    fun clearAllSelection() {
+        _state.update {
+            it.copy(
+                selectedClipId = null,
+                multiSelectedIds = emptySet()
+            )
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  MOVE / SWAP / DELETE
+    // ═══════════════════════════════════════════════════════════
     fun moveClip(clipId: String, targetTrackIndex: Int, newIsAudio: Boolean, newTimelineMs: Long) {
         val s = _state.value
         val clip = s.clips.firstOrNull { it.id == clipId } ?: return
@@ -692,6 +697,9 @@ class EditorViewModel : ViewModel() {
     fun setCurrentPos(ms: Long) = _state.update { it.copy(currentPosMs = ms) }
     fun setPlaying(playing: Boolean) = _state.update { it.copy(isPlaying = playing) }
 
+    // ═══════════════════════════════════════════════════════════
+    //  HELPERS
+    // ═══════════════════════════════════════════════════════════
     private fun findOrCreateVisualTrack(
         preferredTrack: Int, startMs: Long, durMs: Long
     ): Int {
@@ -727,13 +735,36 @@ class EditorViewModel : ViewModel() {
         return finalClip
     }
 
+    // 🆕 Find a free audio track (for effect layers)
+    private fun findFreeAudioTrack(startMs: Long, durMs: Long): Int {
+        val s = _state.value
+        val endMs = startMs + durMs
+        for (t in 0 until s.audioLayerCount) {
+            val hasSourceAudio = s.clips.any { c ->
+                c.isAudio && !c.isAudioEffectClip && c.trackIndex == t
+            }
+            if (hasSourceAudio) continue
+
+            val hasOverlap = s.clips.any { c ->
+                c.isAudio && c.trackIndex == t &&
+                        c.timelineStartMs < endMs && startMs < c.timelineEndMs
+            }
+            if (!hasOverlap) return t
+        }
+        val newIdx = s.audioLayerCount
+        _state.update { it.copy(audioLayerCount = newIdx + 1) }
+        return newIdx
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  CLIP SELECTION
+    // ═══════════════════════════════════════════════════════════
     fun closeGapsFromPlayhead() {
         val sel = _state.value.selectedClip ?: return
         pushHistory()
         val s = _state.value
         val list = if (sel.isAudio) s.timelineAudioList() else s.timelineVisualList()
         val track = list.getOrNull(sel.trackIndex) ?: return
-
         val updated = TimelineTools.closeGapsFromPlayhead(track, s.currentPosMs)
 
         _state.update { st ->
@@ -812,6 +843,9 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  POSITION/SCALE/ROTATION helpers
+    // ═══════════════════════════════════════════════════════════
     private fun getClipPos(clip: EditorClip): Pair<Float, Float> = when {
         clip.isTextClip && clip.textState != null ->
             clip.textState.positionX to clip.textState.positionY
@@ -958,6 +992,9 @@ class EditorViewModel : ViewModel() {
     fun updateStickerTransformBulk(anchorId: String, newScale: Float, newRot: Float) =
         updateSelectedTransformBulk(anchorId, newScale, newRot)
 
+    // ═══════════════════════════════════════════════════════════
+    //  TRIM
+    // ═══════════════════════════════════════════════════════════
     private fun syncLinkedTrim(primary: EditorClip) {
         val linkId = primary.linkedId ?: return
         val list = _state.value.clips.toMutableList()
@@ -1081,12 +1118,33 @@ class EditorViewModel : ViewModel() {
 
     fun duplicateCurrentClip() {
         val sel = _state.value.selectedClip ?: return
+        val s = _state.value
         pushHistory()
-        val copy = DuplicateEngine.duplicateAfter(sel, _state.value.clips)
-        val list = _state.value.clips.toMutableList()
+
+        // 🆕 Duplicate at playhead, stacked if needed
+        val copy = DuplicateEngine.duplicateAt(
+            source = sel,
+            allClips = s.clips,
+            playheadMs = s.currentPosMs
+        )
+
+        val list = s.clips.toMutableList()
         list.add(copy)
-        TimelineEngine.recalcTrackTimings(list, sel.trackIndex, sel.isAudio)
-        _state.update { it.copy(clips = list, selectedClipId = copy.id) }
+
+        // Make sure layer count reflects new track if created
+        val maxVisual = list.filter { !it.isAudio }.maxOfOrNull { it.trackIndex } ?: 0
+        val maxAudio = list.filter { it.isAudio }.maxOfOrNull { it.trackIndex } ?: 0
+
+        _state.update {
+            it.copy(
+                clips = list,
+                selectedClipId = copy.id,
+                selectedTrackIndex = copy.trackIndex,
+                selectedIsAudio = copy.isAudio,
+                visualLayerCount = maxOf(it.visualLayerCount, maxVisual + 1),
+                audioLayerCount = maxOf(it.audioLayerCount, maxAudio + 1)
+            )
+        }
         updateHistoryFlags()
     }
 
@@ -1102,11 +1160,13 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  SPEED / VOLUME
+    // ═══════════════════════════════════════════════════════════
     fun setSpeed(speed: Float) {
         val clamped = speed.coerceIn(SpeedEngine.MIN_SPEED, SpeedEngine.MAX_SPEED)
         val s = _state.value
 
-        // 1. Selected IDs (or multi-selected)
         val targetIds: Set<String> = if (s.multiSelectedIds.isNotEmpty()) {
             s.multiSelectedIds
         } else {
@@ -1114,13 +1174,11 @@ class EditorViewModel : ViewModel() {
         }
         if (targetIds.isEmpty()) return
 
-        // 2. Expand to include LINKED clips (video ↔ audio pair)
         val allIds = targetIds.toMutableSet()
         s.clips.filter { it.id in targetIds && it.linkedId != null }.forEach { c ->
             s.clips.filter { it.linkedId == c.linkedId }.forEach { allIds.add(it.id) }
         }
 
-        // 3. Apply speed to ALL (video + linked audio)
         val list = s.clips.toMutableList()
         for (i in list.indices) {
             if (list[i].id in allIds) {
@@ -1145,6 +1203,9 @@ class EditorViewModel : ViewModel() {
     fun getSelectedBaseDurationMs(): Long =
         _state.value.selectedClip?.let { SpeedEngine.getBaseDuration(it) } ?: 0L
 
+    // ═══════════════════════════════════════════════════════════
+    //  TEXT CLIPS
+    // ═══════════════════════════════════════════════════════════
     fun createTextClip(initial: TextState = TextState(content = "Text")) {
         val s = _state.value
         val clip = EditorClip(
@@ -1271,6 +1332,9 @@ class EditorViewModel : ViewModel() {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  STICKER CLIPS
+    // ═══════════════════════════════════════════════════════════
     fun addOrUpdateSticker(emoji: String) {
         val sel = _state.value.selectedClip
         if (sel != null && sel.isStickerClip) {
@@ -1394,6 +1458,9 @@ class EditorViewModel : ViewModel() {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  BRUSH CLIPS
+    // ═══════════════════════════════════════════════════════════
     fun createBrushClip(initial: BrushState = BrushState()) {
         val s = _state.value
         val clip = EditorClip(
@@ -1484,6 +1551,9 @@ class EditorViewModel : ViewModel() {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  EFFECTS / ADJUSTMENTS / OVERLAYS / CHROMA
+    // ═══════════════════════════════════════════════════════════
     fun applyEffectPreset(presetKey: String, presetLabel: String) {
         val preset = EffectLibrary.findByKey(presetKey) ?: return
         val s = _state.value
@@ -1517,6 +1587,113 @@ class EditorViewModel : ViewModel() {
         pushHistory()
         addClipOnNewLayer(clip, baseTrack + 1)
         updateHistoryFlags()
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 EFFECT PREVIEW + INTENSITY
+    // ═══════════════════════════════════════════════════════════
+    fun setPreviewEffect(presetKey: String?, intensity: Float) {
+        if (presetKey == null) {
+            _state.update { it.copy(previewEffectState = null) }
+            return
+        }
+        val preset = EffectLibrary.findByKey(presetKey) ?: return
+        val scaled = buildScaledEffectState(preset, intensity)
+        _state.update { it.copy(previewEffectState = scaled) }
+    }
+
+    fun clearPreviewEffect() {
+        _state.update { it.copy(previewEffectState = null) }
+    }
+
+    fun createEffectLayerAt(presetKey: String, intensity: Float) {
+        val preset = EffectLibrary.findByKey(presetKey) ?: return
+        val s = _state.value
+        val baseClip = s.selectedClip
+        val startMs = baseClip?.timelineStartMs ?: s.currentPosMs
+        val durMs = baseClip?.durationMs ?: 3000L
+        val baseTrack = baseClip?.trackIndex ?: 0
+
+        val scaled = buildScaledEffectState(preset, intensity)
+
+        val clip = EditorClip(
+            id = UUID.randomUUID().toString(),
+            uri = Uri.EMPTY,
+            name = "✨ ${preset.label}",
+            type = "effect/plain",
+            sourceStartMs = 0L,
+            sourceEndMs = durMs,
+            timelineStartMs = startMs,
+            trackIndex = 0,
+            isAudio = false,
+            sourceTotalMs = Long.MAX_VALUE,
+            effectKeys = listOf(presetKey),
+            effectState = scaled
+        )
+        pushHistory()
+        addClipOnNewLayer(clip, baseTrack + 1)
+        updateHistoryFlags()
+    }
+
+    fun updateEffectLayerIntensity(layerId: String, intensity: Float) {
+        val clip = _state.value.clips.firstOrNull { it.id == layerId } ?: return
+        if (!clip.isEffectClip) return
+        val presetKey = clip.effectKeys.firstOrNull() ?: return
+        val preset = EffectLibrary.findByKey(presetKey) ?: return
+        val scaled = buildScaledEffectState(preset, intensity)
+        updateClipDirect(layerId) { it.copy(effectState = scaled) }
+    }
+
+    fun removeEffectLayer(layerId: String) {
+        val clip = _state.value.clips.firstOrNull { it.id == layerId } ?: return
+        if (!clip.isEffectClip) return
+        pushHistory()
+        val list = _state.value.clips.toMutableList()
+        list.removeAll { it.id == layerId }
+        _state.update {
+            it.copy(clips = list, selectedClipId = null, multiSelectedIds = emptySet())
+        }
+        updateHistoryFlags()
+    }
+
+    private fun buildScaledEffectState(
+        preset: com.moody.moodyvideoeditor.data.EffectPreset,
+        intensity: Float
+    ): EffectState {
+        val t = (intensity / 100f).coerceIn(0f, 2f)
+
+        val scaledMotion = preset.motion?.let {
+            it.copy(intensity = (it.intensity * t).coerceIn(0f, 500f))
+        }
+
+        val scaledFilters = preset.filters?.let { f ->
+            fun s100(v: Float) = (100f + (v - 100f) * t).coerceIn(0f, 300f)
+            fun s0(v: Float) = (v * t).coerceIn(0f, 300f)
+            f.copy(
+                brightness = s100(f.brightness),
+                contrast = s100(f.contrast),
+                saturation = s100(f.saturation),
+                hue = s0(f.hue).coerceIn(0f, 360f),
+                grayscale = s0(f.grayscale).coerceIn(0f, 100f),
+                sepia = s0(f.sepia).coerceIn(0f, 100f),
+                invert = s0(f.invert).coerceIn(0f, 100f),
+                blur = s0(f.blur),
+                opacity = s100(f.opacity).coerceIn(0f, 100f)
+            )
+        }
+
+        val scaledOverlay = preset.overlay?.let {
+            it.copy(intensity = (it.intensity * t).coerceIn(0f, 300f))
+        }
+
+        return EffectState(
+            kind = EffectState.KIND_EFFECT,
+            presetKey = preset.key,
+            filters = scaledFilters,
+            motion = scaledMotion,
+            overlay = scaledOverlay,
+            masterIntensity = intensity
+        )
     }
 
     fun removeSelectedEffect() {
@@ -1675,6 +1852,9 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  MASKS
+    // ═══════════════════════════════════════════════════════════
     fun updateMask(newMask: MaskState) {
         val sel = _state.value.selectedClip ?: return
         updateClipDirect(sel.id) { it.copy(mask = newMask) }
@@ -1837,6 +2017,9 @@ class EditorViewModel : ViewModel() {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  FILTERS
+    // ═══════════════════════════════════════════════════════════
     fun updateFilters(newFilters: FilterState) {
         forEachSelectedClip { clip ->
             if (clip.isVisualClip) clip.copy(filters = newFilters) else clip
@@ -1849,6 +2032,88 @@ class EditorViewModel : ViewModel() {
         }
     }
 
+    // 🆕 Live preview filters
+    fun setPreviewFilters(filters: FilterState?) {
+        _state.update { it.copy(previewFilters = filters) }
+    }
+
+    fun clearPreviewFilters() {
+        _state.update { it.copy(previewFilters = null) }
+    }
+
+    // 🆕 Filter layers
+    fun createFilterLayer(
+        filters: FilterState,
+        durationMs: Long = 0L
+    ) {
+        val s = _state.value
+        // 🆕 Filter layer duration = selected clip ki duration
+        // Agar koi clip select nahi to 3000ms default
+        val selectedDur = s.selectedClip?.durationMs ?: 0L
+        val effectiveDur = when {
+            durationMs > 0L -> durationMs
+            selectedDur > 0L -> selectedDur
+            else -> 3000L
+        }.coerceAtLeast(500L)
+
+        val topTrack = (s.clips
+            .filter {
+                !it.isAudio &&
+                        s.currentPosMs >= it.timelineStartMs &&
+                        s.currentPosMs < it.timelineEndMs
+            }
+            .maxOfOrNull { it.trackIndex } ?: 0) + 1
+
+        val clip = EditorClip(
+            id = UUID.randomUUID().toString(),
+            uri = Uri.EMPTY,
+            name = "🎨 Filter",
+            type = "filter/plain",
+            sourceStartMs = 0L,
+            sourceEndMs = effectiveDur,
+            timelineStartMs = s.currentPosMs,
+            trackIndex = topTrack,
+            isAudio = false,
+            sourceTotalMs = Long.MAX_VALUE,
+            filters = filters
+        )
+        pushHistory()
+        val list = s.clips.toMutableList()
+        list.add(clip)
+        _state.update {
+            it.copy(
+                clips = list,
+                selectedClipId = clip.id,
+                selectedTrackIndex = topTrack,
+                selectedIsAudio = false,
+                visualLayerCount = maxOf(it.visualLayerCount, topTrack + 1),
+                multiSelectedIds = emptySet()
+            )
+        }
+        updateHistoryFlags()
+    }
+
+    fun updateFilterLayer(layerId: String, filters: FilterState) {
+        updateClipDirect(layerId) { c ->
+            if (c.isFilterLayerClip) c.copy(filters = filters) else c
+        }
+    }
+
+    fun removeFilterLayer(layerId: String) {
+        val clip = _state.value.clips.firstOrNull { it.id == layerId } ?: return
+        if (!clip.isFilterLayerClip) return
+        pushHistory()
+        val list = _state.value.clips.toMutableList()
+        list.removeAll { it.id == layerId }
+        _state.update {
+            it.copy(clips = list, selectedClipId = null, multiSelectedIds = emptySet())
+        }
+        updateHistoryFlags()
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  COLOR WHEEL
+    // ═══════════════════════════════════════════════════════════
     fun updateColorWheel(newState: ColorWheelState) {
         forEachSelectedClip { clip ->
             if (clip.isVisualClip) clip.copy(colorWheel = newState) else clip
@@ -1861,6 +2126,9 @@ class EditorViewModel : ViewModel() {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  TRANSITIONS
+    // ═══════════════════════════════════════════════════════════
     fun updateTransition(state: TransitionState) {
         forEachSelectedClip { it.copy(transition = state) }
     }
@@ -1968,6 +2236,9 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  TRANSFORM / CROP
+    // ═══════════════════════════════════════════════════════════
     fun setClipScale(v: Float) {
         val clamped = v.coerceIn(0.1f, 5f)
         forEachSelectedClip { it.copy(scale = clamped) }
@@ -1989,6 +2260,9 @@ class EditorViewModel : ViewModel() {
         forEachSelectedClip { it.copy(cropL = cl, cropR = cr, cropT = ct, cropB = cb) }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  TEMPLATES
+    // ═══════════════════════════════════════════════════════════
     fun applyTemplate(
         templateId: String,
         customTexts: Map<String, String> = emptyMap(),
@@ -2040,6 +2314,9 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  RATIO / BEATS / MUTE
+    // ═══════════════════════════════════════════════════════════
     fun updateRatio(state: RatioState) = _state.update {
         it.copy(aspectRatio = state.key, aspectMode = 0)
     }
@@ -2063,7 +2340,7 @@ class EditorViewModel : ViewModel() {
     fun setSoundFx(fx: String) = _state.update { it.copy(soundFx = fx) }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 PER-CLIP AUDIO EFFECTS
+    //  🆕 PER-CLIP AUDIO FX
     // ═══════════════════════════════════════════════════════════
     fun setClipAudioFx(clipId: String, fx: String) {
         pushHistory()
@@ -2088,12 +2365,7 @@ class EditorViewModel : ViewModel() {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 AUDIO / SOUND FX LAYERS — free-floating timeline layers
-    //  No fixed duration. Drag / trim / stretch like text layers.
-    // ═══════════════════════════════════════════════════════════
-
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 AUDIO EFFECT LAYERS — created from Apply button
+    //  🆕 AUDIO EFFECT LAYERS
     // ═══════════════════════════════════════════════════════════
     fun createAudioFxLayer(
         fx: String,
@@ -2179,96 +2451,9 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
-    private fun findFreeAudioTrack(startMs: Long, durMs: Long): Int {
-        val s = _state.value
-        val endMs = startMs + durMs
-        // Effect layers ko top audio track pe rakho — source audio se alag
-        for (t in 0 until s.audioLayerCount) {
-            val hasSourceAudio = s.clips.any { c ->
-                c.isAudio && !c.isAudioEffectClip && c.trackIndex == t
-            }
-            if (hasSourceAudio) continue
-
-            val hasOverlap = s.clips.any { c ->
-                c.isAudio && c.trackIndex == t &&
-                        c.timelineStartMs < endMs && startMs < c.timelineEndMs
-            }
-            if (!hasOverlap) return t
-        }
-        val newIdx = s.audioLayerCount
-        _state.update { it.copy(audioLayerCount = newIdx + 1) }
-        return newIdx
-    }
-
-    fun updateAudioFxLayer(clipId: String, fx: String) {
-        updateClipDirect(clipId) { c ->
-            if (!c.isAudioFxClip) c
-            else {
-                val label = com.moody.moodyvideoeditor.utils.AudioEngine
-                    .AUDIO_FX.firstOrNull { it.key == fx }?.label ?: fx
-                c.copy(audioFx = fx, name = "🎙️ $label")
-            }
-        }
-    }
-
-    fun updateSoundFxLayer(clipId: String, fx: String) {
-        updateClipDirect(clipId) { c ->
-            if (!c.isSoundFxClip) c
-            else {
-                val label = com.moody.moodyvideoeditor.utils.AudioEngine
-                    .SOUND_FX.firstOrNull { it.key == fx }?.label ?: fx
-                c.copy(soundFx = fx, name = "🔔 $label")
-            }
-        }
-    }
-
-    fun setAudioEffectLayerIntensity(clipId: String, intensity: Float) {
-        val clamped = intensity.coerceIn(0f, 200f)
-        updateClipDirect(clipId) { c ->
-            when {
-                c.isAudioFxClip -> c.copy(audioFxIntensity = clamped)
-                c.isSoundFxClip -> c.copy(soundFxIntensity = clamped)
-                else -> c
-            }
-        }
-    }
-
-    fun removeAudioEffectLayer(clipId: String) {
-        val clip = _state.value.clips.firstOrNull { it.id == clipId } ?: return
-        if (!clip.isAudioEffectClip) return
-        pushHistory()
-        val list = _state.value.clips.toMutableList()
-        list.removeAll { it.id == clipId }
-        _state.update {
-            it.copy(clips = list, selectedClipId = null, multiSelectedIds = emptySet())
-        }
-        updateHistoryFlags()
-    }
-
-    private fun findOrCreateAudioTrack(startMs: Long, durMs: Long): Int {
-        val s = _state.value
-        val endMs = startMs + durMs
-        // Effect layers ko SOURCE audio clips se alag track pe rakho
-        // Top audio track = audioLayerCount - 1 se upar
-        for (t in 0 until s.audioLayerCount) {
-            // Skip tracks jinme real audio sources hain
-            val hasSourceAudio = s.clips.any { c ->
-                c.isAudio && !c.isAudioEffectClip && c.trackIndex == t
-            }
-            if (hasSourceAudio) continue
-            // Free track for effect layers
-            val hasOverlap = s.clips.any { c ->
-                c.isAudio && c.trackIndex == t &&
-                        c.timelineStartMs < endMs && startMs < c.timelineEndMs
-            }
-            if (!hasOverlap) return t
-        }
-        // Naya track banao top pe
-        val newIdx = s.audioLayerCount
-        _state.update { it.copy(audioLayerCount = newIdx + 1) }
-        return newIdx
-    }
-
+    // ═══════════════════════════════════════════════════════════
+    //  TRANSFORM PROPERTY / KEYFRAMES
+    // ═══════════════════════════════════════════════════════════
     fun changeTransformProperty(prop: String, value: Float) {
         val sel = _state.value.selectedClip ?: return
         val currentTimeSec = ((_state.value.currentPosMs - sel.timelineStartMs)
@@ -2481,6 +2666,7 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
+    // 🆕 Reset all transform on SELECTED clip (used by resetAllSelectedTransforms)
     fun resetAllTransform() {
         val sel = _state.value.selectedClip ?: return
         pushHistory()
@@ -2512,6 +2698,9 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  UNDO / REDO
+    // ═══════════════════════════════════════════════════════════
     fun undo() {
         val prev = history.undo(_state.value.clips) ?: return
         _state.update { it.copy(clips = prev) }

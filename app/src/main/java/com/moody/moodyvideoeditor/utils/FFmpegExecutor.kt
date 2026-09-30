@@ -9,6 +9,7 @@ import com.arthenica.ffmpegkit.ReturnCode
 import com.moody.moodyvideoeditor.data.ColorFilterValues
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.MotionConfig
+import com.moody.moodyvideoeditor.data.TransitionLibrary
 import java.io.File
 
 class FFmpegExecutor(
@@ -37,7 +38,6 @@ class FFmpegExecutor(
                 return
             }
 
-            // Total duration = max of everything
             val computedTotal = (
                     clips.maxOfOrNull { it.timelineEndMs } ?: 0L
                     ).coerceAtLeast(
@@ -45,9 +45,7 @@ class FFmpegExecutor(
                 )
             val totalDurationMs = if (explicitDurationMs > 0L)
                 explicitDurationMs else computedTotal
-            val totalDurationSec = (totalDurationMs / 1000.0).coerceAtLeast(0.1)
 
-            // Cache visual clips
             val localFiles = mutableListOf<File>()
             for (clip in clips) {
                 val f = copyUriToCache(clip.uri, "clip_${clip.id}.mp4")
@@ -58,7 +56,6 @@ class FFmpegExecutor(
                 localFiles.add(f)
             }
 
-            // Cache audio-only clips
             val audioLocalFiles = mutableListOf<File>()
             for (clip in audioOnlyClips) {
                 val f = copyUriToCache(clip.uri, "audio_${clip.id}.mp3")
@@ -69,26 +66,36 @@ class FFmpegExecutor(
                 audioLocalFiles.add(f)
             }
 
-            if (localFiles.size == 1 && audioLocalFiles.isEmpty()) {
-                exportSingleClip(
-                    clips[0], allClips, localFiles[0], outputFile,
-                    targetW, targetH, fps, bitrateKbps, textSequences,
-                    totalDurationMs
-                )
-            } else if (localFiles.size == 1 && audioLocalFiles.isNotEmpty()) {
-                exportSingleClipWithAudio(
-                    clips[0], allClips, localFiles[0],
-                    audioOnlyClips, audioLocalFiles,
-                    outputFile, targetW, targetH, fps, bitrateKbps,
-                    textSequences, totalDurationMs
-                )
-            } else {
-                exportMultipleClips(
-                    clips, allClips, localFiles,
-                    audioOnlyClips, audioLocalFiles,
-                    outputFile, targetW, targetH, fps, bitrateKbps,
-                    textSequences, totalDurationMs
-                )
+            when {
+                localFiles.size == 1 && audioLocalFiles.isEmpty() -> {
+                    exportSingleClip(
+                        clips[0], allClips, localFiles[0], outputFile,
+                        targetW, targetH, fps, bitrateKbps, textSequences,
+                        totalDurationMs
+                    )
+                }
+
+                localFiles.size == 1 && audioLocalFiles.isNotEmpty() -> {
+                    exportSingleClipWithAudio(
+                        clips[0], allClips, localFiles[0],
+                        audioOnlyClips, audioLocalFiles,
+                        outputFile, targetW, targetH, fps, bitrateKbps,
+                        textSequences, totalDurationMs
+                    )
+                }
+
+                localFiles.size >= 2 -> {
+                    exportMultipleClips(
+                        clips, allClips, localFiles,
+                        audioOnlyClips, audioLocalFiles,
+                        outputFile, targetW, targetH, fps, bitrateKbps,
+                        textSequences, totalDurationMs
+                    )
+                }
+
+                else -> {
+                    onError("❌ No visual clips")
+                }
             }
         } catch (e: Throwable) {
             Log.e("FFMPEG", "Export crash", e)
@@ -134,34 +141,58 @@ class FFmpegExecutor(
         baseLabel: String
     ): String {
         var lastLabel = baseLabel
-
         sequences.forEachIndexed { idx, seq ->
             val inIdx = seqStartIdx + idx
             val srcLabel = "seqsrc$idx"
             val outLabel = "ov$idx"
-
             filterParts.add("[$inIdx:v]format=rgba[$srcLabel]")
-
             val startS = "%.4f".format(seq.startSec)
             val endS = "%.4f".format(seq.endSec)
-
             filterParts.add(
                 "[$lastLabel][$srcLabel]overlay=0:0:" +
                         "enable='between(t,$startS,$endS)'" +
                         "[$outLabel]"
             )
-
             lastLabel = outLabel
         }
-
         filterParts.add("[$lastLabel]null[outv]")
         return "outv"
     }
 
-    /**
-     * Add audio-only clips as inputs to args, and produce a filter
-     * string that mixes them into the given base audio label.
-     */
+    private fun buildVisualTransformFilters(
+        clip: EditorClip,
+        targetW: Int,
+        targetH: Int
+    ): List<String> {
+        val filters = mutableListOf<String>()
+        filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease")
+
+        val userScale = clip.scale.coerceIn(0.1f, 5f)
+        if (kotlin.math.abs(userScale - 1.0f) > 0.01f) {
+            val scaleStr = String.format(java.util.Locale.US, "%.4f", userScale)
+            filters.add("scale=iw*$scaleStr:ih*$scaleStr")
+        }
+
+        if (kotlin.math.abs(clip.rotation) > 0.1f) {
+            val rad = String.format(
+                java.util.Locale.US,
+                "%.4f",
+                Math.toRadians(clip.rotation.toDouble())
+            )
+            filters.add("rotate=$rad:c=none:ow=iw:oh=ih")
+        }
+
+        val offsetXpx = (clip.offsetX * targetW).toInt()
+        val offsetYpx = (clip.offsetY * targetH).toInt()
+        filters.add(
+            "pad=$targetW:$targetH:" +
+                    "(ow-iw)/2+$offsetXpx:" +
+                    "(oh-ih)/2+$offsetYpx:black"
+        )
+        filters.add("setsar=1")
+        return filters
+    }
+
     private fun buildAudioOnlyMix(
         filterParts: MutableList<String>,
         audioLocalFiles: List<File>,
@@ -204,7 +235,6 @@ class FFmpegExecutor(
             audioLabels.add("[$label]")
         }
 
-        // Mix base + all extra audio streams
         val allMixInputs = "[$baseAudioLabel]" + audioLabels.joinToString("")
         filterParts.add(
             "${allMixInputs}amix=inputs=${audioLabels.size + 1}:duration=longest[$outLabel]"
@@ -213,7 +243,8 @@ class FFmpegExecutor(
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  SINGLE CLIP EXPORT (no extra audio)
+    //  SINGLE CLIP EXPORT
+    // ═══════════════════════════════════════════════════════════
     private fun exportSingleClip(
         clip: EditorClip,
         allClips: List<EditorClip>,
@@ -233,7 +264,6 @@ class FFmpegExecutor(
             val clipDurSec = (clip.durationMs / 1000.0).coerceAtLeast(0.1)
             val totalDurSec = (totalDurationMs / 1000.0).coerceAtLeast(durSec)
 
-            // 🆕 Extra black padding needed
             val extraPadSec = (totalDurSec - clipDurSec).coerceAtLeast(0.0)
 
             val args = mutableListOf<String>()
@@ -242,7 +272,6 @@ class FFmpegExecutor(
             if (img) {
                 args.add("-loop"); args.add("1")
                 args.add("-framerate"); args.add(fps.toString())
-                // 🆕 Image loops for ITS own clip duration, not total
                 args.add("-t"); args.add(clipDurSec.toString())
             } else {
                 if (clip.sourceStartMs > 0) {
@@ -266,6 +295,7 @@ class FFmpegExecutor(
 
             val seqStartIdx = if (img) 2 else 1
             addSequenceInputs(args, sequences)
+
             val filterParts = mutableListOf<String>()
             val baseVf = mutableListOf<String>()
 
@@ -273,20 +303,14 @@ class FFmpegExecutor(
                 baseVf.add("setpts=${1.0f / clip.speed}*PTS")
             }
 
-            val perClipFilters = buildPerClipFilterChain(clip, allClips)
-            baseVf.addAll(perClipFilters)
+            baseVf.addAll(buildPerClipFilterChain(clip, allClips))
+            baseVf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
 
-            baseVf.add(
-                "scale=$targetW:$targetH:force_original_aspect_ratio=decrease," +
-                        "pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2,setsar=1"
-            )
-
-            // 🆕 Extend with BLACK frames if visual is shorter than total
             if (extraPadSec > 0.05) {
-                baseVf.add(
-                    "tpad=stop_mode=add:stop_duration=%.3f:color=black"
-                        .format(extraPadSec)
+                val padSec = String.format(
+                    java.util.Locale.US, "%.3f", extraPadSec
                 )
+                baseVf.add("tpad=stop_mode=add:stop_duration=$padSec")
             }
 
             filterParts.add("[0:v]${baseVf.joinToString(",")}[base]")
@@ -300,7 +324,6 @@ class FFmpegExecutor(
                 af.add("atempo=${clip.speed.coerceIn(0.5f, 2.0f)}")
             }
             if (clip.volume != 1.0f) af.add("volume=${clip.volume}")
-
             if (clip.audioFx != "none") {
                 val fxFilter = AudioEngine.buildAudioFilter(
                     clip.audioFx, clip.audioFxIntensity
@@ -316,15 +339,15 @@ class FFmpegExecutor(
                 )
             }
 
-            // Audio effect layers
             val fxApplied = applyAudioEffectLayers(
                 filterParts, allClips, 0L, "basea", "fxa"
             )
             val afterFxLabel = if (fxApplied) "fxa" else "basea"
+
             args.add("-filter_complex")
             args.add(filterParts.joinToString(";"))
             args.add("-map"); args.add("[$outVLabel]")
-            args.add("-map"); args.add("[fxa]")
+            args.add("-map"); args.add("[$afterFxLabel]")
             args.add("-t"); args.add(totalDurSec.toString())
 
             args.add("-c:v"); args.add("mpeg4")
@@ -339,13 +362,13 @@ class FFmpegExecutor(
 
             execute(args, outputFile)
         } catch (e: Throwable) {
-            Log.e("FFMPEG", "Build error", e)
+            Log.e("FFMPEG", "Single build error", e)
             onError("❌ Build error: ${e.message}")
         }
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  SINGLE VISUAL + AUDIO-ONLY CLIPS
+    //  SINGLE VISUAL + AUDIO-ONLY
     // ═══════════════════════════════════════════════════════════
     private fun exportSingleClipWithAudio(
         clip: EditorClip,
@@ -368,7 +391,6 @@ class FFmpegExecutor(
             val clipDurSec = (clip.durationMs / 1000.0).coerceAtLeast(0.1)
             val totalDurSec = (totalDurationMs / 1000.0).coerceAtLeast(clipDurSec)
 
-            // 🆕 How many extra seconds need black padding
             val extraPadSec = (totalDurSec - clipDurSec).coerceAtLeast(0.0)
 
             val args = mutableListOf<String>()
@@ -377,7 +399,6 @@ class FFmpegExecutor(
             if (img) {
                 args.add("-loop"); args.add("1")
                 args.add("-framerate"); args.add(fps.toString())
-                // 🆕 Image loops for ITS OWN duration, not total
                 args.add("-t"); args.add(sourceDurSec.toString())
             } else {
                 if (clip.sourceStartMs > 0) {
@@ -399,7 +420,6 @@ class FFmpegExecutor(
                 audioInputIdx = 0
             }
 
-            // Add audio-only files as inputs
             val audioStartIdx = if (img) 2 else 1
             audioLocalFiles.forEach { f ->
                 args.add("-i"); args.add(f.absolutePath)
@@ -415,20 +435,14 @@ class FFmpegExecutor(
                 baseVf.add("setpts=${1.0f / clip.speed}*PTS")
             }
 
-            val perClipFilters = buildPerClipFilterChain(clip, allClips)
-            baseVf.addAll(perClipFilters)
+            baseVf.addAll(buildPerClipFilterChain(clip, allClips))
+            baseVf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
 
-            baseVf.add(
-                "scale=$targetW:$targetH:force_original_aspect_ratio=decrease," +
-                        "pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2,setsar=1"
-            )
-
-            // 🆕 Extend with BLACK frames if visual is shorter than total
             if (extraPadSec > 0.05) {
-                baseVf.add(
-                    "tpad=stop_mode=add:stop_duration=%.3f:color=black"
-                        .format(extraPadSec)
+                val padSec = String.format(
+                    java.util.Locale.US, "%.3f", extraPadSec
                 )
+                baseVf.add("tpad=stop_mode=add:stop_duration=$padSec")
             }
 
             filterParts.add("[0:v]${baseVf.joinToString(",")}[base]")
@@ -457,7 +471,6 @@ class FFmpegExecutor(
                 )
             }
 
-            // Mix in audio-only clips
             val mixed = buildAudioOnlyMix(
                 filterParts = filterParts,
                 audioLocalFiles = audioLocalFiles,
@@ -468,11 +481,11 @@ class FFmpegExecutor(
             )
             val afterMixLabel = if (mixed) "mixeda" else "basea"
 
-            // Audio effect layers
             val fxApplied = applyAudioEffectLayers(
                 filterParts, allClips, 0L, afterMixLabel, "fxa"
             )
             val finalAudioLabel = if (fxApplied) "fxa" else afterMixLabel
+
             args.add("-filter_complex")
             args.add(filterParts.joinToString(";"))
             args.add("-map"); args.add("[$outVLabel]")
@@ -497,9 +510,301 @@ class FFmpegExecutor(
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  MULTI-CLIP EXPORT
+    //  MULTI-CLIP EXPORT (dispatcher)
     // ═══════════════════════════════════════════════════════════
     private fun exportMultipleClips(
+        clips: List<EditorClip>,
+        allClips: List<EditorClip>,
+        localFiles: List<File>,
+        audioClips: List<EditorClip>,
+        audioLocalFiles: List<File>,
+        outputFile: File,
+        targetW: Int,
+        targetH: Int,
+        fps: Int,
+        bitrateKbps: Int,
+        sequences: List<TextOverlaySequence>,
+        totalDurationMs: Long
+    ) {
+        // Sort clips by timeline order
+        val sortedClips = clips.sortedBy { it.timelineStartMs }
+        val sortedLocalFiles = sortedClips.mapNotNull { c ->
+            val originalIdx = clips.indexOf(c)
+            if (originalIdx >= 0) localFiles.getOrNull(originalIdx) else null
+        }
+
+        if (sortedClips.size != sortedLocalFiles.size) {
+            Log.e("FFMPEG", "⚠️ Sort mismatch, falling back to concat")
+            exportWithConcat(
+                clips, allClips, localFiles, audioClips, audioLocalFiles,
+                outputFile, targetW, targetH, fps, bitrateKbps,
+                sequences, totalDurationMs
+            )
+            return
+        }
+
+        // 🆕 RELAXED conditions — allow images too
+        val sameTrack = sortedClips.all {
+            it.trackIndex == sortedClips.first().trackIndex
+        }
+
+        // 🆕 Only check speed = 1x (xfade needs uniform speed)
+        val allNormalSpeed = sortedClips.all {
+            kotlin.math.abs(it.speed - 1.0f) < 0.01f
+        }
+
+        // 🆕 At least one transition active
+        val hasAnyTransition = sortedClips.drop(1).any {
+            it.transition?.isActive == true &&
+                    TransitionLibrary.find(it.transition!!.key)
+                        ?.ffmpegXfade?.isNotBlank() == true
+        }
+
+        // 🆕 Allow small gaps
+        val allAdjacent = sortedClips.zipWithNext().all { (a, b) ->
+            val gap = b.timelineStartMs - a.timelineEndMs
+            kotlin.math.abs(gap) < 500L
+        }
+
+        // 🆕 IMAGES ALLOWED now
+        val useXfade = sortedClips.size >= 2 &&
+                sameTrack &&
+                allNormalSpeed &&
+                allAdjacent &&
+                hasAnyTransition
+
+        Log.e(
+            "FFMPEG_TRANS",
+            "clips=${sortedClips.size}, sameTrack=$sameTrack, " +
+                    "allNormalSpeed=$allNormalSpeed, allAdjacent=$allAdjacent, " +
+                    "hasAnyTrans=$hasAnyTransition, useXfade=$useXfade"
+        )
+
+        if (useXfade) {
+            exportWithTransitions(
+                sortedClips, allClips, sortedLocalFiles,
+                audioClips, audioLocalFiles,
+                outputFile, targetW, targetH, fps, bitrateKbps,
+                sequences, totalDurationMs
+            )
+        } else {
+            Log.e("FFMPEG_TRANS", "❌ Falling back to CONCAT (no transitions)")
+            exportWithConcat(
+                clips, allClips, localFiles, audioClips, audioLocalFiles,
+                outputFile, targetW, targetH, fps, bitrateKbps,
+                sequences, totalDurationMs
+            )
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  EXPORT WITH XFADE TRANSITIONS
+    // ═══════════════════════════════════════════════════════════
+    private fun exportWithTransitions(
+        clips: List<EditorClip>,
+        allClips: List<EditorClip>,
+        localFiles: List<File>,
+        audioClips: List<EditorClip>,
+        audioLocalFiles: List<File>,
+        outputFile: File,
+        targetW: Int,
+        targetH: Int,
+        fps: Int,
+        bitrateKbps: Int,
+        sequences: List<TextOverlaySequence>,
+        totalDurationMs: Long
+    ) {
+        try {
+            val args = mutableListOf<String>()
+            args.add("-y")
+
+            // ─── Video / Image inputs ───
+            clips.forEachIndexed { idx, clip ->
+                val img = isImage(clip)
+                val durSec = clip.durationMs / 1000.0
+
+                if (img) {
+                    // 🆕 Image: loop for its timeline duration at exact fps
+                    args.add("-loop"); args.add("1")
+                    args.add("-framerate"); args.add(fps.toString())
+                    args.add("-t"); args.add(durSec.toString())
+                } else {
+                    val srcDurSec = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
+                        .coerceAtLeast(0.1)
+                    if (clip.sourceStartMs > 0) {
+                        args.add("-ss")
+                        args.add((clip.sourceStartMs / 1000.0).toString())
+                    }
+                    args.add("-t"); args.add(srcDurSec.toString())
+                }
+                args.add("-i"); args.add(localFiles[idx].absolutePath)
+            }
+
+            // ─── Silent audio fallback inputs (for clips without audio) ───
+            val silentAudioIdx = mutableMapOf<Int, Int>()
+            var nextIdx = clips.size
+            clips.forEachIndexed { idx, clip ->
+                if (!clipHasAudio(clip)) {
+                    val durSec = clip.durationMs / 1000.0
+                    args.add("-f"); args.add("lavfi")
+                    args.add("-t"); args.add(durSec.toString())
+                    args.add("-i"); args.add("anullsrc=r=44100:cl=stereo")
+                    silentAudioIdx[idx] = nextIdx
+                    nextIdx++
+                }
+            }
+
+            val audioStartIdx = nextIdx
+            audioLocalFiles.forEach { f ->
+                args.add("-i"); args.add(f.absolutePath)
+                nextIdx++
+            }
+
+            val filterParts = mutableListOf<String>()
+
+            // ─── Normalize each clip ───
+            clips.forEachIndexed { idx, clip ->
+                val img = isImage(clip)
+                val vf = mutableListOf<String>()
+
+                if (img) {
+                    // 🆕 Image: just trim to duration + reset PTS
+                    vf.add("trim=duration=${clip.durationMs / 1000.0}")
+                    vf.add("setpts=PTS-STARTPTS")
+                } else {
+                    vf.add("setpts=PTS-STARTPTS")
+                }
+
+                vf.addAll(buildPerClipFilterChain(clip, allClips))
+                vf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
+
+                // 🆕 CRITICAL for xfade
+                vf.add("fps=$fps")
+                vf.add("format=yuv420p")
+                vf.add("settb=AVTB")
+                filterParts.add("[$idx:v]${vf.joinToString(",")}[nv$idx]")
+            }
+
+            // ─── Chain xfade transitions ───
+            var currentLabel = "nv0"
+            var cumulativeOffsetMs = clips[0].durationMs
+
+            for (i in 1 until clips.size) {
+                val trans = clips[i].transition
+                val isTransActive = trans?.isActive == true
+                val preset = if (isTransActive) TransitionLibrary.find(trans!!.key)
+                else null
+                val xfadeName = preset?.ffmpegXfade?.takeIf { it.isNotBlank() }
+                    ?: "fade"
+                val transDurMs = if (isTransActive)
+                    (trans!!.durationMs).coerceIn(100L, 3000L)
+                else 50L  // nearly invisible
+
+                val offsetSec = ((cumulativeOffsetMs - transDurMs).coerceAtLeast(50L)) / 1000.0
+                val durSec = transDurMs / 1000.0
+
+                val outLabel = "xfd$i"
+                filterParts.add(
+                    "[$currentLabel][nv$i]xfade=transition=$xfadeName:" +
+                            "duration=$durSec:offset=$offsetSec[$outLabel]"
+                )
+
+                currentLabel = outLabel
+                cumulativeOffsetMs = cumulativeOffsetMs + clips[i].durationMs - transDurMs
+            }
+
+            // ─── Audio: chain acrossfade (or use silent) ───
+            val audioLabels = mutableListOf<String>()
+            clips.forEachIndexed { idx, clip ->
+                val durSec = clip.durationMs / 1000.0
+                val ss = clip.sourceStartMs / 1000.0
+                val label = "ca$idx"
+                val hasAudio = clipHasAudio(clip)
+                val srcIdx = if (hasAudio) idx else silentAudioIdx[idx] ?: idx
+
+                if (hasAudio) {
+                    filterParts.add(
+                        "[$srcIdx:a]atrim=start=$ss:duration=$durSec," +
+                                "asetpts=PTS-STARTPTS,aresample=44100[$label]"
+                    )
+                } else {
+                    filterParts.add(
+                        "[$srcIdx:a]atrim=0:$durSec," +
+                                "asetpts=PTS-STARTPTS,aresample=44100[$label]"
+                    )
+                }
+                audioLabels.add("[$label]")
+            }
+
+            var currentAudioLabel = "ca0"
+            for (i in 1 until clips.size) {
+                val trans = clips[i].transition
+                val transDurMs = if (trans?.isActive == true)
+                    trans.durationMs.coerceIn(100L, 3000L) else 50L
+                val durSec = transDurMs / 1000.0
+                val outLabel = "xfa$i"
+                filterParts.add(
+                    "[$currentAudioLabel][ca$i]acrossfade=d=$durSec:c1=tri:c2=tri[$outLabel]"
+                )
+                currentAudioLabel = outLabel
+            }
+
+            val outVLabel = buildOverlayChain(
+                filterParts, sequences, nextIdx, currentLabel
+            )
+
+            var finalAudioLabel = currentAudioLabel
+
+            if (audioLocalFiles.isNotEmpty()) {
+                val mixed = buildAudioOnlyMix(
+                    filterParts = filterParts,
+                    audioLocalFiles = audioLocalFiles,
+                    audioClips = audioClips,
+                    firstInputIdx = audioStartIdx,
+                    baseAudioLabel = finalAudioLabel,
+                    outLabel = "mixeda"
+                )
+                if (mixed) finalAudioLabel = "mixeda"
+            }
+
+            val fxApplied = applyAudioEffectLayers(
+                filterParts, allClips, 0L, finalAudioLabel, "fxa"
+            )
+            if (fxApplied) finalAudioLabel = "fxa"
+
+            val totalDurSec = (totalDurationMs / 1000.0).coerceAtLeast(0.1)
+
+            args.add("-filter_complex")
+            args.add(filterParts.joinToString(";"))
+            args.add("-map"); args.add("[$outVLabel]")
+            args.add("-map"); args.add("[$finalAudioLabel]")
+            args.add("-t"); args.add(totalDurSec.toString())
+
+            args.add("-c:v"); args.add("mpeg4")
+            args.add("-qscale:v"); args.add("4")
+            args.add("-pix_fmt"); args.add("yuv420p")
+            args.add("-b:v"); args.add("${bitrateKbps}k")
+            args.add("-r"); args.add(fps.toString())
+            args.add("-c:a"); args.add("aac")
+            args.add("-b:a"); args.add("128k")
+            args.add("-movflags"); args.add("+faststart")
+            args.add(outputFile.absolutePath)
+
+            Log.e("FFMPEG_ARGS", "─────── XFADE ARGS ───────")
+            args.forEach { Log.e("FFMPEG_ARGS", it) }
+            Log.e("FFMPEG_ARGS", "──────────────────────────")
+
+            execute(args, outputFile)
+        } catch (e: Throwable) {
+            Log.e("FFMPEG", "Transition export error", e)
+            onError("❌ Transition export: ${e.message}")
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  EXPORT WITH CONCAT (fallback)
+    // ═══════════════════════════════════════════════════════════
+    private fun exportWithConcat(
         clips: List<EditorClip>,
         allClips: List<EditorClip>,
         localFiles: List<File>,
@@ -535,7 +840,6 @@ class FFmpegExecutor(
                 }
             }
 
-            // Audio-only file inputs
             val audioStartIdx = nextInputIdx
             audioLocalFiles.forEach { f ->
                 args.add("-i"); args.add(f.absolutePath)
@@ -565,12 +869,8 @@ class FFmpegExecutor(
                     vf.add("setpts=${1.0f / clip.speed}*PTS")
                 }
 
-                val perClipFilters = buildPerClipFilterChain(clip, allClips)
-                vf.addAll(perClipFilters)
-
-                vf.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease")
-                vf.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2")
-                vf.add("setsar=1")
+                vf.addAll(buildPerClipFilterChain(clip, allClips))
+                vf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
                 vf.add("fps=$fps")
                 vf.add("format=yuv420p")
                 filterParts.add("[$idx:v]${vf.joinToString(",")}[v$idx]")
@@ -604,7 +904,6 @@ class FFmpegExecutor(
                 "${concatInputs.joinToString("")}concat=n=${clips.size}:v=1:a=1[concatv][basea]"
             )
 
-            // Mix in audio-only clips
             val mixed = if (audioLocalFiles.isNotEmpty()) {
                 buildAudioOnlyMix(
                     filterParts = filterParts,
@@ -618,11 +917,11 @@ class FFmpegExecutor(
 
             val afterMixLabel = if (mixed) "mixeda" else "basea"
 
-            // Audio effect layers
             val fxApplied = applyAudioEffectLayers(
                 filterParts, allClips, 0L, afterMixLabel, "fxa"
             )
             val finalAudioLabel = if (fxApplied) "fxa" else afterMixLabel
+
             val outVLabel = buildOverlayChain(
                 filterParts, sequences, seqStartIdx, "concatv"
             )
@@ -647,17 +946,46 @@ class FFmpegExecutor(
 
             execute(args, outputFile)
         } catch (e: Throwable) {
-            Log.e("FFMPEG", "Multi-clip error", e)
-            onError("❌ Multi-clip error: ${e.message}")
+            Log.e("FFMPEG", "Concat export error", e)
+            onError("❌ Concat export: ${e.message}")
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  PER-CLIP FILTER CHAIN
+    // ═══════════════════════════════════════════════════════════
     private fun buildPerClipFilterChain(
         clip: EditorClip,
         allClips: List<EditorClip>
     ): List<String> {
         val filters = mutableListOf<String>()
 
+        // Filter layers above
+        val filterLayersAbove = allClips.filter { e ->
+            e.isFilterLayerClip &&
+                    e.trackIndex > clip.trackIndex &&
+                    e.timelineEndMs > clip.timelineStartMs &&
+                    e.timelineStartMs < clip.timelineEndMs
+        }.sortedBy { it.trackIndex }
+
+        filterLayersAbove.forEach { layer ->
+            val ff = layer.filters
+            val cfv = ColorFilterValues(
+                brightness = ff.brightness,
+                contrast = ff.contrast,
+                saturation = ff.saturation,
+                hue = ff.hue,
+                grayscale = ff.grayscale,
+                sepia = ff.sepia,
+                invert = ff.invert,
+                blur = ff.blur,
+                opacity = ff.opacity
+            )
+            val filterStr = colorFilterValuesToFfmpeg(cfv)
+            if (filterStr.isNotBlank()) filters.add(filterStr)
+        }
+
+        // Effect clips above
         val effectClipsAbove = allClips.filter { e ->
             e.isEffectClip &&
                     e.trackIndex > clip.trackIndex &&
@@ -665,10 +993,18 @@ class FFmpegExecutor(
                     e.timelineStartMs < clip.timelineEndMs
         }.sortedBy { it.trackIndex }
 
-        val motions = effectClipsAbove.mapNotNull { it.effectState?.motion }
-        motions.forEach { m ->
-            val f = motionToFfmpeg(m)
-            if (f.isNotBlank()) filters.add(f)
+        effectClipsAbove.forEach { effClip ->
+            val m = effClip.effectState?.motion
+            if (m != null) {
+                val f = motionToFfmpeg(m)
+                if (f.isNotBlank()) {
+                    // ⚠️ Motion filters (crop, rotate, scale, noise) DON'T support
+                    // enable='between(t,...)' option in FFmpeg.
+                    // Their motion is already time-varying via 't' variable,
+                    // so we apply whole-clip — the effect naturally animates.
+                    filters.add(f)
+                }
+            }
         }
 
         val effectColorFilters = effectClipsAbove.mapNotNull { it.effectState?.filters }
@@ -677,6 +1013,7 @@ class FFmpegExecutor(
             if (f.isNotBlank()) filters.add(f)
         }
 
+        // Clip's own filters
         val f = clip.filters
         if (f.brightness != 100f || f.contrast != 100f || f.saturation != 100f) {
             val eqParts = mutableListOf<String>()
@@ -695,28 +1032,29 @@ class FFmpegExecutor(
         if (f.grayscale > 0f) filters.add("format=gray")
         if (f.invert > 0f) filters.add("negate")
 
+        // Adjustments
         val adj = clip.adjustments
         if (!adj.isDefault) {
             val adjFilter = FFmpegFilters.build(adj)
             if (adjFilter.isNotBlank()) filters.add(adjFilter)
         }
 
+        // Chroma
         val chroma = clip.chroma
         if (chroma != null && chroma.isActive) {
             try {
                 val cf = ChromaEngine.buildFfmpegFilter(chroma)
                 if (cf.isNotBlank()) filters.add(cf)
-            } catch (e: Throwable) {
+            } catch (_: Throwable) {
             }
         }
 
         return filters
     }
 
-    /**
-     * Apply audio effect layers on top of a base audio label.
-     * Layers use enable window via volume gating.
-     */
+    // ═══════════════════════════════════════════════════════════
+    //  AUDIO EFFECT LAYERS
+    // ═══════════════════════════════════════════════════════════
     private fun applyAudioEffectLayers(
         filterParts: MutableList<String>,
         allClips: List<EditorClip>,
@@ -738,7 +1076,6 @@ class FFmpegExecutor(
                     splitLabels.joinToString("") { "[$it]" }
         )
 
-        // Stream 0: base with ALL layer windows muted
         val baseChainParts = mutableListOf<String>()
         layers.forEach { layer ->
             val s = ((layer.timelineStartMs - rangeStartMs).coerceAtLeast(0L)) / 1000.0
@@ -752,7 +1089,6 @@ class FFmpegExecutor(
         else baseChainParts.joinToString(",")
         filterParts.add("[${splitLabels[0]}]$baseChain[fxn0]")
 
-        // Streams 1..N: each layer FX gated to its window
         layers.forEachIndexed { i, layer ->
             val s = ((layer.timelineStartMs - rangeStartMs).coerceAtLeast(0L)) / 1000.0
             val e = (layer.timelineEndMs - rangeStartMs) / 1000.0
@@ -779,6 +1115,42 @@ class FFmpegExecutor(
         )
         return true
     }
+
+    // ═══════════════════════════════════════════════════════════
+    //  MOTION → FFMPEG
+    // ═══════════════════════════════════════════════════════════
+    /**
+     * Check if clip's source file has an audio stream.
+     * Cached to avoid repeated probing.
+     */
+    private val audioCache = mutableMapOf<String, Boolean>()
+
+    private fun clipHasAudio(clip: EditorClip): Boolean {
+        val key = clip.uri.toString()
+        audioCache[key]?.let { return it }
+
+        val has = try {
+            val extractor = android.media.MediaExtractor()
+            extractor.setDataSource(context, clip.uri, null)
+            var found = false
+            for (i in 0 until extractor.trackCount) {
+                val fmt = extractor.getTrackFormat(i)
+                val mime = fmt.getString(android.media.MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/")) {
+                    found = true
+                    break
+                }
+            }
+            extractor.release()
+            found
+        } catch (_: Throwable) {
+            false
+        }
+
+        audioCache[key] = has
+        return has
+    }
+
 
     private fun motionToFfmpeg(m: MotionConfig): String {
         val I = (m.intensity / 100f).coerceIn(0.1f, 3.0f)
@@ -821,22 +1193,60 @@ class FFmpegExecutor(
 
     private fun colorFilterValuesToFfmpeg(cf: ColorFilterValues): String {
         val parts = mutableListOf<String>()
-        if (cf.brightness != 100f || cf.contrast != 100f || cf.saturation != 100f) {
-            val eqParts = mutableListOf<String>()
-            if (cf.brightness != 100f) {
-                eqParts.add("brightness=${((cf.brightness - 100f) / 100f).coerceIn(-1f, 1f)}")
-            }
-            if (cf.contrast != 100f) {
-                eqParts.add("contrast=${(cf.contrast / 100f).coerceIn(0f, 2f)}")
-            }
-            if (cf.saturation != 100f) {
-                eqParts.add("saturation=${(cf.saturation / 100f).coerceIn(0f, 3f)}")
-            }
-            if (eqParts.isNotEmpty()) parts.add("eq=${eqParts.joinToString(":")}")
+
+        if (cf.brightness != 100f) {
+            val m = String.format(
+                java.util.Locale.US,
+                "%.4f",
+                (cf.brightness / 100f).coerceIn(0f, 3f)
+            )
+            parts.add("lutrgb=r='val*$m':g='val*$m':b='val*$m'")
         }
-        if (cf.hue != 0f) parts.add("hue=h=${cf.hue}")
-        if (cf.grayscale > 0f) parts.add("format=gray")
-        if (cf.invert > 0f) parts.add("negate")
+
+        if (cf.contrast != 100f) {
+            val c = String.format(
+                java.util.Locale.US,
+                "%.4f",
+                (cf.contrast / 100f).coerceIn(0f, 3f)
+            )
+            parts.add("eq=contrast=$c")
+        }
+
+        if (cf.saturation != 100f) {
+            val s = String.format(
+                java.util.Locale.US,
+                "%.4f",
+                (cf.saturation / 100f).coerceIn(0f, 3f)
+            )
+            parts.add("eq=saturation=$s")
+        }
+
+        if (cf.hue != 0f) {
+            parts.add("hue=h=${cf.hue}")
+        }
+
+        if (cf.grayscale > 0f) {
+            val s = String.format(
+                java.util.Locale.US,
+                "%.4f",
+                (1f - (cf.grayscale / 100f).coerceIn(0f, 1f))
+            )
+            parts.add("eq=saturation=$s")
+        }
+
+        if (cf.sepia > 0f) {
+            val a = (cf.sepia / 100f).coerceIn(0f, 1f)
+            parts.add(
+                "colorbalance=rs=${(0.15f * a).coerceIn(-0.5f, 0.5f)}:" +
+                        "gs=${(0.05f * a).coerceIn(-0.5f, 0.5f)}:" +
+                        "bs=${(-0.2f * a).coerceIn(-0.5f, 0.5f)}"
+            )
+        }
+
+        if (cf.invert > 0f) {
+            parts.add("negate")
+        }
+
         return parts.joinToString(",")
     }
 

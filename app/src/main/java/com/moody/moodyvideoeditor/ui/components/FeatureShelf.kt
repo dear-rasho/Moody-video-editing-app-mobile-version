@@ -58,7 +58,11 @@ val FEATURES = listOf(
 )
 
 @Composable
-fun FeatureShelf(onFeatureSelected: (String) -> Unit) {
+fun FeatureShelf(
+    onFeatureSelected: (String) -> Unit,
+    scrollState: androidx.compose.foundation.ScrollState =
+        rememberScrollState()
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -76,7 +80,7 @@ fun FeatureShelf(onFeatureSelected: (String) -> Unit) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScroll(scrollState),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             FEATURES.forEach { feature ->

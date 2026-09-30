@@ -48,7 +48,6 @@ import com.moody.moodyvideoeditor.data.BeatsState
 import com.moody.moodyvideoeditor.data.BrushType
 import com.moody.moodyvideoeditor.data.ChromaState
 import com.moody.moodyvideoeditor.data.ColorWheelState
-import com.moody.moodyvideoeditor.data.FilterState
 import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.data.RatioLibrary
@@ -170,6 +169,15 @@ fun EditorScreen(
     var promptFeedbackType by remember { mutableStateOf("none") }
 
     var isPlaybackActive by remember { mutableStateOf(false) }
+
+    // 🆕 FeatureShelf scroll — persisted across panel switches
+    val featureScrollState = androidx.compose.foundation.rememberScrollState()
+
+    // 🆕 Which filter layer is being edited (null = create new)
+    var filterEditLayerId by remember { mutableStateOf<String?>(null) }
+
+    // 🆕 Which effect layer is being edited (null = create new)
+    var effectEditLayerId by remember { mutableStateOf<String?>(null) }
 
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
@@ -629,6 +637,8 @@ fun EditorScreen(
                 aspectRatioKey = state.aspectRatio,
                 selectedClipId = state.selectedClipId,
                 multiSelectedIds = state.multiSelectedIds,
+                previewFilters = state.previewFilters,
+                previewEffectState = state.previewEffectState,
                 isDrawingMode = isDrawingMode,
                 activeBrushType = brushType,
                 activeBrushColor = brushColor,
@@ -723,6 +733,18 @@ fun EditorScreen(
                     onClipTapped = { clip ->
                         viewModel.selectClip(clip)
                         viewModel.clearMultiSelect()
+
+                        // 🆕 Filter layer tapped → Filters edit mode
+                        if (clip.isFilterLayerClip) {
+                            filterEditLayerId = clip.id
+                            activePanel = "filters"
+                        }
+
+                        // 🆕 Effect layer tapped → Effects edit mode
+                        if (clip.isEffectClip) {
+                            effectEditLayerId = clip.id
+                            activePanel = "effects"
+                        }
                     },
                     onTrackTapped = { ti, aud -> viewModel.selectTrack(ti, aud) },
                     onTrimLeft = { ns -> viewModel.trimClipLeft(ns) },
@@ -732,7 +754,8 @@ fun EditorScreen(
                         isPlaybackActive = false
                         if (exoPlayer.isPlaying) exoPlayer.pause()
                         viewModel.setCurrentPos(t)
-                        viewModel.deselectAll()
+                        // 🆕 Empty area tap → clear selection
+                        viewModel.clearAllSelection()
                         val sel = state.selectedClip
                         if (sel != null && sel.isVisualClip) {
                             val localMs = (t - sel.timelineStartMs)
@@ -831,7 +854,19 @@ fun EditorScreen(
             val selected = state.selectedClip
 
             when (activePanel) {
-                null -> FeatureShelf(onFeatureSelected = { activePanel = it })
+                null -> FeatureShelf(
+                    onFeatureSelected = { key ->
+                        // 🆕 FeatureShelf se Filters/Effects → always NEW layer
+                        if (key == "filters") {
+                            filterEditLayerId = null
+                        }
+                        if (key == "effects") {
+                            effectEditLayerId = null
+                        }
+                        activePanel = key
+                    },
+                    scrollState = featureScrollState
+                )
 
                 "code" -> PromptPanel(
                     feedback = promptFeedback,
@@ -904,24 +939,77 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                "filters" -> FiltersPanel(
-                    current = selected?.filters ?: FilterState(),
-                    hasClipSelected = selected?.isVisualClip == true ||
-                            state.multiSelectedIds.isNotEmpty(),
-                    onFilterChanged = { viewModel.updateFilters(it) },
-                    onResetAll = { viewModel.resetFilters() },
-                    onClose = { activePanel = null }
-                )
+                "filters" -> {
+                    // 🆕 Explicit edit layer — naya ya edit
+                    val editLayer = filterEditLayerId?.let { id ->
+                        state.clips.firstOrNull {
+                            it.id == id && it.isFilterLayerClip
+                        }
+                    }
+                    FiltersPanel(
+                        editLayerId = editLayer?.id,
+                        initialFilters = editLayer?.filters,
+                        onPreviewFilters = { viewModel.setPreviewFilters(it) },
+                        onApplyAsLayer = { filters ->
+                            viewModel.createFilterLayer(filters)
+                            filterEditLayerId = null
+                        },
+                        onUpdateLayer = { filters ->
+                            editLayer?.let {
+                                viewModel.updateFilterLayer(it.id, filters)
+                            }
+                        },
+                        onDeleteLayer = {
+                            editLayer?.let {
+                                viewModel.removeFilterLayer(it.id)
+                            }
+                            filterEditLayerId = null
+                            activePanel = null
+                        },
+                        onClose = {
+                            viewModel.clearPreviewFilters()
+                            filterEditLayerId = null
+                            activePanel = null
+                        }
+                    )
+                }
 
-                "effects" -> EffectsPanel(
-                    currentEffectKey = selected?.effectKeys?.firstOrNull(),
-                    hasClipSelected = true,
-                    onPresetSelected = { preset ->
-                        viewModel.applyEffectPreset(preset.key, preset.label)
-                    },
-                    onRemoveEffect = { viewModel.removeSelectedEffect() },
-                    onClose = { activePanel = null }
-                )
+                "effects" -> {
+                    val editLayer = effectEditLayerId?.let { id ->
+                        state.clips.firstOrNull {
+                            it.id == id && it.isEffectClip
+                        }
+                    }
+                    EffectsPanel(
+                        editLayerId = editLayer?.id,
+                        initialEffectState = editLayer?.effectState,
+                        initialPresetKey = editLayer?.effectKeys?.firstOrNull(),
+                        onPreviewEffect = { key, intensity ->
+                            viewModel.setPreviewEffect(key, intensity)
+                        },
+                        onApplyAsLayer = { key, intensity ->
+                            viewModel.createEffectLayerAt(key, intensity)
+                            effectEditLayerId = null
+                        },
+                        onUpdateIntensity = { intensity ->
+                            editLayer?.let {
+                                viewModel.updateEffectLayerIntensity(it.id, intensity)
+                            }
+                        },
+                        onDeleteLayer = {
+                            editLayer?.let {
+                                viewModel.removeEffectLayer(it.id)
+                            }
+                            effectEditLayerId = null
+                            activePanel = null
+                        },
+                        onClose = {
+                            viewModel.clearPreviewEffect()
+                            effectEditLayerId = null
+                            activePanel = null
+                        }
+                    )
+                }
 
                 "adjustments" -> AdjustmentsPanel(
                     adj = selected?.adjustments ?: AdjustmentData(),
@@ -965,7 +1053,7 @@ fun EditorScreen(
                     }
                     TransitionsPanel(
                         current = selected?.transition ?: TransitionState(),
-                        hasPairAvailable = selected != null,
+                        hasPairAvailable = hasPair,
                         hintText = when {
                             selected == null -> "Pehle timeline pe ek clip select karo."
                             !hasPair -> "Is clip ke pehle adjacent clip chahiye."

@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.media.MediaMetadataRetriever
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.TextureView
 import android.view.View
@@ -76,8 +77,11 @@ import com.moody.moodyvideoeditor.data.BrushStroke
 import com.moody.moodyvideoeditor.data.BrushType
 import com.moody.moodyvideoeditor.data.ColorFilterValues
 import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.data.EffectState
+import com.moody.moodyvideoeditor.data.FilterState
 import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.MaskType
+import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.utils.BrushEngine
 import com.moody.moodyvideoeditor.utils.ColorMatrixBuilder
 import com.moody.moodyvideoeditor.utils.EffectsEngine
@@ -154,6 +158,8 @@ fun PreviewCanvas(
     aspectRatioKey: String = "16:9",
     selectedClipId: String? = null,
     multiSelectedIds: Set<String> = emptySet(),
+    previewFilters: FilterState? = null,
+    previewEffectState: EffectState? = null,
 
     isDrawingMode: Boolean = false,
     activeBrushType: BrushType = BrushType.PEN,
@@ -195,6 +201,7 @@ fun PreviewCanvas(
             !it.isAudio &&
                     !it.isAdjustmentClip &&
                     !it.isEffectClip &&
+                    !it.isFilterLayerClip &&
                     currentPosMs >= it.timelineStartMs &&
                     currentPosMs < it.timelineEndMs &&
                     !hiddenVisualTracks.contains(it.trackIndex)
@@ -227,22 +234,31 @@ fun PreviewCanvas(
     }
 
     var outgoingBitmap by remember { mutableStateOf<Bitmap?>(null) }
-
     LaunchedEffect(outgoingClip?.id) {
         outgoingBitmap?.takeIf { !it.isRecycled }?.recycle()
         outgoingBitmap = null
         val oc = outgoingClip ?: return@LaunchedEffect
         val bmp = withContext(Dispatchers.IO) {
             try {
-                val retriever = MediaMetadataRetriever()
-                retriever.setDataSource(context, oc.uri)
-                val timeUs = (oc.sourceEndMs - 33).coerceAtLeast(0L) * 1000L
-                val b = retriever.getFrameAtTime(
-                    timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC
-                )
-                retriever.release()
-                b
+                // 🆕 Image vs Video handling
+                if (oc.type.startsWith("image/")) {
+                    // Image: decode directly
+                    android.graphics.BitmapFactory.decodeStream(
+                        context.contentResolver.openInputStream(oc.uri)
+                    )
+                } else {
+                    // Video: extract last frame
+                    val retriever = MediaMetadataRetriever()
+                    retriever.setDataSource(context, oc.uri)
+                    val timeUs = (oc.sourceEndMs - 33).coerceAtLeast(0L) * 1000L
+                    val b = retriever.getFrameAtTime(
+                        timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+                    )
+                    retriever.release()
+                    b
+                }
             } catch (e: Exception) {
+                Log.e("PREVIEW_TRANS", "Outgoing bitmap load failed", e)
                 null
             }
         }
@@ -275,22 +291,50 @@ fun PreviewCanvas(
 
     val motionFrames = activeEffects.mapNotNull { clip ->
         clip.effectState?.motion?.let { EffectsEngine.computeMotion(it, timeSec) }
+    }.toMutableList()
+
+    // 🆕 Preview effect
+    previewEffectState?.motion?.let { m ->
+        motionFrames.add(EffectsEngine.computeMotion(m, timeSec))
     }
     val combinedMotion = EffectsEngine.combineMotions(motionFrames)
 
-    val filterList = activeEffects.mapNotNull { it.effectState?.filters }
+    val filterList = activeEffects.mapNotNull { it.effectState?.filters }.toMutableList()
+
+    // 🆕 Preview effect
+    previewEffectState?.filters?.let { filterList.add(it) }
+
     val combinedFilter = if (filterList.isNotEmpty())
         EffectsEngine.combineFilters(filterList) else null
 
+    // 🆕 Overlay from preview effect
+    val previewOverlays = previewEffectState?.overlay?.let {
+        listOf(OverlayState(type = it.type, intensity = it.intensity, color = it.color))
+    } ?: emptyList()
     val allOverlays = EffectsEngine.collectActiveOverlays(clips, currentPosMs, videoTrackIdx)
+        .toMutableList()
+        .apply { addAll(previewOverlays) }
+
+    // 🆕 Filter layer — top-most filter layer active at playhead
+    val activeFilterLayer = clips
+        .filter {
+            it.isFilterLayerClip &&
+                    currentPosMs >= it.timelineStartMs &&
+                    currentPosMs < it.timelineEndMs &&
+                    !hiddenVisualTracks.contains(it.trackIndex)
+        }
+        .maxByOrNull { it.trackIndex }
 
     val hasAdjustments = activeAdjustment?.let {
         ColorMatrixBuilder.hasRealTimeAdjustments(it)
     } ?: false
     val hasFilters = EffectsEngine.hasColorEffect(combinedFilter)
-    val applyMatrix = hasAdjustments || hasFilters
+    val applyMatrix = hasAdjustments || hasFilters ||
+            activeFilterLayer != null || previewFilters != null
 
-    val combinedMatrix = remember(activeAdjustment, combinedFilter) {
+    val combinedMatrix = remember(
+        activeAdjustment, combinedFilter, activeFilterLayer?.id, previewFilters
+    ) {
         val cm = android.graphics.ColorMatrix()
         if (hasAdjustments && activeAdjustment != null) {
             cm.postConcat(ColorMatrixBuilder.build(activeAdjustment))
@@ -298,6 +342,43 @@ fun PreviewCanvas(
         if (hasFilters && combinedFilter != null) {
             cm.postConcat(EffectsEngine.buildColorMatrix(combinedFilter))
         }
+
+        // 🆕 Apply filter layer
+        activeFilterLayer?.let { layer ->
+            val cfv = ColorFilterValues(
+                brightness = layer.filters.brightness,
+                contrast = layer.filters.contrast,
+                saturation = layer.filters.saturation,
+                hue = layer.filters.hue,
+                grayscale = layer.filters.grayscale,
+                sepia = layer.filters.sepia,
+                invert = layer.filters.invert,
+                blur = layer.filters.blur,
+                opacity = layer.filters.opacity
+            )
+            if (EffectsEngine.hasColorEffect(cfv)) {
+                cm.postConcat(EffectsEngine.buildColorMatrix(cfv))
+            }
+        }
+
+        // 🆕 Live preview filters (from panel)
+        previewFilters?.let { pf ->
+            val cfv = ColorFilterValues(
+                brightness = pf.brightness,
+                contrast = pf.contrast,
+                saturation = pf.saturation,
+                hue = pf.hue,
+                grayscale = pf.grayscale,
+                sepia = pf.sepia,
+                invert = pf.invert,
+                blur = pf.blur,
+                opacity = pf.opacity
+            )
+            if (EffectsEngine.hasColorEffect(cfv)) {
+                cm.postConcat(EffectsEngine.buildColorMatrix(cfv))
+            }
+        }
+
         cm
     }
 
@@ -503,17 +584,46 @@ fun PreviewCanvas(
                                         val posTy =
                                             (imgTransform.y - 50f) / 100f * h
 
-                                        translationX = posTx + cropTx
-                                        translationY = posTy + cropTy
-                                        scaleX = (imgTransform.scale / 100f) * cropSx
-                                        scaleY = (imgTransform.scale / 100f) * cropSy
-                                        rotationZ = imgTransform.rotation
+                                        // 🆕 Transition incoming transform
+                                        val transT: Transform2D =
+                                            if (activeTransitionClip != null &&
+                                                activeTransitionClip.id == clip.id
+                                            ) {
+                                                val st = activeTransitionClip.transition!!
+                                                val prog = (
+                                                        (currentPosMs -
+                                                                activeTransitionClip
+                                                                    .timelineStartMs)
+                                                            .toFloat() /
+                                                                st.durationMs
+                                                                    .coerceAtLeast(1L)
+                                                        ).coerceIn(0f, 1f)
+                                                TransitionRenderer
+                                                    .getIncomingTransform(
+                                                        st.key, prog, w, h
+                                                    )
+                                            } else Transform2D()
+
+                                        translationX = posTx + cropTx +
+                                                combinedMotion.tx + transT.tx
+                                        translationY = posTy + cropTy +
+                                                combinedMotion.ty + transT.ty
+                                        scaleX = (imgTransform.scale / 100f) *
+                                                cropSx * combinedMotion.scale *
+                                                transT.scaleX
+                                        scaleY = (imgTransform.scale / 100f) *
+                                                cropSy * combinedMotion.scale *
+                                                transT.scaleY
+                                        rotationZ = imgTransform.rotation +
+                                                combinedMotion.rotation +
+                                                transT.rotZ
                                         transformOrigin = TransformOrigin(
                                             pivotFractionX =
                                                 imgTransform.anchorX / 100f,
                                             pivotFractionY =
                                                 imgTransform.anchorY / 100f
                                         )
+                                        alpha = opacityAlpha * transT.alpha
                                         this.clip = true
                                     }
                                     .then(
@@ -668,12 +778,18 @@ fun PreviewCanvas(
                                         val w = size.width
                                         val h = size.height
                                         translationX =
-                                            (brushTransform.x - 50f) / 100f * w
+                                            (brushTransform.x - 50f) / 100f * w +
+                                                    combinedMotion.tx
                                         translationY =
-                                            (brushTransform.y - 50f) / 100f * h
-                                        scaleX = brushTransform.scale / 100f
-                                        scaleY = brushTransform.scale / 100f
-                                        rotationZ = brushTransform.rotation
+                                            (brushTransform.y - 50f) / 100f * h +
+                                                    combinedMotion.ty
+                                        scaleX = (brushTransform.scale / 100f) *
+                                                combinedMotion.scale
+                                        scaleY = (brushTransform.scale / 100f) *
+                                                combinedMotion.scale
+                                        rotationZ = brushTransform.rotation +
+                                                combinedMotion.rotation
+                                        alpha = opacityAlpha
                                         transformOrigin = TransformOrigin(
                                             pivotFractionX =
                                                 brushTransform.anchorX / 100f,
@@ -881,6 +997,14 @@ fun PreviewCanvas(
                         (currentPosMs - activeTransitionClip.timelineStartMs).toFloat() /
                                 ts.durationMs.coerceAtLeast(1L)
                         ).coerceIn(0f, 1f)
+
+                // 🆕 Debug log
+                Log.d(
+                    "PREVIEW_TRANS",
+                    "Rendering transition: key=${ts.key}, prog=$progress, " +
+                            "clipId=${activeTransitionClip.id}"
+                )
+
                 TransitionRenderer.Render(outgoingBitmap!!, ts.key, progress)
             }
 

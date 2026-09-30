@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,48 +38,6 @@ import com.moody.moodyvideoeditor.data.TransitionLibrary
 import com.moody.moodyvideoeditor.data.TransitionState
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 
-private data class TransitionCategory(
-    val key: String,
-    val label: String,
-    val icon: String,
-    val presets: List<String>
-)
-
-private val CATEGORIES = listOf(
-    TransitionCategory(
-        "fade", "Fade", "◐",
-        listOf("fade", "dissolve", "fadeBlack", "fadeWhite", "blur")
-    ),
-    TransitionCategory(
-        "slide", "Slide", "➡️",
-        listOf("slideLeft", "slideRight", "slideUp", "slideDown")
-    ),
-    TransitionCategory(
-        "push", "Push", "⬅️",
-        listOf("pushLeft", "pushRight", "pushUp", "pushDown")
-    ),
-    TransitionCategory(
-        "wipe", "Wipe", "▷",
-        listOf("wipeLeft", "wipeRight", "wipeUp", "wipeDown")
-    ),
-    TransitionCategory(
-        "shapes", "Shapes", "◯",
-        listOf("circleIn", "irisBox", "clockWipe")
-    ),
-    TransitionCategory(
-        "zoom", "Zoom", "🔍",
-        listOf("zoomIn", "zoomOut", "crossZoom")
-    ),
-    TransitionCategory(
-        "spin", "Spin", "🌀",
-        listOf("spinCW", "spinCCW", "swirl")
-    ),
-    TransitionCategory(
-        "fx", "FX", "⚡",
-        listOf("rgbSplit", "glitch", "flashWhite")
-    )
-)
-
 @Composable
 fun TransitionsPanel(
     current: TransitionState,
@@ -90,16 +47,19 @@ fun TransitionsPanel(
     onRemove: () -> Unit,
     onClose: () -> Unit
 ) {
-    var activeCategory by remember { mutableStateOf("fade") }
+    var activeCategory by remember { mutableStateOf("basic") }
 
-    FeaturePanel(title = "⇄ Transitions", onClose = onClose) {
+    FeaturePanel(
+        title = "⇄ Transitions (${TransitionLibrary.PRESETS.size - 1})",
+        onClose = onClose
+    ) {
 
         if (!hasPairAvailable) {
             EmptyState(
                 icon = "⇄",
                 title = "No transition target",
                 text = hintText.ifBlank {
-                    "Select a clip with a neighboring clip on the same track to add a transition."
+                    "Select a clip with a neighbor on the same track."
                 }
             )
             return@FeaturePanel
@@ -108,12 +68,12 @@ fun TransitionsPanel(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 220.dp)
+                .heightIn(max = 300.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
-            // ─── CURRENT STATUS ───
+            // ═══ STATUS BAR ═══
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -131,7 +91,8 @@ fun TransitionsPanel(
                 )
                 Text(
                     TransitionLibrary.find(current.key)?.label ?: "None",
-                    color = if (current.isActive) Color(0xFFA855F7) else Color(0xFF666666),
+                    color = if (current.isActive) Color(0xFFA855F7)
+                    else Color(0xFF666666),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
@@ -158,15 +119,7 @@ fun TransitionsPanel(
                 }
             }
 
-            // ─── INFO ───
-            Text(
-                "📌 Transition applies at the START of the selected clip.",
-                color = Color(0xFF666666),
-                fontSize = 9.sp,
-                modifier = Modifier.padding(horizontal = 4.dp)
-            )
-
-            // ─── CATEGORY ───
+            // ═══ CATEGORY CHIPS ═══
             Text(
                 "Category",
                 color = Color(0xFF888888),
@@ -181,25 +134,23 @@ fun TransitionsPanel(
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                CATEGORIES.forEach { cat ->
-                    val isActive = cat.key == activeCategory
-                    Row(
+                TransitionLibrary.CATEGORIES.forEach { (key, label) ->
+                    val isActive = activeCategory == key
+                    Box(
                         modifier = Modifier
                             .height(30.dp)
-                            .clip(RoundedCornerShape(15.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .background(
                                 if (isActive) Color(0xFF7C3AED) else Color(0xFF181818)
                             )
-                            .pointerInput(cat.key) {
-                                detectTapGestures { activeCategory = cat.key }
+                            .pointerInput(key) {
+                                detectTapGestures { activeCategory = key }
                             }
-                            .padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text(cat.icon, fontSize = 11.sp)
                         Text(
-                            cat.label,
+                            label,
                             color = Color.White,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold
@@ -208,44 +159,45 @@ fun TransitionsPanel(
                 }
             }
 
-            // ─── PRESET GRID ───
-            val cat = CATEGORIES.firstOrNull { it.key == activeCategory } ?: CATEGORIES[0]
+            // ═══ PRESET CHIPS ═══
+            val catPresets = TransitionLibrary.presetsInCategory(activeCategory)
 
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                cat.presets.chunked(3).forEach { rowPresets ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        rowPresets.forEach { presetKey ->
-                            val preset = TransitionLibrary.find(presetKey)
-                            val isActive = current.key == presetKey
-                            TransitionCard(
-                                icon = preset?.icon ?: "◐",
-                                label = preset?.label ?: presetKey,
-                                isActive = isActive,
-                                modifier = Modifier.weight(1f),
-                                onClick = {
-                                    if (isActive) {
-                                        onRemove()
-                                    } else {
-                                        onTransitionChanged(
-                                            current.copy(key = presetKey)
-                                        )
-                                    }
-                                }
-                            )
+            Text(
+                "Tap to apply (${catPresets.size})",
+                color = Color(0xFF888888),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                catPresets.forEach { preset ->
+                    val isActive = current.key == preset.key
+                    TransitionChip(
+                        icon = preset.icon,
+                        label = preset.label,
+                        isActive = isActive,
+                        onClick = {
+                            if (isActive && preset.key != "none") {
+                                onRemove()
+                            } else {
+                                onTransitionChanged(
+                                    current.copy(key = preset.key)
+                                )
+                            }
                         }
-                        repeat(3 - rowPresets.size) {
-                            Spacer(Modifier.weight(1f))
-                        }
-                    }
+                    )
                 }
             }
 
-            // ─── DURATION SLIDER ───
+            // ═══ DURATION SLIDER ═══
             if (current.isActive) {
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(4.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -281,7 +233,7 @@ fun TransitionsPanel(
                         color = Color.White,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.width(44.dp)
+                        modifier = Modifier.width(48.dp)
                     )
                 }
             }
@@ -290,48 +242,30 @@ fun TransitionsPanel(
 }
 
 @Composable
-private fun TransitionCard(
+private fun TransitionChip(
     icon: String,
     label: String,
     isActive: Boolean,
-    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Column(
-        modifier = modifier
-            .height(64.dp)
+        modifier = Modifier
+            .width(76.dp)
+            .height(68.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(
-                if (isActive) Color(0xFF2A1F4D) else Color(0xFF181818)
-            )
+            .background(if (isActive) Color(0xFF2A1F4D) else Color(0xFF181818))
             .then(
-                if (isActive) {
-                    Modifier.border(
-                        width = 2.dp,
-                        color = Color(0xFFA855F7),
-                        shape = RoundedCornerShape(10.dp)
-                    )
-                } else Modifier
+                if (isActive) Modifier.border(
+                    1.5.dp, Color(0xFFA855F7), RoundedCornerShape(10.dp)
+                ) else Modifier
             )
-            .pointerInput(label) {
-                detectTapGestures { onClick() }
-            }
-            .padding(6.dp),
+            .pointerInput(label) { detectTapGestures { onClick() } }
+            .padding(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(
-                    if (isActive) Color(0xFFA855F7) else Color(0xFF222222)
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(icon, fontSize = 13.sp)
-        }
-        Spacer(Modifier.height(3.dp))
+        Text(icon, fontSize = 18.sp)
+        Spacer(Modifier.height(2.dp))
         Text(
             label,
             color = Color.White,

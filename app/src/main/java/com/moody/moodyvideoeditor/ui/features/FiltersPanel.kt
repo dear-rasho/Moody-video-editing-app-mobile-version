@@ -2,6 +2,7 @@ package com.moody.moodyvideoeditor.ui.features
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,8 +10,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,6 +20,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,268 +31,360 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.moody.moodyvideoeditor.data.FilterPreset
 import com.moody.moodyvideoeditor.data.FilterState
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 
 @Composable
 fun FiltersPanel(
-    current: FilterState,
-    hasClipSelected: Boolean,
-    onFilterChanged: (FilterState) -> Unit,
-    onResetAll: () -> Unit,
+    editLayerId: String? = null,
+    initialFilters: FilterState? = null,
+    onPreviewFilters: (FilterState?) -> Unit,
+    onApplyAsLayer: (FilterState) -> Unit,
+    onUpdateLayer: (FilterState) -> Unit = {},
+    onDeleteLayer: () -> Unit = {},
     onClose: () -> Unit
 ) {
-    var activeFilterKey by remember { mutableStateOf<String?>(null) }
+    val isEditMode = editLayerId != null
 
-    FeaturePanel(title = "🎨 Filters", onClose = onClose) {
-        if (!hasClipSelected) {
-            EmptyState(
-                icon = "👆",
-                title = "No clip selected",
-                text = "Pehle timeline pe ek clip select karo."
-            )
-            return@FeaturePanel
-        }
+    var selectedCategory by remember {
+        mutableStateOf(FilterState.PRESET_CATEGORIES.first().first)
+    }
+    var selectedPreset by remember { mutableStateOf<FilterPreset?>(null) }
+    var intensity by remember { mutableStateOf(100f) }
+    var currentFilters by remember {
+        mutableStateOf(initialFilters ?: FilterState())
+    }
 
-        val activeKey = activeFilterKey
-        if (activeKey == null) {
-            ListView(
-                state = current,
-                onFilterTap = { activeFilterKey = it },
-                onResetAll = onResetAll
-            )
+    LaunchedEffect(Unit) {
+        if (isEditMode && initialFilters != null) {
+            onPreviewFilters(initialFilters)
         } else {
-            val meta =
-                FilterState.FILTERS.firstOrNull { it.key == activeKey } ?: return@FeaturePanel
-            SliderView(
-                meta = meta,
-                value = current.get(activeKey),
-                isChanged = current.isChanged(activeKey),
-                onValueChanged = { newVal ->
-                    onFilterChanged(current.set(activeKey, newVal))
-                },
-                onReset = {
-                    onFilterChanged(current.set(activeKey, meta.default))
-                },
-                onBack = { activeFilterKey = null }
+            onPreviewFilters(null)
+        }
+    }
+
+    FeaturePanel(
+        title = if (isEditMode) "🎨 Edit Filter Layer" else "🎨 Filters",
+        onClose = {
+            onPreviewFilters(null)
+            onClose()
+        }
+    ) {
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 300.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+
+            // ═══════════════════════════════════════════════════════
+            //  CATEGORY CHIPS
+            // ═══════════════════════════════════════════════════════
+            Text(
+                "Category (${FilterState.PRESETS.size} filters)",
+                color = Color(0xFF888888),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                FilterState.PRESET_CATEGORIES.forEach { (key, label) ->
+                    val isActive = selectedCategory == key
+                    Box(
+                        modifier = Modifier
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (isActive) Color(0xFF7C3AED) else Color(0xFF181818)
+                            )
+                            .pointerInput(key) {
+                                detectTapGestures { selectedCategory = key }
+                            }
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            label,
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(2.dp))
+
+            // ═══════════════════════════════════════════════════════
+            //  PRESET CHIPS
+            // ═══════════════════════════════════════════════════════
+            val categoryPresets = FilterState.presetsInCategory(selectedCategory)
+
+            Text(
+                "Tap to preview (${categoryPresets.size})",
+                color = Color(0xFF888888),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                categoryPresets.forEach { preset ->
+                    val isSelected = selectedPreset?.key == preset.key
+                    PresetChip(
+                        icon = preset.icon,
+                        label = preset.label,
+                        isSelected = isSelected,
+                        onClick = {
+                            selectedPreset = preset
+                            intensity = 100f
+                            currentFilters = scalePresetIntensity(preset, intensity)
+                            onPreviewFilters(currentFilters)
+                            if (isEditMode) onUpdateLayer(currentFilters)
+                        }
+                    )
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════
+            //  INTENSITY (only when preset picked)
+            // ═══════════════════════════════════════════════════════
+            selectedPreset?.let { preset ->
+                Spacer(Modifier.height(2.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "Intensity",
+                        color = Color(0xFF888888),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.width(60.dp)
+                    )
+                    Slider(
+                        value = intensity.coerceIn(0f, 200f),
+                        onValueChange = { v ->
+                            intensity = v
+                            currentFilters = scalePresetIntensity(preset, v)
+                            onPreviewFilters(currentFilters)
+                            if (isEditMode) onUpdateLayer(currentFilters)
+                        },
+                        valueRange = 0f..200f,
+                        modifier = Modifier.weight(1f),
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color(0xFF7C3AED),
+                            activeTrackColor = Color(0xFF7C3AED),
+                            inactiveTrackColor = Color(0xFF303030)
+                        )
+                    )
+                    Text(
+                        "${intensity.toInt()}%",
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.width(44.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(6.dp))
+
+            // ═══════════════════════════════════════════════════════
+            //  ACTION BUTTONS
+            // ═══════════════════════════════════════════════════════
+            if (isEditMode) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFFFF6B6B).copy(alpha = 0.15f))
+                            .pointerInput(Unit) {
+                                detectTapGestures {
+                                    onDeleteLayer()
+                                    onPreviewFilters(null)
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "🗑 Delete",
+                            color = Color(0xFFFF6B6B),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .weight(2f)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF7C3AED))
+                            .pointerInput(Unit) {
+                                detectTapGestures {
+                                    onPreviewFilters(null)
+                                    onClose()
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "✓ Done",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF181818))
+                            .pointerInput(Unit) {
+                                detectTapGestures {
+                                    selectedPreset = null
+                                    intensity = 100f
+                                    currentFilters = FilterState()
+                                    onPreviewFilters(null)
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "↺ Reset",
+                            color = Color(0xFFAAAAAA),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .weight(2f)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF7C3AED))
+                            .pointerInput(Unit) {
+                                detectTapGestures {
+                                    onApplyAsLayer(currentFilters)
+                                    selectedPreset = null
+                                    intensity = 100f
+                                    currentFilters = FilterState()
+                                    onPreviewFilters(null)
+                                    onClose()
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "✨ Apply as Layer",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Text(
+                if (isEditMode)
+                    "💡 Changes live update ho rahi hain layer pe"
+                else
+                    "💡 Layer timeline pe banegi — drag, trim, stretch kar sakte ho",
+                color = Color(0xFF666666),
+                fontSize = 9.sp,
+                modifier = Modifier.padding(start = 4.dp)
             )
         }
     }
 }
 
+/**
+ * Scale preset values by intensity (0-200%).
+ */
+private fun scalePresetIntensity(
+    preset: FilterPreset,
+    intensityPct: Float
+): FilterState {
+    val t = (intensityPct / 100f).coerceIn(0f, 2f)
+
+    fun scale100(presetVal: Float): Float =
+        (100f + (presetVal - 100f) * t).coerceIn(0f, 300f)
+
+    fun scale0(presetVal: Float): Float =
+        (presetVal * t).coerceIn(0f, 300f)
+
+    return FilterState(
+        brightness = scale100(preset.brightness),
+        contrast = scale100(preset.contrast),
+        saturation = scale100(preset.saturation),
+        hue = scale0(preset.hue).coerceIn(0f, 360f),
+        grayscale = scale0(preset.grayscale).coerceIn(0f, 100f),
+        sepia = scale0(preset.sepia).coerceIn(0f, 100f),
+        invert = scale0(preset.invert).coerceIn(0f, 100f),
+        blur = scale0(preset.blur).coerceIn(0f, 30f),
+        opacity = scale100(preset.opacity).coerceIn(0f, 100f)
+    )
+}
+
 @Composable
-private fun ListView(
-    state: FilterState,
-    onFilterTap: (String) -> Unit,
-    onResetAll: () -> Unit
+private fun PresetChip(
+    icon: String,
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        val filters = FilterState.FILTERS
-        val rows = filters.chunked(3)
-
-        rows.forEach { rowFilters ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                rowFilters.forEach { meta ->
-                    FilterGridItem(
-                        meta = meta,
-                        value = state.get(meta.key),
-                        isChanged = state.isChanged(meta.key),
-                        modifier = Modifier.weight(1f),
-                        onClick = { onFilterTap(meta.key) }
-                    )
-                }
-                repeat(3 - rowFilters.size) {
-                    Spacer(Modifier.weight(1f))
-                }
-            }
-        }
-
-        if (state.hasAnyChange) {
-            Spacer(Modifier.height(4.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(40.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFFFF6B6B).copy(alpha = 0.15f))
-                    .pointerInput(Unit) { detectTapGestures { onResetAll() } },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "↺ Reset All Filters",
-                    color = Color(0xFFFF6B6B),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun FilterGridItem(
-    meta: FilterState.Companion.Meta,
-    value: Float,
-    isChanged: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    val bg = if (isChanged) Color(0xFF2A1F4D) else Color(0xFF181818)
-    val iconBg = if (isChanged) Color(0xFF7C3AED) else Color(0xFF222222)
-
-    Column(
-        modifier = modifier
-            .height(84.dp)
+            .width(76.dp)
+            .height(68.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(bg)
-            .pointerInput(meta.key) { detectTapGestures { onClick() } }
-            .padding(8.dp),
+            .background(if (isSelected) Color(0xFF2A1F4D) else Color(0xFF181818))
+            .pointerInput(label) { detectTapGestures { onClick() } }
+            .padding(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(30.dp)
-                .clip(RoundedCornerShape(15.dp))
-                .background(iconBg),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(meta.icon, fontSize = 15.sp)
-        }
-        Spacer(Modifier.height(4.dp))
+        Text(icon, fontSize = 18.sp)
+        Spacer(Modifier.height(2.dp))
         Text(
-            meta.label,
+            label,
             color = Color.White,
-            fontSize = 10.sp,
+            fontSize = 9.sp,
             fontWeight = FontWeight.Bold,
-            maxLines = 1
+            textAlign = TextAlign.Center,
+            maxLines = 2
         )
-        if (isChanged) {
-            Text(
-                "${value.toInt()}${meta.suffix}",
-                color = Color(0xFF7C3AED),
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold
-            )
-        }
-    }
-}
-
-@Composable
-private fun SliderView(
-    meta: FilterState.Companion.Meta,
-    value: Float,
-    isChanged: Boolean,
-    onValueChanged: (Float) -> Unit,
-    onReset: () -> Unit,
-    onBack: () -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFF181818))
-                    .pointerInput(Unit) { detectTapGestures { onBack() } },
-                contentAlignment = Alignment.Center
-            ) {
-                Text("‹", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            }
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "${meta.icon}  ${meta.label}",
-                color = Color.White,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f)
-            )
-            Box(
-                modifier = Modifier
-                    .height(28.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFF181818))
-                    .pointerInput(Unit) { detectTapGestures { onReset() } }
-                    .padding(horizontal = 10.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("↺", color = Color(0xFF888888), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Slider(
-                value = value.coerceIn(meta.min, meta.max),
-                onValueChange = {
-                    val snapped = if (meta.step >= 1f) kotlin.math.round(it) else it
-                    onValueChanged(snapped)
-                },
-                valueRange = meta.min..meta.max,
-                modifier = Modifier.weight(1f),
-                colors = SliderDefaults.colors(
-                    thumbColor = Color(0xFF7C3AED),
-                    activeTrackColor = Color(0xFF7C3AED),
-                    inactiveTrackColor = Color(0xFF303030)
-                )
-            )
-
-            Box(
-                modifier = Modifier
-                    .width(70.dp)
-                    .height(36.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF181818)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    if (meta.step < 1f) String.format("%.1f%s", value, meta.suffix)
-                    else "${value.toInt()}${meta.suffix}",
-                    color = if (isChanged) Color(0xFF7C3AED) else Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-
-        Text(
-            "Range ${meta.min.toInt()}–${meta.max.toInt()}${meta.suffix}  •  Default ${meta.default.toInt()}${meta.suffix}",
-            color = Color(0xFF666666),
-            fontSize = 10.sp,
-            modifier = Modifier.padding(start = 4.dp)
-        )
-    }
-}
-
-@Composable
-private fun EmptyState(icon: String, title: String, text: String) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF181818))
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Text(icon, fontSize = 24.sp)
-        Text(title, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        Text(text, color = Color(0xFF888888), fontSize = 10.sp)
     }
 }

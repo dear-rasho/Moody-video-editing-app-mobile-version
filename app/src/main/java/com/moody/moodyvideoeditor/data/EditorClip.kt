@@ -73,6 +73,9 @@ data class EditorClip(
     val isSoundFxClip: Boolean get() = type == "soundfx/plain"
     val isAudioEffectClip: Boolean get() = isAudioFxClip || isSoundFxClip
 
+    // 🆕 Filter layer (adjustment-like visual layer)
+    val isFilterLayerClip: Boolean get() = type == "filter/plain"
+
     companion object {
         const val MIN_DURATION_MS = 300L
     }
@@ -139,7 +142,13 @@ data class EditorState(
     val exportFps: Int = 30,
     val exportBitrateKbps: Int = 8000,
     val exportFormat: String = "mp4",
-    val exportFolderUri: String? = null
+    val exportFolderUri: String? = null,
+
+    // 🆕 Live preview filters (temporary, not committed)
+    val previewFilters: FilterState? = null,
+
+    // 🆕 Live preview effect (temporary, not committed)
+    val previewEffectState: EffectState? = null
 ) {
     val totalDurationMs: Long
         get() = clips.maxOfOrNull { it.timelineEndMs } ?: 10000L
