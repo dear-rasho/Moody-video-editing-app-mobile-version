@@ -101,6 +101,18 @@ object VideoUtils {
             name.endsWith(".mpg") || name.endsWith(".mpeg") -> "video/mpeg"
             name.endsWith(".ts") -> "video/mp2t"
 
+            // AUDIO
+            name.endsWith(".mp3") -> "audio/mpeg"
+            name.endsWith(".wav") -> "audio/wav"
+            name.endsWith(".aac") -> "audio/aac"
+            name.endsWith(".m4a") -> "audio/mp4"
+            name.endsWith(".ogg") -> "audio/ogg"
+            name.endsWith(".oga") -> "audio/ogg"
+            name.endsWith(".opus") -> "audio/opus"
+            name.endsWith(".flac") -> "audio/flac"
+            name.endsWith(".amr") -> "audio/amr"
+            name.endsWith(".3gp") -> "audio/3gpp"
+
             // IMAGE
             name.endsWith(".jpg") -> "image/jpeg"
             name.endsWith(".jpeg") -> "image/jpeg"

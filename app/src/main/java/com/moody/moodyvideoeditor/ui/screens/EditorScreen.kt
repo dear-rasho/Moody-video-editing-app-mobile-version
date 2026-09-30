@@ -62,7 +62,7 @@ import com.moody.moodyvideoeditor.ui.components.TimelineToolbar
 import com.moody.moodyvideoeditor.ui.features.AdjustmentsPanel
 import com.moody.moodyvideoeditor.ui.features.AnimationsPanel
 import com.moody.moodyvideoeditor.ui.features.AspectRatioPanel
-import com.moody.moodyvideoeditor.ui.features.AudioFxPanel
+import com.moody.moodyvideoeditor.ui.features.AudioPanel
 import com.moody.moodyvideoeditor.ui.features.BeatsPanel
 import com.moody.moodyvideoeditor.ui.features.BrushPanel
 import com.moody.moodyvideoeditor.ui.features.ChromaKeyPanel
@@ -77,7 +77,6 @@ import com.moody.moodyvideoeditor.ui.features.MotionPanel
 import com.moody.moodyvideoeditor.ui.features.MusicPanel
 import com.moody.moodyvideoeditor.ui.features.OverlaysPanel
 import com.moody.moodyvideoeditor.ui.features.PromptPanel
-import com.moody.moodyvideoeditor.ui.features.SoundFxPanel
 import com.moody.moodyvideoeditor.ui.features.SpeedPanel
 import com.moody.moodyvideoeditor.ui.features.StickersPanel
 import com.moody.moodyvideoeditor.ui.features.TextPanel
@@ -85,6 +84,7 @@ import com.moody.moodyvideoeditor.ui.features.TransformPanel
 import com.moody.moodyvideoeditor.ui.features.TransitionsPanel
 import com.moody.moodyvideoeditor.ui.features.TrimPanel
 import com.moody.moodyvideoeditor.ui.features.VolumePanel
+import com.moody.moodyvideoeditor.utils.AudioPreviewEngine
 import com.moody.moodyvideoeditor.utils.BeatsEngine
 import com.moody.moodyvideoeditor.utils.CropEngine
 import com.moody.moodyvideoeditor.utils.PromptEngine
@@ -174,8 +174,28 @@ fun EditorScreen(
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
     }
+
+    // 🆕 Second player — dedicated for audio-only clips (mp3, wav, etc.)
+    val audioExoPlayer = remember {
+        ExoPlayer.Builder(context).build().apply { playWhenReady = false }
+    }
+
     DisposableEffect(Unit) {
-        onDispose { exoPlayer.release() }
+        onDispose {
+            exoPlayer.release()
+            audioExoPlayer.release()
+        }
+    }
+
+    // 🆕 Reset audio preview whenever panel closes
+    LaunchedEffect(activePanel) {
+        if (activePanel != "audiofx" && activePanel != "soundfx") {
+            AudioPreviewEngine.release()
+            try {
+                exoPlayer.playbackParameters = androidx.media3.common.PlaybackParameters(1f, 1f)
+            } catch (_: Throwable) {
+            }
+        }
     }
 
     LaunchedEffect(state.selectedClipId, state.selectedClip?.speed) {
@@ -240,24 +260,126 @@ fun EditorScreen(
             exoPlayer.prepare()
         }
 
-        val localMs = (playheadMs - activeClip.timelineStartMs) + activeClip.sourceStartMs
-        val clampedLocal = localMs.coerceIn(activeClip.sourceStartMs, activeClip.sourceEndMs)
+        // 🆕 SPEED-AWARE SOURCE POSITION
+        // playheadOffset (timeline ms) × speed = source ms consumed
+        val speed = activeClip.speed.coerceAtLeast(0.01f)
+        val playheadOffset = (playheadMs - activeClip.timelineStartMs).coerceAtLeast(0L)
+        val localMs = activeClip.sourceStartMs +
+                (playheadOffset * speed).toLong()
+        val clampedLocal = localMs.coerceIn(
+            activeClip.sourceStartMs,
+            activeClip.sourceEndMs
+        )
+
+        // Drift threshold scales with speed
+        // Drift threshold scales with speed
+        val driftThreshold = (150f * speed).toLong().coerceAtLeast(80L)
         val drift = abs(exoPlayer.currentPosition - clampedLocal)
-        if (drift > 150L) {
+        if (drift > driftThreshold) {
             try {
                 exoPlayer.seekTo(clampedLocal)
             } catch (_: Exception) {
             }
         }
 
+        // 🆕 ALWAYS sync playback speed with active clip
+        val targetSpeed = SpeedEngine.clampForExoPlayer(activeClip.speed)
+        val currentSpeed = exoPlayer.playbackParameters.speed
+        if (abs(currentSpeed - targetSpeed) > 0.01f) {
+            try {
+                exoPlayer.setPlaybackSpeed(targetSpeed)
+            } catch (_: Exception) {
+            }
+        }
         if (isPlaybackActive && !exoPlayer.isPlaying) {
-            exoPlayer.setPlaybackSpeed(SpeedEngine.clampForExoPlayer(activeClip.speed))
             exoPlayer.play()
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 AUDIO CLIP PLAYBACK (standalone mp3/wav/etc.)
+    // ═══════════════════════════════════════════════════════════
+    LaunchedEffect(state.currentPosMs, state.clips, state.mutedAudioTracks) {
+        val playheadMs = state.currentPosMs
+        val activeAudio = state.clips
+            .filter {
+                it.isAudio &&
+                        !it.isAudioEffectClip &&
+                        it.uri.toString().isNotBlank() &&
+                        it.uri != Uri.EMPTY &&
+                        playheadMs >= it.timelineStartMs &&
+                        playheadMs < it.timelineEndMs &&
+                        !state.mutedAudioTracks.contains(it.trackIndex)
+            }
+            .maxByOrNull { it.trackIndex }
+
+        if (activeAudio == null) {
+            if (audioExoPlayer.isPlaying) audioExoPlayer.pause()
+            return@LaunchedEffect
+        }
+
+        val currentUri = audioExoPlayer.currentMediaItem?.localConfiguration?.uri
+        if (currentUri != activeAudio.uri) {
+            val mediaItem = MediaItem.Builder()
+                .setUri(activeAudio.uri)
+                .setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(activeAudio.sourceStartMs)
+                        .setEndPositionMs(activeAudio.sourceEndMs)
+                        .build()
+                )
+                .build()
+            audioExoPlayer.setMediaItem(mediaItem)
+            audioExoPlayer.prepare()
+        }
+
+        // Speed-aware position
+        val speed = activeAudio.speed.coerceAtLeast(0.01f)
+        val playheadOffset = (playheadMs - activeAudio.timelineStartMs)
+            .coerceAtLeast(0L)
+        val localMs = activeAudio.sourceStartMs + (playheadOffset * speed).toLong()
+        val clampedLocal = localMs.coerceIn(
+            activeAudio.sourceStartMs,
+            activeAudio.sourceEndMs
+        )
+
+        val driftThreshold = (150f * speed).toLong().coerceAtLeast(80L)
+        val drift = abs(audioExoPlayer.currentPosition - clampedLocal)
+        if (drift > driftThreshold) {
+            try {
+                audioExoPlayer.seekTo(clampedLocal)
+            } catch (_: Exception) {
+            }
+        }
+
+        // Volume + speed sync
+        val targetVolume = if (state.isMuted) 0f else activeAudio.volume
+        if (abs(audioExoPlayer.volume - targetVolume) > 0.01f) {
+            audioExoPlayer.volume = targetVolume
+        }
+
+        val targetSpeed = SpeedEngine.clampForExoPlayer(activeAudio.speed)
+        val currentSpeed = audioExoPlayer.playbackParameters.speed
+        if (abs(currentSpeed - targetSpeed) > 0.01f) {
+            try {
+                audioExoPlayer.setPlaybackSpeed(targetSpeed)
+            } catch (_: Exception) {
+            }
+        }
+
+        if (isPlaybackActive && !audioExoPlayer.isPlaying) {
+            audioExoPlayer.play()
+        }
+    }
+
     LaunchedEffect(isPlaybackActive) {
-        if (!isPlaybackActive) return@LaunchedEffect
+        if (!isPlaybackActive) {
+            try {
+                audioExoPlayer.pause()
+            } catch (_: Exception) {
+            }
+            return@LaunchedEffect
+        }
         var lastWallMs = System.currentTimeMillis()
         while (isPlaybackActive) {
             val now = System.currentTimeMillis()
@@ -270,6 +392,7 @@ fun EditorScreen(
                 viewModel.setCurrentPos(totalDur)
                 isPlaybackActive = false
                 exoPlayer.pause()
+                audioExoPlayer.pause()
             } else {
                 viewModel.setCurrentPos(next)
             }
@@ -562,6 +685,7 @@ fun EditorScreen(
                     arrayOf(
                         "video/*",
                         "image/*",
+                        "audio/*",
                         "image/jpeg",
                         "image/jpg",
                         "application/octet-stream"
@@ -653,6 +777,7 @@ fun EditorScreen(
                 if (isPlaybackActive) {
                     isPlaybackActive = false
                     exoPlayer.pause()
+                    audioExoPlayer.pause()
                 } else {
                     if (state.clips.isNotEmpty()) {
                         val totalDur = state.totalDurationMs
@@ -660,13 +785,26 @@ fun EditorScreen(
                             viewModel.setCurrentPos(0L)
                         }
                         isPlaybackActive = true
-                        val activeClip = state.clips.firstOrNull {
+
+                        // Resume video if visual clip active
+                        val activeVisual = state.clips.firstOrNull {
                             it.isVisualClip &&
                                     state.currentPosMs >= it.timelineStartMs &&
                                     state.currentPosMs < it.timelineEndMs &&
                                     !state.hiddenVisualTracks.contains(it.trackIndex)
                         }
-                        if (activeClip != null) exoPlayer.play()
+                        if (activeVisual != null) exoPlayer.play()
+
+                        // Resume audio if audio clip active
+                        val activeAudio = state.clips.firstOrNull {
+                            it.isAudio &&
+                                    !it.isAudioEffectClip &&
+                                    it.uri != Uri.EMPTY &&
+                                    state.currentPosMs >= it.timelineStartMs &&
+                                    state.currentPosMs < it.timelineEndMs &&
+                                    !state.mutedAudioTracks.contains(it.trackIndex)
+                        }
+                        if (activeAudio != null) audioExoPlayer.play()
                     }
                 }
             },
@@ -728,7 +866,7 @@ fun EditorScreen(
                     clipName = selected?.name ?: "",
                     baseDurationMs = viewModel.getSelectedBaseDurationMs(),
                     currentSpeed = selected?.speed ?: 1.0f,
-                    hasClipSelected = selected?.isVisualClip == true,
+                    hasClipSelected = selected != null,
                     onSpeedChanged = { viewModel.setSpeed(it) },
                     onReset = { viewModel.resetSpeed() },
                     onClose = { activePanel = null }
@@ -967,15 +1105,21 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                "audiofx" -> AudioFxPanel(
-                    current = state.audioFx,
-                    onSelected = { viewModel.setAudioFx(it) },
-                    onClose = { activePanel = null }
-                )
-
-                "soundfx" -> SoundFxPanel(
-                    current = state.soundFx,
-                    onSelected = { viewModel.setSoundFx(it) },
+                "audiofx" -> AudioPanel(
+                    onPreviewFx = { fx, intensity ->
+                        AudioPreviewEngine.apply(exoPlayer, audioExoPlayer, fx, intensity)
+                    },
+                    onClearPreview = {
+                        AudioPreviewEngine.release()
+                        try {
+                            exoPlayer.playbackParameters =
+                                androidx.media3.common.PlaybackParameters(1f, 1f)
+                        } catch (_: Throwable) {
+                        }
+                    },
+                    onApplyAudioFx = { fx, intensity ->
+                        viewModel.createAudioFxLayer(fx, intensity)
+                    },
                     onClose = { activePanel = null }
                 )
 

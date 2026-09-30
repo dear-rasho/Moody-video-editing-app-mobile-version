@@ -213,6 +213,12 @@ object ProjectRepository {
         put("linkedId", c.linkedId ?: JSONObject.NULL)
         put("isMuted", c.isMuted)
 
+        // 🆕 per-clip audio effects
+        put("audioFx", c.audioFx)
+        put("audioFxIntensity", c.audioFxIntensity.toDouble())
+        put("soundFx", c.soundFx)
+        put("soundFxIntensity", c.soundFxIntensity.toDouble())
+
         put("adjustments", adjustmentsToJson(c.adjustments))
         put("filters", filterToJson(c.filters))
         put("colorWheel", colorWheelToJson(c.colorWheel))
@@ -265,6 +271,13 @@ object ProjectRepository {
         sourceTotalMs = o.optLong("sourceTotalMs", Long.MAX_VALUE),
         linkedId = if (o.isNull("linkedId")) null else o.optString("linkedId", null),
         isMuted = o.optBoolean("isMuted", false),
+
+        // 🆕 per-clip audio effects
+        audioFx = o.optString("audioFx", "none"),
+        audioFxIntensity = o.optDouble("audioFxIntensity", 100.0).toFloat(),
+        soundFx = o.optString("soundFx", "none"),
+        soundFxIntensity = o.optDouble("soundFxIntensity", 100.0).toFloat(),
+
         adjustments = adjustmentsFromJson(o.optJSONObject("adjustments")),
         filters = filterFromJson(o.optJSONObject("filters")),
         colorWheel = colorWheelFromJson(o.optJSONObject("colorWheel")),

@@ -873,6 +873,8 @@ private fun TrackContent(
                 val ghostEndPx = ghostEndMs.toFloat() / totalMs * contentWidthPx
                 val ghostWidthPx = (ghostEndPx - ghostStartPx).coerceAtLeast(20f)
                 val ghostColor = when {
+                    ghost.isAudioFxClip -> Color(0xFFA855F7)
+                    ghost.isSoundFxClip -> Color(0xFF3B82F6)
                     ghost.isAudio -> Color(0xFF10B981)
                     ghost.isTextClip -> Color(0xFFEC4899)
                     ghost.isStickerClip -> Color(0xFFF59E0B)
@@ -919,6 +921,8 @@ private fun TrackContent(
             val clipWidthPx = (endPx - startPx).coerceAtLeast(20f)
 
             val barColor = when {
+                clip.isAudioFxClip -> Color(0xFFA855F7)
+                clip.isSoundFxClip -> Color(0xFF3B82F6)
                 clip.isAudio -> Color(0xFF10B981)
                 clip.isTextClip -> Color(0xFFEC4899)
                 clip.isStickerClip -> Color(0xFFF59E0B)

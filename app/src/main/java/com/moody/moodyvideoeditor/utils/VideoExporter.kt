@@ -52,9 +52,9 @@ class VideoExporter(
 
         Log.e("EXPORT_RANGE", "Range: $rangeStart → $rangeEnd (of $totalTimeline)")
 
-        // 🆕 Split visual clips:
-        //  - baseVisuals → track 0 videos/images → FFmpeg base
-        //  - overlayImages → images on higher tracks → rasterized on top
+        // ═══════════════════════════════════════════════════════════
+        //  Visual clips (video/image) → FFmpeg base
+        // ═══════════════════════════════════════════════════════════
         val allVisual = clips.filter {
             it.isVisualClip &&
                     it.uri.toString().isNotBlank() &&
@@ -75,6 +75,19 @@ class VideoExporter(
             rangeStart, rangeEnd
         )
 
+        // ═══════════════════════════════════════════════════════════
+        //  🆕 Audio-only clips (mp3/wav) — trimmed to range
+        // ═══════════════════════════════════════════════════════════
+        val audioOnlyClips = trimClipsToRange(
+            clips.filter {
+                it.isAudio &&
+                        !it.isAudioEffectClip &&
+                        it.uri.toString().isNotBlank() &&
+                        it.uri != Uri.EMPTY
+            },
+            rangeStart, rangeEnd
+        )
+
         val trimmedTextClips = trimClipsToRange(
             clips.filter { it.isTextClip || it.isStickerClip },
             rangeStart, rangeEnd
@@ -86,15 +99,15 @@ class VideoExporter(
         )
 
         when {
-            trimmedVisualClips.isNotEmpty() -> {
+            // ─── Mixed visual + audio-only ───
+            trimmedVisualClips.isNotEmpty() || audioOnlyClips.isNotEmpty() -> {
                 val outputFile = createOutputFile(fileName, format)
 
-                // 🆕 COMBINED overlay for whole timeline
                 val textSequences = try {
                     TextBitmapRenderer.renderCombinedOverlays(
                         context = context,
                         textClips = trimmedTextClips,
-                        imageClips = overlayImageClips,     // 🆕
+                        imageClips = overlayImageClips,
                         W = targetW,
                         H = targetH,
                         fps = fps,
@@ -107,8 +120,9 @@ class VideoExporter(
 
                 Log.e(
                     "EXPORT",
-                    "Text sequences: ${textSequences.size}, " +
-                            "totalFrames=${textSequences.sumOf { it.frameCount }}"
+                    "Visual=${trimmedVisualClips.size}, " +
+                            "AudioOnly=${audioOnlyClips.size}, " +
+                            "Text=${textSequences.size}"
                 )
 
                 ffmpeg = FFmpegExecutor(
@@ -133,13 +147,16 @@ class VideoExporter(
                     targetH = targetH,
                     fps = fps,
                     bitrateKbps = bitrateKbps,
-                    textSequences = textSequences
+                    textSequences = textSequences,
+                    audioOnlyClips = audioOnlyClips,
+                    explicitDurationMs = exportDurationMs
                 )
             }
 
+            // ─── Only text/stickers ───
             trimmedTextClips.isNotEmpty() || overlayImageClips.isNotEmpty() -> {
                 exportSynthetic(
-                    textClips = trimmedTextClips + overlayImageClips,   // 🆕
+                    textClips = trimmedTextClips + overlayImageClips,
                     totalDurationMs = exportDurationMs,
                     fileName = fileName,
                     aspectRatio = aspectRatio,

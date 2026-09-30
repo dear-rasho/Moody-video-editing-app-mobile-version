@@ -28,6 +28,12 @@ data class EditorClip(
     val linkedId: String? = null,
     val isMuted: Boolean = false,
 
+    // 🆕 PER-CLIP AUDIO EFFECTS
+    val audioFx: String = "none",
+    val audioFxIntensity: Float = 100f,
+    val soundFx: String = "none",
+    val soundFxIntensity: Float = 100f,
+
     val filters: FilterState = FilterState(),
     val colorWheel: ColorWheelState = ColorWheelState(),
     val overlay: OverlayState = OverlayState(),
@@ -61,6 +67,11 @@ data class EditorClip(
     val isOverlayClip: Boolean get() = type == "overlay/plain"
     val isChromaClip: Boolean get() = type == "chroma/plain"
     val isBrushClip: Boolean get() = type == "brush/plain"
+
+    // 🆕 Audio effect layers
+    val isAudioFxClip: Boolean get() = type == "audiofx/plain"
+    val isSoundFxClip: Boolean get() = type == "soundfx/plain"
+    val isAudioEffectClip: Boolean get() = isAudioFxClip || isSoundFxClip
 
     companion object {
         const val MIN_DURATION_MS = 300L

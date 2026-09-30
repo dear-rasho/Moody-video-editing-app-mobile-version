@@ -49,7 +49,12 @@ fun AudioFxPanel(current: String, onSelected: (String) -> Unit, onClose: () -> U
                         .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(fx, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        fx,
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
