@@ -2129,6 +2129,11 @@ class EditorViewModel : ViewModel() {
     // ═══════════════════════════════════════════════════════════
     //  TRANSITIONS
     // ═══════════════════════════════════════════════════════════
+    // 🆕 Set transition on SPECIFIC clip (always right clip of pair)
+    fun setTransitionForClip(clipId: String, state: TransitionState) {
+        updateClipDirect(clipId) { it.copy(transition = state) }
+    }
+
     fun updateTransition(state: TransitionState) {
         forEachSelectedClip { it.copy(transition = state) }
     }

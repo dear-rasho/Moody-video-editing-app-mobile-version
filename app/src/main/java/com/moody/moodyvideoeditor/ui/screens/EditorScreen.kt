@@ -1046,21 +1046,45 @@ fun EditorScreen(
                 )
 
                 "transitions" -> {
-                    val hasPair = selected != null && state.clips.any { other ->
-                        other.id != selected.id &&
-                                other.isAudio == selected.isAudio &&
-                                abs(other.timelineEndMs - selected.timelineStartMs) < 100L
+                    // 🆕 Find target = RIGHT clip of pair
+                    val target = selected?.let { sel ->
+                        // Left neighbor of selected → selected is right clip
+                        val hasLeft = state.clips.any { other ->
+                            other.id != sel.id &&
+                                    other.isAudio == sel.isAudio &&
+                                    other.trackIndex == sel.trackIndex &&
+                                    abs(other.timelineEndMs - sel.timelineStartMs) < 100L
+                        }
+                        if (hasLeft) sel
+                        else {
+                            // Right neighbor of selected → rightNeighbor is right clip
+                            state.clips.filter { other ->
+                                other.id != sel.id &&
+                                        other.isAudio == sel.isAudio &&
+                                        other.trackIndex == sel.trackIndex &&
+                                        abs(other.timelineStartMs - sel.timelineEndMs) < 100L
+                            }.minByOrNull { it.timelineStartMs }
+                        }
                     }
+
                     TransitionsPanel(
-                        current = selected?.transition ?: TransitionState(),
-                        hasPairAvailable = hasPair,
+                        current = target?.transition ?: TransitionState(),
+                        hasPairAvailable = target != null,
                         hintText = when {
                             selected == null -> "Pehle timeline pe ek clip select karo."
-                            !hasPair -> "Is clip ke pehle adjacent clip chahiye."
+                            target == null -> "Is clip ke saath koi adjacent clip chahiye."
                             else -> "Transition lagao"
                         },
-                        onTransitionChanged = { viewModel.updateTransition(it) },
-                        onRemove = { viewModel.removeTransition() },
+                        onTransitionChanged = { newState ->
+                            target?.let { viewModel.setTransitionForClip(it.id, newState) }
+                        },
+                        onRemove = {
+                            target?.let {
+                                viewModel.setTransitionForClip(
+                                    it.id, TransitionState()
+                                )
+                            }
+                        },
                         onClose = { activePanel = null }
                     )
                 }
