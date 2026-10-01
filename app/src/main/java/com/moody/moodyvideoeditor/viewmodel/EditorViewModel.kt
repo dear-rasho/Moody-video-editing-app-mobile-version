@@ -1122,25 +1122,30 @@ class EditorViewModel : ViewModel() {
         val s = _state.value
         pushHistory()
 
-        // 🆕 Duplicate at playhead, stacked if needed
-        val copy = DuplicateEngine.duplicateAt(
+        // 🆕 Duplicate at playhead — includes linked audio partner
+        val copies = DuplicateEngine.duplicateAt(
             source = sel,
             allClips = s.clips,
             playheadMs = s.currentPosMs
         )
 
+        if (copies.isEmpty()) return
+
         val list = s.clips.toMutableList()
-        list.add(copy)
+        list.addAll(copies)
 
         val maxVisual = list.filter { !it.isAudio }.maxOfOrNull { it.trackIndex } ?: 0
         val maxAudio = list.filter { it.isAudio }.maxOfOrNull { it.trackIndex } ?: 0
 
+        // Select the primary copy
+        val primary = copies.first()
+
         _state.update {
             it.copy(
                 clips = list,
-                selectedClipId = copy.id,
-                selectedTrackIndex = copy.trackIndex,
-                selectedIsAudio = copy.isAudio,
+                selectedClipId = primary.id,
+                selectedTrackIndex = primary.trackIndex,
+                selectedIsAudio = primary.isAudio,
                 visualLayerCount = maxOf(it.visualLayerCount, maxVisual + 1),
                 audioLayerCount = maxOf(it.audioLayerCount, maxAudio + 1)
             )

@@ -6,26 +6,33 @@ import java.util.UUID
 /**
  * Mirrors js/features/duplicate.js — updated for playhead-based duplication
  * with stack placement when overlap exists.
+ *
+ * 🆕 Now duplicates BOTH video + linked audio partner.
  */
 object DuplicateEngine {
 
     /**
-     * 🆕 Duplicate clip at playhead position.
+     * 🆕 Duplicate clip at playhead position WITH its linked partner.
      *
-     * Behavior:
-     * 1. Copy placed at playhead timeline position
-     * 2. If overlap with existing clip on same track → move to nearest empty track ABOVE
-     * 3. If no free track exists → create new top track
+     * Returns: list of new clips (primary + optional linked partner).
      */
     fun duplicateAt(
         source: EditorClip,
         allClips: List<EditorClip>,
         playheadMs: Long
-    ): EditorClip {
+    ): List<EditorClip> {
         val durMs = source.durationMs
+        val newLinkId = "lk-${System.currentTimeMillis()}-${(1000..9999).random()}"
 
-        // Find empty track at playhead
-        val targetTrack = findFreeTrackForDuplicate(
+        val result = mutableListOf<EditorClip>()
+
+        // ─── Find linked partner (video ↔ audio) ───
+        val linkedPartner = source.linkedId?.let { lid ->
+            allClips.firstOrNull { it.linkedId == lid && it.id != source.id }
+        }
+
+        // ─── Place PRIMARY copy ───
+        val primaryTrack = findFreeTrackForDuplicate(
             allClips = allClips,
             sourceTrack = source.trackIndex,
             isAudio = source.isAudio,
@@ -33,19 +40,38 @@ object DuplicateEngine {
             endMs = playheadMs + durMs
         )
 
-        return source.copy(
+        val primaryCopy = source.copy(
             id = UUID.randomUUID().toString(),
             name = "${source.name} copy",
             timelineStartMs = playheadMs,
-            trackIndex = targetTrack,
-            linkedId = null
+            trackIndex = primaryTrack,
+            linkedId = if (linkedPartner != null) newLinkId else null
         )
+        result.add(primaryCopy)
+
+        // ─── Place LINKED PARTNER copy (if exists) ───
+        if (linkedPartner != null) {
+            val linkedTrack = findFreeTrackForDuplicate(
+                allClips = allClips,
+                sourceTrack = linkedPartner.trackIndex,
+                isAudio = linkedPartner.isAudio,
+                startMs = playheadMs,
+                endMs = playheadMs + durMs
+            )
+
+            val linkedCopy = linkedPartner.copy(
+                id = UUID.randomUUID().toString(),
+                name = "${linkedPartner.name} copy",
+                timelineStartMs = playheadMs,
+                trackIndex = linkedTrack,
+                linkedId = newLinkId
+            )
+            result.add(linkedCopy)
+        }
+
+        return result
     }
 
-    /**
-     * Find a track where duplicate can fit at given time range.
-     * Priority: same track if empty, else next track above, else new top track.
-     */
     private fun findFreeTrackForDuplicate(
         allClips: List<EditorClip>,
         sourceTrack: Int,
@@ -54,11 +80,8 @@ object DuplicateEngine {
         endMs: Long
     ): Int {
         val sameTypeClips = allClips.filter { it.isAudio == isAudio }
-
-        // Max existing track index for this type
         val maxTrack = sameTypeClips.maxOfOrNull { it.trackIndex } ?: -1
 
-        // Try tracks starting from sourceTrack, going up
         for (t in sourceTrack..(maxTrack + 1)) {
             val hasOverlap = sameTypeClips.any { c ->
                 c.trackIndex == t &&
@@ -67,13 +90,11 @@ object DuplicateEngine {
             }
             if (!hasOverlap) return t
         }
-
-        // Fallback: new top track
         return maxTrack + 1
     }
 
     /**
-     * Legacy method — kept for compatibility with old call sites.
+     * Legacy method — kept for compatibility.
      */
     fun duplicateAfter(clip: EditorClip, allClips: List<EditorClip>): EditorClip {
         val sameTrack = allClips.filter {
