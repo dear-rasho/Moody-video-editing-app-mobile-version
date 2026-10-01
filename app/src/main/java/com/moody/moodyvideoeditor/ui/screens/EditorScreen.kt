@@ -29,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -169,9 +170,8 @@ fun EditorScreen(
     var exportProgress by remember { mutableFloatStateOf(0f) }
     var exportMessage by remember { mutableStateOf("") }
     var exportFileName by remember { mutableStateOf("") }
-    var exportStartMs by remember { mutableStateOf(0L) }
-    var exportEndMs by remember { mutableStateOf(0L) }
-    // 🆕 Custom range toggle — OFF by default (full timeline)
+    var exportStartMs by remember { mutableLongStateOf(0L) }
+    var exportEndMs by remember { mutableLongStateOf(0L) }
     var useCustomRange by remember { mutableStateOf(false) }
     var showCancelConfirm by remember { mutableStateOf(false) }
     var activeExporter by remember { mutableStateOf<VideoExporter?>(null) }
@@ -200,7 +200,8 @@ fun EditorScreen(
         if (activePanel != "audiofx" && activePanel != "soundfx") {
             AudioPreviewEngine.release()
             try {
-                exoPlayer.playbackParameters = androidx.media3.common.PlaybackParameters(1f, 1f)
+                exoPlayer.playbackParameters =
+                    androidx.media3.common.PlaybackParameters(1f, 1f)
                 audioExoPlayer.playbackParameters =
                     androidx.media3.common.PlaybackParameters(1f, 1f)
             } catch (_: Throwable) {
@@ -208,11 +209,34 @@ fun EditorScreen(
         }
     }
 
+    // 🆕 Visibility toggle pe preview clear
+    LaunchedEffect(state.hiddenVisualTracks, filterEditLayerId, effectEditLayerId) {
+        val editFilter = filterEditLayerId?.let { id ->
+            state.clips.firstOrNull { it.id == id }
+        }
+        if (editFilter != null &&
+            state.hiddenVisualTracks.contains(editFilter.trackIndex)
+        ) {
+            viewModel.clearPreviewFilters()
+        }
+
+        val editEffect = effectEditLayerId?.let { id ->
+            state.clips.firstOrNull { it.id == id }
+        }
+        if (editEffect != null &&
+            state.hiddenVisualTracks.contains(editEffect.trackIndex)
+        ) {
+            viewModel.clearPreviewEffect()
+        }
+    }
+
     val activeClipTrackMuted = remember(state.selectedClip, state.mutedAudioTracks) {
         val sel = state.selectedClip
         sel != null && sel.isAudio && state.mutedAudioTracks.contains(sel.trackIndex)
     }
-    val anyActiveAudioMuted = remember(state.clips, state.currentPosMs, state.mutedAudioTracks) {
+    val anyActiveAudioMuted = remember(
+        state.clips, state.currentPosMs, state.mutedAudioTracks
+    ) {
         state.clips.any { c ->
             c.isAudio &&
                     state.currentPosMs >= c.timelineStartMs &&
@@ -263,7 +287,8 @@ fun EditorScreen(
         }
 
         val speed = activeClip.speed.coerceAtLeast(0.01f)
-        val playheadOffset = (playheadMs - activeClip.timelineStartMs).coerceAtLeast(0L)
+        val playheadOffset = (playheadMs - activeClip.timelineStartMs)
+            .coerceAtLeast(0L)
         val localMs = activeClip.sourceStartMs + (playheadOffset * speed).toLong()
         val clampedLocal = localMs.coerceIn(
             activeClip.sourceStartMs,
@@ -441,10 +466,11 @@ fun EditorScreen(
                                     "img_${System.currentTimeMillis()}_" +
                                             "${uri.hashCode()}.jpg"
                                 )
-                                context.contentResolver.openInputStream(uri)?.use { input ->
-                                    cacheFile.outputStream()
-                                        .use { output -> input.copyTo(output) }
-                                }
+                                context.contentResolver
+                                    .openInputStream(uri)?.use { input ->
+                                        cacheFile.outputStream()
+                                            .use { output -> input.copyTo(output) }
+                                    }
                                 Uri.fromFile(cacheFile)
                             } catch (e: Exception) {
                                 uri
@@ -520,12 +546,12 @@ fun EditorScreen(
 
         val totalDur = state.totalDurationMs
 
-        // 🆕 Toggle logic: OFF = full timeline, ON = custom range
         val rangeStart: Long
         val rangeEnd: Long
         if (useCustomRange) {
+            val effectiveEnd = if (exportEndMs > 0L) exportEndMs else totalDur
             rangeStart = exportStartMs.coerceIn(0L, totalDur)
-            rangeEnd = exportEndMs.coerceIn(rangeStart + 500L, totalDur)
+            rangeEnd = effectiveEnd.coerceIn(rangeStart + 500L, totalDur)
         } else {
             rangeStart = 0L
             rangeEnd = totalDur
@@ -533,13 +559,23 @@ fun EditorScreen(
 
         Log.e(
             "EXPORT",
-            "Starting export: useCustomRange=$useCustomRange, " +
-                    "range=$rangeStart..$rangeEnd (total=$totalDur)"
+            "useCustomRange=$useCustomRange, " +
+                    "exportStartMs=$exportStartMs, exportEndMs=$exportEndMs, " +
+                    "totalDur=$totalDur → range=$rangeStart..$rangeEnd"
         )
 
         isExporting = true
         exportProgress = 0f
         exportMessage = "⏳ Preparing… (rendering text overlays)"
+
+        val clipsSnapshot = state.clips
+        val aspectSnapshot = state.aspectRatio
+        val resolutionSnapshot = state.exportResolution
+        val fpsSnapshot = state.exportFps
+        val bitrateSnapshot = state.exportBitrateKbps
+        val formatSnapshot = state.exportFormat
+        val folderSnapshot = state.exportFolderUri
+        val adjSnapshot = state.selectedClip?.adjustments ?: AdjustmentData()
 
         val exporter = VideoExporter(
             context = context,
@@ -574,15 +610,15 @@ fun EditorScreen(
         kotlinx.coroutines.CoroutineScope(Dispatchers.Default).launch {
             try {
                 exporter.export(
-                    clips = state.clips,
+                    clips = clipsSnapshot,
                     fileName = finalName,
-                    adjustments = state.selectedClip?.adjustments ?: AdjustmentData(),
-                    aspectRatio = state.aspectRatio,
-                    resolution = state.exportResolution,
-                    fps = state.exportFps,
-                    bitrateKbps = state.exportBitrateKbps,
-                    format = state.exportFormat,
-                    customFolderUri = state.exportFolderUri,
+                    adjustments = adjSnapshot,
+                    aspectRatio = aspectSnapshot,
+                    resolution = resolutionSnapshot,
+                    fps = fpsSnapshot,
+                    bitrateKbps = bitrateSnapshot,
+                    format = formatSnapshot,
+                    customFolderUri = folderSnapshot,
                     customStartMs = rangeStart,
                     customEndMs = rangeEnd
                 )
@@ -675,7 +711,9 @@ fun EditorScreen(
                     viewModel.addStrokeToBrushClip(targetBrush?.id, strokeWithGradient)
                 },
                 onMaskPointAdd = { x, y -> viewModel.addMaskPoint(x, y) },
-                onMaskAnchorMove = { index, x, y -> viewModel.moveMaskAnchor(index, x, y) },
+                onMaskAnchorMove = { index, x, y ->
+                    viewModel.moveMaskAnchor(index, x, y)
+                },
                 onMaskHandleMove = { index, isIn, dx, dy ->
                     viewModel.moveMaskHandle(index, isIn, dx, dy)
                 },
@@ -798,11 +836,15 @@ fun EditorScreen(
                     onToggleVisualVisibility = { idx ->
                         viewModel.toggleVisualTrackVisibility(idx)
                     },
-                    onToggleAudioMute = { idx -> viewModel.toggleAudioTrackMute(idx) },
+                    onToggleAudioMute = { idx ->
+                        viewModel.toggleAudioTrackMute(idx)
+                    },
                     onSwapTracks = { from, to, isAudio ->
                         viewModel.swapTracks(from, to, isAudio)
                     },
-                    onTransitionDelete = { clipId -> viewModel.removeTransitionFor(clipId) },
+                    onTransitionDelete = { clipId ->
+                        viewModel.removeTransitionFor(clipId)
+                    },
                     onTransitionDurationChange = { clipId, ms ->
                         viewModel.setTransitionDuration(clipId, ms)
                     }
@@ -955,7 +997,9 @@ fun EditorScreen(
                     onAnimationSelected = { viewModel.setTextAnimation(it) },
                     onDurationChanged = {
                         val st = viewModel.getSelectedTextState()
-                        viewModel.updateSelectedText(st.copy(animationDuration = it))
+                        viewModel.updateSelectedText(
+                            st.copy(animationDuration = it)
+                        )
                     },
                     onPreview = { exoPlayer.seekTo(0) },
                     onClose = { activePanel = null }
@@ -970,6 +1014,8 @@ fun EditorScreen(
                     FiltersPanel(
                         editLayerId = editLayer?.id,
                         initialFilters = editLayer?.filters,
+                        previewClip = selected,
+                        previewTimeMs = state.currentPosMs,
                         onPreviewFilters = { viewModel.setPreviewFilters(it) },
                         onApplyAsLayer = { filters ->
                             viewModel.createFilterLayer(filters)
@@ -1014,7 +1060,9 @@ fun EditorScreen(
                         },
                         onUpdateIntensity = { intensity ->
                             editLayer?.let {
-                                viewModel.updateEffectLayerIntensity(it.id, intensity)
+                                viewModel.updateEffectLayerIntensity(
+                                    it.id, intensity
+                                )
                             }
                         },
                         onDeleteLayer = {
@@ -1080,7 +1128,9 @@ fun EditorScreen(
                                 other.id != sel.id &&
                                         other.isAudio == sel.isAudio &&
                                         other.trackIndex == sel.trackIndex &&
-                                        abs(other.timelineStartMs - sel.timelineEndMs) < 100L
+                                        abs(
+                                            other.timelineStartMs - sel.timelineEndMs
+                                        ) < 100L
                             }.minByOrNull { it.timelineStartMs }
                         }
                     }
@@ -1094,7 +1144,9 @@ fun EditorScreen(
                             else -> "Transition lagao"
                         },
                         onTransitionChanged = { newState ->
-                            target?.let { viewModel.setTransitionForClip(it.id, newState) }
+                            target?.let {
+                                viewModel.setTransitionForClip(it.id, newState)
+                            }
                         },
                         onRemove = {
                             target?.let {
@@ -1157,10 +1209,14 @@ fun EditorScreen(
                         onOpacityChanged = { brushOpacity = it },
                         onGradientChanged = { brushGradient = it },
                         onUndoStroke = {
-                            brushClip?.let { viewModel.undoLastStrokeOnBrushClip(it.id) }
+                            brushClip?.let {
+                                viewModel.undoLastStrokeOnBrushClip(it.id)
+                            }
                         },
                         onClearStrokes = {
-                            brushClip?.let { viewModel.clearBrushClipStrokes(it.id) }
+                            brushClip?.let {
+                                viewModel.clearBrushClipStrokes(it.id)
+                            }
                         },
                         onCreateLayer = {
                             viewModel.createBrushClip()
@@ -1180,7 +1236,9 @@ fun EditorScreen(
                     cropB = selected?.cropB ?: 0f,
                     hasClipSelected = selected?.isVisualClip == true ||
                             state.multiSelectedIds.isNotEmpty(),
-                    onCropChanged = { l, r, t, b -> viewModel.setCrop(l, r, t, b) },
+                    onCropChanged = { l, r, t, b ->
+                        viewModel.setCrop(l, r, t, b)
+                    },
                     onAspectSelected = { key ->
                         val q = CropEngine.presetFor(key, 16f, 9f)
                         viewModel.setCrop(q.l, q.r, q.t, q.b)
@@ -1237,7 +1295,9 @@ fun EditorScreen(
 
                 "audiofx" -> AudioPanel(
                     onPreviewFx = { fx, intensity ->
-                        AudioPreviewEngine.apply(exoPlayer, audioExoPlayer, fx, intensity)
+                        AudioPreviewEngine.apply(
+                            exoPlayer, audioExoPlayer, fx, intensity
+                        )
                     },
                     onClearPreview = {
                         AudioPreviewEngine.release()
@@ -1258,7 +1318,9 @@ fun EditorScreen(
                 "soundfx" -> {
                     AudioPanel(
                         onPreviewFx = { fx, intensity ->
-                            AudioPreviewEngine.apply(exoPlayer, audioExoPlayer, fx, intensity)
+                            AudioPreviewEngine.apply(
+                                exoPlayer, audioExoPlayer, fx, intensity
+                            )
                         },
                         onClearPreview = {
                             AudioPreviewEngine.release()
@@ -1308,6 +1370,7 @@ fun EditorScreen(
                 )
 
                 "music" -> MusicPanel(onClose = { activePanel = null })
+
                 "motion" -> MotionPanel(
                     current = "none",
                     onSelected = { },

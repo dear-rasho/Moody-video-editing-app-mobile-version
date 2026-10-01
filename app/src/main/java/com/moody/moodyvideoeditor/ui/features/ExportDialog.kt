@@ -29,6 +29,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,7 +93,13 @@ fun ExportDialog(
 ) {
     val context = LocalContext.current
     var messageCopied by remember { mutableStateOf(false) }
-
+// 🆕 Auto-init custom range jab ON ho
+    LaunchedEffect(useCustomRange, timelineDurationMs) {
+        if (useCustomRange && endMs <= 0L) {
+            onStartChange(0L)
+            onEndChange(timelineDurationMs)
+        }
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -235,60 +242,103 @@ fun ExportDialog(
                     // ═══════════════════════════════════════════════
                     //  🆕 EXPORT RANGE TOGGLE
                     // ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════
+//  🆕 EXPORT RANGE — Two Mutually Exclusive Buttons
+// ═══════════════════════════════════════════════
                     SectionLabel("Export Range")
 
+// Two buttons row
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF1A1A1A))
-                            .padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                if (useCustomRange) "Custom range"
-                                else "Full timeline",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                if (useCustomRange) "Set specific start & end time"
-                                else "Export complete project (${formatDuration(timelineDurationMs)})",
-                                color = Color(0xFF888888),
-                                fontSize = 10.sp
-                            )
-                        }
-
-                        // Toggle button
+                        // ─── FULL DURATION BUTTON ───
+                        val isFullActive = !useCustomRange
                         Box(
                             modifier = Modifier
-                                .height(32.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                                .weight(1f)
+                                .height(56.dp)
+                                .clip(RoundedCornerShape(10.dp))
                                 .background(
-                                    if (useCustomRange) Color(0xFF7C3AED)
-                                    else Color(0xFF2A2A2A)
+                                    if (isFullActive) Color(0xFF7C3AED)
+                                    else Color(0xFF1A1A1A)
                                 )
                                 .pointerInput(useCustomRange, isExporting) {
-                                    if (!isExporting) {
+                                    if (!isExporting && useCustomRange) {
                                         detectTapGestures {
-                                            onUseCustomRangeChange(!useCustomRange)
+                                            onUseCustomRangeChange(false)
                                         }
                                     }
-                                }
-                                .padding(horizontal = 14.dp),
+                                },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                if (useCustomRange) "ON" else "OFF",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text(
+                                    "▶  Full Duration",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    formatDuration(timelineDurationMs),
+                                    color = if (isFullActive) Color.White.copy(alpha = 0.9f)
+                                    else Color(0xFF888888),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        // ─── CUSTOM DURATION BUTTON ───
+                        val isCustomActive = useCustomRange
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(56.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (isCustomActive) Color(0xFF7C3AED)
+                                    else Color(0xFF1A1A1A)
+                                )
+                                .pointerInput(useCustomRange, isExporting) {
+                                    if (!isExporting && !useCustomRange) {
+                                        detectTapGestures {
+                                            onUseCustomRangeChange(true)
+                                        }
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text(
+                                    "✂  Custom Duration",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    if (isCustomActive) "${
+                                        formatDuration(
+                                            (endMs - startMs).coerceAtLeast(
+                                                0L
+                                            )
+                                        )
+                                    } selected"
+                                    else "Set specific range",
+                                    color = if (isCustomActive) Color.White.copy(alpha = 0.9f)
+                                    else Color(0xFF888888),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
-
                     // 🆕 Custom range fields — only when toggle is ON
                     if (useCustomRange) {
                         Row(
@@ -815,7 +865,13 @@ private fun TimeInputField(
             BasicTextField(
                 value = text,
                 onValueChange = { newText ->
-                    text = newText.filter { it.isDigit() || it == ':' || it == '.' }
+                    val filtered = newText.filter { it.isDigit() || it == ':' || it == '.' }
+                    text = filtered
+
+                    // 🆕 Live commit — focus blur ka wait mat karo
+                    parseTimeStr(filtered)?.let { parsed ->
+                        onChange(parsed.coerceIn(0L, maxMs))
+                    }
                 },
                 singleLine = true,
                 enabled = enabled,

@@ -444,7 +444,6 @@ class EditorViewModel : ViewModel() {
         val isAudioFile = mediaType.startsWith("audio/")
         val finalDurMs = if (isImage && durationMs < 100L) 5000L else durMs
 
-        // Audio-only import
         if (isAudioFile) {
             val audioPlacement = TimelineTools.findPlacement(
                 visualTracks = s.timelineAudioList(),
@@ -491,7 +490,6 @@ class EditorViewModel : ViewModel() {
             return
         }
 
-        // Video / Image import
         val visualPlacement = TimelineTools.findPlacement(
             visualTracks = s.timelineVisualList(),
             visualLayerCount = s.visualLayerCount,
@@ -565,7 +563,6 @@ class EditorViewModel : ViewModel() {
         }
     }
 
-    // 🆕 Clear BOTH selection
     fun clearAllSelection() {
         _state.update {
             it.copy(
@@ -576,7 +573,7 @@ class EditorViewModel : ViewModel() {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  MOVE / SWAP / DELETE
+    //  🎯 SMART MOVE / SWAP — DURATION AWARE
     // ═══════════════════════════════════════════════════════════
     fun moveClip(clipId: String, targetTrackIndex: Int, newIsAudio: Boolean, newTimelineMs: Long) {
         val s = _state.value
@@ -588,13 +585,152 @@ class EditorViewModel : ViewModel() {
             return
         }
 
-        val list = s.clips.toMutableList()
-        val idx = list.indexOfFirst { it.id == clipId }
-        if (idx < 0) return
-
+        val sourceTrack = clip.trackIndex
         val isAudio = clip.isAudio
         val targetTrack = targetTrackIndex.coerceAtLeast(0)
         val targetStart = newTimelineMs.coerceAtLeast(0L)
+
+        // ═══════════════════════════════════════════════════════════
+        //  CROSS-TRACK MOVE — SMART SWAP / FREE TRACK
+        // ═══════════════════════════════════════════════════════════
+        if (targetTrack != sourceTrack) {
+            val draggedEnd = targetStart + clip.durationMs
+
+            // Find FIRST clip on target track
+            val targetClip = s.clips.firstOrNull { other ->
+                other.id != clipId &&
+                        other.isAudio == isAudio &&
+                        other.trackIndex == targetTrack &&
+                        other.timelineStartMs < draggedEnd &&
+                        targetStart < other.timelineEndMs
+            }
+            if (targetClip != null) {
+                val overlaps = targetClip.timelineStartMs < draggedEnd &&
+                        targetStart < targetClip.timelineEndMs
+
+                if (overlaps) {
+                    if (clip.durationMs <= targetClip.durationMs) {
+                        // ✅ Dragged chhota ya barabar → SWAP TRACKS
+                        val list = s.clips.toMutableList()
+                        val draggedIdx = list.indexOfFirst { it.id == clipId }
+                        val targetIdx = list.indexOfFirst { it.id == targetClip.id }
+
+                        if (draggedIdx >= 0 && targetIdx >= 0) {
+                            // Dragged → target ki track (apni time pe)
+                            list[draggedIdx] = clip.copy(
+                                trackIndex = targetClip.trackIndex
+                            )
+                            // Target → dragged ki track (apni time pe)
+                            list[targetIdx] = targetClip.copy(
+                                trackIndex = sourceTrack
+                            )
+
+                            // Dragged linked partner
+                            val draggedLink = clip.linkedId
+                            if (draggedLink != null) {
+                                val pIdx = list.indexOfFirst {
+                                    it.linkedId == draggedLink && it.id != clipId
+                                }
+                                if (pIdx >= 0) {
+                                    list[pIdx] = list[pIdx].copy(trackIndex = sourceTrack)
+                                }
+                            }
+
+                            // Target linked partner
+                            val targetLink = targetClip.linkedId
+                            if (targetLink != null) {
+                                val pIdx = list.indexOfFirst {
+                                    it.linkedId == targetLink && it.id != targetClip.id
+                                }
+                                if (pIdx >= 0) {
+                                    list[pIdx] = list[pIdx].copy(
+                                        trackIndex = targetClip.trackIndex
+                                    )
+                                }
+                            }
+
+                            _state.update {
+                                it.copy(
+                                    clips = list,
+                                    selectedClipId = clipId,
+                                    selectedTrackIndex = targetClip.trackIndex,
+                                    selectedIsAudio = isAudio,
+                                    multiSelectedIds = emptySet()
+                                )
+                            }
+                            updateHistoryFlags()
+                            return
+                        }
+                    } else {
+                        // ❌ Dragged bara → free track dhundo (source skip)
+                        val freeTrack = findFreeTrackForClip(
+                            clips = s.clips,
+                            excludeClipId = clipId,
+                            isAudio = isAudio,
+                            startMs = targetStart,
+                            endMs = draggedEnd,
+                            preferredTrack = targetTrack,
+                            sourceTrack = sourceTrack,
+                            visualLayerCount = s.visualLayerCount,
+                            audioLayerCount = s.audioLayerCount
+                        )
+
+                        if (freeTrack >= 0) {
+                            val list = s.clips.toMutableList()
+                            val idx = list.indexOfFirst { it.id == clipId }
+                            if (idx >= 0) {
+                                list[idx] = clip.copy(
+                                    trackIndex = freeTrack,
+                                    timelineStartMs = targetStart
+                                )
+
+                                val linkId = clip.linkedId
+                                if (linkId != null) {
+                                    val pIdx = list.indexOfFirst {
+                                        it.linkedId == linkId && it.id != clipId
+                                    }
+                                    if (pIdx >= 0) {
+                                        list[pIdx] = list[pIdx].copy(
+                                            trackIndex = freeTrack
+                                        )
+                                    }
+                                }
+
+                                val maxVisual = list.filter { !it.isAudio }
+                                    .maxOfOrNull { it.trackIndex } ?: 0
+                                val maxAudio = list.filter { it.isAudio }
+                                    .maxOfOrNull { it.trackIndex } ?: 0
+
+                                _state.update {
+                                    it.copy(
+                                        clips = list,
+                                        selectedClipId = clipId,
+                                        selectedTrackIndex = freeTrack,
+                                        selectedIsAudio = isAudio,
+                                        visualLayerCount = maxOf(
+                                            it.visualLayerCount, maxVisual + 1
+                                        ),
+                                        audioLayerCount = maxOf(
+                                            it.audioLayerCount, maxAudio + 1
+                                        ),
+                                        multiSelectedIds = emptySet()
+                                    )
+                                }
+                                updateHistoryFlags()
+                                return
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        //  NORMAL MOVE
+        // ═══════════════════════════════════════════════════════════
+        val list = s.clips.toMutableList()
+        val idx = list.indexOfFirst { it.id == clipId }
+        if (idx < 0) return
 
         val trackDelta = targetTrack - clip.trackIndex
         val timeDelta = targetStart - clip.timelineStartMs
@@ -612,7 +748,8 @@ class EditorViewModel : ViewModel() {
             if (linkedIdx >= 0) {
                 val linked = list[linkedIdx]
                 val newLinkedTrack = (linked.trackIndex + trackDelta).coerceAtLeast(0)
-                val newLinkedStart = (linked.timelineStartMs + timeDelta).coerceAtLeast(0L)
+                val newLinkedStart = (linked.timelineStartMs + timeDelta)
+                    .coerceAtLeast(0L)
                 list[linkedIdx] = linked.copy(
                     trackIndex = newLinkedTrack,
                     timelineStartMs = newLinkedStart
@@ -634,6 +771,40 @@ class EditorViewModel : ViewModel() {
             )
         }
         updateHistoryFlags()
+    }
+
+    /**
+     * Find first free track where clip fits without time-overlap.
+     * Starts from preferredTrack, skips sourceTrack, goes upward.
+     */
+    private fun findFreeTrackForClip(
+        clips: List<EditorClip>,
+        excludeClipId: String,
+        isAudio: Boolean,
+        startMs: Long,
+        endMs: Long,
+        preferredTrack: Int,
+        sourceTrack: Int,
+        visualLayerCount: Int,
+        audioLayerCount: Int
+    ): Int {
+        val maxLayers = if (isAudio) audioLayerCount else visualLayerCount
+        val searchLimit = maxLayers + 10
+
+        for (t in preferredTrack until searchLimit) {
+            // Skip source (dragged clip ki original jagah)
+            if (t == sourceTrack) continue
+
+            val hasOverlap = clips.any { c ->
+                c.id != excludeClipId &&
+                        c.isAudio == isAudio &&
+                        c.trackIndex == t &&
+                        c.timelineStartMs < endMs &&
+                        startMs < c.timelineEndMs
+            }
+            if (!hasOverlap) return t
+        }
+        return maxLayers
     }
 
     private fun moveSelectedClipsBulk(
@@ -736,7 +907,6 @@ class EditorViewModel : ViewModel() {
         return finalClip
     }
 
-    // 🆕 Find a free audio track (for effect layers)
     private fun findFreeAudioTrack(startMs: Long, durMs: Long): Int {
         val s = _state.value
         val endMs = startMs + durMs
@@ -907,7 +1077,6 @@ class EditorViewModel : ViewModel() {
         val isMulti = s.multiSelectedIds.size > 1 && anchorId in s.multiSelectedIds
 
         if (!isMulti) {
-            // 🆕 Auto-keyframe if clip already has any keyframes
             val currentTimeSec = ((s.currentPosMs - anchor.timelineStartMs)
                 .toFloat() / 1000f).coerceAtLeast(0f)
             val hasAnyKf = KeyframeStore.hasAnyKeyframes(anchor.keyframes)
@@ -949,7 +1118,6 @@ class EditorViewModel : ViewModel() {
         val isMulti = s.multiSelectedIds.size > 1 && anchorId in s.multiSelectedIds
 
         if (!isMulti) {
-            // 🆕 Auto-keyframe if clip already has any keyframes
             val currentTimeSec = ((s.currentPosMs - anchor.timelineStartMs)
                 .toFloat() / 1000f).coerceAtLeast(0f)
             val hasAnyKf = KeyframeStore.hasAnyKeyframes(anchor.keyframes)
@@ -1152,7 +1320,6 @@ class EditorViewModel : ViewModel() {
         val s = _state.value
         pushHistory()
 
-        // 🆕 Duplicate at playhead — includes linked audio partner
         val copies = DuplicateEngine.duplicateAt(
             source = sel,
             allClips = s.clips,
@@ -1167,7 +1334,6 @@ class EditorViewModel : ViewModel() {
         val maxVisual = list.filter { !it.isAudio }.maxOfOrNull { it.trackIndex } ?: 0
         val maxAudio = list.filter { it.isAudio }.maxOfOrNull { it.trackIndex } ?: 0
 
-        // Select the primary copy
         val primary = copies.first()
 
         _state.update {
@@ -2232,44 +2398,23 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
-    /**
-     * 🆕 Apply per-clip transitions on a specific layer.
-     *
-     * @param layerNumber 1-based layer (L1 = track 0, L2 = track 1)
-     * @param clipTransitionMap Map of 1-based clip index → transition name
-     * @return number of transitions applied
-     */
     fun applyLayerClipTransitions(
         layerNumber: Int,
         clipTransitionMap: Map<Int, String>
     ): Int {
         val trackIndex = layerNumber - 1
-        android.util.Log.d(
-            "PROMPT_TRANS",
-            "applyLayerClipTransitions L$layerNumber (track=$trackIndex), " +
-                    "map=$clipTransitionMap"
-        )
 
         if (trackIndex < 0) return 0
 
         val s = _state.value
 
-        // 🆕 Only count REAL visual clips (video/image) — skip text/sticker/effects
-        // This way C1 = first video clip, C2 = second, etc.
         val layerClips = s.clips
             .filter {
-                it.isVisualClip &&              // video or image
+                it.isVisualClip &&
                         !it.isAudio &&
                         it.trackIndex == trackIndex
             }
             .sortedBy { it.timelineStartMs }
-
-        android.util.Log.d(
-            "PROMPT_TRANS",
-            "found ${layerClips.size} visual clips on L$layerNumber: " +
-                    layerClips.mapIndexed { i, c -> "C${i + 1}='${c.name}'" }
-                        .joinToString(", ")
-        )
 
         if (layerClips.isEmpty()) return 0
 
@@ -2278,22 +2423,14 @@ class EditorViewModel : ViewModel() {
         var appliedCount = 0
 
         clipTransitionMap.forEach { (clipNum, transName) ->
-            android.util.Log.d("PROMPT_TRANS", "→ C$clipNum: '$transName'")
-
-            // 🆕 Support "skip" keyword
             if (transName.equals("skip", ignoreCase = true) ||
                 transName.equals("none", ignoreCase = true) ||
                 transName.isBlank()
             ) {
-                android.util.Log.d("PROMPT_TRANS", "  ⏭️ Skipped (C$clipNum)")
                 return@forEach
             }
 
             if (clipNum < 1 || clipNum > layerClips.size) {
-                android.util.Log.d(
-                    "PROMPT_TRANS",
-                    "  ❌ C$clipNum out of range (max=${layerClips.size})"
-                )
                 return@forEach
             }
 
@@ -2301,28 +2438,7 @@ class EditorViewModel : ViewModel() {
             val resolvedKey = resolveTransitionName(transName)
 
             if (resolvedKey == null) {
-                android.util.Log.d(
-                    "PROMPT_TRANS",
-                    "  ❌ Could not resolve transition: '$transName'"
-                )
                 return@forEach
-            }
-
-            android.util.Log.d(
-                "PROMPT_TRANS",
-                "  ✅ C$clipNum ('${targetClip.name}'): '$transName' → '$resolvedKey'"
-            )
-
-            // ⚠️ Check left neighbor
-            val hasLeft = layerClips.any { other ->
-                other.id != targetClip.id &&
-                        abs(other.timelineEndMs - targetClip.timelineStartMs) < 100L
-            }
-            if (!hasLeft) {
-                android.util.Log.d(
-                    "PROMPT_TRANS",
-                    "  ⚠️ C$clipNum has no left neighbor — won't render visually"
-                )
             }
 
             val idx = list.indexOfFirst { it.id == targetClip.id }
@@ -2336,7 +2452,6 @@ class EditorViewModel : ViewModel() {
 
         _state.update { it.copy(clips = list) }
         updateHistoryFlags()
-        android.util.Log.d("PROMPT_TRANS", "Total applied: $appliedCount")
         return appliedCount
     }
 
@@ -2348,9 +2463,7 @@ class EditorViewModel : ViewModel() {
 
         if (clean.isBlank()) return null
 
-        // 🆕 Direct aliases — user-friendly names
         val aliases = mapOf(
-            // Slides
             "slide" to "slideLeft",
             "slideleft" to "slideLeft",
             "slideright" to "slideRight",
@@ -2358,47 +2471,39 @@ class EditorViewModel : ViewModel() {
             "slidedown" to "slideDown",
             "rightslide" to "slideRight",
             "leftslide" to "slideLeft",
-            // Push (maps to slide since no pushLeft preset)
             "push" to "slideLeft",
             "pushleft" to "slideLeft",
             "pushright" to "slideRight",
             "pushup" to "slideUp",
             "pushdown" to "slideDown",
-            // Pan (exists as preset)
             "panleft" to "panLeft",
             "panright" to "panRight",
             "panup" to "tiltUp",
             "pandown" to "tiltDown",
             "tiltup" to "tiltUp",
             "tiltdown" to "tiltDown",
-            // Fade
             "fade" to "fade",
             "fadein" to "fade",
             "fadeout" to "fade",
             "dissolve" to "dissolve",
             "fadeblack" to "blinkFade",
             "fadewhite" to "whiteFlash",
-            // Zoom
             "zoom" to "zoomIn",
             "zoomin" to "zoomIn",
             "zoomout" to "zoomOut",
             "gaussianzoom" to "gaussianZoom",
-            // Wipe
             "wipe" to "wipeLeft",
             "wipeleft" to "wipeLeft",
             "wiperight" to "wipeRight",
             "wipeup" to "wipeUp",
             "wipedown" to "wipeDown",
             "linearwipe" to "linearWipe",
-            // Flash
             "flash" to "whiteFlash",
             "flashwhite" to "whiteFlash",
             "whiteflash" to "whiteFlash",
-            // Glitch
             "glitch" to "glitch",
             "glitchfx" to "glitch",
             "rgbshift" to "rgbShift",
-            // Shapes
             "circle" to "circleMask",
             "circleopen" to "circleMask",
             "circleclose" to "circleMask",
@@ -2411,24 +2516,20 @@ class EditorViewModel : ViewModel() {
             "diamondreveal" to "diamondReveal",
             "clock" to "clockWipe",
             "clockwipe" to "clockWipe",
-            // Blur
             "blur" to "gaussianZoom",
             "motionblur" to "motionWipeBlur"
         )
 
         aliases[clean]?.let { return it }
 
-        // Exact key match
         TransitionLibrary.PRESETS.firstOrNull { p ->
             p.key.lowercase() == clean
         }?.let { return it.key }
 
-        // Label match (spaces removed)
         TransitionLibrary.PRESETS.firstOrNull { p ->
             p.label.lowercase().replace(" ", "").replace("-", "") == clean
         }?.let { return it.key }
 
-        // Partial match
         TransitionLibrary.PRESETS.firstOrNull { p ->
             val pClean = p.label.lowercase().replace(" ", "").replace("-", "")
             pClean.contains(clean) || clean.contains(pClean)

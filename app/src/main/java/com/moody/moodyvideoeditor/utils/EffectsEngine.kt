@@ -184,9 +184,7 @@ object EffectsEngine {
             cm.postConcat(sCM)
         }
         if (f.hue != 0f) {
-            val hCM = ColorMatrix()
-            hCM.setRotate(0, f.hue)
-            cm.postConcat(hCM)
+            cm.postConcat(buildHueRotateMatrix(f.hue))
         }
         if (f.grayscale > 0f) {
             val gCM = ColorMatrix()
@@ -231,6 +229,36 @@ object EffectsEngine {
             )
         }
         return cm
+    }
+
+    /**
+     * Proper hue rotation (CSS-style) — matches FFmpeg hue filter.
+     */
+    private fun buildHueRotateMatrix(degrees: Float): ColorMatrix {
+        val rad = Math.toRadians(degrees.toDouble())
+        val cos = cos(rad).toFloat()
+        val sin = sin(rad).toFloat()
+
+        return ColorMatrix(
+            floatArrayOf(
+                0.213f + cos * 0.787f - sin * 0.213f,
+                0.715f - cos * 0.715f - sin * 0.715f,
+                0.072f - cos * 0.072f + sin * 0.928f,
+                0f, 0f,
+
+                0.213f - cos * 0.213f + sin * 0.143f,
+                0.715f + cos * 0.285f + sin * 0.140f,
+                0.072f - cos * 0.072f - sin * 0.283f,
+                0f, 0f,
+
+                0.213f - cos * 0.213f - sin * 0.787f,
+                0.715f - cos * 0.715f + sin * 0.715f,
+                0.072f + cos * 0.928f + sin * 0.072f,
+                0f, 0f,
+
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
     }
 
     fun hasColorEffect(f: ColorFilterValues?): Boolean {

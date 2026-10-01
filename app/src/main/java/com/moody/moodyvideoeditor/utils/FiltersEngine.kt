@@ -57,9 +57,32 @@ object FiltersEngine {
         }
 
         // 4) HUE (0..360, def 0)
+// 4) HUE (0..360, def 0) — proper CSS-style rotation
         if (f.hue != 0f) {
-            val hueCM = ColorMatrix()
-            hueCM.setRotate(0, f.hue)
+            val rad = Math.toRadians(f.hue.toDouble())
+            val cos = kotlin.math.cos(rad).toFloat()
+            val sin = kotlin.math.sin(rad).toFloat()
+
+            val hueCM = ColorMatrix(
+                floatArrayOf(
+                    0.213f + cos * 0.787f - sin * 0.213f,
+                    0.715f - cos * 0.715f - sin * 0.715f,
+                    0.072f - cos * 0.072f + sin * 0.928f,
+                    0f, 0f,
+
+                    0.213f - cos * 0.213f + sin * 0.143f,
+                    0.715f + cos * 0.285f + sin * 0.140f,
+                    0.072f - cos * 0.072f - sin * 0.283f,
+                    0f, 0f,
+
+                    0.213f - cos * 0.213f - sin * 0.787f,
+                    0.715f - cos * 0.715f + sin * 0.715f,
+                    0.072f + cos * 0.928f + sin * 0.072f,
+                    0f, 0f,
+
+                    0f, 0f, 0f, 1f, 0f
+                )
+            )
             cm.postConcat(hueCM)
         }
 

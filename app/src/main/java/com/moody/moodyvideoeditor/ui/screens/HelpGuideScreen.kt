@@ -43,7 +43,6 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun HelpGuideScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    // 🆕 Default tab = AI Prompt
     var activeTab by remember { mutableStateOf("prompt") }
 
     Column(
@@ -72,7 +71,6 @@ fun HelpGuideScreen(onBack: () -> Unit) {
             )
         }
 
-        // 🆕 TAB ORDER: AI Prompt → Commands → Guide
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -132,7 +130,7 @@ private fun TabChip(
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  AI PROMPT TAB (DEFAULT)
+//  AI PROMPT TAB
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun PromptContent(context: Context) {
@@ -253,12 +251,13 @@ private fun PromptContent(context: Context) {
         listOf(
             "Make it cinematic with fade-in text",
             "Add shake effect and red tint on beat",
-            "Text 'HELLO' big, animation popIn, glow cyan",
+            "Text 'HELLO' with glow cyan and popIn animation",
             "Slow motion 0.5x with cool blue filter",
-            "Zoom in 1.5x over 3 seconds",
-            "Add sticker 🔥 at top-right",
             "60-second motivational reel about stress and action",
-            "Retro VHS vibe with scanlines and vintage"
+            "Retro VHS vibe with scanlines and vintage",
+            "Add sticker 🔥 at top-right with popIn animation",
+            "Multi-clip transitions — C1 fade, C2 slide left, C3 zoom in",
+            "9:16 vertical reel with 8K cinematic filter"
         ).forEach { example ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -277,7 +276,7 @@ private fun PromptContent(context: Context) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  MEGA AI PROMPT
+//  MEGA AI PROMPT — Fully Updated
 // ═══════════════════════════════════════════════════════════════
 private fun buildFullAiPrompt(): String = """
 You are an AI Prompt Generator for "Moody Video Editor" — an offline mobile video editor app.
@@ -293,6 +292,7 @@ You will output ONLY the editor commands. No explanations, no markdown, no extra
 - Colors: hex (#ff0066) OR names (red, blue, green, yellow, orange, purple, cyan, magenta, pink, white, black)
 - Be concise — no commentary
 - If unsure, make a reasonable creative choice
+- Timestamped blocks can be MIXED with trailing linear commands (transitions, ratio, filters)
 
 ═══════════════════════════════════════════════════════════════
   COMMAND REFERENCE — ALL SUPPORTED FEATURES
@@ -301,60 +301,53 @@ You will output ONLY the editor commands. No explanations, no markdown, no extra
 ### 📝 TEXT
 Syntax:
   text "Hello" [options]
-  [seg "bold" font Impact size 72] [seg " light" font Arial size 36]   (multi-segment)
 
 Options (chain with spaces):
   size NUMBER            → font size (8-300)
   color #hex | COLORNAME → text fill color
   font NAME              → font family (see FONT CATEGORIES below)
-  bold | italic          → style
+  italic                 → italic style (avoid "bold" — use stroke/glow for emphasis)
   align left|center|right
   anchor top-left | top-center | top-right | center-left | center |
          center-right | bottom-left | bottom-center | bottom-right
   position X Y           → 0-100 percent
   animation NAME         → see ANIMATIONS list below
   opacity 0-100
+  rotation DEG           → -180 to +180
 
   ▸ TEXT OUTLINE (stroke):
     stroke WIDTH COLOR
     stroke 3 #000000
     stroke 5 red
     stroke 8 white
-    nostroke                → remove outline
 
   ▸ TEXT GLOW (neon):
     glow COLOR RADIUS
-    glow #ff0066 40         → pink glow radius 40
+    glow #ff0066 40
     glow cyan 30
-    glow red 25
     glow white 20
-    noglow                  → remove glow
 
   ▸ TEXT SHADOW:
     shadow COLOR BLUR X Y
     shadow black 8 2 2
     shadow #000000 15 0 4
-    shadow black 20 5 5
-    noshadow                → remove shadow
 
   ▸ TEXT GRADIENT (color ramp):
     gradient COLOR1 COLOR2 [ANGLE]
-    gradient red blue               → 2-color gradient
-    gradient red to blue            → "to" is optional
-    gradient #ff0066 #00ffcc 90     → with angle (0-360)
-    solid                           → turn off gradient
+    gradient red blue
+    gradient #ff0066 #00ffcc 90
 
   ▸ TYPOGRAPHY:
-    tracking NUMBER         → letter spacing (-10 to +30, negative = tighter)
+    tracking NUMBER         → letter spacing (-10 to +30)
     lineheight NUMBER       → line spacing multiplier (1.0-3.0)
-    rotation DEG            → rotate text (-180 to +180)
+    rotation DEG            → rotate text
 
 FONT CATEGORIES (mention category, editor auto-picks best font):
-  font handwriting   → Comic Sans, Brush Script, Dancing Script, Pacifico, Caveat
+  font handwriting   → Dancing Script, Brush Script, Pacifico, Caveat, Kalam
   font system        → Arial, Helvetica, Roboto, Segoe UI, Inter
-  font serif         → Times New Roman, Georgia, Garamond, Playfair, Baskerville
+  font serif         → Times New Roman, Georgia, Garamond, Playfair, Baskerville, Cinzel
   font mono          → Courier New, Consolas, Monaco, JetBrains Mono, Fira Code
-  font display       → Impact, Bebas Neue, Oswald, Anton, Bungee, Audiowide
+  font display       → Oswald, Bebas Neue, Anton, Bungee, Audiowide
   font elegant       → Playfair, Cormorant, Cinzel, Bodoni, Abril Fatface
   font modern        → Poppins, Montserrat, Raleway, DM Sans, Manrope, Sora
   font titles        → Bebas Neue, Cinzel, Alfa Slab One, Abril Fatface
@@ -362,10 +355,34 @@ FONT CATEGORIES (mention category, editor auto-picks best font):
   font playful       → Comic Sans, Baloo 2, Fredoka, Chewy, Luckiest Guy
   font retro         → Lobster, Righteous, Bungee Shade, Monoton, Ultra
   font educational   → Open Sans, Lato, Source Sans 3, Noto Sans
-  font cinematic     → Cinzel, Playfair, Cormorant, Prata, Spectra, Lora
+  font cinematic     → Cinzel, Playfair, Cormorant, Prata, Spectral, Lora
   font minimal       → Inter, Roboto, Open Sans, Work Sans, DM Sans
 
-Or exact font name: font "Playfair Display" size 48
+⚠️ IMPORTANT — AVOID USING "bold" — it causes animation rendering issues.
+   Use stroke + glow + shadow + size increase for emphasis instead.
+
+### 😀 STICKER COMMANDS
+Syntax:
+  sticker EMOJI [properties]
+
+Emoji:
+  sticker 🔥
+  sticker ⚡
+  sticker ✨
+  sticker 💪
+  sticker 😀
+
+Properties (chain with spaces):
+  position X Y             → 0-100 percent
+  scale NUMBER             → 10-500 (default 100)
+  rotation DEG             → -180 to +180
+  opacity 0-100
+  animation NAME           → popIn, bounceIn, overshootPop, etc.
+  duration SEC             → animation duration (0.3-3.0)
+
+Example:
+  sticker 🔥 position 15 22 scale 90 animation popIn duration 0.6
+  sticker ⚡ position 85 22 scale 90 animation bounceIn duration 0.5
 
 ### 🎞️ TEXT ANIMATIONS (100+)
 Basic:    fadeIn, fadeUp, fadeDown, slideLeft, slideRight, slideUp, slideDown,
@@ -381,7 +398,7 @@ Bounces:  overshootPop, elasticDrop, jellyBounce, microBounce, stompBounce,
           doubleBounce, bouncySpin, snapBack, springString, sideKick
 Sliders:  flyDiagonalTL, flyDiagonalBR, crossSlide, accelSlide, decelSlide,
           splitSlide, zigzagSlide, smoothGlide, infiniteScroll, pushSlide
-Rotations: flip3DX, flip3DY, rotate3D, yAxisFlip, xAxisFlip, vortexSpin,
+Rotations: flip3DX, flip3DY, rotate3D, yAxisSwap, xAxisSwap, vortexSpin,
           zAxisSpin, spiralIn, tornado, skewSpin, pendulum, propeller,
           barrelRoll, cubeRoll, gentleTilt, twister
 Zooms:    zoomIn, zoomOut, cinematicZoom, hyperZoomOut, pulseScale,
@@ -394,7 +411,9 @@ Special:  scribble, neonGlow, gradientShift, ghostTrail, silhouette,
   saturation, vibrance, clarity, temperature, tint, noise, sharpen, vignette,
   reds, oranges, yellows, greens, cyans, blues, purples, magentas, skintones
 
-  Use: brightness 120, contrast 110, saturation 150
+  Usage:
+    brightness 20, contrast 25, saturation 30
+    temperature 10, tint -8, vibrance 35
 
   Hindi/Urdu synonyms:
     lal  → reds
@@ -413,7 +432,7 @@ Special:  scribble, neonGlow, gradientShift, ghostTrail, silhouette,
   blur 0-20
   opacity 0-100
 
-### ✨ EFFECTS (100+ presets — single word)
+### ✨ EFFECTS (150+ presets — single word, all lowercase)
 Motion:   shake, tremor, quake, earthquake, hit, impact, jolt, rumble, vibration,
           jitter, chaos, bounce, punch, kick, throb, beat, spring, elastic,
           headbang, pulse, heartbeat, breath, pump, thump, drum,
@@ -422,18 +441,18 @@ Motion:   shake, tremor, quake, earthquake, hit, impact, jolt, rumble, vibration
           glitch, noise, digital, rgbSplit, pixel, stutter, tear, vhs, staticFx,
           signalLoss, flicker, strobe, flashFast, tv, lightning, blink, spark
 Color:    warm, cool, vintage, cinematic, bw, dreamy, vivid, faded, dramatic,
-          noir, tealOrange, hollywood, blockbuster, filmLook, drama, epic,
+          noir, moody, darkDrama (use moody for dark cinematic), 
+          tealOrange, hollywood, blockbuster, filmLook, epic,
           thriller, bleach, bleachBypass, sepiaMem, sepiaDeep, retro8mm,
           kodak, polaroid, oldFilm, antique, monochrome, graySoft, grayHard,
           inkwell, filmNoir, cyberpunk, vaporwave, synthwave, plasma,
           electric, techno, neonCity, retrowave, gold, sunrise, sunset,
           goldenHour, amber, ember, copper, autumn, moonlight, midnight,
-          ice, frost, ocean, sky, deepBlue, moody, darkDrama, grunge,
-          gritty, somber, infrared, matrix, thermal, xray, duotone,
-          spectrum, hyperSat, softFocus, pastel, creamy, haze, bloom,
-          ethereal, hdr, punchy, dynamic, vividHard, contrastMax, sepia,
-          sepiaWarm, brownTone, coffee, flashWhite, flashSoft, lightBurst,
-          overexpose
+          ice, frost, ocean, sky, deepBlue, grunge, gritty, somber,
+          infrared, matrix, thermal, xray, duotone, spectrum, hyperSat,
+          softFocus, pastel, creamy, haze, bloom, ethereal, hdr, punchy,
+          dynamic, vividHard, contrastMax, sepia, sepiaWarm, brownTone,
+          coffee, flashWhite, flashSoft, lightBurst, overexpose
 Overlay:  oRain, oSnow, oDust, oSparks, oEmbers, oStars, oBokeh, oFireFlies,
           oFog, oSmoke, oHaze, oMist, oNoise, oFilmGrain, oBlackNoise,
           oWhiteNoise, oScanlines, oStaticTV, oLightLeak, oLensFlare,
@@ -443,27 +462,10 @@ Overlay:  oRain, oSnow, oDust, oSparks, oEmbers, oStars, oBokeh, oFireFlies,
 
 ### 🔲 TRANSFORM
   scale VALUE              (10-500, default 100)
-  rotation VALUE           (-360 to +360 degrees)
-  positionX VALUE          (0-100 percent)
-  positionY VALUE          (0-100 percent)
-  cropL VALUE              (0-45 percent)
-  cropR VALUE
-  cropT VALUE
-  cropB VALUE
-  anchor KEY               (top-left, center, bottom-right, etc.)
-
-### 🎞️ KEYFRAME ANIMATIONS
-Syntax:
-  PROP START to END over DURATIONs [easing]
-
-Props: zoom, scale, rotate, position, x, y
-
-Examples:
-  zoom 100 to 200 over 3s
-  zoom 100 to 200 over 3s easeOut
-  rotate 0 to 360 over 5s linear
-  position 50 50 to 90 50 over 1s easeInOut
-  scale 100 to 150 over 2s easeOutBack
+  rotation VALUE           (-360 to +360)
+  positionX VALUE          (0-100)
+  positionY VALUE          (0-100)
+  cropL / cropR / cropT / cropB VALUE (0-45)
 
 ### ⏩ SPEED
   speed 0.25x / 0.5x / 1x / 1.5x / 2x / 3x / 4x
@@ -487,7 +489,7 @@ Examples:
 
 ### ⇄ TRANSITIONS (100+ types)
 
-Single (needs left neighbor):
+#### ▸ SINGLE-CLIP TRANSITIONS (applies to selected clip)
   fade in 0.5
   dissolve 0.8
   fade black 0.5
@@ -504,45 +506,54 @@ Single (needs left neighbor):
   spinCW 0.5
   swirl 0.6
 
-All junctions (same pattern on every clip):
+#### ▸ PER-CLIP TRANSITIONS ON LAYER (RECOMMENDED — no clip selection needed)
+Syntax:
+  L{layer} transitions, C{clip} {transition name}, C{clip} {transition name}, ...
+
+- L{layer}: 1 = V1, 2 = V2, 3 = V3, etc.
+- C{clip}: 1-based clip index in that layer (sorted by timeline position)
+- {name}: any transition name (fade, slide left, push right, zoom in, glitch, ...)
+- Use "skip" or "none" to skip a clip
+- Extra C-entries beyond available clips → silently ignored
+- First clip of layer → transition saved but no visual effect (no left neighbor)
+
+Single layer (5 clips, 4 transitions visible):
+  L1 transitions, C1 fade, C2 slide left, C3 push right, C4 zoom in, C5 dissolve
+
+Two layers:
+  L1 transitions, C1 fade, C2 push, C3 fade
+  L2 transitions, C1 dissolve, C2 zoom out, C3 glitch
+
+Mixed with other commands:
+  L1 transitions, C1 fade, C2 slide left, ratio 9:16, brightness 20
+
+Skip one clip:
+  L1 transitions, C1 fade, C2 skip, C3 zoom in
+
+#### ▸ ALL JUNCTIONS (same pattern on every adjacent pair)
   transition all fade 0.5
   transition all dissolve 0.6
 
-At specific time:
+#### ▸ AT SPECIFIC TIME
   transition at 3 fade 0.5
   transition at 6 dissolve 0.8
 
-Layer pattern (cycle):
+#### ▸ LAYER PATTERN (cycling)
   layer v1 transitions dissolve, slide left, zoom in
-  layer v1 transitions dissolve, null, zoom in    (null = skip)
+  layer v1 transitions dissolve, null, zoom in
   layer v1 transitions dissolve, slide, zoom loop
 
-### 🆕 PER-CLIP TRANSITIONS (Layer + Clip index based)
-
-Syntax:
-  L{layer} transitions , C{clip} {transition name} , C{clip} {transition name} , ...
-
-- L{layer}: 1 = first visual track (V1), 2 = second (V2), etc.
-- C{clip}: 1-based clip index in that layer, sorted by timeline position
-- {name}: any transition name (fade, slide left, push right, zoom in, glitch, ...)
-- Extra C-entries beyond available clips → silently ignored
-- First clip of layer → transition saved (no left neighbor → no effect)
-
-Single layer:
-  L1 transitions , C1 slide , C2 Push left , C3 fade , C4 zoom in
-
-Two layers:
-  L1 transitions , C1 slide , C2 push , C3 fade
-  L2 transitions , C1 fade , C2 zoom out , C3 glitch
-
-Mixed with other commands:
-  L1 transitions , C1 fade , C2 push left , ratio 9:16 , brightness 120
-
-Names can be:
-  fade, dissolve, slide left, slide right, slide up, slide down,
-  push left, push right, push up, push down, zoom in, zoom out,
-  wipe left, wipe right, circle in, clock wipe, spin cw, spin ccw,
-  glitch, rgb split, flash white, film burn, ink splash, and 100+ more
+#### Available Transition Names (partial list — 100+ total)
+  fade, dissolve, fadeblack, fadewhite, blur,
+  slideleft, slideright, slideup, slidedown,
+  pushleft, pushright, pushup, pushdown,
+  zoomin, zoomout, crosszoom, gaussianzoom,
+  wipeleft, wiperight, wipeup, wipedown, linearwipe,
+  circlein, circleout, clockwipe, irisbox, radial,
+  glitch, rgbsplit, vhs, signalloss, pixelize,
+  whiteflash, lightleak, filmburn, lensflare,
+  spinCW, spinCCW, swirl, barrelroll, twirl,
+  heart, starburst, diamond, spiral, ink splash
 
 ### 🖌️ BRUSH
   brush draw                    → enable draw mode
@@ -560,12 +571,6 @@ Names can be:
   brush gradient #ff0066 to #00ffcc
   brush solid                   → turn off gradient
 
-### 😀 STICKERS
-  sticker EMOJI
-  sticker 😀
-  sticker 🔥
-  sticker ⭐
-
 ### 🎙️ AUDIO FX
   audio studio, audio warm, audio bright, audio vocal, audio podcast,
   audio deep, audio monster, audio chipmunk, audio baby, audio robot,
@@ -579,21 +584,25 @@ Names can be:
 
 ### ⚙️ SPECIAL COMMANDS
   tighten track         → close gaps from playhead
-  graph on / graph off  → toggle keyframe graph
   clear keyframes       → remove all keyframes
   ratio 16:9 / 9:16 / 1:1 / 4:5 / 3:4 / 21:9
 
 ═══════════════════════════════════════════════════════════════
-  TIMESTAMPED MULTI-LAYER BLOCKS
+  TIMESTAMPED MULTI-LAYER BLOCKS + TRAILING LINEAR COMMANDS
 ═══════════════════════════════════════════════════════════════
-For time-ranged edits, use MM:SS format:
+For time-ranged edits, use [MM:SS - MM:SS] format.
+After all timestamped blocks, you can add TRAILING LINEAR commands
+(transitions, ratio, adjustments, effects) — they work correctly.
 
-[00:00 - 00:05] "Welcome" animation typewriter, position center
-[00:05 - 00:08] brightness 130, saturation 140
-[00:08 - 00:12] sticker 🔥, motion shake
-[00:12 - 00:15] audio echo, speed 1.5x
+Example structure:
+  [00:00 - 00:04] text "STRESSED" font serif size 110 color white position 50 45 animation popScale
+  [00:01 - 00:04] text "You're not" font minimal size 42 color white position 50 20 animation fadeUp
+  [00:02 - 00:04] text "from doing too much" font modern size 42 color white position 50 72 animation characterRise
+  [00:00 - 00:12] sticker 🔥 position 15 22 scale 90 animation popIn duration 0.6
+  [00:00 - 00:12] sticker ⚡ position 85 22 scale 90 animation popIn duration 0.6
 
-Each block applies at that time range on the timeline.
+  L1 transitions, C1 fade, C2 slide left, C3 push right
+  ratio 9:16, moody, hdr, contrast 20, saturation 15, vibrance 30, vignette 40
 
 ═══════════════════════════════════════════════════════════════
   COMPLETE EXAMPLES
@@ -602,8 +611,8 @@ Each block applies at that time range on the timeline.
 ### Example 1 — Cinematic Intro
 User: "Make a 5-second cinematic intro with fade-in title"
 
-Your output:
-[00:00 - 00:05] text "YOUR STORY" font cinematic size 72 bold color white align center anchor center position 50 50 animation fadeIn, glow white 20
+Output:
+[00:00 - 00:05] text "YOUR STORY" font cinematic size 72 italic color white align center position 50 50 animation fadeIn, glow white 20
 [00:00 - 00:05] cinematic, brightness 98, contrast 115, saturation 90, shadows 20, highlights -10
 [00:00 - 00:05] vignette 40
 [00:00 - 00:05] fade in 1.0
@@ -611,80 +620,79 @@ Your output:
 ### Example 2 — Neon TikTok Text
 User: "Add neon text with glow"
 
-Your output:
-[00:00 - 00:05] text "TURN UP" font display size 96 bold color white align center anchor center position 50 50 animation popScale glow #ff0066 50 stroke 4 #ff0066 shadow black 15 0 4 tracking -4
-[00:00 - 00:05] contrast 120, saturation 140, vibrance 60
-[00:00 - 00:05] sticker 🔥
+Output:
+[00:00 - 00:05] text "TURN UP" font display size 96 color white align center position 50 50 animation popScale glow #ff0066 50 stroke 4 #ff0066 shadow black 15 0 4 tracking -4
+[00:00 - 00:05] contrast 20, saturation 40, vibrance 60
+[00:00 - 00:05] sticker 🔥 position 15 22 scale 90 animation popIn duration 0.6
 
 ### Example 3 — Retro Gradient Title
 User: "80s retro style title with gradient"
 
-Your output:
-[00:00 - 00:05] text "MOODY" font retro size 140 bold color white align center anchor center animation popIn gradient #ff0066 #ffcc00 45 glow cyan 50 stroke 6 black shadow black 20 6 6
-[00:00 - 00:05] retro8mm, contrast 108, saturation 118
+Output:
+[00:00 - 00:05] text "MOODY" font retro size 140 color white align center animation popIn gradient #ff0066 #ffcc00 45 glow cyan 50 stroke 6 black shadow black 20 6 6
+[00:00 - 00:05] retro8mm, contrast 8, saturation 18
 [00:00 - 00:05] oScanlines, oVhsLines
 
-### Example 4 — Lyrics Video
-User: "Show lyrics with typewriter effect"
+### Example 4 — Full Motivational Reel (20s vertical)
+User: "20-second motivational reel with multi-track images and stylish text"
 
-Your output:
-[00:00 - 00:03] text "First line" font handwriting size 42 color white align center anchor center position 50 40 animation typewriter
-[00:03 - 00:06] text "Second line" font handwriting size 42 color white align center anchor center position 50 40 animation typewriter
-[00:06 - 00:09] text "Third line" font handwriting size 42 color white align center anchor center position 50 40 animation typewriter
-[00:00 - 00:10] vivid, brightness 105, saturation 130, audio warm
+Output:
+[00:00 - 00:04] text "So you're not" font minimal size 55 color white align center position 50 25 animation fadeUp tracking -1
+[00:01 - 00:04] text "TRULY" font serif size 110 color #ffcc00 align center position 50 50 animation typewriter tracking -2 stroke 3 #000000
+[00:02 - 00:04] text "stressed" font handwriting size 70 color white align center position 50 75 animation characterRise rotation -3
+[00:04 - 00:08] text "you are" font mono size 45 color #00ffcc align center position 50 28 animation typewriter tracking 2
+[00:05 - 00:08] text "OBSESSED" font serif size 100 italic color white align center position 50 52 animation overshootPop tracking -3 glow #ff0066 35
+[00:06 - 00:08] text "with the fire inside" font handwriting size 55 color #ffcc00 align center position 50 78 animation blurryReveal
+[00:08 - 00:12] text "That spark" font minimal size 50 color white align center position 50 30 animation slideDown tracking -1
+[00:09 - 00:12] text "WON'T" font display size 115 color white align center position 50 52 animation stompBounce tracking -3 stroke 4 #ff0066
+[00:10 - 00:12] text "let you sleep at night" font serif size 48 italic color #60EFFF align center position 50 78 animation wordReveal
+[00:12 - 00:16] text "so wake up" font handwriting size 60 color #ffcc00 align center position 50 28 animation popIn rotation -8
+[00:13 - 00:16] text "AND BUILD" font serif size 108 color white align center position 50 52 animation popScale tracking -3 glow #00ffcc 40
+[00:14 - 00:16] text "your dream" font mono size 52 color #ff0066 align center position 50 78 animation trailFade
+[00:16 - 00:20] text "START" font minimal size 55 color white align center position 50 25 animation fadeUp tracking -1
+[00:17 - 00:20] text "TODAY" font serif size 130 color #ffcc00 align center position 50 50 animation bounceIn tracking -4 stroke 3 #000000 shadow black 20 0 4
+[00:18 - 00:20] text "your future self is waiting" font handwriting size 45 color white align center position 50 78 animation characterRise
+[00:16 - 00:20] sticker 🔥 position 12 22 scale 95 animation popIn duration 0.7
+[00:16 - 00:20] sticker ⚡ position 88 22 scale 95 animation bounceIn duration 0.6
+[00:17 - 00:20] sticker ✨ position 12 82 scale 90 animation overshootPop duration 0.8
+[00:17 - 00:20] sticker 💪 position 88 82 scale 95 animation popIn duration 0.7
 
-### Example 5 — Chrome/Metal Text
-User: "Metallic chrome text"
+L1 transitions, C1 fade, C2 slide left, C3 push right, C4 zoom in, C5 dissolve
 
-Your output:
-[00:00 - 00:05] text "CHROME" font display size 130 bold color #e0e0e0 align center anchor center gradient #ffffff #808080 90 stroke 3 black shadow black 10 2 2 glow white 15
-[00:00 - 00:05] contrast 120, saturation 30
-
-### Example 6 — Neon Sign Style
-User: "Neon sign text"
-
-Your output:
-[00:00 - 00:05] text "OPEN" font display size 130 bold color white align center anchor center glow #ff00ff 60 stroke 4 #ff00ff, darkDrama
-
-### Example 7 — Brush Drawing
-User: "I want to draw with neon on video"
-
-Your output:
-brush draw, brush neon color cyan width 25, brush gradient cyan to magenta
-
-═══════════════════════════════════════════════════════════════
-  🎬 REAL USER EXAMPLE — MOTIVATIONAL REEL (Copy this style)
-═══════════════════════════════════════════════════════════════
-
-User Request: "Make a 60-second motivational reel about stress and action. Cinematic style with big bold texts and clean animations."
-
-Your Output (EXACTLY this format):
-
-ratio 9:16[00:00 - 00:05] text "You're not" font minimal size 42 color white align center anchor center position 50 32 animation fadeUp tracking -1[00:01 - 00:05] text "Stressed" font display size 115 bold color white align center anchor center position 50 50 animation popScale shadow black 15 0 4 tracking -4[00:02 - 00:05] text "From" font cinematic size 70 italic color white align center anchor center position 50 68 animation cinematicBlur[00:03 - 00:05] text "doing too much" font modern size 48 color white align center anchor center position 50 82 animation characterRise tracking -2, darkDrama, vignette 40[00:05 - 00:10] clear keyframes, text "You're stressed" font minimal size 42 color white align center anchor center position 50 35 animation slideDown tracking -1[00:06 - 00:10] text "BECAUSE" font display size 110 bold color #ff0066 align center anchor center position 50 53 animation overshootPop tracking -3 glow #ff0066 10[00:07 - 00:10] text "you are doing" font modern size 48 color white align center anchor center position 50 70 animation characterRise tracking -1[00:10 - 00:16] text "TOO LITTLE" font display size 120 bold color red align center anchor center position 50 42 animation sliceGlitch tracking -4 shadow black 20 0 0[00:12 - 00:16] text "of what makes you" font minimal size 45 color white align center anchor center position 50 62 animation blurryReveal tracking -1[00:14 - 00:16] text "TRULY ALIVE" font cinematic size 75 italic color yellow align center anchor center position 50 78 animation smokeDissolve, contrastMax[00:16 - 00:23] text "Stop chasing" font minimal size 45 color white align center anchor center position 50 35 animation fadeUp tracking -1[00:18 - 00:23] text "COMFORT" font display size 110 bold color white align center anchor center position 50 52 animation stompBounce tracking -3 shadow black 15 3 3[00:20 - 00:23] text "comfort kills growth" font mono size 36 color #00ffcc align center anchor center position 50 68 animation typewriter tracking 0[00:23 - 00:30] text "Look at" font minimal size 45 color white align center anchor center position 50 30 animation characterRise tracking -1[00:25 - 00:30] text "YOUR LIFE" font display size 115 bold color white align center anchor center position 50 48 animation popIn tracking -4 shadow black 15 0 0[00:26 - 00:30] text "Are you genuinely" font cinematic size 60 italic color white align center anchor center position 50 64 animation gentleTilt[00:27 - 00:30] text "SATISFIED?" font modern size 75 bold color cyan align center anchor center position 50 80 animation neonGlow tracking -2, contrast 30[00:30 - 00:38] clear keyframes, text "Or are you" font minimal size 42 color white align center anchor center position 50 32 animation fadeDown tracking -1[00:32 - 00:38] text "HIDING" font display size 120 bold color red align center anchor center position 50 50 animation glitch tracking -4 shadow black 20 0 0[00:34 - 00:38] text "behind safe choices?" font modern size 46 color white align center anchor center position 50 68 animation wordReveal tracking -2, noise 15[00:38 - 00:46] text "and" font handwriting size 55 color yellow align center anchor center position 50 32 animation popIn rotation -10[00:40 - 00:46] text "Excited" font display size 130 bold color white align center anchor center position 50 54 animation stompBounce tracking -4 shadow black 20 0 5[00:42 - 00:46] text "in the morning" font modern size 55 color white align center anchor center position 50 76 animation characterRise tracking -2, gold, flashSoft[00:46 - 00:53] text "That excitement" font minimal size 42 color white align center anchor center position 50 35 animation blurryReveal tracking -1[00:48 - 00:53] text "REQUIRES" font display size 105 bold color white align center anchor center position 50 52 animation overshootPop tracking -3 shadow black 15 2 2[00:50 - 00:53] text "massive action" font cinematic size 70 italic color #ff0066 align center anchor center position 50 70 animation trailFade[00:53 - 01:00] text "Wake up." font minimal size 45 color white align center anchor center position 50 30 animation slideUp tracking -1[00:55 - 01:00] text "START NOW." font display size 125 bold color white align center anchor center position 50 50 animation popScale tracking -4 shadow black 25 0 0[00:57 - 01:00] text "Build your legacy." font modern size 50 bold color cyan align center anchor center position 50 70 animation typewriter tracking -2, zoom 100 to 120 over 7s linear, flashWhite, sticker 🔥
+ratio 9:16, moody, hdr, brightness 5, contrast 22, saturation 18, vibrance 35, clarity 22, sharpen 28, vignette 38, temperature 6, tint -6
 
 ═══════════════════════════════════════════════════════════════
   ⚡ PATTERNS TO NOTICE
 ═══════════════════════════════════════════════════════════════
 
-1. ratio 9:16 first — vertical reel format
-2. Time blocks — multiple texts overlap
-3. Font variety — display for big words, minimal for small, cinematic for italic
-4. Animation variety — fadeUp, popScale, characterRise, glitch, smokeDissolve
-5. Color strategy — white base, red/pink/cyan/yellow for emphasis
-6. Tracking negative — tight spacing for big text (-3, -4)
-7. Position layering — Y values (32, 50, 68, 82) stack vertically
-8. Effects at end — darkDrama, vignette, contrast, gold, flashSoft, noise
-9. clear keyframes — resets between sections
-10. zoom + sticker at end — finishing flourish
+1. ratio 9:16 for vertical reels (first or in trailing section)
+2. Time blocks — multiple texts overlap for layered typography
+3. Font variety — display for big words, minimal for small, serif for elegance,
+   handwriting for emotion, mono for technical
+4. Animation variety — fadeUp, popScale, characterRise, overshootPop, stompBounce
+5. Color strategy — white base, accent colors for emphasis (gold, cyan, pink)
+6. Tracking negative for tight big text (-3, -4), positive for spaced small (2)
+7. Position layering — Y values (25, 50, 75) stack vertically
+8. AVOID "bold" — use stroke + glow + shadow + size for emphasis
+9. Sticker animations always include duration (0.5-0.8s)
+10. Filters at end in trailing section — moody, hdr, contrast, saturation, vignette
 
 Style recipe for similar request:
-  - Big bold display font for KEY words
-  - Smaller minimal font for connecting phrases
-  - Cinematic italic for emotional emphasis
-  - Time-block each word 2-3 seconds
-  - Stack vertically (30, 50, 70 Y positions)
-  - Bold colors for emphasis (#ff0066, red, cyan, yellow)
-  - Add effect at end (contrast, vignette, gold)
+  - Big serif for KEY words (with stroke/glow)
+  - Smaller minimal/mono for connecting phrases
+  - Handwriting for emotional emphasis
+  - Time-block each word 2-4 seconds
+  - Stack vertically (25, 50, 75 Y positions)
+  - Accent colors (#ffcc00, #ff0066, #60EFFF)
+  - Multi-clip transitions with L1 transitions C1 ... syntax
+  - Add effect at end (moody, hdr, vignette, contrast)
+
+### 📌 EXPORT TIPS
+- Export dialog has a toggle: OFF = full timeline, ON = custom range
+- Transitions work best with adjacent clips (no gaps)
+- Multi-track visual clips (V2+) are not included in base FFmpeg export — only V1 base track
+- Text/stickers from ALL tracks are overlaid correctly
+- Test export with toggle OFF first to verify full timeline
 
 Now wait for the user's request. Do not output anything until they tell you what they want.
 """.trimIndent()
@@ -699,7 +707,7 @@ private fun CommandsContent() {
         "📝 Text — Basic", listOf(
             "text \"Hello\" size 48 color #ff0066",
             "text \"Hi\" size 72 animation typewriter",
-            "text \"Title\" font cinematic size 96 bold",
+            "text \"Title\" font cinematic size 96 italic",
             "font handwriting size 24",
             "font \"Playfair Display\" size 48",
             "align left / center / right",
@@ -759,11 +767,25 @@ private fun CommandsContent() {
     )
 
     CommandCategory(
+        "😀 Stickers", listOf(
+            "sticker 🔥",
+            "sticker ⚡",
+            "sticker ✨",
+            "sticker 💪",
+            "sticker 😀",
+            "sticker 🔥 position 15 22 scale 90",
+            "sticker ⚡ animation popIn duration 0.6",
+            "sticker ✨ position 12 82 animation overshootPop duration 0.7"
+        )
+    )
+
+    CommandCategory(
         "🎚️ Adjustments", listOf(
-            "brightness 120", "contrast 110", "saturation 150",
+            "brightness 20", "contrast 25", "saturation 30",
             "shadows 30", "highlights -15",
-            "temperature 30", "tint -20",
-            "vibrance 50", "clarity 30",
+            "temperature 10", "tint -8",
+            "vibrance 35", "clarity 22",
+            "sharpen 28", "vignette 38",
             "reds 50", "blues -40", "lal 30", "hara -20"
         )
     )
@@ -789,9 +811,8 @@ private fun CommandsContent() {
             "vintage, cinematic, warm, cool, bw",
             "dreamy, vivid, faded, dramatic, noir",
             "cyberpunk, vaporwave, synthwave",
-            "tealOrange, hollywood, sepiaDeep",
-            "moody, grunge, thermal, xray",
-            "darkDrama, contrastMax, gold, flashSoft"
+            "moody, darkDrama, grunge, thermal",
+            "hdr, contrastMax, gold, flashSoft"
         )
     )
 
@@ -814,15 +835,6 @@ private fun CommandsContent() {
     )
 
     CommandCategory(
-        "🎞️ Keyframes", listOf(
-            "zoom 100 to 200 over 3s",
-            "position 50 50 to 90 50 over 1s",
-            "rotate 0 to 360 over 5s",
-            "zoom 100 to 150 over 2s easeOutBack"
-        )
-    )
-
-    CommandCategory(
         "🎬 Timeline", listOf(
             "[00:00 - 00:05] \"Welcome\" animation typewriter",
             "[00:05 - 00:08] brightness 130, saturation 140",
@@ -832,8 +844,20 @@ private fun CommandsContent() {
     )
 
     CommandCategory(
-        "⇄ Transitions", listOf(
-            "fade in 0.5", "dissolve 0.8", "slide left 0.6",
+        "⇄ Transitions — Per Clip (BEST)", listOf(
+            "L1 transitions, C1 fade, C2 slide left",
+            "L1 transitions, C1 fade, C2 push right, C3 zoom in",
+            "L1 transitions, C1 fade, C2 slide left, C3 push right, C4 zoom in, C5 dissolve",
+            "L1 transitions, C1 fade, C2 skip, C3 zoom in",
+            "L2 transitions, C1 dissolve, C2 glitch"
+        )
+    )
+
+    CommandCategory(
+        "⇄ Transitions — Other", listOf(
+            "fade in 0.5",
+            "dissolve 0.8",
+            "slide left 0.6",
             "transition all fade 0.5",
             "transition at 3 dissolve 0.8",
             "layer v1 transitions dissolve, slide left, zoom in"
@@ -848,13 +872,6 @@ private fun CommandsContent() {
             "brush gradient red to blue",
             "brush gradient #ff0066 to #00ffcc",
             "brush solid"
-        )
-    )
-
-    CommandCategory(
-        "😀 Stickers", listOf(
-            "sticker 😀", "sticker 🔥", "sticker ⭐",
-            "sticker ❤️", "sticker 🎬"
         )
     )
 
@@ -928,7 +945,7 @@ private fun CommandCategory(title: String, commands: List<String>) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  GUIDE TAB (LAST)
+//  GUIDE TAB
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun GuideContent() {
@@ -949,7 +966,8 @@ private fun GuideContent() {
             "Drag edges → trim start/end",
             "Tap track label (V1) → drag to swap track order",
             "👁 / 🔊 icons → hide/mute track",
-            "Pinch → zoom timeline"
+            "Pinch → zoom timeline",
+            "Multi-track drag → V4 se V3 pe drag karo to clip swap ho jayega"
         )
     )
 
@@ -957,29 +975,42 @@ private fun GuideContent() {
         "📝 Text & Stickers", listOf(
             "Text panel → add text, font, color, gradient, shadow, glow",
             "Preview pe text drag/pinch → move/scale/rotate",
-            "Double-tap text → edit content",
             "Stickers → 10 categories × 20 emojis",
-            "Text + Sticker → keyframes + animations"
+            "Text + Sticker → keyframes + animations",
+            "⚠️ AVOID 'bold' font weight — animations render issues ka reason",
+            "Emphasis ke liye: stroke + glow + shadow + size use karo"
         )
     )
 
     GuideSection(
         "🌟 Text Effects — Stroke / Glow / Shadow", listOf(
-            "Stroke → outline around letters (width + color)",
-            "Glow → soft neon blur (color + radius 2-80)",
-            "Shadow → drop shadow (color + blur + offset X/Y)",
-            "Gradient → 2-color fill (start color + end color + angle)",
-            "All can be combined — stroke + glow + shadow + gradient"
+            "Stroke → outline around letters",
+            "Glow → soft neon blur",
+            "Shadow → drop shadow with offset",
+            "Gradient → 2-color fill with angle",
+            "Sab combine ho sakte hain"
         )
     )
 
     GuideSection(
         "🎨 Filters & Effects", listOf(
             "Filters → 9 primitives (brightness, contrast, etc.)",
-            "Effects → 100+ presets (motion, color, overlay)",
+            "Effects → 150+ presets (motion, color, overlay)",
             "Adjustments → 24 sliders for pro grading",
-            "Color Wheels → shadows/midtones/highlights",
-            "Chroma Key → green screen removal"
+            "Color Wheels → shadows/midtones/highlights + HDR",
+            "Chroma Key → green screen removal",
+            "8K Look = moody + hdr + contrast + saturation + vibrance + sharpen + vignette"
+        )
+    )
+
+    GuideSection(
+        "⇄ Transitions", listOf(
+            "Per-clip: L1 transitions, C1 fade, C2 slide left, C3 zoom in",
+            "Clips adjacent hone chahiye (koi gap nahi)",
+            "C1 pe transition set hota hai but render nahi (no left neighbor)",
+            "5 clips = 4 visible transitions",
+            "Layer pattern: layer v1 transitions dissolve, slide left, zoom in",
+            "Duration slider 0.2s - 3s"
         )
     )
 
@@ -987,7 +1018,7 @@ private fun GuideContent() {
         "🖌️ Brush & Mask", listOf(
             "Brush panel → Create layer → Start Drawing",
             "Preview pe finger se draw karo",
-            "Brush pen/marker/chalk/neon/glow/spray",
+            "Brush: pen/marker/chalk/neon/glow/spray",
             "Gradient support (start/mid/end colors)",
             "Mask → Circle/Rect/Linear/Heart/Custom",
             "Custom → Pen tool → tap points → close on first point"
@@ -1006,29 +1037,22 @@ private fun GuideContent() {
 
     GuideSection(
         "⏩ Speed & Volume", listOf(
-            "Speed panel → 0.25x se 4x (presets + slider)",
+            "Speed panel → 0.25x se 4x",
             "Linked clips sync automatically",
             "Volume panel → per-clip volume + mute"
         )
     )
 
     GuideSection(
-        "🎯 Transitions", listOf(
-            "Transitions → 30+ types",
-            "Duration slider (0.2s se 3s)",
-            "Clip ke start pe lagti hai (needs left neighbor)",
-            "Layer transitions → pattern for whole track"
-        )
-    )
-
-    GuideSection(
         "💾 Export", listOf(
             "Export button (top-right)",
+            "🎚️ Custom Range Toggle: OFF = full timeline, ON = custom time",
             "Resolution: 480p/720p/1080p/2K/4K",
             "FPS: 24/25/30/60",
             "Bitrate: auto or manual (1-50 Mbps)",
             "Format: MP4 or MOV",
-            "Save location: default ya custom folder"
+            "Multi-track base = V1 only (transitions V1 pe)",
+            "Text/stickers sab tracks se overlay hote hain"
         )
     )
 
@@ -1040,7 +1064,8 @@ private fun GuideContent() {
             "Split ✂️ → playhead pe clip divide",
             "◆ → keyframe at playhead",
             "Undo/Redo → ↶ ↷ buttons",
-            "Code Mode → prompt-based editing"
+            "Code Mode → prompt-based editing",
+            "Preview aur Export match — same position, same animations"
         )
     )
 }

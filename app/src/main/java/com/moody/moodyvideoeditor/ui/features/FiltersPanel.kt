@@ -1,5 +1,9 @@
 package com.moody.moodyvideoeditor.ui.features
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Log
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -12,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,19 +34,31 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.moody.moodyvideoeditor.R
+import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.FilterPreset
 import com.moody.moodyvideoeditor.data.FilterState
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
+import com.moody.moodyvideoeditor.utils.FiltersEngine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun FiltersPanel(
     editLayerId: String? = null,
     initialFilters: FilterState? = null,
+    previewClip: EditorClip? = null,
+    previewTimeMs: Long = 0L,
     onPreviewFilters: (FilterState?) -> Unit,
     onApplyAsLayer: (FilterState) -> Unit,
     onUpdateLayer: (FilterState) -> Unit = {},
@@ -49,6 +66,7 @@ fun FiltersPanel(
     onClose: () -> Unit
 ) {
     val isEditMode = editLayerId != null
+    val context = LocalContext.current
 
     var selectedCategory by remember {
         mutableStateOf(FilterState.PRESET_CATEGORIES.first().first)
@@ -57,6 +75,15 @@ fun FiltersPanel(
     var intensity by remember { mutableStateOf(100f) }
     var currentFilters by remember {
         mutableStateOf(initialFilters ?: FilterState())
+    }
+
+    // 🆕 Load reference image ONCE
+    var refBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    LaunchedEffect(Unit) {
+        refBitmap = withContext(Dispatchers.IO) {
+            loadRefImage(context)
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -78,7 +105,7 @@ fun FiltersPanel(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 300.dp)
+                .heightIn(max = 320.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -128,7 +155,7 @@ fun FiltersPanel(
             Spacer(Modifier.height(2.dp))
 
             // ═══════════════════════════════════════════════════════
-            //  PRESET CHIPS
+            //  PRESET CHIPS — Reference image with filter applied
             // ═══════════════════════════════════════════════════════
             val categoryPresets = FilterState.presetsInCategory(selectedCategory)
 
@@ -148,10 +175,10 @@ fun FiltersPanel(
             ) {
                 categoryPresets.forEach { preset ->
                     val isSelected = selectedPreset?.key == preset.key
-                    PresetChip(
-                        icon = preset.icon,
-                        label = preset.label,
+                    FilterThumbChip(
+                        preset = preset,
                         isSelected = isSelected,
+                        refBitmap = refBitmap,
                         onClick = {
                             selectedPreset = preset
                             intensity = 100f
@@ -164,7 +191,7 @@ fun FiltersPanel(
             }
 
             // ═══════════════════════════════════════════════════════
-            //  INTENSITY (only when preset picked)
+            //  INTENSITY SLIDER
             // ═══════════════════════════════════════════════════════
             selectedPreset?.let { preset ->
                 Spacer(Modifier.height(2.dp))
@@ -330,6 +357,124 @@ fun FiltersPanel(
     }
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  🆕 REFERENCE IMAGE LOADER
+// ═══════════════════════════════════════════════════════════════
+private fun loadRefImage(context: android.content.Context): Bitmap? {
+    return try {
+        // Decode from drawable resource
+        val opts = BitmapFactory.Options().apply {
+            inScaled = false
+        }
+        val bmp = BitmapFactory.decodeResource(
+            context.resources,
+            R.drawable.filter_ref_image,
+            opts
+        ) ?: return null
+
+        // Square crop (center) for consistent look
+        val minDim = minOf(bmp.width, bmp.height)
+        val x = (bmp.width - minDim) / 2
+        val y = (bmp.height - minDim) / 2
+        val cropped = Bitmap.createBitmap(bmp, x, y, minDim, minDim)
+
+        // Scale to 120×120
+        val scaled = Bitmap.createScaledBitmap(cropped, 120, 120, true)
+
+        if (cropped != scaled && cropped != bmp) cropped.recycle()
+        if (bmp != scaled && bmp != cropped) bmp.recycle()
+
+        scaled
+    } catch (e: Throwable) {
+        Log.e("FILTER_REF", "Failed to load reference image", e)
+        null
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FILTER THUMB CHIP — reference image + filter applied
+// ═══════════════════════════════════════════════════════════════
+@Composable
+private fun FilterThumbChip(
+    preset: FilterPreset,
+    isSelected: Boolean,
+    refBitmap: Bitmap?,
+    onClick: () -> Unit
+) {
+    val filterState = remember(preset.key) {
+        preset.toFilterState()
+    }
+
+    val colorFilter = remember(preset.key, refBitmap) {
+        try {
+            val cm = FiltersEngine.buildColorMatrix(filterState)
+            ColorFilter.colorMatrix(ColorMatrix(cm.array))
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .width(76.dp)
+            .height(102.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (isSelected) Color(0xFF2A1F4D) else Color(0xFF181818))
+            .pointerInput(preset.key) {
+                detectTapGestures { onClick() }
+            }
+            .padding(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+
+        // Thumbnail — ref image with filter applied
+        Box(
+            modifier = Modifier
+                .size(60.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF0F0F0F)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (refBitmap != null && !refBitmap.isRecycled) {
+                Image(
+                    bitmap = refBitmap.asImageBitmap(),
+                    contentDescription = preset.label,
+                    contentScale = ContentScale.Crop,
+                    colorFilter = colorFilter,
+                    modifier = Modifier
+                        .size(60.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                )
+            } else {
+                // Fallback if ref image not loaded yet
+                Text(preset.icon, fontSize = 22.sp)
+            }
+
+            // Selection overlay
+            if (isSelected) {
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF7C3AED).copy(alpha = 0.15f))
+                )
+            }
+        }
+
+        // Label
+        Text(
+            preset.label,
+            color = if (isSelected) Color(0xFFA78BFA) else Color.White,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            lineHeight = 10.sp
+        )
+    }
+}
+
 /**
  * Scale preset values by intensity (0-200%).
  */
@@ -356,35 +501,4 @@ private fun scalePresetIntensity(
         blur = scale0(preset.blur).coerceIn(0f, 30f),
         opacity = scale100(preset.opacity).coerceIn(0f, 100f)
     )
-}
-
-@Composable
-private fun PresetChip(
-    icon: String,
-    label: String,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .width(76.dp)
-            .height(68.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (isSelected) Color(0xFF2A1F4D) else Color(0xFF181818))
-            .pointerInput(label) { detectTapGestures { onClick() } }
-            .padding(4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(icon, fontSize = 18.sp)
-        Spacer(Modifier.height(2.dp))
-        Text(
-            label,
-            color = Color.White,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-            maxLines = 2
-        )
-    }
 }

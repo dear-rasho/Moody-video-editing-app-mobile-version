@@ -21,7 +21,6 @@ class FFmpegExecutor(
     private var currentSession: FFmpegSession? = null
     private val audioCache = mutableMapOf<String, Boolean>()
 
-    // 🆕 Fallback retry on xfade failure
     private var xfadeFallback: (() -> Unit)? = null
 
     fun export(
@@ -111,7 +110,6 @@ class FFmpegExecutor(
 
     private fun copyUriToCache(uri: Uri, fileName: String): File? {
         return try {
-            // 🆕 Detect actual extension from mime type
             val mime = try {
                 context.contentResolver.getType(uri) ?: ""
             } catch (_: Throwable) {
@@ -134,7 +132,6 @@ class FFmpegExecutor(
                 else -> "mp4"
             }
 
-            // 🆕 Use proper extension
             val baseName = fileName.substringBeforeLast('.')
             val realFileName = "$baseName.$ext"
             val file = File(context.cacheDir, realFileName)
@@ -564,6 +561,7 @@ class FFmpegExecutor(
 
     // ═══════════════════════════════════════════════════════════
     //  MULTI-CLIP DISPATCHER
+    //  🆕 FIXED: sortedClips/sortedLocalFiles ab CONCAT fallback ko bhi jaate hain
     // ═══════════════════════════════════════════════════════════
     private fun exportMultipleClips(
         clips: List<EditorClip>,
@@ -588,7 +586,8 @@ class FFmpegExecutor(
         if (sortedClips.size != sortedLocalFiles.size) {
             Log.e("FFMPEG", "⚠️ Sort mismatch, falling back to concat")
             exportWithConcat(
-                clips, allClips, localFiles, audioClips, audioLocalFiles,
+                sortedClips, allClips, sortedLocalFiles,
+                audioClips, audioLocalFiles,
                 outputFile, targetW, targetH, fps, bitrateKbps,
                 sequences, totalDurationMs
             )
@@ -635,9 +634,11 @@ class FFmpegExecutor(
                 sequences, totalDurationMs
             )
         } else {
-            Log.e("FFMPEG_TRANS", "❌ Falling back to CONCAT")
+            Log.e("FFMPEG_TRANS", "❌ Falling back to CONCAT (sorted)")
+            // 🆕 FIX: sortedClips + sortedLocalFiles pass karo (pehle original pass hota tha)
             exportWithConcat(
-                clips, allClips, localFiles, audioClips, audioLocalFiles,
+                sortedClips, allClips, sortedLocalFiles,
+                audioClips, audioLocalFiles,
                 outputFile, targetW, targetH, fps, bitrateKbps,
                 sequences, totalDurationMs
             )
@@ -665,7 +666,7 @@ class FFmpegExecutor(
             val args = mutableListOf<String>()
             args.add("-y")
 
-            // ═══ Inputs ═══
+            // ═══ Inputs: Clip files ═══
             clips.forEachIndexed { idx, clip ->
                 val img = isImage(clip)
                 if (img) {
@@ -683,7 +684,7 @@ class FFmpegExecutor(
                 args.add("-i"); args.add(localFiles[idx].absolutePath)
             }
 
-            // Silent audio for clips without audio
+            // ═══ Silent audio for clips without audio ═══
             val silentIdx = mutableMapOf<Int, Int>()
             var nextIdx = clips.size
             clips.forEachIndexed { idx, clip ->
@@ -696,15 +697,19 @@ class FFmpegExecutor(
                 }
             }
 
+            // ═══ Audio-only inputs ═══
             val audioStartIdx = nextIdx
             audioLocalFiles.forEach { f ->
                 args.add("-i"); args.add(f.absolutePath)
                 nextIdx++
             }
 
+            // ═══ Text/sticker sequence inputs ═══
+            val seqStartIdx = nextIdx
+            addSequenceInputs(args, sequences)
+
             val filterParts = mutableListOf<String>()
 
-            // ═══ MINIMAL normalize — most common failure source ═══
             clips.forEachIndexed { idx, clip ->
                 val vf = mutableListOf<String>()
 
@@ -730,7 +735,7 @@ class FFmpegExecutor(
                 filterParts.add("[$idx:v]${vf.joinToString(",")}[nv$idx]")
             }
 
-            // ═══ Chain xfade — MINIMAL graph ═══
+            // ═══ Chain xfade ═══
             var currentLabel = "nv0"
             var cumulativeOffsetSec = clips[0].durationMs / 1000.0
 
@@ -758,7 +763,7 @@ class FFmpegExecutor(
                 cumulativeOffsetSec += (clips[i].durationMs / 1000.0) - transDurSec
             }
 
-            // ═══ Audio — simple concat, NO acrossfade ═══
+            // ═══ Audio — concat ═══
             val audioLabels = mutableListOf<String>()
             clips.forEachIndexed { idx, clip ->
                 val hasAudio = clipHasAudio(clip)
@@ -780,14 +785,12 @@ class FFmpegExecutor(
                 audioLabels.add("[$label]")
             }
 
-            // Concat all audio (no crossfade — simpler)
             filterParts.add(
                 "${audioLabels.joinToString("")}concat=n=${clips.size}:v=0:a=1[basea]"
             )
 
             var finalAudioLabel = "basea"
 
-            // Audio-only mix
             if (audioLocalFiles.isNotEmpty()) {
                 val mixed = buildAudioOnlyMix(
                     filterParts, audioLocalFiles, audioClips,
@@ -796,14 +799,13 @@ class FFmpegExecutor(
                 if (mixed) finalAudioLabel = "mixeda"
             }
 
-            // Audio effect layers
             val fxApplied = applyAudioEffectLayers(
                 filterParts, allClips, 0L, finalAudioLabel, "fxa"
             )
             if (fxApplied) finalAudioLabel = "fxa"
 
             val outVLabel = buildOverlayChain(
-                filterParts, sequences, nextIdx, currentLabel
+                filterParts, sequences, seqStartIdx, currentLabel
             )
 
             val totalDurSec = (totalDurationMs / 1000.0).coerceAtLeast(0.1)
@@ -828,7 +830,6 @@ class FFmpegExecutor(
             args.forEach { Log.e("FFMPEG_ARGS", it) }
             Log.e("FFMPEG_ARGS", "──────────────────────────")
 
-            // Set fallback
             xfadeFallback = {
                 Log.e("FFMPEG_TRANS", "⚠️ Retrying as CONCAT (no transitions)")
                 exportWithConcat(
@@ -843,7 +844,6 @@ class FFmpegExecutor(
         } catch (e: Throwable) {
             Log.e("FFMPEG", "Transition export error", e)
             xfadeFallback = null
-            // Direct fallback
             exportWithConcat(
                 clips, allClips, localFiles,
                 audioClips, audioLocalFiles,
@@ -855,6 +855,7 @@ class FFmpegExecutor(
 
     // ═══════════════════════════════════════════════════════════
     //  EXPORT WITH CONCAT (fallback)
+    //  🆕 FIXED: Images ko -loop 1 + duration ke saath load karo
     // ═══════════════════════════════════════════════════════════
     private fun exportWithConcat(
         clips: List<EditorClip>,
@@ -871,16 +872,29 @@ class FFmpegExecutor(
         totalDurationMs: Long
     ) {
         try {
-            // 🆕 Clear fallback — we're already the fallback
             xfadeFallback = null
 
             val args = mutableListOf<String>()
             args.add("-y")
 
-            localFiles.forEach { file ->
+            // ═══════════════════════════════════════════════════════
+            //  🆕 FIX: Image inputs ko -loop 1 + duration ke saath load karo
+            //  Pehle sirf `-i file` tha → images 1 frame hi thi
+            //  Ab `-loop 1 -framerate FPS -t DURATION -i file` → image
+            //  ka proper duration milta hai
+            // ═══════════════════════════════════════════════════════
+            clips.forEachIndexed { idx, clip ->
+                val file = localFiles[idx]
+                val img = isImage(clip)
+                if (img) {
+                    args.add("-loop"); args.add("1")
+                    args.add("-framerate"); args.add(fps.toString())
+                    args.add("-t"); args.add((clip.durationMs / 1000.0).toString())
+                }
                 args.add("-i"); args.add(file.absolutePath)
             }
 
+            // Silent audio for images
             val imageAudioInputs = mutableMapOf<Int, Int>()
             var nextInputIdx = clips.size
             clips.forEachIndexed { idx, clip ->
@@ -1013,7 +1027,6 @@ class FFmpegExecutor(
     ): List<String> {
         val filters = mutableListOf<String>()
 
-        // Filter layers above
         val filterLayersAbove = allClips.filter { e ->
             e.isFilterLayerClip &&
                     e.trackIndex > clip.trackIndex &&
@@ -1038,7 +1051,6 @@ class FFmpegExecutor(
             if (filterStr.isNotBlank()) filters.add(filterStr)
         }
 
-        // Effect clips above
         val effectClipsAbove = allClips.filter { e ->
             e.isEffectClip &&
                     e.trackIndex > clip.trackIndex &&
@@ -1062,7 +1074,6 @@ class FFmpegExecutor(
             if (f.isNotBlank()) filters.add(f)
         }
 
-        // Clip's own filters
         val f = clip.filters
         if (f.brightness != 100f || f.contrast != 100f || f.saturation != 100f) {
             val eqParts = mutableListOf<String>()
@@ -1250,13 +1261,44 @@ class FFmpegExecutor(
 
         if (cf.sepia > 0f) {
             val a = (cf.sepia / 100f).coerceIn(0f, 1f)
+
+            val sr = 0.393f
+            val sg = 0.769f
+            val sb = 0.189f
+            val mr = 0.349f
+            val mg = 0.686f
+            val mb = 0.168f
+            val hr = 0.272f
+            val hg = 0.534f
+            val hb = 0.131f
+
+            val rr = (1f - a) + a * sr
+            val rg = a * sg
+            val rb = a * sb
+            val gr = a * mr
+            val gg = (1f - a) + a * mg
+            val gb = a * mb
+            val br = a * hr
+            val bg = a * hg
+            val bb = (1f - a) + a * hb
+
+            val f = java.util.Locale.US
             parts.add(
-                "colorbalance=rs=${(0.15f * a).coerceIn(-0.5f, 0.5f)}:" +
-                        "gs=${(0.05f * a).coerceIn(-0.5f, 0.5f)}:" +
-                        "bs=${(-0.2f * a).coerceIn(-0.5f, 0.5f)}"
+                "colorchannelmixer=" +
+                        "rr=${"%.4f".format(f, rr)}:" +
+                        "rg=${"%.4f".format(f, rg)}:" +
+                        "rb=${"%.4f".format(f, rb)}:" +
+                        "ra=0:" +
+                        "gr=${"%.4f".format(f, gr)}:" +
+                        "gg=${"%.4f".format(f, gg)}:" +
+                        "gb=${"%.4f".format(f, gb)}:" +
+                        "ga=0:" +
+                        "br=${"%.4f".format(f, br)}:" +
+                        "bg=${"%.4f".format(f, bg)}:" +
+                        "bb=${"%.4f".format(f, bb)}:" +
+                        "ba=0"
             )
         }
-
         if (cf.invert > 0f) {
             parts.add("negate")
         }
@@ -1289,7 +1331,6 @@ class FFmpegExecutor(
                             val output = s.allLogsAsString ?: ""
                             Log.e("FFMPEG_FULL", output)
 
-                            // Fallback
                             val fb = xfadeFallback
                             if (fb != null) {
                                 xfadeFallback = null
