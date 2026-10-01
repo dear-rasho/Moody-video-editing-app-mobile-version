@@ -6,10 +6,11 @@ import com.moody.moodyvideoeditor.data.EffectLibrary
 enum class CmdType {
     ADJUSTMENT, FILTER, EFFECT, SPEED, TRANSFORM, TRIM,
     TRANSITION, TRANSITION_ALL, TRANSITION_AT, TRANSITION_LAYER,
+    TRANSITION_LAYER_CLIPS, TRANSITION_CLIP_MAP,
     TEXT, STICKER, CHROMA, AUDIO_FX, ANIMATION,
     COLOR_WHEEL, FONT, ALIGN, ANCHOR, KEYFRAME,
     RATIO, TIGHTEN, GRAPH, CLEAR_KEYFRAMES,
-    TEMPLATE,   // 🆕
+    TEMPLATE,
     BRUSH_GRADIENT,
     BRUSH_TYPE,
     BRUSH_DRAW,
@@ -24,8 +25,8 @@ data class ParsedCommand(
     val value2: Float? = null,
     val stringValue: String? = null,
     val extra: String? = null,
-    val startMs: Long? = null,   // 🆕 timestamp start
-    val endMs: Long? = null,     // 🆕 timestamp end
+    val startMs: Long? = null,
+    val endMs: Long? = null,
     val raw: String = ""
 )
 
@@ -35,6 +36,7 @@ data class ParseResult(
 )
 
 object PromptEngine {
+
     private fun colorNameToHex(name: String): String {
         return when (name.lowercase().trim()) {
             "red" -> "ff0000"
@@ -86,12 +88,30 @@ object PromptEngine {
         val trimmed = input.trim()
         if (trimmed.isBlank()) return ParseResult(emptyList(), emptyList())
 
-        // 🆕 Check for timestamped blocks
         val hasTimestamps = Regex("""\[\s*\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\s*\]""")
             .containsMatchIn(trimmed)
 
-        return if (hasTimestamps) parseTimestamped(trimmed)
+        android.util.Log.d("PROMPT_PARSE", "Input: $trimmed")
+        android.util.Log.d("PROMPT_PARSE", "hasTimestamps: $hasTimestamps")
+
+        val result = if (hasTimestamps) parseTimestamped(trimmed)
         else parseLinear(trimmed)
+
+        android.util.Log.d(
+            "PROMPT_PARSE",
+            "commands=${result.commands.size}, unknown=${result.unknown.size}"
+        )
+        result.commands.forEach { cmd ->
+            android.util.Log.d(
+                "PROMPT_PARSE",
+                "  ${cmd.type}: key=${cmd.key}, v1=${cmd.value1}, sv=${cmd.stringValue}"
+            )
+        }
+        result.unknown.forEach { u ->
+            android.util.Log.d("PROMPT_PARSE", "  UNKNOWN: $u")
+        }
+
+        return result
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -101,7 +121,6 @@ object PromptEngine {
         val commands = mutableListOf<ParsedCommand>()
         val unknown = mutableListOf<String>()
 
-        // Block pattern: [MM:SS - MM:SS] body  (until next [ or end)
         val blockRegex = Regex(
             """\[\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*\]\s*([^\[\n]*)""",
             RegexOption.MULTILINE
@@ -124,7 +143,6 @@ object PromptEngine {
 
             if (body.isBlank()) continue
 
-            // Body may have multiple comma-separated commands
             val bodyParts = body.split(",").map { it.trim() }.filter { it.isNotBlank() }
 
             for (bp in bodyParts) {
@@ -141,7 +159,7 @@ object PromptEngine {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  LINEAR PARSE (no timestamps)
+    //  🆕 LINEAR PARSE — handles L1 transitions, C1 slide, ...
     // ═══════════════════════════════════════════════════════════
     private fun parseLinear(input: String): ParseResult {
         val commands = mutableListOf<ParsedCommand>()
@@ -153,10 +171,62 @@ object PromptEngine {
             .map { it.trim() }
             .filter { it.isNotBlank() }
 
-        for (part in rawParts) {
+        android.util.Log.d("PROMPT_PARSE", "rawParts: $rawParts")
+
+        var i = 0
+        while (i < rawParts.size) {
+            val part = rawParts[i]
+
+            // 🆕 Detect "L1 transitions" / "L2 transitions" / "L1 transition"
+            val layerMatch = Regex(
+                """^l(\d+)\s+transitions?$""",
+                RegexOption.IGNORE_CASE
+            ).find(part)
+
+            if (layerMatch != null) {
+                val layerNum = layerMatch.groupValues[1].toIntOrNull() ?: 0
+                val clipPairs = mutableListOf<String>()
+                i++
+
+                // Consume following "C1 slide" / "C5 skip" / "C2 push left" entries
+                while (i < rawParts.size) {
+                    val cMatch = Regex(
+                        """^c(\d+)(?:\s+(.+))?$""",
+                        RegexOption.IGNORE_CASE
+                    ).find(rawParts[i])
+                    if (cMatch == null) break
+
+                    val clipNum = cMatch.groupValues[1]
+                    val transName = cMatch.groupValues[2].trim()
+                        .ifBlank { "skip" }  // 🆕 bare "C1" = skip
+                    clipPairs.add("$clipNum=$transName")
+                    i++
+                }
+
+                if (layerNum > 0 && clipPairs.isNotEmpty()) {
+                    commands.add(
+                        ParsedCommand(
+                            CmdType.TRANSITION_LAYER_CLIPS,
+                            "layer",
+                            value1 = layerNum.toFloat(),
+                            stringValue = clipPairs.joinToString("|"),
+                            raw = "L$layerNum transitions"
+                        )
+                    )
+                    android.util.Log.d(
+                        "PROMPT_PARSE",
+                        "✅ L$layerNum transitions: $clipPairs"
+                    )
+                } else {
+                    unknown.add(part)
+                }
+                continue
+            }
+
             val parsed = parseOne(part)
             if (parsed != null) commands.add(parsed)
             else unknown.add(part)
+            i++
         }
 
         return ParseResult(commands, unknown)
@@ -187,13 +257,15 @@ object PromptEngine {
                 raw = text
             )
         }
-        // 🆕 TEMPLATE: template motiv / template cinematic
+
+        // TEMPLATE
         if (lower.startsWith("template ")) {
             val tId = lower.substring(9).trim()
             if (tId.isNotBlank()) {
                 return ParsedCommand(CmdType.TEMPLATE, tId, raw = text)
             }
         }
+
         // TRANSITION ALL
         Regex("""^transition\s+all\s+([a-z\s]+?)(?:\s+([\d.]+))?$""", RegexOption.IGNORE_CASE)
             .find(lower)?.let { m ->
@@ -206,21 +278,20 @@ object PromptEngine {
         Regex(
             """^transition\s+at\s+([\d.]+)\s+([a-z\s]+?)(?:\s+([\d.]+))?$""",
             RegexOption.IGNORE_CASE
-        )
-            .find(lower)?.let { m ->
-                val time = m.groupValues[1].toFloatOrNull() ?: 0f
-                val key = m.groupValues[2].trim().replace(" ", "")
-                val dur = m.groupValues[3].toFloatOrNull() ?: 0.5f
-                return ParsedCommand(
-                    CmdType.TRANSITION_AT,
-                    key,
-                    value1 = time,
-                    value2 = dur,
-                    raw = text
-                )
-            }
+        ).find(lower)?.let { m ->
+            val time = m.groupValues[1].toFloatOrNull() ?: 0f
+            val key = m.groupValues[2].trim().replace(" ", "")
+            val dur = m.groupValues[3].toFloatOrNull() ?: 0.5f
+            return ParsedCommand(
+                CmdType.TRANSITION_AT,
+                key,
+                value1 = time,
+                value2 = dur,
+                raw = text
+            )
+        }
 
-        // TRANSITION LAYER
+        // TRANSITION LAYER (pattern)
         Regex("""^layer\s+(v|a)(\d+)\s+transitions\s+(.+)$""", RegexOption.IGNORE_CASE)
             .find(text)?.let { m ->
                 val isAudio = m.groupValues[1].lowercase() == "a"
@@ -245,7 +316,7 @@ object PromptEngine {
             return ParsedCommand(CmdType.TRANSITION, key, value1 = dur, raw = text)
         }
 
-        // TEXT with properties: text "Hello" size 48 color #ff0066 animation typewriter
+        // TEXT
         val textFull =
             Regex("""^text\s+"([^"]+)"(?:\s+(.+))?$""", RegexOption.IGNORE_CASE).find(text)
         if (textFull != null) {
@@ -263,11 +334,8 @@ object PromptEngine {
             if (emoji.isNotBlank())
                 return ParsedCommand(CmdType.STICKER, "emoji", stringValue = emoji, raw = text)
         }
-        // ═══════════════════════════════════════════════════════════
-        //  🆕 BRUSH COMMANDS
-        // ═══════════════════════════════════════════════════════════
 
-        // brush gradient red to blue
+        // BRUSH COMMANDS
         Regex(
             """^brush\s+gradient\s+(?:#([0-9a-fA-F]{6})|([a-z]+))\s+to\s+(?:#([0-9a-fA-F]{6})|([a-z]+))$""",
             RegexOption.IGNORE_CASE
@@ -282,12 +350,10 @@ object PromptEngine {
             )
         }
 
-        // brush no gradient / brush solid
         if (lower == "brush solid" || lower == "brush no gradient") {
             return ParsedCommand(CmdType.BRUSH_GRADIENT, "off", raw = text)
         }
 
-        // brush pen color #ff0000 width 20
         Regex(
             """^brush\s+(pen|marker|chalk|neon|glow|spray)(?:\s+color\s+(?:#([0-9a-fA-F]{6})|([a-z]+)))?(?:\s+width\s+([\d.]+))?$""",
             RegexOption.IGNORE_CASE
@@ -304,20 +370,18 @@ object PromptEngine {
             )
         }
 
-        // brush draw / start drawing
         if (lower == "brush draw" || lower == "start drawing" || lower == "draw") {
             return ParsedCommand(CmdType.BRUSH_DRAW, "on", raw = text)
         }
 
-        // brush stop
         if (lower == "brush stop" || lower == "stop drawing") {
             return ParsedCommand(CmdType.BRUSH_DRAW, "off", raw = text)
         }
 
-        // brush clear
         if (lower == "brush clear" || lower == "clear brush") {
             return ParsedCommand(CmdType.BRUSH_CLEAR, "clear", raw = text)
         }
+
         // ANIMATION
         if (lower.startsWith("animation ")) {
             val anim = lower.substring(10).trim().replace(" ", "")

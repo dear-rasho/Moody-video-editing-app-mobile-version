@@ -485,7 +485,8 @@ Examples:
   highlights HUE SAT INTENSITY
   hdr 0-200                          (HDR white boost)
 
-### ⇄ TRANSITIONS (30+ types)
+### ⇄ TRANSITIONS (100+ types)
+
 Single (needs left neighbor):
   fade in 0.5
   dissolve 0.8
@@ -493,33 +494,55 @@ Single (needs left neighbor):
   fade white 0.5
   blur 0.5
   slide left 0.6
-  slide right 0.6
-  slide up 0.6
-  slide down 0.6
   push left 0.5
-  wipe right 0.5
   zoom in 0.5
+  zoom out 0.5
+  wipe right 0.5
   circleIn 0.5
-  clockWipe 0.7
-  spinCW 0.5
-  swirl 0.6
-  rgbSplit 0.4
   glitch 0.5
   flashWhite 0.3
+  spinCW 0.5
+  swirl 0.6
 
-All junctions:
+All junctions (same pattern on every clip):
   transition all fade 0.5
   transition all dissolve 0.6
 
 At specific time:
   transition at 3 fade 0.5
   transition at 6 dissolve 0.8
-  transition at 9 zoom in 0.5
 
-Layer pattern:
+Layer pattern (cycle):
   layer v1 transitions dissolve, slide left, zoom in
   layer v1 transitions dissolve, null, zoom in    (null = skip)
   layer v1 transitions dissolve, slide, zoom loop
+
+### 🆕 PER-CLIP TRANSITIONS (Layer + Clip index based)
+
+Syntax:
+  L{layer} transitions , C{clip} {transition name} , C{clip} {transition name} , ...
+
+- L{layer}: 1 = first visual track (V1), 2 = second (V2), etc.
+- C{clip}: 1-based clip index in that layer, sorted by timeline position
+- {name}: any transition name (fade, slide left, push right, zoom in, glitch, ...)
+- Extra C-entries beyond available clips → silently ignored
+- First clip of layer → transition saved (no left neighbor → no effect)
+
+Single layer:
+  L1 transitions , C1 slide , C2 Push left , C3 fade , C4 zoom in
+
+Two layers:
+  L1 transitions , C1 slide , C2 push , C3 fade
+  L2 transitions , C1 fade , C2 zoom out , C3 glitch
+
+Mixed with other commands:
+  L1 transitions , C1 fade , C2 push left , ratio 9:16 , brightness 120
+
+Names can be:
+  fade, dissolve, slide left, slide right, slide up, slide down,
+  push left, push right, push up, push down, zoom in, zoom out,
+  wipe left, wipe right, circle in, clock wipe, spin cw, spin ccw,
+  glitch, rgb split, flash white, film burn, ink splash, and 100+ more
 
 ### 🖌️ BRUSH
   brush draw                    → enable draw mode

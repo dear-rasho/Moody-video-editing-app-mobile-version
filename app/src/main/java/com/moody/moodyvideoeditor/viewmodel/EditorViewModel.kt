@@ -23,6 +23,7 @@ import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.data.RatioState
 import com.moody.moodyvideoeditor.data.StickerState
 import com.moody.moodyvideoeditor.data.TextState
+import com.moody.moodyvideoeditor.data.TransitionLibrary
 import com.moody.moodyvideoeditor.data.TransitionState
 import com.moody.moodyvideoeditor.utils.DeleteEngine
 import com.moody.moodyvideoeditor.utils.DuplicateEngine
@@ -1131,7 +1132,6 @@ class EditorViewModel : ViewModel() {
         val list = s.clips.toMutableList()
         list.add(copy)
 
-        // Make sure layer count reflects new track if created
         val maxVisual = list.filter { !it.isAudio }.maxOfOrNull { it.trackIndex } ?: 0
         val maxAudio = list.filter { it.isAudio }.maxOfOrNull { it.trackIndex } ?: 0
 
@@ -1552,7 +1552,7 @@ class EditorViewModel : ViewModel() {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  EFFECTS / ADJUSTMENTS / OVERLAYS / CHROMA
+    //  EFFECTS
     // ═══════════════════════════════════════════════════════════
     fun applyEffectPreset(presetKey: String, presetLabel: String) {
         val preset = EffectLibrary.findByKey(presetKey) ?: return
@@ -1589,9 +1589,6 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 EFFECT PREVIEW + INTENSITY
-    // ═══════════════════════════════════════════════════════════
     fun setPreviewEffect(presetKey: String?, intensity: Float) {
         if (presetKey == null) {
             _state.update { it.copy(previewEffectState = null) }
@@ -1706,6 +1703,9 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  ADJUSTMENTS
+    // ═══════════════════════════════════════════════════════════
     fun applyAdjustment(newAdj: AdjustmentData) {
         val s = _state.value
         val baseClip = s.selectedClip
@@ -1754,6 +1754,9 @@ class EditorViewModel : ViewModel() {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  OVERLAYS
+    // ═══════════════════════════════════════════════════════════
     fun applyOverlay(newOverlay: OverlayState) {
         val s = _state.value
         val baseClip = s.selectedClip
@@ -1803,6 +1806,9 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  CHROMA
+    // ═══════════════════════════════════════════════════════════
     fun applyChroma(newChroma: ChromaState) {
         val s = _state.value
         val baseClip = s.selectedClip
@@ -2032,7 +2038,6 @@ class EditorViewModel : ViewModel() {
         }
     }
 
-    // 🆕 Live preview filters
     fun setPreviewFilters(filters: FilterState?) {
         _state.update { it.copy(previewFilters = filters) }
     }
@@ -2041,14 +2046,11 @@ class EditorViewModel : ViewModel() {
         _state.update { it.copy(previewFilters = null) }
     }
 
-    // 🆕 Filter layers
     fun createFilterLayer(
         filters: FilterState,
         durationMs: Long = 0L
     ) {
         val s = _state.value
-        // 🆕 Filter layer duration = selected clip ki duration
-        // Agar koi clip select nahi to 3000ms default
         val selectedDur = s.selectedClip?.durationMs ?: 0L
         val effectiveDur = when {
             durationMs > 0L -> durationMs
@@ -2129,7 +2131,6 @@ class EditorViewModel : ViewModel() {
     // ═══════════════════════════════════════════════════════════
     //  TRANSITIONS
     // ═══════════════════════════════════════════════════════════
-    // 🆕 Set transition on SPECIFIC clip (always right clip of pair)
     fun setTransitionForClip(clipId: String, state: TransitionState) {
         updateClipDirect(clipId) { it.copy(transition = state) }
     }
@@ -2194,6 +2195,211 @@ class EditorViewModel : ViewModel() {
         pushHistory()
         _state.update { it.copy(clips = list) }
         updateHistoryFlags()
+    }
+
+    /**
+     * 🆕 Apply per-clip transitions on a specific layer.
+     *
+     * @param layerNumber 1-based layer (L1 = track 0, L2 = track 1)
+     * @param clipTransitionMap Map of 1-based clip index → transition name
+     * @return number of transitions applied
+     */
+    fun applyLayerClipTransitions(
+        layerNumber: Int,
+        clipTransitionMap: Map<Int, String>
+    ): Int {
+        val trackIndex = layerNumber - 1
+        android.util.Log.d(
+            "PROMPT_TRANS",
+            "applyLayerClipTransitions L$layerNumber (track=$trackIndex), " +
+                    "map=$clipTransitionMap"
+        )
+
+        if (trackIndex < 0) return 0
+
+        val s = _state.value
+
+        // 🆕 Only count REAL visual clips (video/image) — skip text/sticker/effects
+        // This way C1 = first video clip, C2 = second, etc.
+        val layerClips = s.clips
+            .filter {
+                it.isVisualClip &&              // video or image
+                        !it.isAudio &&
+                        it.trackIndex == trackIndex
+            }
+            .sortedBy { it.timelineStartMs }
+
+        android.util.Log.d(
+            "PROMPT_TRANS",
+            "found ${layerClips.size} visual clips on L$layerNumber: " +
+                    layerClips.mapIndexed { i, c -> "C${i + 1}='${c.name}'" }
+                        .joinToString(", ")
+        )
+
+        if (layerClips.isEmpty()) return 0
+
+        pushHistory()
+        val list = s.clips.toMutableList()
+        var appliedCount = 0
+
+        clipTransitionMap.forEach { (clipNum, transName) ->
+            android.util.Log.d("PROMPT_TRANS", "→ C$clipNum: '$transName'")
+
+            // 🆕 Support "skip" keyword
+            if (transName.equals("skip", ignoreCase = true) ||
+                transName.equals("none", ignoreCase = true) ||
+                transName.isBlank()
+            ) {
+                android.util.Log.d("PROMPT_TRANS", "  ⏭️ Skipped (C$clipNum)")
+                return@forEach
+            }
+
+            if (clipNum < 1 || clipNum > layerClips.size) {
+                android.util.Log.d(
+                    "PROMPT_TRANS",
+                    "  ❌ C$clipNum out of range (max=${layerClips.size})"
+                )
+                return@forEach
+            }
+
+            val targetClip = layerClips[clipNum - 1]
+            val resolvedKey = resolveTransitionName(transName)
+
+            if (resolvedKey == null) {
+                android.util.Log.d(
+                    "PROMPT_TRANS",
+                    "  ❌ Could not resolve transition: '$transName'"
+                )
+                return@forEach
+            }
+
+            android.util.Log.d(
+                "PROMPT_TRANS",
+                "  ✅ C$clipNum ('${targetClip.name}'): '$transName' → '$resolvedKey'"
+            )
+
+            // ⚠️ Check left neighbor
+            val hasLeft = layerClips.any { other ->
+                other.id != targetClip.id &&
+                        abs(other.timelineEndMs - targetClip.timelineStartMs) < 100L
+            }
+            if (!hasLeft) {
+                android.util.Log.d(
+                    "PROMPT_TRANS",
+                    "  ⚠️ C$clipNum has no left neighbor — won't render visually"
+                )
+            }
+
+            val idx = list.indexOfFirst { it.id == targetClip.id }
+            if (idx >= 0) {
+                list[idx] = list[idx].copy(
+                    transition = TransitionState(key = resolvedKey, durationMs = 500L)
+                )
+                appliedCount++
+            }
+        }
+
+        _state.update { it.copy(clips = list) }
+        updateHistoryFlags()
+        android.util.Log.d("PROMPT_TRANS", "Total applied: $appliedCount")
+        return appliedCount
+    }
+
+    private fun resolveTransitionName(name: String): String? {
+        val clean = name.trim().lowercase()
+            .replace(" ", "")
+            .replace("_", "")
+            .replace("-", "")
+
+        if (clean.isBlank()) return null
+
+        // 🆕 Direct aliases — user-friendly names
+        val aliases = mapOf(
+            // Slides
+            "slide" to "slideLeft",
+            "slideleft" to "slideLeft",
+            "slideright" to "slideRight",
+            "slideup" to "slideUp",
+            "slidedown" to "slideDown",
+            "rightslide" to "slideRight",
+            "leftslide" to "slideLeft",
+            // Push (maps to slide since no pushLeft preset)
+            "push" to "slideLeft",
+            "pushleft" to "slideLeft",
+            "pushright" to "slideRight",
+            "pushup" to "slideUp",
+            "pushdown" to "slideDown",
+            // Pan (exists as preset)
+            "panleft" to "panLeft",
+            "panright" to "panRight",
+            "panup" to "tiltUp",
+            "pandown" to "tiltDown",
+            "tiltup" to "tiltUp",
+            "tiltdown" to "tiltDown",
+            // Fade
+            "fade" to "fade",
+            "fadein" to "fade",
+            "fadeout" to "fade",
+            "dissolve" to "dissolve",
+            "fadeblack" to "blinkFade",
+            "fadewhite" to "whiteFlash",
+            // Zoom
+            "zoom" to "zoomIn",
+            "zoomin" to "zoomIn",
+            "zoomout" to "zoomOut",
+            "gaussianzoom" to "gaussianZoom",
+            // Wipe
+            "wipe" to "wipeLeft",
+            "wipeleft" to "wipeLeft",
+            "wiperight" to "wipeRight",
+            "wipeup" to "wipeUp",
+            "wipedown" to "wipeDown",
+            "linearwipe" to "linearWipe",
+            // Flash
+            "flash" to "whiteFlash",
+            "flashwhite" to "whiteFlash",
+            "whiteflash" to "whiteFlash",
+            // Glitch
+            "glitch" to "glitch",
+            "glitchfx" to "glitch",
+            "rgbshift" to "rgbShift",
+            // Shapes
+            "circle" to "circleMask",
+            "circleopen" to "circleMask",
+            "circleclose" to "circleMask",
+            "circlemask" to "circleMask",
+            "heart" to "heartPop",
+            "heartpop" to "heartPop",
+            "star" to "starBurst",
+            "starburst" to "starBurst",
+            "diamond" to "diamondReveal",
+            "diamondreveal" to "diamondReveal",
+            "clock" to "clockWipe",
+            "clockwipe" to "clockWipe",
+            // Blur
+            "blur" to "gaussianZoom",
+            "motionblur" to "motionWipeBlur"
+        )
+
+        aliases[clean]?.let { return it }
+
+        // Exact key match
+        TransitionLibrary.PRESETS.firstOrNull { p ->
+            p.key.lowercase() == clean
+        }?.let { return it.key }
+
+        // Label match (spaces removed)
+        TransitionLibrary.PRESETS.firstOrNull { p ->
+            p.label.lowercase().replace(" ", "").replace("-", "") == clean
+        }?.let { return it.key }
+
+        // Partial match
+        TransitionLibrary.PRESETS.firstOrNull { p ->
+            val pClean = p.label.lowercase().replace(" ", "").replace("-", "")
+            pClean.contains(clean) || clean.contains(pClean)
+        }?.let { return it.key }
+
+        return null
     }
 
     fun applyLayerTransitions(pattern: String, trackIdx: Int, isAudio: Boolean) {
@@ -2345,7 +2551,7 @@ class EditorViewModel : ViewModel() {
     fun setSoundFx(fx: String) = _state.update { it.copy(soundFx = fx) }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 PER-CLIP AUDIO FX
+    //  PER-CLIP AUDIO FX
     // ═══════════════════════════════════════════════════════════
     fun setClipAudioFx(clipId: String, fx: String) {
         pushHistory()
@@ -2370,7 +2576,7 @@ class EditorViewModel : ViewModel() {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 AUDIO EFFECT LAYERS
+    //  AUDIO EFFECT LAYERS
     // ═══════════════════════════════════════════════════════════
     fun createAudioFxLayer(
         fx: String,
@@ -2671,7 +2877,6 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
-    // 🆕 Reset all transform on SELECTED clip (used by resetAllSelectedTransforms)
     fun resetAllTransform() {
         val sel = _state.value.selectedClip ?: return
         pushHistory()

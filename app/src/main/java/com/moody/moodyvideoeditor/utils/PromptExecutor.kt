@@ -40,8 +40,9 @@ object PromptExecutor {
 
         val state = viewModel.state.value
         val selected = state.selectedClip
+
         // ═══════════════════════════════════════════════════════
-        //  PRIORITY 0 — TEMPLATES (before everything else)
+        //  PRIORITY 0 — TEMPLATES
         // ═══════════════════════════════════════════════════════
         for (cmd in parsed.commands) {
             if (cmd.type == CmdType.TEMPLATE) {
@@ -58,6 +59,7 @@ object PromptExecutor {
                 }
             }
         }
+
         // ═══════════════════════════════════════════════════════
         //  PRIORITY 1 — GLOBAL (Ratio, Tighten, Clear)
         // ═══════════════════════════════════════════════════════
@@ -111,6 +113,28 @@ object PromptExecutor {
                     applied.add("layer transitions: $pattern")
                 }
 
+                // 🆕 Per-clip transitions on a specific layer
+                // Works WITHOUT any layer selected — layer specified in prompt itself
+                // Handles both TRANSITION_LAYER_CLIPS and TRANSITION_CLIP_MAP
+                CmdType.TRANSITION_LAYER_CLIPS,
+                CmdType.TRANSITION_CLIP_MAP -> {
+                    val layerNum = cmd.value1?.toInt() ?: 0
+                    val pairsStr = cmd.stringValue ?: ""
+                    val clipMap = parseLayerClipPairs(pairsStr)
+
+                    if (layerNum > 0 && clipMap.isNotEmpty()) {
+                        val appliedCount = viewModel.applyLayerClipTransitions(
+                            layerNum, clipMap
+                        )
+                        val desc = clipMap.entries.joinToString(", ") {
+                            "C${it.key} ${it.value}"
+                        }
+                        applied.add("L$layerNum transitions: $desc")
+                    } else {
+                        errors.add("Invalid layer clips: ${cmd.raw}")
+                    }
+                }
+
                 else -> {}
             }
         }
@@ -119,7 +143,6 @@ object PromptExecutor {
         //  PRIORITY 3 — TEXT + STICKER (timestamp + AUTO-STACKING)
         // ═══════════════════════════════════════════════════════
 
-        // 🆕 Group texts by [startMs-endMs] block for auto-stacking
         val textCommands = parsed.commands.filter { it.type == CmdType.TEXT }
         val groupedTexts = textCommands
             .filter { it.startMs != null && it.endMs != null }
@@ -131,7 +154,6 @@ object PromptExecutor {
             val count = group.size
             if (count == 0) continue
 
-            // 🆕 Distribute Y positions: top (15%) to bottom (85%)
             val topMargin = 15f
             val bottomMargin = 85f
             val spacing = if (count > 1) (bottomMargin - topMargin) / (count - 1)
@@ -144,7 +166,6 @@ object PromptExecutor {
             }
         }
 
-        // Now create all texts
         for (cmd in parsed.commands) {
             when (cmd.type) {
                 CmdType.TEXT -> {
@@ -158,7 +179,6 @@ object PromptExecutor {
                     val endMs = cmd.endMs
 
                     if (startMs != null && endMs != null) {
-                        // 🆕 Apply auto-stack position if user didn't specify
                         val userSetPosition =
                             cmd.extra?.contains("position", ignoreCase = true) == true
                         if (!userSetPosition) {
@@ -202,8 +222,9 @@ object PromptExecutor {
                 else -> {}
             }
         }
-        // 🆕 BULK MODE: if multi-selected, use bulk viewModel methods
+
         val hasMulti = state.multiSelectedIds.isNotEmpty()
+
         // ═══════════════════════════════════════════════════════
         //  PRIORITY 4 — SELECTED CLIP MUTATIONS
         // ═══════════════════════════════════════════════════════
@@ -253,7 +274,7 @@ object PromptExecutor {
 
                     CmdType.TRANSFORM -> {
                         val value = cmd.value1 ?: continue
-                        val hasMulti = state.multiSelectedIds.isNotEmpty()
+                        val hasMultiT = state.multiSelectedIds.isNotEmpty()
                         when (cmd.key) {
                             "scale" -> viewModel.setClipScale(value / 100f)
                             "rotation" -> viewModel.setClipRotation(value)
@@ -275,7 +296,7 @@ object PromptExecutor {
                                 )
                             }
                         }
-                        val label = if (hasMulti) {
+                        val label = if (hasMultiT) {
                             "${cmd.key} $value → ${state.multiSelectedIds.size} clips"
                         } else "${cmd.key} $value"
                         applied.add(label)
@@ -376,15 +397,6 @@ object PromptExecutor {
                     }
 
                     CmdType.BRUSH_TYPE -> {
-                        val brushType = when (cmd.key) {
-                            "pen" -> com.moody.moodyvideoeditor.data.BrushType.PEN
-                            "marker" -> com.moody.moodyvideoeditor.data.BrushType.MARKER
-                            "chalk" -> com.moody.moodyvideoeditor.data.BrushType.CHALK
-                            "neon" -> com.moody.moodyvideoeditor.data.BrushType.NEON
-                            "glow" -> com.moody.moodyvideoeditor.data.BrushType.GLOW
-                            "spray" -> com.moody.moodyvideoeditor.data.BrushType.SPRAY
-                            else -> com.moody.moodyvideoeditor.data.BrushType.PEN
-                        }
                         applied.add("brush type: ${cmd.key}")
                     }
 
@@ -447,6 +459,31 @@ object PromptExecutor {
         )
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 LAYER CLIP TRANSITIONS PARSER
+    //  Input format: "1=slide|2=push left|3=fade|4=zoom in"
+    // ═══════════════════════════════════════════════════════════
+    private fun parseLayerClipPairs(pairs: String): Map<Int, String> {
+        val result = mutableMapOf<Int, String>()
+        if (pairs.isBlank()) return result
+
+        pairs.split("|").forEach { pair ->
+            val parts = pair.split("=", limit = 2)
+            if (parts.size == 2) {
+                val num = parts[0].toIntOrNull() ?: return@forEach
+                // 🆕 "skip" / "none" / blank = skip clip
+                val name = parts[1].trim()
+                if (num > 0) {
+                    result[num] = name.ifBlank { "skip" }
+                }
+            }
+        }
+        return result
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  TEXT PROPS PARSER
+    // ═══════════════════════════════════════════════════════════
     private fun applyTextProps(initial: TextState, props: String): TextState {
         var st = initial
         val tokens = props.split(Regex("\\s+"))
@@ -505,11 +542,9 @@ object PromptExecutor {
                     i += 2
                 }
 
-                // 🆕 TEXT COLOR RAMP (gradient)
                 "gradient" -> {
                     val c1 = tokens.getOrNull(i + 1)
                     val c2 = tokens.getOrNull(i + 2)
-                    // Handle both: "gradient red blue" and "gradient red to blue"
                     if (c2?.lowercase() == "to") {
                         val c2b = tokens.getOrNull(i + 3)
                         val angle = tokens.getOrNull(i + 4)?.toFloatOrNull()
@@ -545,7 +580,6 @@ object PromptExecutor {
                     i += 1
                 }
 
-                // 🆕 TEXT GLOW
                 "glow" -> {
                     val c = tokens.getOrNull(i + 1)
                     val r = tokens.getOrNull(i + 2)?.toFloatOrNull()
@@ -558,7 +592,6 @@ object PromptExecutor {
                         )
                         i += if (r != null) 3 else 2
                     } else if (r != null) {
-                        // "glow 30" — radius only, keep old color
                         st = st.copy(glowEnabled = true, glowRadius = r)
                         i += 2
                     } else {
@@ -572,7 +605,6 @@ object PromptExecutor {
                     i += 1
                 }
 
-                // 🆕 TEXT STROKE
                 "stroke" -> {
                     val w = tokens.getOrNull(i + 1)?.toFloatOrNull()
                     val c = tokens.getOrNull(i + 2)
@@ -595,7 +627,6 @@ object PromptExecutor {
                     i += 1
                 }
 
-                // 🆕 TEXT SHADOW
                 "shadow" -> {
                     val c = tokens.getOrNull(i + 1)
                     val blur = tokens.getOrNull(i + 2)?.toFloatOrNull()
@@ -621,7 +652,6 @@ object PromptExecutor {
                     i += 1
                 }
 
-                // 🆕 TYPOGRAPHY
                 "tracking" -> {
                     val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
                     if (v != null) st = st.copy(letterSpacing = v)

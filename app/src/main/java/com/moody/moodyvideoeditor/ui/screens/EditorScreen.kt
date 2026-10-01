@@ -4,6 +4,7 @@ package com.moody.moodyvideoeditor.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -146,6 +147,14 @@ fun EditorScreen(
     var activePanel by remember {
         mutableStateOf<String?>(if (startInCodeMode) "code" else null)
     }
+
+    // FeatureShelf scroll — persisted
+    val featureScrollState = androidx.compose.foundation.rememberScrollState()
+
+    // Filter / Effect edit layers
+    var filterEditLayerId by remember { mutableStateOf<String?>(null) }
+    var effectEditLayerId by remember { mutableStateOf<String?>(null) }
+
     var isDrawingMode by remember { mutableStateOf(false) }
     var isMaskPenMode by remember { mutableStateOf(false) }
     var brushType by remember { mutableStateOf(BrushType.PEN) }
@@ -155,7 +164,10 @@ fun EditorScreen(
     var brushGradient by remember {
         mutableStateOf(com.moody.moodyvideoeditor.data.BrushGradient())
     }
-    var pendingUri by remember { mutableStateOf<Uri?>(null) }
+
+    // 🆕 Multi-import
+    var pendingUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+
     var isExporting by remember { mutableStateOf(false) }
     var exportProgress by remember { mutableFloatStateOf(0f) }
     var exportMessage by remember { mutableStateOf("") }
@@ -170,20 +182,11 @@ fun EditorScreen(
 
     var isPlaybackActive by remember { mutableStateOf(false) }
 
-    // 🆕 FeatureShelf scroll — persisted across panel switches
-    val featureScrollState = androidx.compose.foundation.rememberScrollState()
-
-    // 🆕 Which filter layer is being edited (null = create new)
-    var filterEditLayerId by remember { mutableStateOf<String?>(null) }
-
-    // 🆕 Which effect layer is being edited (null = create new)
-    var effectEditLayerId by remember { mutableStateOf<String?>(null) }
-
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
     }
 
-    // 🆕 Second player — dedicated for audio-only clips (mp3, wav, etc.)
+    // 🆕 Second player — dedicated for audio clips
     val audioExoPlayer = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
     }
@@ -195,23 +198,16 @@ fun EditorScreen(
         }
     }
 
-    // 🆕 Reset audio preview whenever panel closes
+    // Reset audio preview when panel closes
     LaunchedEffect(activePanel) {
         if (activePanel != "audiofx" && activePanel != "soundfx") {
             AudioPreviewEngine.release()
             try {
                 exoPlayer.playbackParameters = androidx.media3.common.PlaybackParameters(1f, 1f)
+                audioExoPlayer.playbackParameters =
+                    androidx.media3.common.PlaybackParameters(1f, 1f)
             } catch (_: Throwable) {
             }
-        }
-    }
-
-    LaunchedEffect(state.selectedClipId, state.selectedClip?.speed) {
-        val clip = state.selectedClip
-        if (clip != null) {
-            exoPlayer.setPlaybackSpeed(SpeedEngine.clampForExoPlayer(clip.speed))
-        } else {
-            exoPlayer.setPlaybackSpeed(1.0f)
         }
     }
 
@@ -236,6 +232,7 @@ fun EditorScreen(
         }
     }
 
+    // Video playback sync
     LaunchedEffect(state.currentPosMs, state.clips, state.hiddenVisualTracks) {
         val playheadMs = state.currentPosMs
         val activeClip = state.clips
@@ -268,19 +265,14 @@ fun EditorScreen(
             exoPlayer.prepare()
         }
 
-        // 🆕 SPEED-AWARE SOURCE POSITION
-        // playheadOffset (timeline ms) × speed = source ms consumed
         val speed = activeClip.speed.coerceAtLeast(0.01f)
         val playheadOffset = (playheadMs - activeClip.timelineStartMs).coerceAtLeast(0L)
-        val localMs = activeClip.sourceStartMs +
-                (playheadOffset * speed).toLong()
+        val localMs = activeClip.sourceStartMs + (playheadOffset * speed).toLong()
         val clampedLocal = localMs.coerceIn(
             activeClip.sourceStartMs,
             activeClip.sourceEndMs
         )
 
-        // Drift threshold scales with speed
-        // Drift threshold scales with speed
         val driftThreshold = (150f * speed).toLong().coerceAtLeast(80L)
         val drift = abs(exoPlayer.currentPosition - clampedLocal)
         if (drift > driftThreshold) {
@@ -290,7 +282,6 @@ fun EditorScreen(
             }
         }
 
-        // 🆕 ALWAYS sync playback speed with active clip
         val targetSpeed = SpeedEngine.clampForExoPlayer(activeClip.speed)
         val currentSpeed = exoPlayer.playbackParameters.speed
         if (abs(currentSpeed - targetSpeed) > 0.01f) {
@@ -299,14 +290,13 @@ fun EditorScreen(
             } catch (_: Exception) {
             }
         }
+
         if (isPlaybackActive && !exoPlayer.isPlaying) {
             exoPlayer.play()
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 AUDIO CLIP PLAYBACK (standalone mp3/wav/etc.)
-    // ═══════════════════════════════════════════════════════════
+    // Audio playback sync
     LaunchedEffect(state.currentPosMs, state.clips, state.mutedAudioTracks) {
         val playheadMs = state.currentPosMs
         val activeAudio = state.clips
@@ -341,7 +331,6 @@ fun EditorScreen(
             audioExoPlayer.prepare()
         }
 
-        // Speed-aware position
         val speed = activeAudio.speed.coerceAtLeast(0.01f)
         val playheadOffset = (playheadMs - activeAudio.timelineStartMs)
             .coerceAtLeast(0L)
@@ -360,7 +349,6 @@ fun EditorScreen(
             }
         }
 
-        // Volume + speed sync
         val targetVolume = if (state.isMuted) 0f else activeAudio.volume
         if (abs(audioExoPlayer.volume - targetVolume) > 0.01f) {
             audioExoPlayer.volume = targetVolume
@@ -380,6 +368,7 @@ fun EditorScreen(
         }
     }
 
+    // Playhead ticker
     LaunchedEffect(isPlaybackActive) {
         if (!isPlaybackActive) {
             try {
@@ -408,9 +397,14 @@ fun EditorScreen(
         }
     }
 
+    // 🆕 Multi-select picker
     val picker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? -> uri?.let { pendingUri = it } }
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            pendingUris = uris
+        }
+    }
 
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -428,51 +422,69 @@ fun EditorScreen(
         }
     }
 
-    LaunchedEffect(pendingUri) {
-        val uri = pendingUri ?: return@LaunchedEffect
+    // 🆕 Multi-import processing
+    LaunchedEffect(pendingUris) {
+        val uris = pendingUris
+        if (uris.isEmpty()) return@LaunchedEffect
         try {
-            val result = withContext(Dispatchers.IO) {
-                val name = VideoUtils.getFileName(context, uri)
-                var mime = VideoUtils.getMimeType(context, uri)
-                val nameLower = name.lowercase()
-                val isJfifVariant = nameLower.endsWith(".jfif") ||
-                        nameLower.endsWith(".jif") ||
-                        nameLower.endsWith(".jfi")
-                if (isJfifVariant) mime = "image/jpeg"
-                val isImage = mime.startsWith("image/")
-                val finalUri: Uri = if (isJfifVariant) {
+            val results = withContext(Dispatchers.IO) {
+                uris.mapNotNull { uri ->
                     try {
-                        val cacheFile = java.io.File(
-                            context.cacheDir,
-                            "img_${System.currentTimeMillis()}.jpg"
-                        )
-                        context.contentResolver.openInputStream(uri)?.use { input ->
-                            cacheFile.outputStream().use { output -> input.copyTo(output) }
+                        val name = VideoUtils.getFileName(context, uri)
+                        var mime = VideoUtils.getMimeType(context, uri)
+                        val nameLower = name.lowercase()
+                        val isJfifVariant = nameLower.endsWith(".jfif") ||
+                                nameLower.endsWith(".jif") ||
+                                nameLower.endsWith(".jfi")
+                        if (isJfifVariant) mime = "image/jpeg"
+                        val isImage = mime.startsWith("image/")
+                        val finalUri: Uri = if (isJfifVariant) {
+                            try {
+                                val cacheFile = java.io.File(
+                                    context.cacheDir,
+                                    "img_${System.currentTimeMillis()}_" +
+                                            "${uri.hashCode()}.jpg"
+                                )
+                                context.contentResolver.openInputStream(uri)?.use { input ->
+                                    cacheFile.outputStream()
+                                        .use { output -> input.copyTo(output) }
+                                }
+                                Uri.fromFile(cacheFile)
+                            } catch (e: Exception) {
+                                uri
+                            }
+                        } else uri
+
+                        val dur = if (isImage) 5000L
+                        else VideoUtils.getVideoDuration(context, uri)
+
+                        try {
+                            context.contentResolver.takePersistableUriPermission(
+                                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            )
+                        } catch (_: Exception) {
                         }
-                        Uri.fromFile(cacheFile)
+
+                        MediaInfo(name, dur, mime, finalUri)
                     } catch (e: Exception) {
-                        uri
+                        Log.e("IMPORT", "Failed to import uri: $uri", e)
+                        null
                     }
-                } else uri
-                val dur = if (isImage) 5000L else VideoUtils.getVideoDuration(context, uri)
-                try {
-                    context.contentResolver.takePersistableUriPermission(
-                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    )
-                } catch (_: Exception) {
                 }
-                MediaInfo(name, dur, mime, finalUri)
             }
-            viewModel.addClipSmart(
-                uri = result.finalUri,
-                name = result.name,
-                durationMs = result.durationMs,
-                mediaType = result.mimeType
-            )
+
+            results.forEach { info ->
+                viewModel.addClipSmart(
+                    uri = info.finalUri,
+                    name = info.name,
+                    durationMs = info.durationMs,
+                    mediaType = info.mimeType
+                )
+            }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("IMPORT", "Multi-import failed", e)
         } finally {
-            pendingUri = null
+            pendingUris = emptyList()
         }
     }
 
@@ -566,7 +578,7 @@ fun EditorScreen(
                     customEndMs = rangeEnd
                 )
             } catch (e: Throwable) {
-                android.util.Log.e("EXPORT", "Export failed", e)
+                Log.e("EXPORT", "Export failed", e)
                 withContext(Dispatchers.Main) {
                     isExporting = false
                     exportMessage = "❌ Export failed: ${e.message}"
@@ -582,6 +594,7 @@ fun EditorScreen(
             .background(Color(0xFF121212))
     ) {
 
+        // ─── TOP BAR ───
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -620,6 +633,7 @@ fun EditorScreen(
             }
         }
 
+        // ─── PREVIEW ───
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -689,6 +703,7 @@ fun EditorScreen(
             )
         }
 
+        // ─── CONTROL BAR ───
         ControlBar(
             onMediaClick = {
                 picker.launch(
@@ -708,6 +723,7 @@ fun EditorScreen(
             onRatioClick = { activePanel = "ratio" }
         )
 
+        // ─── TIMELINE ───
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -734,13 +750,13 @@ fun EditorScreen(
                         viewModel.selectClip(clip)
                         viewModel.clearMultiSelect()
 
-                        // 🆕 Filter layer tapped → Filters edit mode
+                        // Filter layer tapped → Filters edit mode
                         if (clip.isFilterLayerClip) {
                             filterEditLayerId = clip.id
                             activePanel = "filters"
                         }
 
-                        // 🆕 Effect layer tapped → Effects edit mode
+                        // Effect layer tapped → Effects edit mode
                         if (clip.isEffectClip) {
                             effectEditLayerId = clip.id
                             activePanel = "effects"
@@ -753,8 +769,8 @@ fun EditorScreen(
                     onSeek = { t ->
                         isPlaybackActive = false
                         if (exoPlayer.isPlaying) exoPlayer.pause()
+                        if (audioExoPlayer.isPlaying) audioExoPlayer.pause()
                         viewModel.setCurrentPos(t)
-                        // 🆕 Empty area tap → clear selection
                         viewModel.clearAllSelection()
                         val sel = state.selectedClip
                         if (sel != null && sel.isVisualClip) {
@@ -787,6 +803,7 @@ fun EditorScreen(
             }
         }
 
+        // ─── PLAYBACK CONTROLS ───
         PlaybackControls(
             isPlaying = isPlaybackActive,
             isMuted = state.isMuted,
@@ -809,7 +826,6 @@ fun EditorScreen(
                         }
                         isPlaybackActive = true
 
-                        // Resume video if visual clip active
                         val activeVisual = state.clips.firstOrNull {
                             it.isVisualClip &&
                                     state.currentPosMs >= it.timelineStartMs &&
@@ -818,7 +834,6 @@ fun EditorScreen(
                         }
                         if (activeVisual != null) exoPlayer.play()
 
-                        // Resume audio if audio clip active
                         val activeAudio = state.clips.firstOrNull {
                             it.isAudio &&
                                     !it.isAudioEffectClip &&
@@ -846,6 +861,7 @@ fun EditorScreen(
             onKeyframe = { viewModel.toggleKeyframeAll() }
         )
 
+        // ─── FEATURE PANEL / SHELF ───
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -856,7 +872,6 @@ fun EditorScreen(
             when (activePanel) {
                 null -> FeatureShelf(
                     onFeatureSelected = { key ->
-                        // 🆕 FeatureShelf se Filters/Effects → always NEW layer
                         if (key == "filters") {
                             filterEditLayerId = null
                         }
@@ -940,7 +955,6 @@ fun EditorScreen(
                 )
 
                 "filters" -> {
-                    // 🆕 Explicit edit layer — naya ya edit
                     val editLayer = filterEditLayerId?.let { id ->
                         state.clips.firstOrNull {
                             it.id == id && it.isFilterLayerClip
@@ -1046,9 +1060,7 @@ fun EditorScreen(
                 )
 
                 "transitions" -> {
-                    // 🆕 Find target = RIGHT clip of pair
                     val target = selected?.let { sel ->
-                        // Left neighbor of selected → selected is right clip
                         val hasLeft = state.clips.any { other ->
                             other.id != sel.id &&
                                     other.isAudio == sel.isAudio &&
@@ -1057,7 +1069,6 @@ fun EditorScreen(
                         }
                         if (hasLeft) sel
                         else {
-                            // Right neighbor of selected → rightNeighbor is right clip
                             state.clips.filter { other ->
                                 other.id != sel.id &&
                                         other.isAudio == sel.isAudio &&
@@ -1226,6 +1237,8 @@ fun EditorScreen(
                         try {
                             exoPlayer.playbackParameters =
                                 androidx.media3.common.PlaybackParameters(1f, 1f)
+                            audioExoPlayer.playbackParameters =
+                                androidx.media3.common.PlaybackParameters(1f, 1f)
                         } catch (_: Throwable) {
                         }
                     },
@@ -1234,6 +1247,30 @@ fun EditorScreen(
                     },
                     onClose = { activePanel = null }
                 )
+
+                "soundfx" -> {
+                    // soundfx ab FeatureShelf se remove hai
+                    // Lekin safety ke liye AudioPanel open kar do
+                    AudioPanel(
+                        onPreviewFx = { fx, intensity ->
+                            AudioPreviewEngine.apply(exoPlayer, audioExoPlayer, fx, intensity)
+                        },
+                        onClearPreview = {
+                            AudioPreviewEngine.release()
+                            try {
+                                exoPlayer.playbackParameters =
+                                    androidx.media3.common.PlaybackParameters(1f, 1f)
+                                audioExoPlayer.playbackParameters =
+                                    androidx.media3.common.PlaybackParameters(1f, 1f)
+                            } catch (_: Throwable) {
+                            }
+                        },
+                        onApplyAudioFx = { fx, intensity ->
+                            viewModel.createAudioFxLayer(fx, intensity)
+                        },
+                        onClose = { activePanel = null }
+                    )
+                }
 
                 "beats" -> BeatsPanel(
                     state = BeatsState(
@@ -1286,11 +1323,15 @@ fun EditorScreen(
                     activePanel = null
                 }
 
-                else -> FeatureShelf(onFeatureSelected = { activePanel = it })
+                else -> FeatureShelf(
+                    onFeatureSelected = { activePanel = it },
+                    scrollState = featureScrollState
+                )
             }
         }
     }
 
+    // ─── EXPORT DIALOG ───
     if (activePanel == "export") {
         ExportDialog(
             isExporting = isExporting,
@@ -1326,6 +1367,7 @@ fun EditorScreen(
         )
     }
 
+    // ─── CANCEL CONFIRM ───
     if (showCancelConfirm) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showCancelConfirm = false },
