@@ -907,7 +907,21 @@ class EditorViewModel : ViewModel() {
         val isMulti = s.multiSelectedIds.size > 1 && anchorId in s.multiSelectedIds
 
         if (!isMulti) {
-            updateClipDirect(anchorId) { setClipPos(it, newX, newY) }
+            // 🆕 Auto-keyframe if clip already has any keyframes
+            val currentTimeSec = ((s.currentPosMs - anchor.timelineStartMs)
+                .toFloat() / 1000f).coerceAtLeast(0f)
+            val hasAnyKf = KeyframeStore.hasAnyKeyframes(anchor.keyframes)
+
+            updateClipDirect(anchorId) { c ->
+                var updated = setClipPos(c, newX, newY)
+                if (hasAnyKf) {
+                    var kf = c.keyframes
+                    kf = KeyframeStore.autoKeyframeIfActive(kf, "x", currentTimeSec, newX)
+                    kf = KeyframeStore.autoKeyframeIfActive(kf, "y", currentTimeSec, newY)
+                    updated = updated.copy(keyframes = kf)
+                }
+                updated
+            }
             return
         }
 
@@ -935,8 +949,24 @@ class EditorViewModel : ViewModel() {
         val isMulti = s.multiSelectedIds.size > 1 && anchorId in s.multiSelectedIds
 
         if (!isMulti) {
-            updateClipDirect(anchorId) {
-                setClipRotation(setClipScale(it, newScale), newRotation)
+            // 🆕 Auto-keyframe if clip already has any keyframes
+            val currentTimeSec = ((s.currentPosMs - anchor.timelineStartMs)
+                .toFloat() / 1000f).coerceAtLeast(0f)
+            val hasAnyKf = KeyframeStore.hasAnyKeyframes(anchor.keyframes)
+
+            updateClipDirect(anchorId) { c ->
+                var updated = setClipRotation(setClipScale(c, newScale), newRotation)
+                if (hasAnyKf) {
+                    var kf = c.keyframes
+                    kf = KeyframeStore.autoKeyframeIfActive(
+                        kf, "scale", currentTimeSec, newScale
+                    )
+                    kf = KeyframeStore.autoKeyframeIfActive(
+                        kf, "rotation", currentTimeSec, newRotation
+                    )
+                    updated = updated.copy(keyframes = kf)
+                }
+                updated
             }
             return
         }

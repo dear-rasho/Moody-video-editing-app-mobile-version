@@ -4,19 +4,21 @@ import java.util.UUID
 
 /**
  * Mirrors js/features/stickers.js CATEGORIES + st.sticker object.
+ * 🆕 Animation + opacity support added (like text clips).
  */
 data class StickerState(
     val emoji: String = "",
-    val x: Float = 50f,         // 0..100 %
-    val y: Float = 50f,         // 0..100 %
-    val scale: Float = 100f,    // 10..500 %
-    val rotation: Float = 0f    // -180..180 deg
+    val x: Float = 50f,              // 0..100 %
+    val y: Float = 50f,              // 0..100 %
+    val scale: Float = 100f,         // 10..500 %
+    val rotation: Float = 0f,        // -180..180 deg
+
+    // 🆕 Animation (mirrors TextState)
+    val animation: String = "none",
+    val animationDuration: Float = 0.6f,
+    val opacity: Float = 100f
 )
 
-/**
- * Keyframe types for sticker animation.
- * Mirrors st.kfPosition, st.kfScale, st.kfRotation from JS.
- */
 data class PositionKeyframe(val time: Float, val x: Float, val y: Float)
 data class ValueKeyframe(val time: Float, val value: Float)
 
@@ -29,9 +31,6 @@ data class StickerKeyframes(
         get() = position.isEmpty() && scale.isEmpty() && rotation.isEmpty()
 }
 
-/**
- * A placed sticker on the timeline.
- */
 data class StickerClip(
     val id: String = UUID.randomUUID().toString(),
     val state: StickerState = StickerState(),
@@ -54,9 +53,6 @@ object StickerLibrary {
         val emojis: List<String>
     )
 
-    /**
-     * Mirrors stickers.js CATEGORIES — 10 categories × 20 emojis.
-     */
     val CATEGORIES: List<Category> = listOf(
         Category(
             "faces", "Faces", "😀", listOf(
@@ -120,7 +116,6 @@ object StickerLibrary {
         )
     )
 
-    /** Mirrors JS EASING_OPTIONS */
     data class EasingOption(val key: String, val label: String)
 
     val EASING_OPTIONS: List<EasingOption> = listOf(

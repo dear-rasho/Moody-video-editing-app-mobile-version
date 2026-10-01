@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,12 +37,8 @@ import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.StickerLibrary
 import com.moody.moodyvideoeditor.data.StickerState
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
+import com.moody.moodyvideoeditor.utils.AnimationsEngine
 
-/**
- * Mirrors js/features/stickers.js
- * Category shelf → emoji grid → tap to add/change emoji.
- * Position / Scale / Rotation sliders.
- */
 @Composable
 fun StickersPanel(
     current: StickerState,
@@ -53,7 +50,7 @@ fun StickersPanel(
     onClose: () -> Unit
 ) {
     var selectedCategoryKey by remember { mutableStateOf(StickerLibrary.CATEGORIES[0].key) }
-    var subView by remember { mutableStateOf("emoji") }   // "emoji" | "position" | "scale" | "rotation"
+    var subView by remember { mutableStateOf("emoji") }
 
     FeaturePanel(title = "😀 Stickers", onClose = onClose) {
 
@@ -67,7 +64,8 @@ fun StickersPanel(
                 hasSticker = hasStickerSelected,
                 onGotoPosition = { subView = "position" },
                 onGotoScale = { subView = "scale" },
-                onGotoRotation = { subView = "rotation" }
+                onGotoRotation = { subView = "rotation" },
+                onGotoAnimation = { subView = "animation" }
             )
 
             "position" -> SliderSubView(
@@ -102,12 +100,19 @@ fun StickersPanel(
                     onStickerChanged(current.copy(rotation = v))
                 }
             }
+
+            // 🆕 Animation sub-view
+            "animation" -> AnimationSubView(
+                current = current,
+                onChanged = onStickerChanged,
+                onBack = { subView = "emoji" }
+            )
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  EMOJI VIEW — category shelf + emoji grid + property buttons
+//  EMOJI VIEW
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun EmojiView(
@@ -119,7 +124,8 @@ private fun EmojiView(
     hasSticker: Boolean,
     onGotoPosition: () -> Unit,
     onGotoScale: () -> Unit,
-    onGotoRotation: () -> Unit
+    onGotoRotation: () -> Unit,
+    onGotoAnimation: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -127,7 +133,6 @@ private fun EmojiView(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // ─── CATEGORY SHELF ──────────────────────
         Text(
             "Category",
             color = Color(0xFF888888),
@@ -150,7 +155,9 @@ private fun EmojiView(
                         .height(58.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(if (isActive) Color(0xFF7C3AED) else Color(0xFF181818))
-                        .pointerInput(cat.key) { detectTapGestures { onCategorySelected(cat.key) } }
+                        .pointerInput(cat.key) {
+                            detectTapGestures { onCategorySelected(cat.key) }
+                        }
                         .padding(4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
@@ -168,7 +175,6 @@ private fun EmojiView(
             }
         }
 
-        // ─── EMOJI GRID (2 rows of 10 via horizontal scroll) ───
         val category = StickerLibrary.CATEGORIES.firstOrNull { it.key == selectedCategoryKey }
             ?: StickerLibrary.CATEGORIES[0]
 
@@ -193,7 +199,9 @@ private fun EmojiView(
                         .size(44.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(if (isActive) Color(0xFF7C3AED) else Color(0xFF181818))
-                        .pointerInput(emoji) { detectTapGestures { onEmojiTapped(emoji) } },
+                        .pointerInput(emoji) {
+                            detectTapGestures { onEmojiTapped(emoji) }
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(emoji, fontSize = 22.sp)
@@ -201,7 +209,6 @@ private fun EmojiView(
             }
         }
 
-        // ─── PROPERTY SHORTCUTS ─────────────────
         if (hasSticker) {
             Spacer(Modifier.height(2.dp))
             Text(
@@ -211,6 +218,8 @@ private fun EmojiView(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(start = 4.dp)
             )
+
+            // 🆕 4 buttons now (added Animate)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -218,6 +227,7 @@ private fun EmojiView(
                 PropertyButton("📍", "Position", Modifier.weight(1f), onGotoPosition)
                 PropertyButton("🔍", "Scale", Modifier.weight(1f), onGotoScale)
                 PropertyButton("🔄", "Rotate", Modifier.weight(1f), onGotoRotation)
+                PropertyButton("🎞️", "Animate", Modifier.weight(1f), onGotoAnimation)
             }
 
             Spacer(Modifier.height(2.dp))
@@ -241,6 +251,162 @@ private fun EmojiView(
     }
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  🆕 ANIMATION SUB-VIEW
+// ═══════════════════════════════════════════════════════════════
+@Composable
+private fun AnimationSubView(
+    current: StickerState,
+    onChanged: (StickerState) -> Unit,
+    onBack: () -> Unit
+) {
+    var activeCategory by remember { mutableStateOf("basic") }
+    val categories = AnimationsEngine.CATEGORIES
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 280.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // Header with back
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFF181818))
+                    .pointerInput(Unit) { detectTapGestures { onBack() } },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("‹", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "🎞️ Animation (${AnimationsEngine.ALL_ANIMATIONS.size})",
+                color = Color.White,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        // Category chips
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            categories.forEach { cat ->
+                val isActive = activeCategory == cat.key
+                Box(
+                    modifier = Modifier
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isActive) Color(0xFF7C3AED) else Color(0xFF181818))
+                        .pointerInput(cat.key) {
+                            detectTapGestures { activeCategory = cat.key }
+                        }
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "${cat.label} (${cat.animations.size})",
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        // Animation chips
+        val cat = categories.firstOrNull { it.key == activeCategory } ?: categories[0]
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 140.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            cat.animations.chunked(3).forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    row.forEach { anim ->
+                        val isActive = current.animation == anim.key
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (isActive) Color(0xFF7C3AED) else Color(0xFF181818)
+                                )
+                                .pointerInput(anim.key) {
+                                    detectTapGestures {
+                                        onChanged(current.copy(animation = anim.key))
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                anim.label,
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                                maxLines = 2
+                            )
+                        }
+                    }
+                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+        }
+
+        // Duration slider
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                "Duration",
+                color = Color(0xFF888888),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.width(60.dp)
+            )
+            Slider(
+                value = current.animationDuration.coerceIn(0.2f, 5f),
+                onValueChange = { onChanged(current.copy(animationDuration = it)) },
+                valueRange = 0.2f..5f,
+                modifier = Modifier.weight(1f),
+                colors = SliderDefaults.colors(
+                    thumbColor = Color(0xFF7C3AED),
+                    activeTrackColor = Color(0xFF7C3AED),
+                    inactiveTrackColor = Color(0xFF303030)
+                )
+            )
+            Text(
+                String.format("%.1fs", current.animationDuration),
+                color = Color.White,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.width(40.dp)
+            )
+        }
+
+        // Opacity slider
+        SliderRow("Opacity", current.opacity, 0f..100f) { v ->
+            onChanged(current.copy(opacity = v))
+        }
+    }
+}
+
 @Composable
 private fun PropertyButton(icon: String, label: String, modifier: Modifier, onClick: () -> Unit) {
     Column(
@@ -257,9 +423,6 @@ private fun PropertyButton(icon: String, label: String, modifier: Modifier, onCl
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  SLIDER SUB-VIEW
-// ═══════════════════════════════════════════════════════════════
 @Composable
 private fun SliderSubView(
     title: String,

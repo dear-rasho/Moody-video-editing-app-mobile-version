@@ -328,13 +328,22 @@ object PromptEngine {
             )
         }
 
-        // STICKER
-        if (lower.startsWith("sticker ")) {
-            val emoji = text.substring(8).trim()
-            if (emoji.isNotBlank())
-                return ParsedCommand(CmdType.STICKER, "emoji", stringValue = emoji, raw = text)
+        // STICKER with optional properties
+        // Format: sticker 😀 animation popIn duration 0.8
+        val stickerFull = Regex(
+            """^sticker\s+(\S+)(?:\s+(.+))?$""",
+            RegexOption.IGNORE_CASE
+        ).find(text)
+        if (stickerFull != null) {
+            val emoji = stickerFull.groupValues[1]
+            val extra = stickerFull.groupValues[2].ifBlank { null }
+            return ParsedCommand(
+                CmdType.STICKER, "emoji",
+                stringValue = emoji,
+                extra = extra,
+                raw = text
+            )
         }
-
         // BRUSH COMMANDS
         Regex(
             """^brush\s+gradient\s+(?:#([0-9a-fA-F]{6})|([a-z]+))\s+to\s+(?:#([0-9a-fA-F]{6})|([a-z]+))$""",

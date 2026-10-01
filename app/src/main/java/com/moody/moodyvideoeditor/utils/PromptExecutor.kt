@@ -206,16 +206,31 @@ object PromptExecutor {
                     val startMs = cmd.startMs
                     val endMs = cmd.endMs
 
+                    // 🆕 Parse extra properties (animation, etc.)
+                    var state = com.moody.moodyvideoeditor.data.StickerState(emoji = emoji)
+                    cmd.extra?.let { props ->
+                        state = applyStickerProps(state, props)
+                    }
+
                     if (startMs != null && endMs != null) {
                         viewModel.createStickerAtTime(
-                            emoji = emoji,
+                            emoji = state.emoji,
                             startMs = startMs,
                             endMs = endMs
                         )
-                        applied.add("sticker @${startMs / 1000}s \"$emoji\"")
+                        // Apply animation on top
+                        val sel = viewModel.state.value.selectedClip
+                        if (sel != null && sel.isStickerClip) {
+                            viewModel.updateSelectedSticker(state)
+                        }
+                        applied.add(
+                            "sticker @${startMs / 1000}s \"${state.emoji}\""
+                        )
                     } else {
-                        viewModel.addOrUpdateSticker(emoji)
-                        applied.add("sticker $emoji")
+                        viewModel.addOrUpdateSticker(state.emoji)
+                        // Apply animation
+                        viewModel.updateSelectedSticker(state)
+                        applied.add("sticker ${state.emoji}")
                     }
                 }
 
@@ -774,6 +789,66 @@ object PromptExecutor {
         "bottom-center" -> 50f to 100f
         "bottom-right" -> 100f to 100f
         else -> 50f to 50f
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 STICKER PROPS PARSER
+    //  Format: "animation popIn duration 0.8 opacity 90"
+    // ═══════════════════════════════════════════════════════════
+    private fun applyStickerProps(
+        initial: com.moody.moodyvideoeditor.data.StickerState,
+        props: String
+    ): com.moody.moodyvideoeditor.data.StickerState {
+        var st = initial
+        val tokens = props.split(Regex("\\s+"))
+        var i = 0
+
+        while (i < tokens.size) {
+            when (tokens[i].lowercase()) {
+                "animation", "anim" -> {
+                    val a = tokens.getOrNull(i + 1)
+                    if (a != null) {
+                        st = st.copy(animation = PromptEngine.animationKey(a))
+                    }
+                    i += 2
+                }
+
+                "duration", "dur" -> {
+                    val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
+                    if (v != null) st = st.copy(animationDuration = v)
+                    i += 2
+                }
+
+                "opacity" -> {
+                    val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
+                    if (v != null) st = st.copy(opacity = v.coerceIn(0f, 100f))
+                    i += 2
+                }
+
+                "position", "pos" -> {
+                    val x = tokens.getOrNull(i + 1)?.toFloatOrNull()
+                    val y = tokens.getOrNull(i + 2)?.toFloatOrNull()
+                    if (x != null) st = st.copy(x = x.coerceIn(0f, 100f))
+                    if (y != null) st = st.copy(y = y.coerceIn(0f, 100f))
+                    i += 3
+                }
+
+                "scale", "size" -> {
+                    val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
+                    if (v != null) st = st.copy(scale = v.coerceIn(10f, 500f))
+                    i += 2
+                }
+
+                "rotation", "rotate" -> {
+                    val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
+                    if (v != null) st = st.copy(rotation = v)
+                    i += 2
+                }
+
+                else -> i++
+            }
+        }
+        return st
     }
 
     private fun colorToHue(name: String): Float = when (name.lowercase()) {

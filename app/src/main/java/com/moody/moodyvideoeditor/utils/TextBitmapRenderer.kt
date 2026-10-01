@@ -193,8 +193,10 @@ object TextBitmapRenderer {
         val ss = clip.stickerState ?: return
         if (ss.emoji.isBlank()) return
 
+        val animDur = ss.animationDuration.coerceAtLeast(0.1f)
+        val progress = (localTimeSec / animDur).coerceIn(0f, 1f)
         val frame = try {
-            AnimationsEngine.computeFrame("none", 1f, localTimeSec)
+            AnimationsEngine.computeFrame(ss.animation, progress, localTimeSec)
         } catch (_: Throwable) {
             AnimationsEngine.Frame()
         }
@@ -203,7 +205,9 @@ object TextBitmapRenderer {
             .resolveLive(clip, localTimeSec)
 
         val baseSize = 48f * (W / REFERENCE_WIDTH_PX)
-        val fontSize = baseSize * (sampled.scale / 100f)
+        // Combine user + animation scale
+        val combinedScale = (sampled.scale / 100f) * frame.scaleX
+        val fontSize = baseSize * combinedScale
 
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textSize = fontSize
@@ -217,10 +221,14 @@ object TextBitmapRenderer {
         val fm = paint.fontMetrics
         val baseline = cy - (fm.ascent + fm.descent) / 2f
 
+        val alphaTotal = (ss.opacity / 100f * frame.alpha).coerceIn(0f, 1f)
+        val alphaInt = (alphaTotal * 255).toInt().coerceIn(0, 255)
+        if (alphaInt <= 0) return
+        paint.alpha = alphaInt
+
         canvas.save()
         canvas.translate(cx + frame.translateX, cy + frame.translateY)
         canvas.rotate(sampled.rotation + frame.rotationZ)
-        canvas.scale(frame.scaleX, frame.scaleY)
         canvas.drawText(ss.emoji, 0f, baseline - cy, paint)
         canvas.restore()
     }
