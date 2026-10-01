@@ -11,9 +11,16 @@ import android.graphics.PorterDuff
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.util.Log
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.data.OverlayState
 import java.io.File
 import java.io.FileOutputStream
+import androidx.compose.ui.geometry.Size as ComposeSize
+import androidx.compose.ui.graphics.Canvas as ComposeCanvas
 
 data class TextOverlaySequence(
     val pattern: String,
@@ -26,27 +33,21 @@ data class TextOverlaySequence(
 
 object TextBitmapRenderer {
 
-    // 🆕 FIXED: 560 → 400 to match TextScaler.REFERENCE_WIDTH_DP
     private const val REFERENCE_WIDTH_PX = 400f
-
-    private val LOOPING_ANIMATIONS = setOf(
-        "wave", "bounceWave", "sineWave", "waterRipple", "heatWave",
-        "pulsingWave", "turbulent", "float", "squeezeStretch",
-        "pendulum", "gentleTilt", "pulse", "shake", "flicker",
-        "neonGlow", "staticNoise", "shakeJitter", "infiniteScroll",
-        "flagWave", "cyberpunk", "matrixRain", "propeller", "spark"
-    )
 
     fun renderCombinedOverlays(
         context: Context,
         textClips: List<EditorClip>,
         imageClips: List<EditorClip> = emptyList(),
+        overlayClips: List<EditorClip> = emptyList(),
         W: Int,
         H: Int,
         fps: Int,
         totalDurationMs: Long
     ): List<TextOverlaySequence> {
-        if (textClips.isEmpty() && imageClips.isEmpty()) return emptyList()
+        if (textClips.isEmpty() && imageClips.isEmpty() && overlayClips.isEmpty()) {
+            return emptyList()
+        }
 
         val totalFrames = ((totalDurationMs * fps) / 1000L).toInt().coerceAtLeast(1)
         val CHUNK_SIZE = 600
@@ -61,8 +62,13 @@ object TextBitmapRenderer {
         } catch (_: Exception) {
         }
 
-        // 🆕 FIX: Sort by track order for correct z-index (V2 → V3 → V4)
+        // Sort text/sticker by track for z-index
         val sortedTextClips = textClips.sortedWith(
+            compareBy({ it.trackIndex }, { it.timelineStartMs })
+        )
+
+        // Sort overlay clips by track
+        val sortedOverlayClips = overlayClips.sortedWith(
             compareBy({ it.trackIndex }, { it.timelineStartMs })
         )
 
@@ -81,13 +87,32 @@ object TextBitmapRenderer {
                 val canvas = Canvas(bmp)
                 canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
-                // ✅ Sort order: lowest track drawn first (V2 below V3 below V4)
+                // 1️⃣ Overlay clips (behind text) — exact same as preview
+                sortedOverlayClips.forEach { clip ->
+                    if (timelineMs >= clip.timelineStartMs &&
+                        timelineMs < clip.timelineEndMs
+                    ) {
+                        val localSec = (timelineMs - clip.timelineStartMs) / 1000f
+                        val ov = extractOverlay(clip)
+                        if (ov != null && ov.isActive) {
+                            try {
+                                drawOverlayOnCanvas(canvas, localSec, ov, W, H)
+                            } catch (e: Throwable) {
+                                Log.e(
+                                    "OVERLAY_RENDER",
+                                    "Overlay failed: ${ov.type}", e
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 2️⃣ Text + sticker
                 sortedTextClips.forEach { clip ->
                     if (timelineMs >= clip.timelineStartMs &&
                         timelineMs < clip.timelineEndMs
                     ) {
                         val localSec = (timelineMs - clip.timelineStartMs) / 1000f
-
                         if (clip.isTextClip) {
                             drawTextClipAtTime(canvas, clip, localSec, W, H)
                         } else if (clip.isStickerClip) {
@@ -132,9 +157,69 @@ object TextBitmapRenderer {
         Log.e(
             "TEXT_RENDER",
             "Combined: ${sequences.size} chunk(s), frames=$totalFrames, " +
-                    "textClips=${sortedTextClips.size}"
+                    "text=${sortedTextClips.size}, overlay=${sortedOverlayClips.size}"
         )
         return sequences
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  EXTRACT OVERLAY from clip
+    // ═══════════════════════════════════════════════════════════
+    private fun extractOverlay(clip: EditorClip): OverlayState? {
+        // Direct overlay clip
+        if (clip.isOverlayClip) {
+            val ov = clip.overlay
+            if (ov.type != "none") return ov
+        }
+        // Effect clip with overlay config
+        val effOv = clip.effectState?.overlay
+        if (effOv != null) {
+            return OverlayState(
+                type = effOv.type,
+                intensity = effOv.intensity,
+                color = effOv.color
+            )
+        }
+        return null
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  DRAW OVERLAY — Render overlay to bitmap, then blit
+    // ═══════════════════════════════════════════════════════════
+    private fun drawOverlayOnCanvas(
+        androidCanvas: Canvas,
+        timeSec: Float,
+        overlay: OverlayState,
+        W: Int,
+        H: Int
+    ) {
+        try {
+            // 1. Create transparent bitmap
+            val overlayBmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
+
+            // 2. Wrap in Compose ImageBitmap + Canvas
+            val imageBitmap = overlayBmp.asImageBitmap()
+            val composeCanvas = ComposeCanvas(imageBitmap)
+
+            // 3. Draw via Compose CanvasDrawScope
+            val drawScope = CanvasDrawScope()
+            drawScope.draw(
+                density = Density(1f, 1f),
+                layoutDirection = LayoutDirection.Ltr,
+                canvas = composeCanvas,
+                size = ComposeSize(W.toFloat(), H.toFloat())
+            ) {
+                OverlayEngine.draw(this, timeSec, overlay)
+            }
+
+            // 4. Blit onto main Android canvas
+            androidCanvas.drawBitmap(overlayBmp, 0f, 0f, null)
+
+            // 5. Recycle
+            overlayBmp.recycle()
+        } catch (e: Throwable) {
+            Log.e("OVERLAY_DRAW", "Failed: ${overlay.type}", e)
+        }
     }
 
     private fun androidFamilyFor(fontName: String): String {
@@ -145,21 +230,25 @@ object TextBitmapRenderer {
                 "monospace"
 
             n.contains("script") || n.contains("brush") || n.contains("hand") ||
-                    n.contains("comic") || n.contains("cursive") || n.contains("dancing") ||
-                    n.contains("pacific") || n.contains("vibes") || n.contains("amita") ||
-                    n.contains("chopin") || n.contains("musiclife") || n.contains("caveat") ||
-                    n.contains("allura") || n.contains("satisfy") || n.contains("kaushan") ||
+                    n.contains("comic") || n.contains("cursive") ||
+                    n.contains("dancing") || n.contains("pacific") ||
+                    n.contains("vibes") || n.contains("amita") ||
+                    n.contains("chopin") || n.contains("musiclife") ||
+                    n.contains("caveat") || n.contains("allura") ||
+                    n.contains("satisfy") || n.contains("kaushan") ||
                     n.contains("parisienne") || n.contains("sacramento") ||
-                    n.contains("tangerine") || n.contains("indie") || n.contains("patrick") ||
-                    n.contains("kalam") ->
+                    n.contains("tangerine") || n.contains("indie") ||
+                    n.contains("patrick") || n.contains("kalam") ->
                 "cursive"
 
             n.contains("serif") || n.contains("times") || n.contains("georgia") ||
                     n.contains("garamond") || n.contains("baskerville") ||
-                    n.contains("playfair") || n.contains("cinzel") || n.contains("bodoni") ||
-                    n.contains("cormorant") || n.contains("merriweather") ||
-                    n.contains("lora") || n.contains("crimson") || n.contains("prata") ||
-                    n.contains("cardo") || n.contains("spectral") || n.contains("abril") ->
+                    n.contains("playfair") || n.contains("cinzel") ||
+                    n.contains("bodoni") || n.contains("cormorant") ||
+                    n.contains("merriweather") || n.contains("lora") ||
+                    n.contains("crimson") || n.contains("prata") ||
+                    n.contains("cardo") || n.contains("spectral") ||
+                    n.contains("abril") ->
                 "serif"
 
             else -> "sans-serif"
@@ -224,7 +313,6 @@ object TextBitmapRenderer {
             color = Color.WHITE
         }
 
-        // 🆕 FIX: Clamp position to keep sticker inside canvas
         val stickerSizeDp = baseSize * (sampled.scale / 100f)
         val halfWPct = (stickerSizeDp / 2f / W * 100f).coerceAtMost(50f)
         val halfHPct = (stickerSizeDp / 2f / H * 100f).coerceAtMost(50f)
@@ -259,9 +347,7 @@ object TextBitmapRenderer {
         sampled: TransformValues
     ) {
         try {
-            // ═══════════════════════════════════════════════════════
-            //  1. CONTENT (typewriter handling)
-            // ═══════════════════════════════════════════════════════
+            // ═══ CONTENT (typewriter) ═══
             val content = if (st.animation.equals("typewriter", ignoreCase = true)) {
                 val total = st.content.length
                 val visible = (progress * total).toInt().coerceIn(0, total)
@@ -270,16 +356,12 @@ object TextBitmapRenderer {
 
             if (content.isEmpty()) return
 
-            // ═══════════════════════════════════════════════════════
-            //  2. FONT SIZE calculation
-            // ═══════════════════════════════════════════════════════
+            // ═══ FONT SIZE ═══
             val baseFontSize = st.fontSize.coerceAtLeast(8)
             val initialFontSize = (baseFontSize * (W.toFloat() / REFERENCE_WIDTH_PX))
                 .coerceAtLeast(10f)
 
-            // ═══════════════════════════════════════════════════════
-            //  3. TYPEFACE
-            // ═══════════════════════════════════════════════════════
+            // ═══ TYPEFACE ═══
             val typeface = try {
                 val style = when {
                     st.fontWeight == "bold" && st.fontStyle == "italic" ->
@@ -294,9 +376,7 @@ object TextBitmapRenderer {
                 Typeface.DEFAULT
             }
 
-            // ═══════════════════════════════════════════════════════
-            //  4. MEASURE + auto-shrink to maxWidth
-            // ═══════════════════════════════════════════════════════
+            // ═══ MEASURE + auto-shrink ═══
             val measurePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 this.typeface = typeface
                 this.textSize = initialFontSize
@@ -310,16 +390,12 @@ object TextBitmapRenderer {
                 initialFontSize
             }
 
-            // ═══════════════════════════════════════════════════════
-            //  5. LETTER SPACING (in em units, matching preview)
-            // ═══════════════════════════════════════════════════════
+            // ═══ LETTER SPACING ═══
             val spacingPx = st.letterSpacing * (W.toFloat() / REFERENCE_WIDTH_PX)
             val spacingEm = if (fontSize <= 0f) 0f
             else (spacingPx / fontSize).coerceIn(-0.3f, 0.3f)
 
-            // ═══════════════════════════════════════════════════════
-            //  6. BASE PAINT
-            // ═══════════════════════════════════════════════════════
+            // ═══ BASE PAINT ═══
             val basePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 this.typeface = typeface
                 this.textSize = fontSize
@@ -332,9 +408,7 @@ object TextBitmapRenderer {
                 color = st.color.toInt()
             }
 
-            // ═══════════════════════════════════════════════════════
-            //  7. 🆕 CLAMP POSITION (matches preview TextScaler.clampPosition)
-            // ═══════════════════════════════════════════════════════
+            // ═══ CLAMP POSITION ═══
             val textW = basePaint.measureText(content)
             val textH = basePaint.fontMetrics.let { it.descent - it.ascent }
             val halfWPct = (textW / 2f / W * 100f).coerceAtMost(50f)
@@ -348,9 +422,7 @@ object TextBitmapRenderer {
             val fm = basePaint.fontMetrics
             val baseline = cy - (fm.ascent + fm.descent) / 2f
 
-            // ═══════════════════════════════════════════════════════
-            //  8. CANVAS TRANSFORM (animation offsets + user scale)
-            // ═══════════════════════════════════════════════════════
+            // ═══ CANVAS TRANSFORM ═══
             canvas.save()
             canvas.translate(cx + frame.translateX, cy + frame.translateY)
             canvas.rotate(sampled.rotation + frame.rotationZ)
@@ -362,9 +434,7 @@ object TextBitmapRenderer {
             val tx = 0f
             val ty = baseline - cy
 
-            // ═══════════════════════════════════════════════════════
-            //  9. ALPHA
-            // ═══════════════════════════════════════════════════════
+            // ═══ ALPHA ═══
             val alphaTotal = (st.opacity / 100f * frame.alpha).coerceIn(0f, 1f)
             val alphaInt = (alphaTotal * 255).toInt().coerceIn(0, 255)
 
@@ -373,9 +443,7 @@ object TextBitmapRenderer {
                 return
             }
 
-            // ═══════════════════════════════════════════════════════
-            //  10. GLOW layers (behind)
-            // ═══════════════════════════════════════════════════════
+            // ═══ GLOW layers ═══
             if (st.glowEnabled && st.glowRadius > 0f) {
                 val glowColorInt = st.glowColor.toInt()
                 val glowR = st.glowRadius.coerceIn(4f, 60f)
@@ -401,9 +469,7 @@ object TextBitmapRenderer {
                 }
             }
 
-            // ═══════════════════════════════════════════════════════
-            //  11. SHADOW (behind fill)
-            // ═══════════════════════════════════════════════════════
+            // ═══ SHADOW ═══
             if (st.shadowEnabled) {
                 val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     this.typeface = typeface
@@ -423,9 +489,7 @@ object TextBitmapRenderer {
                 canvas.drawText(content, tx, ty, shadowPaint)
             }
 
-            // ═══════════════════════════════════════════════════════
-            //  12. STROKE outline
-            // ═══════════════════════════════════════════════════════
+            // ═══ STROKE ═══
             if (st.strokeEnabled && st.strokeWidth > 0f) {
                 val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     this.typeface = typeface
@@ -444,9 +508,7 @@ object TextBitmapRenderer {
                 canvas.drawText(content, tx, ty, strokePaint)
             }
 
-            // ═══════════════════════════════════════════════════════
-            //  13. FILL (with optional gradient)
-            // ═══════════════════════════════════════════════════════
+            // ═══ FILL (gradient or solid) ═══
             val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 this.typeface = typeface
                 this.textSize = fontSize
@@ -473,9 +535,6 @@ object TextBitmapRenderer {
 
             canvas.drawText(content, tx, ty, fillPaint)
 
-            // ═══════════════════════════════════════════════════════
-            //  14. RESTORE canvas
-            // ═══════════════════════════════════════════════════════
             canvas.restore()
 
         } catch (e: Throwable) {

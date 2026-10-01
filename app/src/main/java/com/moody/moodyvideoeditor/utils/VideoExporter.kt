@@ -108,9 +108,17 @@ class VideoExporter(
             rangeStart, rangeEnd
         )
 
-        // 🆕 ALL text + sticker clips (any track) → overlaid on top
         val trimmedTextClips = trimClipsToRange(
             clips.filter { it.isTextClip || it.isStickerClip },
+            rangeStart, rangeEnd
+        )
+
+// 🆕 Overlay clips (direct + effect clips with overlay)
+        val trimmedOverlayClips = trimClipsToRange(
+            clips.filter {
+                it.isOverlayClip ||
+                        (it.isEffectClip && it.effectState?.overlay != null)
+            },
             rangeStart, rangeEnd
         )
         val exportDurationMs = rangeEnd - rangeStart
@@ -129,6 +137,7 @@ class VideoExporter(
                         context = context,
                         textClips = trimmedTextClips,
                         imageClips = overlayImageClips,
+                        overlayClips = trimmedOverlayClips,
                         W = targetW,
                         H = targetH,
                         fps = fps,

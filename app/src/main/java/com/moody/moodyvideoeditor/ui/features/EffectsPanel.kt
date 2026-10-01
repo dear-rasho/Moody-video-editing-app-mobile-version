@@ -1,5 +1,16 @@
 package com.moody.moodyvideoeditor.ui.features
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Log
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -12,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,16 +41,29 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.moody.moodyvideoeditor.R
 import com.moody.moodyvideoeditor.data.EffectKind
 import com.moody.moodyvideoeditor.data.EffectLibrary
 import com.moody.moodyvideoeditor.data.EffectPreset
 import com.moody.moodyvideoeditor.data.EffectState
+import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
+import com.moody.moodyvideoeditor.utils.EffectsEngine
+import com.moody.moodyvideoeditor.utils.OverlayEngine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private val CATEGORIES = listOf(
     Triple(EffectKind.MOTION, "💫 Motion", EffectLibrary.MOTION_EFFECTS),
@@ -58,19 +83,38 @@ fun EffectsPanel(
     onClose: () -> Unit
 ) {
     val isEditMode = editLayerId != null
+    val context = LocalContext.current
 
     var selectedCategoryIdx by remember { mutableStateOf(0) }
     var selectedPreset by remember { mutableStateOf<EffectPreset?>(null) }
     var intensity by remember { mutableStateOf(100f) }
 
-    // Initialize from edit mode
+    // Reference image
+    var refBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(Unit) {
+        refBitmap = withContext(Dispatchers.IO) {
+            loadRefImage(context)
+        }
+    }
+
+    // 🆕 Shared animation clock (0-10 sec loop)
+    val infiniteTransition = rememberInfiniteTransition(label = "fxClock")
+    val clockSec by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 10f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 10000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "clockSec"
+    )
+
     LaunchedEffect(Unit) {
         if (isEditMode && initialPresetKey != null) {
             val preset = EffectLibrary.findByKey(initialPresetKey)
             if (preset != null) {
                 selectedPreset = preset
                 intensity = initialEffectState?.masterIntensity ?: 100f
-                // Find category for this preset
                 val catIdx = CATEGORIES.indexOfFirst { (_, _, list) ->
                     list.any { it.key == initialPresetKey }
                 }
@@ -142,9 +186,9 @@ fun EffectsPanel(
             Spacer(Modifier.height(2.dp))
 
             // ═══════════════════════════════════════════════════════
-            //  PRESET CHIPS
+            //  PRESET CHIPS — ANIMATED PREVIEWS
             // ═══════════════════════════════════════════════════════
-            val (_, catLabel, catPresets) = CATEGORIES[selectedCategoryIdx]
+            val (currentKind, catLabel, catPresets) = CATEGORIES[selectedCategoryIdx]
 
             Text(
                 "$catLabel (${catPresets.size})",
@@ -162,10 +206,12 @@ fun EffectsPanel(
             ) {
                 catPresets.forEach { preset ->
                     val isSelected = selectedPreset?.key == preset.key
-                    PresetChip(
-                        icon = preset.icon,
-                        label = preset.label,
+                    EffectThumbChip(
+                        preset = preset,
+                        kind = currentKind,
                         isSelected = isSelected,
+                        refBitmap = refBitmap,
+                        clockSec = clockSec,
                         onClick = {
                             selectedPreset = preset
                             intensity = 100f
@@ -183,7 +229,6 @@ fun EffectsPanel(
             if (current != null) {
                 Spacer(Modifier.height(2.dp))
 
-                // Info bar
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -213,7 +258,6 @@ fun EffectsPanel(
                     }
                 }
 
-                // Intensity slider
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -250,7 +294,6 @@ fun EffectsPanel(
                     )
                 }
 
-                // Action buttons
                 if (isEditMode) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -376,33 +419,168 @@ fun EffectsPanel(
     }
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  EFFECT THUMB CHIP — ANIMATED previews
+//  - Color  → image + ColorMatrix (static)
+//  - Motion → image + LIVE animated transform
+//  - Overlay → image + LIVE animated overlay
+// ═══════════════════════════════════════════════════════════════
 @Composable
-private fun PresetChip(
-    icon: String,
-    label: String,
+private fun EffectThumbChip(
+    preset: EffectPreset,
+    kind: EffectKind,
     isSelected: Boolean,
+    refBitmap: Bitmap?,
+    clockSec: Float,
     onClick: () -> Unit
 ) {
+    // ─── Color matrix (COLOR only) ───
+    val colorFilter = remember(preset.key, kind) {
+        if (kind != EffectKind.COLOR || preset.filters == null) {
+            null
+        } else {
+            try {
+                val cm = EffectsEngine.buildColorMatrix(preset.filters)
+                ColorFilter.colorMatrix(ColorMatrix(cm.array))
+            } catch (_: Throwable) {
+                null
+            }
+        }
+    }
+
+    // ─── LIVE motion frame (MOTION only) ───
+    val motionFrame = remember(preset.key, kind, clockSec) {
+        if (kind != EffectKind.MOTION || preset.motion == null) {
+            EffectsEngine.MotionFrame()
+        } else {
+            EffectsEngine.computeMotion(preset.motion, clockSec)
+        }
+    }
+
+    // ─── Overlay state (OVERLAY only) ───
+    val overlayState = remember(preset.key, kind) {
+        if (kind != EffectKind.OVERLAY || preset.overlay == null) null
+        else OverlayState(
+            type = preset.overlay.type,
+            intensity = (preset.overlay.intensity * 1.3f).coerceAtMost(200f),
+            color = preset.overlay.color
+        )
+    }
+
+    val hasImage = refBitmap != null && !refBitmap.isRecycled
+
     Column(
         modifier = Modifier
             .width(76.dp)
-            .height(68.dp)
+            .height(102.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(if (isSelected) Color(0xFF2A1F4D) else Color(0xFF181818))
-            .pointerInput(label) { detectTapGestures { onClick() } }
+            .pointerInput(preset.key) {
+                detectTapGestures { onClick() }
+            }
             .padding(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Text(icon, fontSize = 18.sp)
-        Spacer(Modifier.height(2.dp))
+
+        Box(
+            modifier = Modifier
+                .size(60.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF0F0F0F))
+        ) {
+            if (hasImage) {
+                // Image with motion transform
+                Image(
+                    bitmap = refBitmap!!.asImageBitmap(),
+                    contentDescription = preset.label,
+                    contentScale = ContentScale.Crop,
+                    colorFilter = colorFilter,
+                    modifier = Modifier
+                        .matchParentSize()
+                        .graphicsLayer {
+                            translationX = motionFrame.tx
+                            translationY = motionFrame.ty
+                            scaleX = motionFrame.scale
+                            scaleY = motionFrame.scale
+                            rotationZ = motionFrame.rotation
+                            transformOrigin = TransformOrigin.Center
+                        }
+                )
+
+                // Overlay animation on top
+                if (overlayState != null) {
+                    Canvas(modifier = Modifier.matchParentSize()) {
+                        try {
+                            OverlayEngine.draw(
+                                scope = this,
+                                time = clockSec,
+                                overlay = overlayState
+                            )
+                        } catch (e: Throwable) {
+                            Log.e(
+                                "EFFECT_OVERLAY",
+                                "Overlay failed: ${overlayState.type}", e
+                            )
+                        }
+                    }
+                }
+            } else {
+                // Fallback icon while image loads
+                Box(
+                    modifier = Modifier.matchParentSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(preset.icon, fontSize = 24.sp)
+                }
+            }
+
+            // Selection overlay (top-most)
+            if (isSelected) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(Color(0xFF7C3AED).copy(alpha = 0.15f))
+                )
+            }
+        }
+
         Text(
-            label,
-            color = Color.White,
+            preset.label,
+            color = if (isSelected) Color(0xFFA78BFA) else Color.White,
             fontSize = 9.sp,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
-            maxLines = 2
+            maxLines = 2,
+            lineHeight = 10.sp
         )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  REFERENCE IMAGE LOADER
+// ═══════════════════════════════════════════════════════════════
+private fun loadRefImage(context: android.content.Context): Bitmap? {
+    return try {
+        val opts = BitmapFactory.Options().apply { inScaled = false }
+        val bmp = BitmapFactory.decodeResource(
+            context.resources,
+            R.drawable.filter_ref_image,
+            opts
+        ) ?: return null
+
+        val minDim = minOf(bmp.width, bmp.height)
+        val x = (bmp.width - minDim) / 2
+        val y = (bmp.height - minDim) / 2
+        val cropped = Bitmap.createBitmap(bmp, x, y, minDim, minDim)
+        val scaled = Bitmap.createScaledBitmap(cropped, 120, 120, true)
+
+        if (cropped != scaled && cropped != bmp) cropped.recycle()
+        if (bmp != scaled && bmp != cropped) bmp.recycle()
+
+        scaled
+    } catch (e: Throwable) {
+        Log.e("EFFECT_REF", "Failed to load reference image", e)
+        null
     }
 }

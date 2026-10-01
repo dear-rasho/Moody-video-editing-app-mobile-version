@@ -1059,21 +1059,24 @@ class FFmpegExecutor(
         }.sortedBy { it.trackIndex }
 
         effectClipsAbove.forEach { effClip ->
+            // ── Motion effects ──
             val m = effClip.effectState?.motion
             if (m != null) {
                 val f = motionToFfmpeg(m)
-                if (f.isNotBlank()) {
-                    filters.add(f)
-                }
+                if (f.isNotBlank()) filters.add(f)
             }
+
+            // ── Color effects ──
+            val cf = effClip.effectState?.filters
+            if (cf != null) {
+                val f = colorFilterValuesToFfmpeg(cf)
+                if (f.isNotBlank()) filters.add(f)
+            }
+
+
         }
 
-        val effectColorFilters = effectClipsAbove.mapNotNull { it.effectState?.filters }
-        effectColorFilters.forEach { cf ->
-            val f = colorFilterValuesToFfmpeg(cf)
-            if (f.isNotBlank()) filters.add(f)
-        }
-
+        // Clip's own filters
         val f = clip.filters
         if (f.brightness != 100f || f.contrast != 100f || f.saturation != 100f) {
             val eqParts = mutableListOf<String>()
@@ -1108,6 +1111,169 @@ class FFmpegExecutor(
         }
 
         return filters
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+//  🆕 OVERLAY → FFMPEG MAPPING
+//  Approximates overlay effects with closest FFmpeg filters
+// ═══════════════════════════════════════════════════════════════
+    private fun overlayToFfmpeg(o: com.moody.moodyvideoeditor.data.OverlayConfig): String {
+        val intensity = (o.intensity / 100f).coerceIn(0.3f, 2f)
+        val alpha = intensity.coerceIn(0.1f, 1f)
+
+        return when (o.type) {
+            // ─── Noise / Film Grain (exact match possible) ───
+            "noise", "filmGrain" -> {
+                val s = (15 * intensity).toInt().coerceIn(5, 60)
+                "noise=alls=$s:allf=t+u"
+            }
+
+            "blackNoise" -> {
+                val s = (20 * intensity).toInt().coerceIn(5, 60)
+                "noise=alls=$s:allf=t+u:c0f=u"
+            }
+
+            "whiteNoise", "staticTV" -> {
+                val s = (30 * intensity).toInt().coerceIn(10, 80)
+                "noise=alls=$s:allf=t+u"
+            }
+
+            // ─── Scanlines ───
+            "scanlines" -> {
+                val h = (3 * intensity).toInt().coerceAtLeast(2)
+                "drawgrid=w=iw:h=$h:t=1:c=black@${"%.2f".format(alpha * 0.4f)}"
+            }
+
+            "vhsLines" -> {
+                "noise=alls=${(15 * intensity).toInt()}:allf=t"
+            }
+
+            "glitchBars" -> {
+                "noise=alls=${(25 * intensity).toInt()}:allf=t+u"
+            }
+
+            // ─── Vignette ───
+            "vignette" -> {
+                val angle = (intensity * 0.5f).coerceIn(0.1f, 1.2f)
+                "vignette=angle=$angle"
+            }
+
+            // ─── Tone washes (color tint) ───
+            "warmWash" -> "colorbalance=rs=${0.2f * alpha}:gs=0:bs=${-0.15f * alpha}"
+            "coolWash" -> "colorbalance=rs=${-0.15f * alpha}:gs=0:bs=${0.2f * alpha}"
+            "blueLake" -> "colorbalance=rs=${-0.2f * alpha}:gs=${-0.05f * alpha}:bs=${0.25f * alpha}"
+            "tealWash" -> "colorbalance=rm=0:gm=${0.15f * alpha}:bm=${0.1f * alpha}"
+            "roseWash" -> "colorbalance=rs=${0.2f * alpha}:gs=${-0.05f * alpha}:bs=${0.1f * alpha}"
+
+            // ─── Fog / Haze / Mist (brightness + contrast reduce) ───
+            "fog" -> {
+                val b = 0.15f * alpha
+                val c = 1f - 0.3f * alpha
+                "eq=brightness=$b:contrast=$c:saturation=${1f - 0.2f * alpha}"
+            }
+
+            "haze" -> {
+                val b = 0.2f * alpha
+                "eq=brightness=$b:contrast=${1f - 0.2f * alpha}"
+            }
+
+            "mist" -> {
+                val b = 0.15f * alpha
+                "eq=brightness=$b:contrast=${1f - 0.15f * alpha}"
+            }
+
+            "smoke" -> {
+                val c = 1f - 0.15f * alpha
+                "eq=contrast=$c:saturation=${1f - 0.1f * alpha}"
+            }
+
+            // ─── Light effects (brightness + blur) ───
+            "lightLeak" -> {
+                val b = 0.2f * alpha
+                "eq=brightness=$b:saturation=${1f + 0.3f * alpha}"
+            }
+
+            "lensFlare" -> {
+                val b = 0.15f * alpha
+                "eq=brightness=$b:contrast=${1f + 0.1f * alpha}"
+            }
+
+            "bloom" -> {
+                val b = 0.15f * alpha
+                "eq=brightness=$b:saturation=${1f + 0.2f * alpha}"
+            }
+
+            "sunburst" -> {
+                val b = 0.2f * alpha
+                "eq=brightness=$b:saturation=${1f + 0.25f * alpha}"
+            }
+
+            "godRays" -> {
+                val b = 0.15f * alpha
+                "eq=brightness=$b"
+            }
+
+            // ─── Flicker / Strobe / Pulse (animated brightness) ───
+            "flicker" -> {
+                val hz = (5f * intensity).coerceIn(2f, 15f)
+                "eq=brightness='0.1*sin($hz*t)':eval=frame"
+            }
+
+            "strobe" -> {
+                val hz = (8f * intensity).coerceIn(3f, 20f)
+                "eq=brightness='0.3*sin($hz*t)':eval=frame"
+            }
+
+            "pulseFx" -> {
+                "eq=brightness='0.15*sin(2.5*t)':eval=frame"
+            }
+
+            "blink" -> {
+                "eq=brightness='0.4*sin(4*t)':eval=frame"
+            }
+
+            // ─── Rain / Snow / Dust / Sparks (approximation via noise) ───
+            "rain" -> "noise=alls=${(12 * intensity).toInt()}:allf=t"
+            "snow" -> "noise=alls=${(10 * intensity).toInt()}:allf=t"
+            "dust" -> "noise=alls=${(8 * intensity).toInt()}:allf=t"
+            "sparks" -> "noise=alls=${(15 * intensity).toInt()}:allf=t"
+            "embers" -> "noise=alls=${(12 * intensity).toInt()}:allf=t"
+
+            // ─── Stars / Bokeh / Fireflies (soft glow via blur) ───
+            "stars" -> {
+                val s = (0.8f * alpha).coerceIn(0.3f, 1.5f)
+                "gblur=sigma=$s"
+            }
+
+            "bokeh" -> {
+                val s = (1.5f * alpha).coerceIn(0.5f, 2.5f)
+                "gblur=sigma=$s"
+            }
+
+            "fireFlies" -> {
+                val s = (0.6f * alpha).coerceIn(0.3f, 1.2f)
+                "gblur=sigma=$s"
+            }
+
+            // ─── Black bars ───
+            "blackBars" -> {
+                // Approx: crop top/bottom
+                "crop=iw:ih*0.9:0:ih*0.05"
+            }
+
+            // ─── Edges ───
+            "sharpenEdges" -> {
+                val amt = (0.8f * alpha).coerceIn(0.3f, 2f)
+                "unsharp=5:5:$amt:5:5:0"
+            }
+
+            "edgeGlow" -> {
+                "edgedetect=low=0.1:high=0.4"
+            }
+
+            // ─── Fallback (unknown overlay) ───
+            else -> ""
+        }
     }
 
     // ═══════════════════════════════════════════════════════════

@@ -568,7 +568,10 @@ fun EditorScreen(
         exportProgress = 0f
         exportMessage = "⏳ Preparing… (rendering text overlays)"
 
-        val clipsSnapshot = state.clips
+// 🆕 Hidden tracks ke clips export se exclude
+        val clipsSnapshot = state.clips.filter {
+            !state.hiddenVisualTracks.contains(it.trackIndex)
+        }
         val aspectSnapshot = state.aspectRatio
         val resolutionSnapshot = state.exportResolution
         val fpsSnapshot = state.exportFps
