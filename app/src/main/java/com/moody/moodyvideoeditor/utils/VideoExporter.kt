@@ -54,6 +54,8 @@ class VideoExporter(
 
         // ═══════════════════════════════════════════════════════════
         //  Visual clips (video/image) → FFmpeg base
+        //  🆕 FIX: Only BASE TRACK (V1) visual clips go to FFmpeg
+        //          so transitions work properly
         // ═══════════════════════════════════════════════════════════
         val allVisual = clips.filter {
             it.isVisualClip &&
@@ -61,22 +63,40 @@ class VideoExporter(
                     it.uri != Uri.EMPTY
         }
 
+        // 🆕 Find base track (lowest track index with visual clips)
+        val baseTrackIndex = allVisual.minOfOrNull { it.trackIndex } ?: 0
+        val baseVisualClips = allVisual.filter { it.trackIndex == baseTrackIndex }
+        val higherTrackVisualClips = allVisual.filter { it.trackIndex > baseTrackIndex }
+
+        if (higherTrackVisualClips.isNotEmpty()) {
+            Log.w(
+                "EXPORT",
+                "⚠️ ${higherTrackVisualClips.size} higher-track visual clips " +
+                        "are NOT included in FFmpeg base. " +
+                        "Only V${baseTrackIndex + 1} clips exported. " +
+                        "Higher-track video overlay support is future work."
+            )
+        }
+
+        // Overlay image clips (higher track images) — currently also skipped
+        // because they can't be overlaid via FFmpeg easily with transitions
         val overlayImageClips = trimClipsToRange(
-            allVisual.filter {
+            baseVisualClips.filter {
                 it.type.startsWith("image/") && it.trackIndex > 0
             },
             rangeStart, rangeEnd
         )
 
+        // 🆕 Base visual clips (V1) → main export track
         val trimmedVisualClips = trimClipsToRange(
-            allVisual.filter {
+            baseVisualClips.filter {
                 !(it.type.startsWith("image/") && it.trackIndex > 0)
             },
             rangeStart, rangeEnd
         )
 
         // ═══════════════════════════════════════════════════════════
-        //  🆕 Audio-only clips (mp3/wav) — trimmed to range
+        //  Audio-only clips (mp3/wav) — trimmed to range
         // ═══════════════════════════════════════════════════════════
         val audioOnlyClips = trimClipsToRange(
             clips.filter {
@@ -88,6 +108,7 @@ class VideoExporter(
             rangeStart, rangeEnd
         )
 
+        // 🆕 ALL text + sticker clips (any track) → overlaid on top
         val trimmedTextClips = trimClipsToRange(
             clips.filter { it.isTextClip || it.isStickerClip },
             rangeStart, rangeEnd
@@ -99,7 +120,7 @@ class VideoExporter(
         )
 
         when {
-            // ─── Mixed visual + audio-only ───
+            // ─── Base visual + audio-only ───
             trimmedVisualClips.isNotEmpty() || audioOnlyClips.isNotEmpty() -> {
                 val outputFile = createOutputFile(fileName, format)
 
@@ -120,9 +141,10 @@ class VideoExporter(
 
                 Log.e(
                     "EXPORT",
-                    "Visual=${trimmedVisualClips.size}, " +
+                    "BaseVisual=${trimmedVisualClips.size} (V${baseTrackIndex + 1}), " +
                             "AudioOnly=${audioOnlyClips.size}, " +
-                            "Text=${textSequences.size}"
+                            "Text=${trimmedTextClips.size}, " +
+                            "TextSeqs=${textSequences.size}"
                 )
 
                 ffmpeg = FFmpegExecutor(

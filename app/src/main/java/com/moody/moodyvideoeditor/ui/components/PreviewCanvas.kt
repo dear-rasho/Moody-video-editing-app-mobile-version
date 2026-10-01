@@ -178,7 +178,6 @@ fun PreviewCanvas(
 
     onClipSelected: (String) -> Unit = {},
 
-    // 🆕 GROUP GESTURE
     onGroupGestureStart: () -> Unit = {},
     onGroupGestureEnd: () -> Unit = {},
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit =
@@ -193,9 +192,6 @@ fun PreviewCanvas(
 ) {
     val context = LocalContext.current
 
-    // ═══════════════════════════════════════════════════════════
-    //  STRICT TRACK-ORDER SORT — higher track = drawn later
-    // ═══════════════════════════════════════════════════════════
     val activeClips = clips
         .filter {
             !it.isAudio &&
@@ -375,9 +371,6 @@ fun PreviewCanvas(
 
     val opacityAlpha = EffectsEngine.opacityAlpha(combinedFilter)
 
-    // ═══════════════════════════════════════════════════════════
-    //  ROOT BOX
-    // ═══════════════════════════════════════════════════════════
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -404,9 +397,6 @@ fun PreviewCanvas(
         val sideBar = ((windowW - canvasW) / 2f).coerceAtLeast(0f)
         val topBar = ((windowH - canvasH) / 2f).coerceAtLeast(0f)
 
-        // ═══════════════════════════════════════════════════════════
-        //  SINGLE UNIFIED LAYER — strict z-index by track
-        // ═══════════════════════════════════════════════════════════
         Box(
             modifier = Modifier
                 .width(canvasW.dp)
@@ -953,14 +943,12 @@ fun PreviewCanvas(
                 }
             }
 
-            // ─────────── OVERLAY EFFECTS ───────────
             if (allOverlays.isNotEmpty()) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     allOverlays.forEach { ov -> OverlayEngine.draw(this, timeSec, ov) }
                 }
             }
 
-            // ─────────── VIGNETTE ───────────
             activeAdjustment?.let { adj ->
                 if (adj.vignette > 0f) {
                     val alpha = (adj.vignette / 100f).coerceIn(0f, 1f)
@@ -980,7 +968,6 @@ fun PreviewCanvas(
                 }
             }
 
-            // ─────────── TRANSITION ───────────
             if (activeTransitionClip != null && outgoingBitmap != null) {
                 val ts = activeTransitionClip.transition!!
                 val progress = (
@@ -988,16 +975,9 @@ fun PreviewCanvas(
                                 ts.durationMs.coerceAtLeast(1L)
                         ).coerceIn(0f, 1f)
 
-                Log.d(
-                    "PREVIEW_TRANS",
-                    "Rendering transition: key=${ts.key}, prog=$progress, " +
-                            "clipId=${activeTransitionClip.id}"
-                )
-
                 TransitionRenderer.Render(outgoingBitmap!!, ts.key, progress)
             }
 
-            // ─────────── MASK PEN ───────────
             if (isMaskPenMode && selectedClip != null) {
                 MaskPenOverlay(
                     maskState = maskToRender
@@ -1013,7 +993,6 @@ fun PreviewCanvas(
                 )
             }
 
-            // ─────────── BRUSH DRAW MODE ───────────
             if (isDrawingMode && !isMaskPenMode) {
                 val brushClip = clips.firstOrNull {
                     it.isBrushClip &&
@@ -1036,7 +1015,6 @@ fun PreviewCanvas(
             }
         }
 
-        // ─────────── SIDE BLACK BARS ───────────
         if (sideBar > 0.5f) {
             Box(
                 modifier = Modifier
@@ -1070,7 +1048,6 @@ fun PreviewCanvas(
             )
         }
 
-        // ─────────── FRAME BORDER ───────────
         Box(
             modifier = Modifier
                 .width(canvasW.dp)
@@ -1592,7 +1569,7 @@ private fun BrushDrawLayer(
 
 // ═══════════════════════════════════════════════════════════════
 //  INTERACTIVE TEXT OVERLAY
-//  🆕 FIXED: canvas pixels use kar rahe hain drag math ke liye
+//  ✅ FIXED: Dp/px mismatch — canvas pixels use kar rahe hain
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun InteractiveTextOverlay(
@@ -1641,6 +1618,10 @@ private fun InteractiveTextOverlay(
     ) return
 
     val density = LocalDensity.current
+
+    // 🆕 Canvas dimensions in PIXELS — critical for matching export
+    val canvasWpx = with(density) { canvasW.dp.toPx() }
+    val canvasHpx = with(density) { canvasH.dp.toPx() }
 
     val effFontSize = TextScaler.fontSize(textState.fontSize, canvasW)
     val effLetterSpacing = TextScaler.letterSpacing(textState.letterSpacing, canvasW)
@@ -1700,10 +1681,6 @@ private fun InteractiveTextOverlay(
         canvasHeightDp = canvasH
     )
 
-    // 🆕 FIX: Canvas pixels — drag math ke liye zaroori
-    val canvasWpx = with(density) { canvasW.dp.toPx() }
-    val canvasHpx = with(density) { canvasH.dp.toPx() }
-
     val family = FontLibrary.familyFor(textState.fontFamily)
     val solidColor = Color(textState.color)
 
@@ -1760,8 +1737,9 @@ private fun InteractiveTextOverlay(
         Box(
             modifier = Modifier
                 .graphicsLayer {
-                    val posTx = (clampedX - 50f) / 100f * canvasW
-                    val posTy = (clampedY - 50f) / 100f * canvasH
+                    // ✅ FIXED: pixel values use kar rahe hain
+                    val posTx = (clampedX - 50f) / 100f * canvasWpx
+                    val posTy = (clampedY - 50f) / 100f * canvasHpx
                     translationX = posTx + frame.translateX
                     translationY = posTy + frame.translateY
                     scaleX = (sampled.scale / 100f) * frame.scaleX
@@ -1780,7 +1758,6 @@ private fun InteractiveTextOverlay(
                     } else Modifier
                 )
                 .padding(8.dp)
-                // 🆕 FIX: canvas px keys add kiye
                 .pointerInput(clip.id, isSelected, isMulti, canvasWpx, canvasHpx) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
@@ -1836,7 +1813,7 @@ private fun InteractiveTextOverlay(
                                     c2.consume()
                                 }
 
-                                // ✅ FIXED: canvas px use kar rahe hain
+                                // ✅ FIXED: canvas px
                                 val rawX = baseX + accumPanX / canvasWpx * 100f
                                 val rawY = baseY + accumPanY / canvasHpx * 100f
 
@@ -1866,7 +1843,6 @@ private fun InteractiveTextOverlay(
         ) {
             Box(contentAlignment = Alignment.Center) {
 
-                // GLOW
                 if (textState.glowEnabled && textState.glowRadius > 0f) {
                     val glowColorInt = textState.glowColor.toInt()
                     val glowAlign = when (textState.alignment) {
@@ -1916,7 +1892,6 @@ private fun InteractiveTextOverlay(
                     }
                 }
 
-                // STROKE
                 if (textState.strokeEnabled && userStrokeDp > 0f) {
                     Text(
                         text = displayContent,
@@ -1942,7 +1917,6 @@ private fun InteractiveTextOverlay(
                     )
                 }
 
-                // FILL + SHADOW
                 Text(
                     text = displayContent,
                     color = if (gradient != null) Color.Unspecified else solidColor,
@@ -1968,7 +1942,7 @@ private fun InteractiveTextOverlay(
 
 // ═══════════════════════════════════════════════════════════════
 //  INTERACTIVE STICKER OVERLAY
-//  🆕 FIXED: canvas pixels use kar rahe hain drag math ke liye
+//  ✅ FIXED: Dp/px mismatch — canvas pixels use kar rahe hain
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun InteractiveStickerOverlay(
@@ -2012,8 +1986,8 @@ private fun InteractiveStickerOverlay(
         sampled.x, sampled.y, stickerSizeDp, stickerSizeDp, canvasW, canvasH
     )
 
-    // 🆕 FIX: Canvas pixels — drag math ke liye zaroori
     val density = LocalDensity.current
+    // 🆕 Canvas dimensions in PIXELS — critical for matching export
     val canvasWpx = with(density) { canvasW.dp.toPx() }
     val canvasHpx = with(density) { canvasH.dp.toPx() }
 
@@ -2030,9 +2004,10 @@ private fun InteractiveStickerOverlay(
         Box(
             modifier = Modifier
                 .graphicsLayer {
-                    translationX = (clampedX - 50f) / 100f * canvasW +
+                    // ✅ FIXED: pixel values
+                    translationX = (clampedX - 50f) / 100f * canvasWpx +
                             frame.translateX
-                    translationY = (clampedY - 50f) / 100f * canvasH +
+                    translationY = (clampedY - 50f) / 100f * canvasHpx +
                             frame.translateY
                     scaleX = (sampled.scale / 100f) * frame.scaleX
                     scaleY = (sampled.scale / 100f) * frame.scaleY
@@ -2050,7 +2025,6 @@ private fun InteractiveStickerOverlay(
                     } else Modifier
                 )
                 .padding(6.dp)
-                // 🆕 FIX: canvas px keys add kiye
                 .pointerInput(clip.id, isSelected, isMulti, canvasWpx, canvasHpx) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
@@ -2104,7 +2078,7 @@ private fun InteractiveStickerOverlay(
                                     c2.consume()
                                 }
 
-                                // ✅ FIXED: canvas px use kar rahe hain
+                                // ✅ FIXED: canvas px
                                 val rawX = baseX + accumPanX / canvasWpx * 100f
                                 val rawY = baseY + accumPanY / canvasHpx * 100f
 

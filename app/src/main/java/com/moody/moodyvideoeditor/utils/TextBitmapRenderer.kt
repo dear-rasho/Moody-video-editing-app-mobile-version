@@ -26,7 +26,8 @@ data class TextOverlaySequence(
 
 object TextBitmapRenderer {
 
-    private const val REFERENCE_WIDTH_PX = 560f
+    // 🆕 FIXED: 560 → 400 to match TextScaler.REFERENCE_WIDTH_DP
+    private const val REFERENCE_WIDTH_PX = 400f
 
     private val LOOPING_ANIMATIONS = setOf(
         "wave", "bounceWave", "sineWave", "waterRipple", "heatWave",
@@ -60,6 +61,11 @@ object TextBitmapRenderer {
         } catch (_: Exception) {
         }
 
+        // 🆕 FIX: Sort by track order for correct z-index (V2 → V3 → V4)
+        val sortedTextClips = textClips.sortedWith(
+            compareBy({ it.trackIndex }, { it.timelineStartMs })
+        )
+
         var chunkStart = 0
         var chunkIdx = 0
 
@@ -75,7 +81,8 @@ object TextBitmapRenderer {
                 val canvas = Canvas(bmp)
                 canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
-                textClips.forEach { clip ->
+                // ✅ Sort order: lowest track drawn first (V2 below V3 below V4)
+                sortedTextClips.forEach { clip ->
                     if (timelineMs >= clip.timelineStartMs &&
                         timelineMs < clip.timelineEndMs
                     ) {
@@ -122,7 +129,11 @@ object TextBitmapRenderer {
             chunkIdx++
         }
 
-        Log.e("TEXT_RENDER", "Combined: ${sequences.size} chunk(s), frames=$totalFrames")
+        Log.e(
+            "TEXT_RENDER",
+            "Combined: ${sequences.size} chunk(s), frames=$totalFrames, " +
+                    "textClips=${sortedTextClips.size}"
+        )
         return sequences
     }
 
@@ -177,8 +188,7 @@ object TextBitmapRenderer {
             AnimationsEngine.Frame()
         }
 
-        val sampled = TransformApplier
-            .resolveLive(clip, localTimeSec)
+        val sampled = TransformApplier.resolveLive(clip, localTimeSec)
 
         drawTextWithFrame(canvas, st, frame, progress, W, H, sampled)
     }
@@ -201,11 +211,9 @@ object TextBitmapRenderer {
             AnimationsEngine.Frame()
         }
 
-        val sampled = TransformApplier
-            .resolveLive(clip, localTimeSec)
+        val sampled = TransformApplier.resolveLive(clip, localTimeSec)
 
         val baseSize = 48f * (W / REFERENCE_WIDTH_PX)
-        // Combine user + animation scale
         val combinedScale = (sampled.scale / 100f) * frame.scaleX
         val fontSize = baseSize * combinedScale
 
@@ -216,8 +224,16 @@ object TextBitmapRenderer {
             color = Color.WHITE
         }
 
-        val cx = sampled.x / 100f * W
-        val cy = sampled.y / 100f * H
+        // 🆕 FIX: Clamp position to keep sticker inside canvas
+        val stickerSizeDp = baseSize * (sampled.scale / 100f)
+        val halfWPct = (stickerSizeDp / 2f / W * 100f).coerceAtMost(50f)
+        val halfHPct = (stickerSizeDp / 2f / H * 100f).coerceAtMost(50f)
+        val clampedX = sampled.x.coerceIn(halfWPct, 100f - halfWPct)
+        val clampedY = sampled.y.coerceIn(halfHPct, 100f - halfHPct)
+
+        val cx = clampedX / 100f * W
+        val cy = clampedY / 100f * H
+
         val fm = paint.fontMetrics
         val baseline = cy - (fm.ascent + fm.descent) / 2f
 
@@ -317,15 +333,23 @@ object TextBitmapRenderer {
             }
 
             // ═══════════════════════════════════════════════════════
-            //  7. LIVE POSITION from sampled (keyframe-aware)
+            //  7. 🆕 CLAMP POSITION (matches preview TextScaler.clampPosition)
             // ═══════════════════════════════════════════════════════
-            val cx = sampled.x / 100f * W
-            val cy = sampled.y / 100f * H
+            val textW = basePaint.measureText(content)
+            val textH = basePaint.fontMetrics.let { it.descent - it.ascent }
+            val halfWPct = (textW / 2f / W * 100f).coerceAtMost(50f)
+            val halfHPct = (textH / 2f / H * 100f).coerceAtMost(50f)
+            val clampedX = sampled.x.coerceIn(halfWPct, 100f - halfWPct)
+            val clampedY = sampled.y.coerceIn(halfHPct, 100f - halfHPct)
+
+            val cx = clampedX / 100f * W
+            val cy = clampedY / 100f * H
+
             val fm = basePaint.fontMetrics
             val baseline = cy - (fm.ascent + fm.descent) / 2f
 
             // ═══════════════════════════════════════════════════════
-            //  8. CANVAS TRANSFORM (raw pixels, animation offsets unscaled)
+            //  8. CANVAS TRANSFORM (animation offsets + user scale)
             // ═══════════════════════════════════════════════════════
             canvas.save()
             canvas.translate(cx + frame.translateX, cy + frame.translateY)

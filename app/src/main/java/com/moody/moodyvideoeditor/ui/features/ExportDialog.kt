@@ -53,7 +53,8 @@ import com.moody.moodyvideoeditor.utils.ExportSettings
 /**
  * Full-screen modal export dialog with:
  *  - File name
- *  - Custom start/end time range
+ *  - 🆕 Custom range toggle (OFF = full timeline)
+ *  - Custom start/end time (only when ON)
  *  - Format, resolution, fps, bitrate
  *  - Save location
  *  - Cancel button during export
@@ -73,6 +74,9 @@ fun ExportDialog(
     fileName: String,
     startMs: Long,
     endMs: Long,
+    // 🆕 Custom range toggle
+    useCustomRange: Boolean,
+    onUseCustomRangeChange: (Boolean) -> Unit,
     onFileNameChange: (String) -> Unit,
     onStartChange: (Long) -> Unit,
     onEndChange: (Long) -> Unit,
@@ -89,7 +93,6 @@ fun ExportDialog(
     val context = LocalContext.current
     var messageCopied by remember { mutableStateOf(false) }
 
-    // Full-screen dark overlay
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -98,7 +101,6 @@ fun ExportDialog(
                 // Block touches behind
             }
     ) {
-        // Centered card
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -230,67 +232,125 @@ fun ExportDialog(
                         }
                     }
 
-                    // ═══ EXPORT RANGE ═══
-                    SectionLabel("Export Range (custom)")
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        TimeInputField(
-                            label = "Start",
-                            valueMs = startMs,
-                            maxMs = timelineDurationMs,
-                            enabled = !isExporting,
-                            onChange = onStartChange,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TimeInputField(
-                            label = "End",
-                            valueMs = endMs,
-                            maxMs = timelineDurationMs,
-                            enabled = !isExporting,
-                            onChange = onEndChange,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
+                    // ═══════════════════════════════════════════════
+                    //  🆕 EXPORT RANGE TOGGLE
+                    // ═══════════════════════════════════════════════
+                    SectionLabel("Export Range")
 
-                    // Duration display
-                    val exportDuration = (endMs - startMs).coerceAtLeast(0L)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF0F1A2A))
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF1A1A1A))
+                            .padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            "⏱️ Export Duration: ${formatDuration(exportDuration)}",
-                            color = Color(0xFF60EFFF),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                if (useCustomRange) "Custom range"
+                                else "Full timeline",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                if (useCustomRange) "Set specific start & end time"
+                                else "Export complete project (${formatDuration(timelineDurationMs)})",
+                                color = Color(0xFF888888),
+                                fontSize = 10.sp
+                            )
+                        }
+
+                        // Toggle button
                         Box(
                             modifier = Modifier
-                                .height(24.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFF7C3AED).copy(alpha = 0.25f))
-                                .pointerInput(timelineDurationMs) {
-                                    detectTapGestures {
-                                        onStartChange(0L)
-                                        onEndChange(timelineDurationMs)
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (useCustomRange) Color(0xFF7C3AED)
+                                    else Color(0xFF2A2A2A)
+                                )
+                                .pointerInput(useCustomRange, isExporting) {
+                                    if (!isExporting) {
+                                        detectTapGestures {
+                                            onUseCustomRangeChange(!useCustomRange)
+                                        }
                                     }
                                 }
-                                .padding(horizontal = 10.dp),
+                                .padding(horizontal = 14.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                "Full",
-                                color = Color(0xFF7C3AED),
-                                fontSize = 9.sp,
+                                if (useCustomRange) "ON" else "OFF",
+                                color = Color.White,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )
+                        }
+                    }
+
+                    // 🆕 Custom range fields — only when toggle is ON
+                    if (useCustomRange) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            TimeInputField(
+                                label = "Start",
+                                valueMs = startMs,
+                                maxMs = timelineDurationMs,
+                                enabled = !isExporting,
+                                onChange = onStartChange,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TimeInputField(
+                                label = "End",
+                                valueMs = endMs,
+                                maxMs = timelineDurationMs,
+                                enabled = !isExporting,
+                                onChange = onEndChange,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        // Duration display
+                        val exportDuration = (endMs - startMs).coerceAtLeast(0L)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(0xFF0F1A2A))
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "⏱️ Export Duration: ${formatDuration(exportDuration)}",
+                                color = Color(0xFF60EFFF),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .height(24.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF7C3AED).copy(alpha = 0.25f))
+                                    .pointerInput(timelineDurationMs) {
+                                        detectTapGestures {
+                                            onStartChange(0L)
+                                            onEndChange(timelineDurationMs)
+                                        }
+                                    }
+                                    .padding(horizontal = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "Full",
+                                    color = Color(0xFF7C3AED),
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
 
@@ -719,7 +779,6 @@ private fun Chip(
 
 /**
  * Time input field with MM:SS format.
- * User types any format — parses on blur.
  */
 @Composable
 private fun TimeInputField(

@@ -148,10 +148,8 @@ fun EditorScreen(
         mutableStateOf<String?>(if (startInCodeMode) "code" else null)
     }
 
-    // FeatureShelf scroll — persisted
     val featureScrollState = androidx.compose.foundation.rememberScrollState()
 
-    // Filter / Effect edit layers
     var filterEditLayerId by remember { mutableStateOf<String?>(null) }
     var effectEditLayerId by remember { mutableStateOf<String?>(null) }
 
@@ -165,7 +163,6 @@ fun EditorScreen(
         mutableStateOf(com.moody.moodyvideoeditor.data.BrushGradient())
     }
 
-    // 🆕 Multi-import
     var pendingUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
 
     var isExporting by remember { mutableStateOf(false) }
@@ -174,6 +171,8 @@ fun EditorScreen(
     var exportFileName by remember { mutableStateOf("") }
     var exportStartMs by remember { mutableStateOf(0L) }
     var exportEndMs by remember { mutableStateOf(0L) }
+    // 🆕 Custom range toggle — OFF by default (full timeline)
+    var useCustomRange by remember { mutableStateOf(false) }
     var showCancelConfirm by remember { mutableStateOf(false) }
     var activeExporter by remember { mutableStateOf<VideoExporter?>(null) }
 
@@ -186,7 +185,6 @@ fun EditorScreen(
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
     }
 
-    // 🆕 Second player — dedicated for audio clips
     val audioExoPlayer = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
     }
@@ -198,7 +196,6 @@ fun EditorScreen(
         }
     }
 
-    // Reset audio preview when panel closes
     LaunchedEffect(activePanel) {
         if (activePanel != "audiofx" && activePanel != "soundfx") {
             AudioPreviewEngine.release()
@@ -397,7 +394,6 @@ fun EditorScreen(
         }
     }
 
-    // 🆕 Multi-select picker
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
@@ -422,7 +418,7 @@ fun EditorScreen(
         }
     }
 
-    // 🆕 Multi-import processing
+    // Multi-import processing
     LaunchedEffect(pendingUris) {
         val uris = pendingUris
         if (uris.isEmpty()) return@LaunchedEffect
@@ -523,10 +519,23 @@ fun EditorScreen(
         }
 
         val totalDur = state.totalDurationMs
-        val rangeStart = if (exportEndMs > 0L) exportStartMs.coerceIn(0L, totalDur)
-        else 0L
-        val rangeEnd = if (exportEndMs > 0L) exportEndMs.coerceIn(rangeStart + 500L, totalDur)
-        else totalDur
+
+        // 🆕 Toggle logic: OFF = full timeline, ON = custom range
+        val rangeStart: Long
+        val rangeEnd: Long
+        if (useCustomRange) {
+            rangeStart = exportStartMs.coerceIn(0L, totalDur)
+            rangeEnd = exportEndMs.coerceIn(rangeStart + 500L, totalDur)
+        } else {
+            rangeStart = 0L
+            rangeEnd = totalDur
+        }
+
+        Log.e(
+            "EXPORT",
+            "Starting export: useCustomRange=$useCustomRange, " +
+                    "range=$rangeStart..$rangeEnd (total=$totalDur)"
+        )
 
         isExporting = true
         exportProgress = 0f
@@ -750,13 +759,11 @@ fun EditorScreen(
                         viewModel.selectClip(clip)
                         viewModel.clearMultiSelect()
 
-                        // Filter layer tapped → Filters edit mode
                         if (clip.isFilterLayerClip) {
                             filterEditLayerId = clip.id
                             activePanel = "filters"
                         }
 
-                        // Effect layer tapped → Effects edit mode
                         if (clip.isEffectClip) {
                             effectEditLayerId = clip.id
                             activePanel = "effects"
@@ -1249,8 +1256,6 @@ fun EditorScreen(
                 )
 
                 "soundfx" -> {
-                    // soundfx ab FeatureShelf se remove hai
-                    // Lekin safety ke liye AudioPanel open kar do
                     AudioPanel(
                         onPreviewFx = { fx, intensity ->
                             AudioPreviewEngine.apply(exoPlayer, audioExoPlayer, fx, intensity)
@@ -1345,8 +1350,10 @@ fun EditorScreen(
             timelineDurationMs = state.totalDurationMs,
             currentFolderUri = state.exportFolderUri,
             fileName = exportFileName,
-            startMs = if (exportEndMs > 0L) exportStartMs else 0L,
+            startMs = exportStartMs,
             endMs = if (exportEndMs > 0L) exportEndMs else state.totalDurationMs,
+            useCustomRange = useCustomRange,
+            onUseCustomRangeChange = { useCustomRange = it },
             onFileNameChange = { exportFileName = it },
             onStartChange = { exportStartMs = it },
             onEndChange = { exportEndMs = it },
