@@ -673,7 +673,7 @@ fun EditorScreen(
 
         isExporting = true
         exportProgress = 0f
-        exportMessage = "⏳ Preparing… (rendering overlays)"
+        exportMessage = "⏳ Starting…"
 
         val clipsSnapshot = state.clips.filter {
             !state.hiddenVisualTracks.contains(it.trackIndex)
@@ -690,7 +690,20 @@ fun EditorScreen(
             context = context,
             onProgress = { p ->
                 exportProgress = p
-                exportMessage = "Processing… ${(p * 100).toInt()}%"
+                // 🆕 Phase-based messaging
+                exportMessage = when {
+                    p < 0.05f -> "⏳ Preparing… ${(p * 100).toInt()}%"
+                    p < 0.20f -> "🎨 Rendering text & stickers… " +
+                            "${((p - 0.05f) / 0.15f * 100).toInt()}%"
+
+                    p < 0.40f -> "🎵 Rendering visualizer… " +
+                            "${((p - 0.20f) / 0.20f * 100).toInt()}%"
+
+                    p < 0.99f -> "🎬 Encoding video… " +
+                            "${((p - 0.40f) / 0.60f * 100).toInt()}%"
+
+                    else -> "✅ Finalizing…"
+                }
             },
             onSuccess = {
                 isExporting = false
@@ -865,31 +878,31 @@ fun EditorScreen(
                 },
                 onGroupGestureStart = { viewModel.beginGroupGesture() },
                 onGroupGestureEnd = { viewModel.endGroupGesture() },
-                onGroupGesture = { clipId, x, y, scale, rot ->
+                onGroupGesture = { clipId: String, x: Float, y: Float, scale: Float, rot: Float ->
                     viewModel.applyGroupTransform(clipId, x, y, scale, rot)
                 },
-                onTextPositionChanged = { clipId, x, y ->
+                onTextPositionChanged = { clipId: String, x: Float, y: Float ->
                     viewModel.updateSelectedPositionBulk(clipId, x, y)
                 },
-                onTextTransformChanged = { clipId, s, r ->
+                onTextTransformChanged = { clipId: String, s: Float, r: Float ->
                     viewModel.updateSelectedTransformBulk(clipId, s, r)
                 },
-                onStickerPositionChanged = { clipId, x, y ->
+                onStickerPositionChanged = { clipId: String, x: Float, y: Float ->
                     viewModel.updateSelectedPositionBulk(clipId, x, y)
                 },
-                onStickerTransformChanged = { clipId, s, r ->
+                onStickerTransformChanged = { clipId: String, s: Float, r: Float ->
                     viewModel.updateSelectedTransformBulk(clipId, s, r)
                 },
-                onBrushPositionChanged = { clipId, x, y ->
+                onBrushPositionChanged = { clipId: String, x: Float, y: Float ->
                     viewModel.updateSelectedPositionBulk(clipId, x, y)
                 },
-                onBrushTransformChanged = { clipId, s, r ->
+                onBrushTransformChanged = { clipId: String, s: Float, r: Float ->
                     viewModel.updateSelectedTransformBulk(clipId, s, r)
                 },
-                onVisualizerPositionChanged = { clipId, x, y ->
+                onVisualizerPositionChanged = { clipId: String, x: Float, y: Float ->
                     viewModel.updateSelectedPositionBulk(clipId, x, y)
                 },
-                onVisualizerTransformChanged = { clipId, s, r ->
+                onVisualizerTransformChanged = { clipId: String, s: Float, r: Float ->
                     viewModel.updateSelectedTransformBulk(clipId, s, r)
                 }
             )
@@ -1521,7 +1534,6 @@ fun EditorScreen(
                 //  VISUALIZER — Manual button + selected-audio only
                 // ═══════════════════════════════════════════════════════
                 "visualizer" -> {
-                    // 🎯 Only find visualizer linked to CURRENTLY SELECTED audio
                     val selectedAudioId: String? = selected?.takeIf {
                         it.isAudio && !it.isAudioEffectClip
                     }?.id
@@ -1534,7 +1546,6 @@ fun EditorScreen(
                         }
 
                     when {
-                        // ═══ DETECTING BEATS ═══
                         isDetectingBeats -> {
                             Box(
                                 modifier = Modifier
@@ -1582,7 +1593,6 @@ fun EditorScreen(
                             }
                         }
 
-                        // ═══ BEAT DETECTION ERROR ═══
                         beatDetectionError != null && vizClip == null -> {
                             Box(
                                 modifier = Modifier
@@ -1628,7 +1638,6 @@ fun EditorScreen(
                             }
                         }
 
-                        // ═══ NO VISUALIZER YET — CREATE ═══
                         vizClip == null -> {
                             val sel = selected
                             val selectedIsAudio = sel != null &&
@@ -1686,7 +1695,6 @@ fun EditorScreen(
                                     }
                                 }
                             } else {
-                                // ✅ Manual "Create Visualizer" button — NO auto-launch
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1713,8 +1721,6 @@ fun EditorScreen(
                                             fontSize = 10.sp,
                                             textAlign = TextAlign.Center
                                         )
-
-                                        // Explicit button
                                         Box(
                                             modifier = Modifier
                                                 .height(44.dp)
@@ -1735,7 +1741,6 @@ fun EditorScreen(
                                                 fontWeight = FontWeight.Bold
                                             )
                                         }
-
                                         Text(
                                             "Or use Code Mode: visualizer add",
                                             color = Color(0xFF666666),
@@ -1746,7 +1751,6 @@ fun EditorScreen(
                             }
                         }
 
-                        // ═══ VISUALIZER EXISTS — SHOW PANEL ═══
                         else -> {
                             LaunchedEffect(pendingVizImageUri) {
                                 val uri = pendingVizImageUri

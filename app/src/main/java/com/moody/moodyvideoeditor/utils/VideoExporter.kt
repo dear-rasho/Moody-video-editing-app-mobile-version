@@ -24,7 +24,7 @@ class VideoExporter(
     private var sessionId: Long? = null
     private var isCancelled = false
 
-    fun export(
+    suspend fun export(
         clips: List<EditorClip>,
         fileName: String,
         adjustments: AdjustmentData = AdjustmentData(),
@@ -107,9 +107,7 @@ class VideoExporter(
             rangeStart, rangeEnd
         )
 
-        // ─── 🆕 Visualizer clips (KEEP original timeline!) ───
-        // Important: NOT trimmed because we need original position for
-        // audio-relative time in VisualizerBitmapRenderer.
+        // ─── Visualizer clips (KEEP original timeline!) ───
         val vizClips = clips.filter { it.isVisualizerClip }
 
         val exportDurationMs = rangeEnd - rangeStart
@@ -134,10 +132,17 @@ class VideoExporter(
 
         when {
             // ═══════════════════════════════════════════════════════
-            //  CASE 1: Base visual clips exist → FFmpegExecutor
+            //  CASE 1: Base visual clips exist
+            //  Progress map:
+            //   0-20%  → text/sticker PNG rendering
+            //  20-40%  → visualizer PNG rendering
+            //  40-100% → FFmpeg encoding
             // ═══════════════════════════════════════════════════════
             hasBaseVideo -> {
                 val outputFile = createOutputFile(fileName, format)
+
+                // Notify start
+                onProgress(0.01f)
 
                 val textSequences = try {
                     TextBitmapRenderer.renderCombinedOverlays(
@@ -146,7 +151,8 @@ class VideoExporter(
                         imageClips = overlayImageClips,
                         overlayClips = trimmedOverlayClips,
                         W = targetW, H = targetH, fps = fps,
-                        totalDurationMs = exportDurationMs
+                        totalDurationMs = exportDurationMs,
+                        onProgress = { p -> onProgress(p * 0.20f) }
                     )
                 } catch (e: Throwable) {
                     Log.e("EXPORT", "Text render failed", e)
@@ -161,7 +167,8 @@ class VideoExporter(
                             allClips = clips,
                             rangeStart = rangeStart,
                             W = targetW, H = targetH, fps = fps,
-                            totalDurationMs = exportDurationMs
+                            totalDurationMs = exportDurationMs,
+                            onProgress = { p -> onProgress(0.20f + p * 0.20f) }
                         )
                     } catch (e: Throwable) {
                         Log.e("EXPORT", "Visualizer render failed", e)
@@ -171,9 +178,13 @@ class VideoExporter(
 
                 val allSequences = textSequences + vizSequences
 
+                onProgress(0.40f)
+
                 ffmpeg = FFmpegExecutor(
                     context = context,
-                    onProgress = { if (!isCancelled) onProgress(it) },
+                    onProgress = { p ->
+                        if (!isCancelled) onProgress(0.40f + p * 0.60f)
+                    },
                     onSuccess = { file ->
                         if (isCancelled) return@FFmpegExecutor
                         val galleryUri = saveToGallery(file, customFolderUri)
@@ -197,8 +208,7 @@ class VideoExporter(
             }
 
             // ═══════════════════════════════════════════════════════
-            //  CASE 2: No base video but has synthetic layers
-            //         (text / sticker / visualizer) → black bg export
+            //  CASE 2: No base video, has synthetic layers
             // ═══════════════════════════════════════════════════════
             hasSynthetic -> {
                 exportSyntheticFull(
@@ -299,10 +309,13 @@ class VideoExporter(
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 SYNTHETIC FULL EXPORT (no base video)
-    //  Black canvas + visualizer/text overlays + audio mix
+    //  SYNTHETIC FULL EXPORT (no base video)
+    //  Progress map:
+    //   0-25%  → visualizer PNG rendering
+    //  25-50%  → text/sticker PNG rendering
+    //  50-100% → FFmpeg encoding
     // ═══════════════════════════════════════════════════════════
-    private fun exportSyntheticFull(
+    private suspend fun exportSyntheticFull(
         allClips: List<EditorClip>,
         textClips: List<EditorClip>,
         overlayImageClips: List<EditorClip>,
@@ -321,7 +334,9 @@ class VideoExporter(
         val (targetW, targetH) = ExportSettings.targetDimensions(resolution, aspectRatio)
         val durationMs = (rangeEnd - rangeStart).coerceAtLeast(500L)
 
-        // ─── Visualizer PNG sequences (uses original timeline) ───
+        onProgress(0.01f)
+
+        // ─── Visualizer PNG sequences ───
         val vizSequences = if (vizClips.isNotEmpty()) {
             try {
                 VisualizerBitmapRenderer.renderCombinedOverlays(
@@ -330,7 +345,8 @@ class VideoExporter(
                     allClips = allClips,
                     rangeStart = rangeStart,
                     W = targetW, H = targetH, fps = fps,
-                    totalDurationMs = durationMs
+                    totalDurationMs = durationMs,
+                    onProgress = { p -> onProgress(p * 0.25f) }
                 )
             } catch (e: Throwable) {
                 Log.e("EXPORT", "Visualizer render failed", e)
@@ -339,7 +355,7 @@ class VideoExporter(
             }
         } else emptyList()
 
-        // ─── Text + overlay + image PNG sequences ───
+        // ─── Text + overlay PNG sequences ───
         val textSequences = if (
             textClips.isNotEmpty() ||
             overlayImageClips.isNotEmpty() ||
@@ -352,7 +368,8 @@ class VideoExporter(
                     imageClips = overlayImageClips,
                     overlayClips = overlayClips,
                     W = targetW, H = targetH, fps = fps,
-                    totalDurationMs = durationMs
+                    totalDurationMs = durationMs,
+                    onProgress = { p -> onProgress(0.25f + p * 0.25f) }
                 )
             } catch (e: Throwable) {
                 Log.e("EXPORT", "Text render failed", e)
@@ -362,10 +379,10 @@ class VideoExporter(
 
         val allSequences = vizSequences + textSequences
 
+        onProgress(0.50f)
+
         // ═══════════════════════════════════════════════════════
         //  COLLECT AUDIO
-        //  1) Explicit audio-only clips
-        //  2) Audio auto-linked to visualizers
         // ═══════════════════════════════════════════════════════
         val audioToMix = mutableListOf<EditorClip>()
         audioToMix.addAll(audioOnlyClips)
@@ -377,7 +394,6 @@ class VideoExporter(
                         it.uri.toString().isNotBlank() && it.uri != Uri.EMPTY
             }
             if (linkedAudio != null && audioToMix.none { it.id == linkedAudio.id }) {
-                // Localize to range
                 val clipStart = linkedAudio.timelineStartMs
                 val clipEnd = linkedAudio.timelineEndMs
                 if (clipEnd > rangeStart && clipStart < rangeEnd) {
@@ -402,7 +418,6 @@ class VideoExporter(
             }
         }
 
-        // Copy audio files to cache
         val audioLocalFiles = mutableListOf<File>()
         val audioLocalClips = mutableListOf<EditorClip>()
         audioToMix.forEach { clip ->
@@ -427,22 +442,18 @@ class VideoExporter(
         val args = mutableListOf<String>()
         args.add("-y")
 
-        // Video: black canvas
         args.add("-f"); args.add("lavfi")
         args.add("-t"); args.add(durSec.toString())
         args.add("-i"); args.add("color=c=black:s=${targetW}x${targetH}:r=$fps")
 
-        // Silent audio source
         args.add("-f"); args.add("lavfi")
         args.add("-t"); args.add(durSec.toString())
         args.add("-i"); args.add("anullsrc=r=44100:cl=stereo")
 
-        // Real audio inputs
         audioLocalFiles.forEach { f ->
             args.add("-i"); args.add(f.absolutePath)
         }
 
-        // Sequence inputs
         val seqStartIdx = 2 + audioLocalFiles.size
         allSequences.forEach { seq ->
             if (seq.startSec > 0.0001) {
@@ -472,7 +483,6 @@ class VideoExporter(
         }
         filterParts.add("[$lastLabel]format=yuv420p[outv]")
 
-        // Audio mix
         if (audioLocalFiles.isEmpty()) {
             filterParts.add("[1:a]anull[outa]")
         } else {
@@ -544,7 +554,138 @@ class VideoExporter(
                             if (t > 0) {
                                 val p = ((t / (durationMs.toDouble() * 1.2))
                                     .coerceIn(0.0, 0.95)).toFloat()
-                                onProgress(p)
+                                onProgress(0.50f + p * 0.50f)
+                            }
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
+            )
+            sessionId = session.sessionId
+        } catch (e: Exception) {
+            onError("❌ FFmpeg error: ${e.message}")
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  SYNTHETIC EXPORT (text/sticker only — legacy path)
+    // ═══════════════════════════════════════════════════════════
+    private suspend fun exportSynthetic(
+        textClips: List<EditorClip>,
+        totalDurationMs: Long,
+        fileName: String,
+        aspectRatio: String,
+        resolution: String,
+        fps: Int,
+        bitrateKbps: Int,
+        customFolderUri: String?
+    ) {
+        val outputFile = createOutputFile(fileName, "mp4")
+        val durSec = (totalDurationMs / 1000.0).coerceAtLeast(1.0)
+        val (targetW, targetH) = ExportSettings.targetDimensions(resolution, aspectRatio)
+
+        onProgress(0.01f)
+
+        val sequences = try {
+            TextBitmapRenderer.renderCombinedOverlays(
+                context = context,
+                textClips = textClips.filter { it.isTextClip || it.isStickerClip },
+                imageClips = textClips.filter {
+                    it.isVisualClip && it.type.startsWith("image/")
+                },
+                overlayClips = emptyList(),
+                W = targetW, H = targetH, fps = fps,
+                totalDurationMs = totalDurationMs,
+                onProgress = { p -> onProgress(p * 0.40f) }
+            )
+        } catch (e: Throwable) {
+            Log.e("EXPORT", "Synthetic render failed", e)
+            emptyList()
+        }
+
+        onProgress(0.40f)
+
+        val args = mutableListOf<String>()
+        args.add("-y")
+        args.add("-f"); args.add("lavfi")
+        args.add("-t"); args.add(durSec.toString())
+        args.add("-i"); args.add("color=c=black:s=${targetW}x${targetH}:r=$fps")
+
+        args.add("-f"); args.add("lavfi")
+        args.add("-t"); args.add(durSec.toString())
+        args.add("-i"); args.add("anullsrc=r=44100:cl=stereo")
+
+        sequences.forEach { seq ->
+            if (seq.startSec > 0.0001) {
+                args.add("-itsoffset"); args.add("%.4f".format(seq.startSec))
+            }
+            args.add("-framerate"); args.add(seq.fps.toString())
+            args.add("-start_number"); args.add(seq.startNumber.toString())
+            args.add("-i"); args.add(seq.pattern)
+        }
+
+        val filterParts = mutableListOf<String>()
+        filterParts.add("[0:v]format=yuva420p[base]")
+
+        var lastLabel = "base"
+        sequences.forEachIndexed { idx, seq ->
+            val inIdx = idx + 2
+            val srcLabel = "seqsrc$idx"
+            val outLabel = "ov$idx"
+            filterParts.add("[$inIdx:v]format=rgba[$srcLabel]")
+            val startS = "%.4f".format(seq.startSec)
+            val endS = "%.4f".format(seq.endSec)
+            filterParts.add(
+                "[$lastLabel][$srcLabel]overlay=0:0:" +
+                        "enable='between(t,$startS,$endS)'" +
+                        "[$outLabel]"
+            )
+            lastLabel = outLabel
+        }
+        filterParts.add("[$lastLabel]format=yuv420p[outv]")
+        filterParts.add("[1:a]anull[outa]")
+
+        args.add("-filter_complex")
+        args.add(filterParts.joinToString(";"))
+        args.add("-map"); args.add("[outv]")
+        args.add("-map"); args.add("[outa]")
+
+        args.add("-c:v"); args.add("mpeg4")
+        args.add("-qscale:v"); args.add("4")
+        args.add("-pix_fmt"); args.add("yuv420p")
+        args.add("-b:v"); args.add("${bitrateKbps}k")
+        args.add("-r"); args.add(fps.toString())
+        args.add("-c:a"); args.add("aac")
+        args.add("-b:a"); args.add("128k")
+        args.add("-movflags"); args.add("+faststart")
+        args.add("-t"); args.add(durSec.toString())
+        args.add(outputFile.absolutePath)
+
+        try {
+            val argsArray = args.toTypedArray()
+            val session = FFmpegKit.executeWithArgumentsAsync(
+                argsArray,
+                { s ->
+                    if (isCancelled) {
+                        onCancelled()
+                    } else if (ReturnCode.isSuccess(s.returnCode)) {
+                        val galleryUri = saveToGallery(outputFile, customFolderUri)
+                        if (galleryUri != null) onSuccess(galleryUri)
+                        else onSuccess(Uri.fromFile(outputFile))
+                    } else {
+                        val logs = s.allLogsAsString ?: "Unknown error"
+                        onError("❌ Export failed:\n${logs.takeLast(1500)}")
+                    }
+                },
+                { _ -> },
+                { stats ->
+                    if (!isCancelled) {
+                        try {
+                            val t = stats.time
+                            if (t > 0) {
+                                val p = ((t / (totalDurationMs.toDouble() * 1.2))
+                                    .coerceIn(0.0, 0.95)).toFloat()
+                                onProgress(0.40f + p * 0.60f)
                             }
                         } catch (_: Exception) {
                         }

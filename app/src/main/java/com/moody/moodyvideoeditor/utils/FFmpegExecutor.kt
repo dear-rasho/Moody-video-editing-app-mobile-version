@@ -217,30 +217,56 @@ class FFmpegExecutor(
         targetH: Int
     ): List<String> {
         val filters = mutableListOf<String>()
-        filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease")
 
+        // ═══════════════════════════════════════════════════════
+        //  STEP 1 — User scale FIRST (may enlarge or shrink)
+        //  No pad yet, so no conflict.
+        // ═══════════════════════════════════════════════════════
         val userScale = clip.scale.coerceIn(0.1f, 5f)
         if (kotlin.math.abs(userScale - 1.0f) > 0.01f) {
             val scaleStr = String.format(java.util.Locale.US, "%.4f", userScale)
             filters.add("scale=iw*$scaleStr:ih*$scaleStr")
         }
 
+        // ═══════════════════════════════════════════════════════
+        //  STEP 2 — Rotation (FFmpeg auto-calculates rotated size)
+        // ═══════════════════════════════════════════════════════
         if (kotlin.math.abs(clip.rotation) > 0.1f) {
             val rad = String.format(
                 java.util.Locale.US,
                 "%.4f",
                 Math.toRadians(clip.rotation.toDouble())
             )
-            filters.add("rotate=$rad:c=none:ow=iw:oh=ih")
+            // ow/oh auto-computed from rotation angle, black background
+            filters.add("rotate=$rad:c=black:ow=rotw($rad):oh=roth($rad)")
         }
 
+        // ═══════════════════════════════════════════════════════
+        //  STEP 3 — Scale to FIT-INCREASE target (guarantees at
+        //  least canvas size on both axes → crop will work)
+        // ═══════════════════════════════════════════════════════
+        filters.add(
+            "scale=$targetW:$targetH:force_original_aspect_ratio=increase"
+        )
+
+        // ═══════════════════════════════════════════════════════
+        //  STEP 4 — Crop to exact canvas size (with offset for
+        //  user-defined position). Offset is clamped so crop
+        //  never goes out of bounds.
+        // ═══════════════════════════════════════════════════════
         val offsetXpx = (clip.offsetX * targetW).toInt()
         val offsetYpx = (clip.offsetY * targetH).toInt()
-        filters.add(
-            "pad=$targetW:$targetH:" +
-                    "(ow-iw)/2+$offsetXpx:" +
-                    "(oh-ih)/2+$offsetYpx:black"
-        )
+
+        if (offsetXpx == 0 && offsetYpx == 0) {
+            filters.add("crop=$targetW:$targetH")
+        } else {
+            filters.add(
+                "crop=$targetW:$targetH:" +
+                        "max(0\\,min(iw-$targetW\\,(iw-$targetW)/2+$offsetXpx)):" +
+                        "max(0\\,min(ih-$targetH\\,(ih-$targetH)/2+$offsetYpx))"
+            )
+        }
+
         filters.add("setsar=1")
         return filters
     }
