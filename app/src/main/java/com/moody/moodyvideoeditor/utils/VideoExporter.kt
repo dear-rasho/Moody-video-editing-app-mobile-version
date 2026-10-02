@@ -60,20 +60,30 @@ class VideoExporter(
         val baseVisualClips = allVisual.filter { it.trackIndex == baseTrackIndex }
         val higherTrackVisualClips = allVisual.filter { it.trackIndex > baseTrackIndex }
 
-        if (higherTrackVisualClips.isNotEmpty()) {
+        // 🆕 Higher-track IMAGES can be overlaid on top of base
+        val higherTrackImageClips = higherTrackVisualClips.filter {
+            it.type.startsWith("image/")
+        }
+
+        // Higher-track VIDEOS cannot be composited (FFmpeg limitation) — warn only
+        val higherTrackVideoClips = higherTrackVisualClips.filter {
+            !it.type.startsWith("image/")
+        }
+        if (higherTrackVideoClips.isNotEmpty()) {
             Log.w(
                 "EXPORT",
-                "⚠️ ${higherTrackVisualClips.size} higher-track visual clips skipped"
+                "⚠️ ${higherTrackVideoClips.size} higher-track VIDEO clips skipped " +
+                        "(only images supported on V2+)"
             )
         }
 
+        // 🆕 Combined overlay images: base-track images + ALL higher-track images
         val overlayImageClips = trimClipsToRange(
             baseVisualClips.filter {
                 it.type.startsWith("image/") && it.trackIndex > 0
-            },
+            } + higherTrackImageClips,
             rangeStart, rangeEnd
         )
-
         val trimmedVisualClips = trimClipsToRange(
             baseVisualClips.filter {
                 !(it.type.startsWith("image/") && it.trackIndex > 0)
@@ -176,7 +186,9 @@ class VideoExporter(
                     }
                 } else emptyList()
 
-                val allSequences = textSequences + vizSequences
+                // 🆕 Sort by track index → correct layer order in overlay chain
+                val allSequences = (textSequences + vizSequences)
+                    .sortedBy { it.trackIndex }
 
                 onProgress(0.40f)
 
@@ -377,7 +389,9 @@ class VideoExporter(
             }
         } else emptyList()
 
-        val allSequences = vizSequences + textSequences
+        // 🆕 Sort by track index → correct layer order
+        val allSequences = (vizSequences + textSequences)
+            .sortedBy { it.trackIndex }
 
         onProgress(0.50f)
 

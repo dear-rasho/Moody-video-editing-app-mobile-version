@@ -232,6 +232,7 @@ object ProjectRepository {
         c.ratio?.let { put("ratio", ratioToJson(it)) }
         put("mask", maskToJson(c.mask))
         put("brush", brushToJson(c.brush))
+        c.visualizer?.let { put("visualizer", visualizerToJson(it)) }
 
         val kfObj = JSONObject()
         c.keyframes.forEach { (prop, list) ->
@@ -291,6 +292,7 @@ object ProjectRepository {
         ratio = o.optJSONObject("ratio")?.let { ratioFromJson(it) },
         mask = maskFromJson(o.optJSONObject("mask")),
         brush = brushFromJson(o.optJSONObject("brush")),
+        visualizer = o.optJSONObject("visualizer")?.let { visualizerFromJson(it) },
         keyframes = keyframesFromJson(o.optJSONObject("keyframes"))
     )
 
@@ -964,5 +966,129 @@ object ProjectRepository {
             result[prop] = list
         }
         return result
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 VISUALIZER
+    // ═══════════════════════════════════════════════════════════
+    private fun visualizerToJson(v: VisualizerState): JSONObject =
+        JSONObject().apply {
+            put("preset", v.preset.key)
+            put("linkedAudioClipId", v.linkedAudioClipId ?: JSONObject.NULL)
+
+            put("color1", v.color1)
+            put("color2", v.color2)
+
+            put("sensitivity", v.sensitivity.toDouble())
+            put("smoothing", v.smoothing.toDouble())
+
+            put("size", v.size.toDouble())
+            put("positionX", v.positionX.toDouble())
+            put("positionY", v.positionY.toDouble())
+            put("rotation", v.rotation.toDouble())
+            put("opacity", v.opacity.toDouble())
+            put("glow", v.glow)
+
+            put("imageUri", v.imageUri ?: JSONObject.NULL)
+            put("showImage", v.showImage)
+            put("imageScale", v.imageScale.toDouble())
+            put("imageOpacity", v.imageOpacity.toDouble())
+
+            put("imageIdleRotation", v.imageIdleRotation)
+            put("imageIdleSpeed", v.imageIdleSpeed.toDouble())
+            put("imagePulseAmount", v.imagePulseAmount.toDouble())
+            put("imageBassOnly", v.imageBassOnly)
+
+            put("showText", v.showText)
+            put("textContent", v.textContent)
+            put("textState", textStateToJson(v.textState))
+            put("textOnTopOfImage", v.textOnTopOfImage)
+
+            put("bassRingBoost", v.bassRingBoost.toDouble())
+            put("midBarBoost", v.midBarBoost.toDouble())
+            put("trebleSpikeBoost", v.trebleSpikeBoost.toDouble())
+
+            put("beatReaction", v.beatReaction.toDouble())
+            put("beatPulseDurationMs", v.beatPulseDurationMs)
+            put("useBeatSync", v.useBeatSync)
+
+            put("lerpFactor", v.lerpFactor.toDouble())
+
+            val bt = JSONArray()
+            v.beatTimesMs.forEach { bt.put(it) }
+            put("beatTimesMs", bt)
+
+            val bs = JSONArray()
+            v.beatStrengths.forEach { bs.put(it.toDouble()) }
+            put("beatStrengths", bs)
+        }
+
+    private fun visualizerFromJson(o: JSONObject): VisualizerState {
+        val preset = VisualizerPreset
+            .fromKey(o.optString("preset", "neonGlowRing"))
+
+        val beatTimes = mutableListOf<Long>()
+        val btArr = o.optJSONArray("beatTimesMs")
+        if (btArr != null) {
+            for (i in 0 until btArr.length()) {
+                beatTimes.add(btArr.optLong(i, 0L))
+            }
+        }
+
+        val beatStrengths = mutableListOf<Float>()
+        val bsArr = o.optJSONArray("beatStrengths")
+        if (bsArr != null) {
+            for (i in 0 until bsArr.length()) {
+                beatStrengths.add(bsArr.optDouble(i, 0.5).toFloat())
+            }
+        }
+
+        return VisualizerState(
+            preset = preset,
+            linkedAudioClipId = if (o.isNull("linkedAudioClipId")) null
+            else o.optString("linkedAudioClipId", null),
+
+            color1 = o.optLong("color1", 0xFFFFD166L),
+            color2 = o.optLong("color2", 0xFFFFA500L),
+
+            sensitivity = o.optDouble("sensitivity", 1.5).toFloat(),
+            smoothing = o.optDouble("smoothing", 0.65).toFloat(),
+
+            size = o.optDouble("size", 0.32).toFloat(),
+            positionX = o.optDouble("positionX", 0.5).toFloat(),
+            positionY = o.optDouble("positionY", 0.5).toFloat(),
+            rotation = o.optDouble("rotation", 0.0).toFloat(),
+            opacity = o.optDouble("opacity", 1.0).toFloat(),
+            glow = o.optBoolean("glow", true),
+
+            imageUri = if (o.isNull("imageUri")) null
+            else o.optString("imageUri", null),
+            showImage = o.optBoolean("showImage", false),
+            imageScale = o.optDouble("imageScale", 0.55).toFloat(),
+            imageOpacity = o.optDouble("imageOpacity", 1.0).toFloat(),
+
+            imageIdleRotation = o.optBoolean("imageIdleRotation", true),
+            imageIdleSpeed = o.optDouble("imageIdleSpeed", 0.5).toFloat(),
+            imagePulseAmount = o.optDouble("imagePulseAmount", 0.15).toFloat(),
+            imageBassOnly = o.optBoolean("imageBassOnly", true),
+
+            showText = o.optBoolean("showText", false),
+            textContent = o.optString("textContent", "🎵"),
+            textState = o.optJSONObject("textState")?.let { textStateFromJson(it) }
+                ?: TextState(),
+            textOnTopOfImage = o.optBoolean("textOnTopOfImage", true),
+
+            bassRingBoost = o.optDouble("bassRingBoost", 1.0).toFloat(),
+            midBarBoost = o.optDouble("midBarBoost", 1.0).toFloat(),
+            trebleSpikeBoost = o.optDouble("trebleSpikeBoost", 1.0).toFloat(),
+
+            beatTimesMs = beatTimes,
+            beatStrengths = beatStrengths,
+            beatReaction = o.optDouble("beatReaction", 1.0).toFloat(),
+            beatPulseDurationMs = o.optLong("beatPulseDurationMs", 260L),
+            useBeatSync = o.optBoolean("useBeatSync", true),
+
+            lerpFactor = o.optDouble("lerpFactor", 0.20).toFloat()
+        )
     }
 }

@@ -50,6 +50,8 @@ object VisualizerBitmapRenderer {
         }
 
         val sortedViz = visualizerClips.sortedBy { it.timelineStartMs }
+        // 🆕 Compute min track index for correct composite layering
+        val renderTrackIndex = visualizerClips.minOfOrNull { it.trackIndex } ?: 0
 
         // Preload images
         val vizBitmaps = mutableMapOf<String, Bitmap?>()
@@ -96,6 +98,7 @@ object VisualizerBitmapRenderer {
                         vizBitmaps = vizBitmaps,
                         allClips = allClips,
                         emptyPngBytes = emptyPngBytes,
+                        renderTrackIndex = renderTrackIndex,   // 🆕 add this
                         onFrameDone = {
                             val done = completedCounter.incrementAndGet()
                             onProgress(done.toFloat() / totalFrames.toFloat())
@@ -122,6 +125,7 @@ object VisualizerBitmapRenderer {
         vizBitmaps: Map<String, Bitmap?>,
         allClips: List<EditorClip>,
         emptyPngBytes: ByteArray,
+        renderTrackIndex: Int,          // 🆕 add this
         onFrameDone: () -> Unit
     ): TextOverlaySequence {
 
@@ -223,7 +227,8 @@ object VisualizerBitmapRenderer {
             fps = fps,
             startNumber = 1,
             startSec = startSec,
-            endSec = endSec
+            endSec = endSec,
+            trackIndex = renderTrackIndex      // 🆕 add this
         )
     }
 }

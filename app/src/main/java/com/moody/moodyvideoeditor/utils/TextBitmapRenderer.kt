@@ -35,7 +35,8 @@ data class TextOverlaySequence(
     val fps: Int,
     val startNumber: Int,
     val startSec: Double,
-    val endSec: Double
+    val endSec: Double,
+    val trackIndex: Int = 0    // 🆕 layer order for composite sorting
 )
 
 object TextBitmapRenderer {
@@ -81,7 +82,12 @@ object TextBitmapRenderer {
         val sortedOverlayClips = overlayClips.sortedWith(
             compareBy({ it.trackIndex }, { it.timelineStartMs })
         )
-
+        // 🆕 Compute min track index for correct composite layering
+        val renderTrackIndex = (
+                textClips.map { it.trackIndex } +
+                        imageClips.map { it.trackIndex } +
+                        overlayClips.map { it.trackIndex }
+                ).minOrNull() ?: 0
         // 🆕 Pre-generate empty transparent PNG (reused for empty frames)
         val emptyPngBytes: ByteArray = ByteArrayOutputStream().use { baos ->
             val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
@@ -110,6 +116,7 @@ object TextBitmapRenderer {
                         textClips = sortedTextClips,
                         overlayClips = sortedOverlayClips,
                         emptyPngBytes = emptyPngBytes,
+                        renderTrackIndex = renderTrackIndex,   // 🆕 add this
                         onFrameDone = {
                             val done = completedCounter.incrementAndGet()
                             onProgress(done.toFloat() / totalFrames.toFloat())
@@ -138,6 +145,7 @@ object TextBitmapRenderer {
         textClips: List<EditorClip>,
         overlayClips: List<EditorClip>,
         emptyPngBytes: ByteArray,
+        renderTrackIndex: Int,              // 🆕 add this
         onFrameDone: () -> Unit
     ): TextOverlaySequence {
 
@@ -244,7 +252,8 @@ object TextBitmapRenderer {
             fps = fps,
             startNumber = 1,
             startSec = startSec,
-            endSec = endSec
+            endSec = endSec,
+            trackIndex = renderTrackIndex      // 🆕 add this
         )
     }
 
