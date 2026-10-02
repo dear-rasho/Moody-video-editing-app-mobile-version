@@ -9,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -40,6 +41,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -54,6 +56,7 @@ import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.data.RatioLibrary
 import com.moody.moodyvideoeditor.data.TransitionState
+import com.moody.moodyvideoeditor.data.VisualizerState
 import com.moody.moodyvideoeditor.ui.components.ControlBar
 import com.moody.moodyvideoeditor.ui.components.FeatureShelf
 import com.moody.moodyvideoeditor.ui.components.PlaybackControls
@@ -84,9 +87,9 @@ import com.moody.moodyvideoeditor.ui.features.TextPanel
 import com.moody.moodyvideoeditor.ui.features.TransformPanel
 import com.moody.moodyvideoeditor.ui.features.TransitionsPanel
 import com.moody.moodyvideoeditor.ui.features.TrimPanel
+import com.moody.moodyvideoeditor.ui.features.VisualizerPanel
 import com.moody.moodyvideoeditor.ui.features.VolumePanel
 import com.moody.moodyvideoeditor.utils.AudioPreviewEngine
-import com.moody.moodyvideoeditor.utils.BeatsEngine
 import com.moody.moodyvideoeditor.utils.CropEngine
 import com.moody.moodyvideoeditor.utils.PromptEngine
 import com.moody.moodyvideoeditor.utils.PromptExecutor
@@ -95,6 +98,7 @@ import com.moody.moodyvideoeditor.utils.TransformApplier
 import com.moody.moodyvideoeditor.utils.TransformValues
 import com.moody.moodyvideoeditor.utils.VideoExporter
 import com.moody.moodyvideoeditor.utils.VideoUtils
+import com.moody.moodyvideoeditor.utils.VisualizerEngine
 import com.moody.moodyvideoeditor.viewmodel.EditorViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -120,6 +124,9 @@ fun EditorScreen(
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
 
+    // ═══════════════════════════════════════════════════════════
+    //  PROJECT LOAD / AUTO-SAVE
+    // ═══════════════════════════════════════════════════════════
     LaunchedEffect(projectId) {
         if (projectId.isNotBlank() && viewModel.getProjectId() != projectId) {
             viewModel.loadProject(context, projectId)
@@ -145,6 +152,9 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  PANEL STATE
+    // ═══════════════════════════════════════════════════════════
     var activePanel by remember {
         mutableStateOf<String?>(if (startInCodeMode) "code" else null)
     }
@@ -154,6 +164,9 @@ fun EditorScreen(
     var filterEditLayerId by remember { mutableStateOf<String?>(null) }
     var effectEditLayerId by remember { mutableStateOf<String?>(null) }
 
+    // ═══════════════════════════════════════════════════════════
+    //  BRUSH STATE
+    // ═══════════════════════════════════════════════════════════
     var isDrawingMode by remember { mutableStateOf(false) }
     var isMaskPenMode by remember { mutableStateOf(false) }
     var brushType by remember { mutableStateOf(BrushType.PEN) }
@@ -164,8 +177,22 @@ fun EditorScreen(
         mutableStateOf(com.moody.moodyvideoeditor.data.BrushGradient())
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  IMPORT STATE
+    // ═══════════════════════════════════════════════════════════
     var pendingUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var pendingVizImageUri by remember { mutableStateOf<String?>(null) }
 
+    // ═══════════════════════════════════════════════════════════
+    //  VISUALIZER DETECTION STATE
+    // ═══════════════════════════════════════════════════════════
+    var isDetectingBeats by remember { mutableStateOf(false) }
+    var beatDetectionProgress by remember { mutableFloatStateOf(0f) }
+    var beatDetectionError by remember { mutableStateOf<String?>(null) }
+
+    // ═══════════════════════════════════════════════════════════
+    //  EXPORT STATE
+    // ═══════════════════════════════════════════════════════════
     var isExporting by remember { mutableStateOf(false) }
     var exportProgress by remember { mutableFloatStateOf(0f) }
     var exportMessage by remember { mutableStateOf("") }
@@ -176,11 +203,20 @@ fun EditorScreen(
     var showCancelConfirm by remember { mutableStateOf(false) }
     var activeExporter by remember { mutableStateOf<VideoExporter?>(null) }
 
+    // ═══════════════════════════════════════════════════════════
+    //  PROMPT STATE
+    // ═══════════════════════════════════════════════════════════
     var promptFeedback by remember { mutableStateOf("") }
     var promptFeedbackType by remember { mutableStateOf("none") }
 
+    // ═══════════════════════════════════════════════════════════
+    //  PLAYBACK STATE
+    // ═══════════════════════════════════════════════════════════
     var isPlaybackActive by remember { mutableStateOf(false) }
 
+    // ═══════════════════════════════════════════════════════════
+    //  TWO EXOPLAYERS
+    // ═══════════════════════════════════════════════════════════
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
     }
@@ -196,6 +232,18 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  VISUALIZER CACHE CLEANUP
+    // ═══════════════════════════════════════════════════════════
+    DisposableEffect(Unit) {
+        onDispose {
+            VisualizerEngine.clearCache()
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  AUDIO FX PREVIEW — release on panel change
+    // ═══════════════════════════════════════════════════════════
     LaunchedEffect(activePanel) {
         if (activePanel != "audiofx" && activePanel != "soundfx") {
             AudioPreviewEngine.release()
@@ -209,7 +257,9 @@ fun EditorScreen(
         }
     }
 
-    // 🆕 Visibility toggle pe preview clear
+    // ═══════════════════════════════════════════════════════════
+    //  PREVIEW CLEAR ON TRACK HIDE
+    // ═══════════════════════════════════════════════════════════
     LaunchedEffect(state.hiddenVisualTracks, filterEditLayerId, effectEditLayerId) {
         val editFilter = filterEditLayerId?.let { id ->
             state.clips.firstOrNull { it.id == id }
@@ -230,10 +280,14 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  MUTE STATE
+    // ═══════════════════════════════════════════════════════════
     val activeClipTrackMuted = remember(state.selectedClip, state.mutedAudioTracks) {
         val sel = state.selectedClip
         sel != null && sel.isAudio && state.mutedAudioTracks.contains(sel.trackIndex)
     }
+
     val anyActiveAudioMuted = remember(
         state.clips, state.currentPosMs, state.mutedAudioTracks
     ) {
@@ -244,6 +298,7 @@ fun EditorScreen(
                     state.mutedAudioTracks.contains(c.trackIndex)
         }
     }
+
     LaunchedEffect(state.volume, state.isMuted, activeClipTrackMuted, anyActiveAudioMuted) {
         exoPlayer.volume = when {
             state.isMuted -> 0f
@@ -253,7 +308,9 @@ fun EditorScreen(
         }
     }
 
-    // Video playback sync
+    // ═══════════════════════════════════════════════════════════
+    //  VIDEO PLAYBACK SYNC
+    // ═══════════════════════════════════════════════════════════
     LaunchedEffect(state.currentPosMs, state.clips, state.hiddenVisualTracks) {
         val playheadMs = state.currentPosMs
         val activeClip = state.clips
@@ -318,7 +375,9 @@ fun EditorScreen(
         }
     }
 
-    // Audio playback sync
+    // ═══════════════════════════════════════════════════════════
+    //  AUDIO PLAYBACK SYNC
+    // ═══════════════════════════════════════════════════════════
     LaunchedEffect(state.currentPosMs, state.clips, state.mutedAudioTracks) {
         val playheadMs = state.currentPosMs
         val activeAudio = state.clips
@@ -390,7 +449,9 @@ fun EditorScreen(
         }
     }
 
-    // Playhead ticker
+    // ═══════════════════════════════════════════════════════════
+    //  PLAYHEAD TICKER
+    // ═══════════════════════════════════════════════════════════
     LaunchedEffect(isPlaybackActive) {
         if (!isPlaybackActive) {
             try {
@@ -419,6 +480,9 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  MEDIA PICKERS
+    // ═══════════════════════════════════════════════════════════
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
@@ -443,7 +507,51 @@ fun EditorScreen(
         }
     }
 
-    // Multi-import processing
+    // ═══════════════════════════════════════════════════════════
+    //  VISUALIZER IMAGE PICKER — JFIF/HEIC fixed
+    // ═══════════════════════════════════════════════════════════
+    val vizImagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    it, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+            }
+
+            val name = VideoUtils.getFileName(context, it).lowercase()
+            val needsConvert = name.endsWith(".jfif") ||
+                    name.endsWith(".jif") ||
+                    name.endsWith(".jfi") ||
+                    name.endsWith(".heic") ||
+                    name.endsWith(".heif")
+
+            val finalUri = if (needsConvert) {
+                try {
+                    val cacheFile = java.io.File(
+                        context.cacheDir,
+                        "viz_${System.currentTimeMillis()}_${it.hashCode()}.jpg"
+                    )
+                    context.contentResolver.openInputStream(it)?.use { input ->
+                        cacheFile.outputStream().use { out -> input.copyTo(out) }
+                    }
+                    Uri.fromFile(cacheFile)
+                } catch (e: Exception) {
+                    Log.e("VIZ_IMAGE", "Convert failed", e)
+                    it
+                }
+            } else it
+
+            pendingVizImageUri = finalUri.toString()
+            Log.e("VIZ_IMAGE", "Picked: $name → $finalUri")
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  MULTI-IMPORT PROCESSING
+    // ═══════════════════════════════════════════════════════════
     LaunchedEffect(pendingUris) {
         val uris = pendingUris
         if (uris.isEmpty()) return@LaunchedEffect
@@ -510,6 +618,9 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  PROMPT RUNNER
+    // ═══════════════════════════════════════════════════════════
     fun runPrompt(input: String) {
         try {
             val parsed = PromptEngine.parse(input)
@@ -538,6 +649,9 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  EXPORT
+    // ═══════════════════════════════════════════════════════════
     fun startExport() {
         if (state.clips.isEmpty()) {
             exportMessage = "❌ No clips to export"
@@ -557,18 +671,10 @@ fun EditorScreen(
             rangeEnd = totalDur
         }
 
-        Log.e(
-            "EXPORT",
-            "useCustomRange=$useCustomRange, " +
-                    "exportStartMs=$exportStartMs, exportEndMs=$exportEndMs, " +
-                    "totalDur=$totalDur → range=$rangeStart..$rangeEnd"
-        )
-
         isExporting = true
         exportProgress = 0f
-        exportMessage = "⏳ Preparing… (rendering text overlays)"
+        exportMessage = "⏳ Preparing… (rendering overlays)"
 
-// 🆕 Hidden tracks ke clips export se exclude
         val clipsSnapshot = state.clips.filter {
             !state.hiddenVisualTracks.contains(it.trackIndex)
         }
@@ -636,6 +742,35 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  VISUALIZER CREATION WITH BEAT DETECTION (Manual)
+    // ═══════════════════════════════════════════════════════════
+    fun launchVisualizerCreation() {
+        isDetectingBeats = true
+        beatDetectionProgress = 0f
+        beatDetectionError = null
+
+        kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val success = viewModel.createVisualizerClipWithBeats(context)
+                isDetectingBeats = false
+                if (!success) {
+                    beatDetectionError = "Could not create visualizer"
+                } else {
+                    beatDetectionError = null
+                    activePanel = null
+                }
+            } catch (e: Throwable) {
+                isDetectingBeats = false
+                beatDetectionError = "Failed: ${e.message}"
+                Log.e("VISUALIZER", "Create failed", e)
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  MAIN LAYOUT
+    // ═══════════════════════════════════════════════════════════
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -695,6 +830,7 @@ fun EditorScreen(
                 aspectMode = state.aspectMode,
                 clips = state.clips,
                 currentPosMs = state.currentPosMs,
+                isPlaying = isPlaybackActive,
                 hiddenVisualTracks = state.hiddenVisualTracks,
                 aspectRatioKey = state.aspectRatio,
                 selectedClipId = state.selectedClipId,
@@ -749,6 +885,12 @@ fun EditorScreen(
                 },
                 onBrushTransformChanged = { clipId, s, r ->
                     viewModel.updateSelectedTransformBulk(clipId, s, r)
+                },
+                onVisualizerPositionChanged = { clipId, x, y ->
+                    viewModel.updateSelectedPositionBulk(clipId, x, y)
+                },
+                onVisualizerTransformChanged = { clipId, s, r ->
+                    viewModel.updateSelectedTransformBulk(clipId, s, r)
                 }
             )
         }
@@ -780,6 +922,13 @@ fun EditorScreen(
                 .height(220.dp)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
+                val selectedForToolbar = state.selectedClip
+                val linkGroupId = selectedForToolbar?.linkGroupId
+                val multiCount = state.multiSelectedIds.size
+                val canLink = multiCount >= 2 ||
+                        (selectedForToolbar != null && linkGroupId == null)
+                val isLinked = linkGroupId != null
+
                 TimelineToolbar(
                     onSelectBackward = { viewModel.selectBackward() },
                     onSelectForward = { viewModel.selectForward() },
@@ -789,6 +938,18 @@ fun EditorScreen(
                     onMagnet = { viewModel.closeGapsFromPlayhead() },
                     onAddVisualLayer = { viewModel.addVisualLayer() },
                     onAddAudioLayer = { viewModel.addAudioLayer() },
+                    onLink = {
+                        val gid = viewModel.linkSelectedClips()
+                        Log.e("LINK", "Linked result: $gid")
+                    },
+                    onUnlink = {
+                        selectedForToolbar?.let {
+                            viewModel.unlinkClip(it.id)
+                            Log.e("LINK", "Unlinked: ${it.id}")
+                        }
+                    },
+                    isLinked = isLinked,
+                    canLink = canLink,
                     zoomSlider = state.timelineZoom,
                     totalSec = state.totalDurationMs / 1000f,
                     viewportContentWidthDp = 320f,
@@ -808,6 +969,10 @@ fun EditorScreen(
                         if (clip.isEffectClip) {
                             effectEditLayerId = clip.id
                             activePanel = "effects"
+                        }
+
+                        if (clip.isVisualizerClip) {
+                            activePanel = "visualizer"
                         }
                     },
                     onTrackTapped = { ti, aud -> viewModel.selectTrack(ti, aud) },
@@ -913,7 +1078,9 @@ fun EditorScreen(
             onKeyframe = { viewModel.toggleKeyframeAll() }
         )
 
-        // ─── FEATURE PANEL / SHELF ───
+        // ═══════════════════════════════════════════════════════
+        //  FEATURE PANEL / SHELF
+        // ═══════════════════════════════════════════════════════
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -924,12 +1091,8 @@ fun EditorScreen(
             when (activePanel) {
                 null -> FeatureShelf(
                     onFeatureSelected = { key ->
-                        if (key == "filters") {
-                            filterEditLayerId = null
-                        }
-                        if (key == "effects") {
-                            effectEditLayerId = null
-                        }
+                        if (key == "filters") filterEditLayerId = null
+                        if (key == "effects") effectEditLayerId = null
                         activePanel = key
                     },
                     scrollState = featureScrollState
@@ -1348,15 +1511,301 @@ fun EditorScreen(
                         count = state.beatsCount,
                         filter = state.beatsFilter
                     ),
-                    onDetect = { filter ->
-                        val beats = BeatsEngine.detectSynthetic(
-                            state.totalDurationMs, filter
-                        )
-                        viewModel.updateBeats(beats)
-                    },
+                    viewModel = viewModel,
+                    onDetect = { },
                     onClear = { viewModel.clearBeats() },
                     onClose = { activePanel = null }
                 )
+
+                // ═══════════════════════════════════════════════════════
+                //  VISUALIZER — Manual button + selected-audio only
+                // ═══════════════════════════════════════════════════════
+                "visualizer" -> {
+                    // 🎯 Only find visualizer linked to CURRENTLY SELECTED audio
+                    val selectedAudioId: String? = selected?.takeIf {
+                        it.isAudio && !it.isAudioEffectClip
+                    }?.id
+
+                    val vizClip = selected?.takeIf { it.isVisualizerClip }
+                        ?: state.clips.firstOrNull { clip ->
+                            clip.isVisualizerClip &&
+                                    selectedAudioId != null &&
+                                    clip.visualizer?.linkedAudioClipId == selectedAudioId
+                        }
+
+                    when {
+                        // ═══ DETECTING BEATS ═══
+                        isDetectingBeats -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF1A1F3A))
+                                    .padding(20.dp)
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Text("🎵", fontSize = 36.sp)
+                                    Text(
+                                        "Detecting beats…",
+                                        color = Color(0xFF60EFFF),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        "Analyzing linked audio. This may take a few seconds.",
+                                        color = Color(0xFF888888),
+                                        fontSize = 10.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(4.dp)
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(Color(0xFF0F0F0F))
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth(
+                                                    beatDetectionProgress.coerceIn(
+                                                        0f, 1f
+                                                    )
+                                                )
+                                                .height(4.dp)
+                                                .background(Color(0xFF60EFFF))
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // ═══ BEAT DETECTION ERROR ═══
+                        beatDetectionError != null && vizClip == null -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF2A0F0F))
+                                    .padding(16.dp)
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text("❌", fontSize = 32.sp)
+                                    Text(
+                                        beatDetectionError ?: "Error",
+                                        color = Color(0xFFFF6B6B),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .height(36.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color(0xFF7C3AED))
+                                            .pointerInput(Unit) {
+                                                detectTapGestures {
+                                                    beatDetectionError = null
+                                                    activePanel = null
+                                                }
+                                            }
+                                            .padding(horizontal = 20.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            "OK",
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // ═══ NO VISUALIZER YET — CREATE ═══
+                        vizClip == null -> {
+                            val sel = selected
+                            val selectedIsAudio = sel != null &&
+                                    sel.isAudio && !sel.isAudioEffectClip
+
+                            if (!selectedIsAudio) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color(0xFF2A0F0F))
+                                        .padding(16.dp)
+                                ) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text("⚠️", fontSize = 32.sp)
+                                        Text(
+                                            "Select an audio clip first",
+                                            color = Color(0xFFFF6B6B),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            "Visualizer only reacts to its " +
+                                                    "linked audio clip. " +
+                                                    "Please select an audio clip " +
+                                                    "on the timeline, then tap " +
+                                                    "Visualizer again.",
+                                            color = Color(0xFF888888),
+                                            fontSize = 11.sp,
+                                            textAlign = TextAlign.Center
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .height(36.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(Color(0xFF7C3AED))
+                                                .pointerInput(Unit) {
+                                                    detectTapGestures {
+                                                        activePanel = null
+                                                    }
+                                                }
+                                                .padding(horizontal = 20.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                "OK",
+                                                color = Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                // ✅ Manual "Create Visualizer" button — NO auto-launch
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color(0xFF1A1F3A))
+                                        .padding(16.dp)
+                                ) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Text("🎵", fontSize = 36.sp)
+                                        Text(
+                                            "Create Visualizer for \"${sel.name.take(20)}\"",
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            textAlign = TextAlign.Center
+                                        )
+                                        Text(
+                                            "Beats will be detected from this audio. " +
+                                                    "This may take a few seconds.",
+                                            color = Color(0xFF888888),
+                                            fontSize = 10.sp,
+                                            textAlign = TextAlign.Center
+                                        )
+
+                                        // Explicit button
+                                        Box(
+                                            modifier = Modifier
+                                                .height(44.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(Color(0xFF7C3AED))
+                                                .pointerInput(sel.id) {
+                                                    detectTapGestures {
+                                                        launchVisualizerCreation()
+                                                    }
+                                                }
+                                                .padding(horizontal = 24.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                "✨ Create Visualizer",
+                                                color = Color.White,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        Text(
+                                            "Or use Code Mode: visualizer add",
+                                            color = Color(0xFF666666),
+                                            fontSize = 9.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // ═══ VISUALIZER EXISTS — SHOW PANEL ═══
+                        else -> {
+                            LaunchedEffect(pendingVizImageUri) {
+                                val uri = pendingVizImageUri
+                                    ?: return@LaunchedEffect
+                                viewModel.updateVisualizerLayer(
+                                    vizClip.id,
+                                    (vizClip.visualizer ?: VisualizerState()).copy(
+                                        imageUri = uri,
+                                        showImage = true
+                                    )
+                                )
+                                pendingVizImageUri = null
+                            }
+
+                            val hasAudio = state.clips.any {
+                                it.isAudio && !it.isAudioEffectClip
+                            }
+
+                            VisualizerPanel(
+                                current = vizClip.visualizer ?: VisualizerState(),
+                                hasAudio = hasAudio,
+                                onStateChanged = {
+                                    viewModel.updateVisualizerLayer(vizClip.id, it)
+                                },
+                                onPickImage = {
+                                    vizImagePicker.launch(
+                                        arrayOf(
+                                            "image/*",
+                                            "image/jpeg",
+                                            "image/jpg",
+                                            "image/pjpeg",
+                                            "image/webp",
+                                            "image/gif",
+                                            "image/bmp",
+                                            "image/heic",
+                                            "image/heif",
+                                            "application/octet-stream",
+                                            "*/*"
+                                        )
+                                    )
+                                },
+                                onClearImage = {
+                                    viewModel.updateVisualizerLayer(
+                                        vizClip.id,
+                                        (vizClip.visualizer ?: VisualizerState()).copy(
+                                            imageUri = null,
+                                            showImage = false
+                                        )
+                                    )
+                                },
+                                onRemove = {
+                                    viewModel.removeVisualizerLayer(vizClip.id)
+                                    activePanel = null
+                                },
+                                onClose = { activePanel = null }
+                            )
+                        }
+                    }
+                }
 
                 "ratio" -> AspectRatioPanel(
                     currentRatio = state.aspectRatio,

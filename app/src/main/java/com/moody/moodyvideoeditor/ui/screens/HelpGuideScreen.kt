@@ -570,6 +570,50 @@ Skip one clip:
   brush gradient red to blue
   brush gradient #ff0066 to #00ffcc
   brush solid                   → turn off gradient
+  ### 🎵 VISUALIZER (audio-reactive layer)
+
+Syntax:
+  visualizer COMMAND
+
+Commands:
+  visualizer add                    → create visualizer for selected audio clip
+  visualizer remove                 → delete current visualizer
+  visualizer preset NAME            → change preset
+  visualizer color1 #hex | COLORNAME → ring color A
+  visualizer color2 #hex | COLORNAME → ring color B
+  visualizer size N                 → 15..60 (percent of screen)
+  visualizer pos X Y                → 0..100 (0,0 = top-left)
+  visualizer opacity N              → 0..100
+  visualizer glow on | off          → enable/disable glow
+  visualizer reaction N             → 0..2 beat sensitivity
+  visualizer text "Hello"           → show text inside circle
+  visualizer text "Hi" size 60      → text + custom size
+  visualizer show text              → enable text display
+  visualizer show image             → enable image display
+  visualizer hide text              → hide text
+  visualizer hide image             → hide image
+  visualizer order text-top         → text on top of image
+  visualizer order image-top        → image on top of text
+
+Preset names (aliases):
+  neon / glow / neonring          → Neon Glow Ring
+  spectrum / freq / bars          → Frequency Spectrum Ring
+  particle / orbit                → Particle Orbit Ring
+  liquid / wave                   → Liquid Wave Ring
+  double / doubleorbit            → Double Orbit Rings
+  dots / dotted / dottedradial    → Dotted Radial Wave
+  vinyl / record / vinylrecord    → Vinyl Record Spin
+  center / art / centerart        → Audio Reactive Center Art
+  broken / segments / brokenring  → Broken Segment Ring
+  vortex / tunnel / vortextunnel  → Vortex Tunnel
+
+⚠️ IMPORTANT:
+  Visualizer auto-detects beats from the LINKED AUDIO clip.
+  User MUST select an audio clip BEFORE running "visualizer add".
+
+Example:
+  visualizer add, visualizer preset vortex, visualizer color1 #ff0066, visualizer color2 cyan,
+   visualizer size 50, visualizer glow on, visualizer text "🔥", visualizer show text
 
 ### 🎙️ AUDIO FX
   audio studio, audio warm, audio bright, audio vocal, audio podcast,
@@ -765,7 +809,30 @@ private fun CommandsContent() {
             "animation trailFade"
         )
     )
-
+    CommandCategory(
+        "🎵 Visualizer", listOf(
+            "visualizer add",
+            "visualizer remove",
+            "visualizer preset vortex",
+            "visualizer preset spectrum",
+            "visualizer preset vinyl",
+            "visualizer color1 #ff0066",
+            "visualizer color2 cyan",
+            "visualizer size 50",
+            "visualizer pos 50 50",
+            "visualizer opacity 80",
+            "visualizer glow on",
+            "visualizer reaction 1.5",
+            "visualizer text \"Hello\"",
+            "visualizer text \"Hi\" size 60",
+            "visualizer show text",
+            "visualizer show image",
+            "visualizer hide text",
+            "visualizer hide image",
+            "visualizer order text-top",
+            "visualizer order image-top"
+        )
+    )
     CommandCategory(
         "😀 Stickers", listOf(
             "sticker 🔥",
@@ -1024,7 +1091,20 @@ private fun GuideContent() {
             "Custom → Pen tool → tap points → close on first point"
         )
     )
-
+    GuideSection(
+        "🎵 Visualizer", listOf(
+            "1. Timeline pe AUDIO clip add karo",
+            "2. Audio clip SELECT karo",
+            "3. FeatureShelf → 🎵 Visualizer tap karo",
+            "4. Beats auto-detect honge (2-5 sec)",
+            "5. Visualizer timeline pe V-layer mein ban jayegi",
+            "6. Preview pe drag/pinch → move/scale/rotate",
+            "7. Circle Content: 🖼️ Image ya 📝 Text ON karo",
+            "8. Text mode mein full TextPanel khulta hai (font/color/glow/shadow/gradient)",
+            "9. Both ON → Order toggle (Image→Text / Text→Image)",
+            "10. Visualizer layer ko V2/V3 pe drag karo → upar/neeche layering"
+        )
+    )
     GuideSection(
         "🔲 Transform & Keyframes", listOf(
             "Transform → Position/Scale/Rotation/Anchor",

@@ -26,8 +26,8 @@ data class EditorClip(
     val adjustments: AdjustmentData = AdjustmentData(),
     val sourceTotalMs: Long = Long.MAX_VALUE,
     val linkedId: String? = null,
+    val linkGroupId: String? = null,   // 🆕 user-defined multi-clip link
     val isMuted: Boolean = false,
-
     // 🆕 PER-CLIP AUDIO EFFECTS
     val audioFx: String = "none",
     val audioFxIntensity: Float = 100f,
@@ -50,6 +50,8 @@ data class EditorClip(
 
     val brush: BrushState = BrushState(),
 
+    val visualizer: VisualizerState? = null,
+
     val keyframes: Map<String, List<Keyframe>> = emptyMap()
 ) {
     val sourceDurationMs: Long get() = sourceEndMs - sourceStartMs
@@ -67,6 +69,24 @@ data class EditorClip(
     val isOverlayClip: Boolean get() = type == "overlay/plain"
     val isChromaClip: Boolean get() = type == "chroma/plain"
     val isBrushClip: Boolean get() = type == "brush/plain"
+    val isVisualizerClip: Boolean get() = type == "visualizer/plain"
+
+    // 🆕 Link anchor priority (higher = anchor)
+    val linkAnchorPriority: Int
+        get() = when {
+            !isAudio && isVisualClip && trackIndex == 0 -> 100  // V1 video
+            !isAudio && isVisualClip -> 90                       // higher video
+            isAudio && !isAudioEffectClip -> 80                  // source audio
+            isTextClip -> 60
+            isStickerClip -> 55
+            isVisualizerClip -> 50
+            isOverlayClip -> 45
+            isEffectClip -> 40
+            isBrushClip -> 35
+            isAdjustmentClip -> 30
+            isFilterLayerClip -> 25
+            else -> 10
+        }
 
     // 🆕 Audio effect layers
     val isAudioFxClip: Boolean get() = type == "audiofx/plain"
@@ -132,6 +152,8 @@ data class EditorState(
     val beatsDetected: Boolean = false,
     val beatsCount: Int = 0,
     val beatsFilter: String = "all",
+    val beatTimesMs: List<Long> = emptyList(),
+    val beatStrengths: List<Float> = emptyList(),   // 🆕
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
     val timelineZoom: Float = 0f,

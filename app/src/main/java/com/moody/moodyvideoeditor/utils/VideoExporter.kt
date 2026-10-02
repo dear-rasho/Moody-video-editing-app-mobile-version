@@ -46,24 +46,16 @@ class VideoExporter(
         val rangeStart = customStartMs.coerceIn(0L, totalTimeline)
         val rangeEnd = if (customEndMs > rangeStart) {
             customEndMs.coerceIn(rangeStart + 500L, totalTimeline)
-        } else {
-            totalTimeline
-        }
+        } else totalTimeline
 
         Log.e("EXPORT_RANGE", "Range: $rangeStart → $rangeEnd (of $totalTimeline)")
 
-        // ═══════════════════════════════════════════════════════════
-        //  Visual clips (video/image) → FFmpeg base
-        //  🆕 FIX: Only BASE TRACK (V1) visual clips go to FFmpeg
-        //          so transitions work properly
-        // ═══════════════════════════════════════════════════════════
+        // ─── Visual clips (video/image) ───
         val allVisual = clips.filter {
             it.isVisualClip &&
                     it.uri.toString().isNotBlank() &&
                     it.uri != Uri.EMPTY
         }
-
-        // 🆕 Find base track (lowest track index with visual clips)
         val baseTrackIndex = allVisual.minOfOrNull { it.trackIndex } ?: 0
         val baseVisualClips = allVisual.filter { it.trackIndex == baseTrackIndex }
         val higherTrackVisualClips = allVisual.filter { it.trackIndex > baseTrackIndex }
@@ -71,15 +63,10 @@ class VideoExporter(
         if (higherTrackVisualClips.isNotEmpty()) {
             Log.w(
                 "EXPORT",
-                "⚠️ ${higherTrackVisualClips.size} higher-track visual clips " +
-                        "are NOT included in FFmpeg base. " +
-                        "Only V${baseTrackIndex + 1} clips exported. " +
-                        "Higher-track video overlay support is future work."
+                "⚠️ ${higherTrackVisualClips.size} higher-track visual clips skipped"
             )
         }
 
-        // Overlay image clips (higher track images) — currently also skipped
-        // because they can't be overlaid via FFmpeg easily with transitions
         val overlayImageClips = trimClipsToRange(
             baseVisualClips.filter {
                 it.type.startsWith("image/") && it.trackIndex > 0
@@ -87,7 +74,6 @@ class VideoExporter(
             rangeStart, rangeEnd
         )
 
-        // 🆕 Base visual clips (V1) → main export track
         val trimmedVisualClips = trimClipsToRange(
             baseVisualClips.filter {
                 !(it.type.startsWith("image/") && it.trackIndex > 0)
@@ -95,9 +81,7 @@ class VideoExporter(
             rangeStart, rangeEnd
         )
 
-        // ═══════════════════════════════════════════════════════════
-        //  Audio-only clips (mp3/wav) — trimmed to range
-        // ═══════════════════════════════════════════════════════════
+        // ─── Audio-only clips ───
         val audioOnlyClips = trimClipsToRange(
             clips.filter {
                 it.isAudio &&
@@ -108,12 +92,13 @@ class VideoExporter(
             rangeStart, rangeEnd
         )
 
+        // ─── Text + sticker ───
         val trimmedTextClips = trimClipsToRange(
             clips.filter { it.isTextClip || it.isStickerClip },
             rangeStart, rangeEnd
         )
 
-// 🆕 Overlay clips (direct + effect clips with overlay)
+        // ─── Overlay clips ───
         val trimmedOverlayClips = trimClipsToRange(
             clips.filter {
                 it.isOverlayClip ||
@@ -121,15 +106,37 @@ class VideoExporter(
             },
             rangeStart, rangeEnd
         )
+
+        // ─── 🆕 Visualizer clips (KEEP original timeline!) ───
+        // Important: NOT trimmed because we need original position for
+        // audio-relative time in VisualizerBitmapRenderer.
+        val vizClips = clips.filter { it.isVisualizerClip }
+
         val exportDurationMs = rangeEnd - rangeStart
 
         val (targetW, targetH) = ExportSettings.targetDimensions(
             resolution, aspectRatio
         )
 
+        Log.e(
+            "EXPORT",
+            "BaseVisual=${trimmedVisualClips.size}, " +
+                    "AudioOnly=${audioOnlyClips.size}, " +
+                    "Text=${trimmedTextClips.size}, " +
+                    "Overlay=${trimmedOverlayClips.size}, " +
+                    "Visualizer=${vizClips.size}"
+        )
+
+        val hasBaseVideo = trimmedVisualClips.isNotEmpty()
+        val hasSynthetic = trimmedTextClips.isNotEmpty() ||
+                overlayImageClips.isNotEmpty() ||
+                vizClips.isNotEmpty()
+
         when {
-            // ─── Base visual + audio-only ───
-            trimmedVisualClips.isNotEmpty() || audioOnlyClips.isNotEmpty() -> {
+            // ═══════════════════════════════════════════════════════
+            //  CASE 1: Base visual clips exist → FFmpegExecutor
+            // ═══════════════════════════════════════════════════════
+            hasBaseVideo -> {
                 val outputFile = createOutputFile(fileName, format)
 
                 val textSequences = try {
@@ -138,9 +145,7 @@ class VideoExporter(
                         textClips = trimmedTextClips,
                         imageClips = overlayImageClips,
                         overlayClips = trimmedOverlayClips,
-                        W = targetW,
-                        H = targetH,
-                        fps = fps,
+                        W = targetW, H = targetH, fps = fps,
                         totalDurationMs = exportDurationMs
                     )
                 } catch (e: Throwable) {
@@ -148,13 +153,23 @@ class VideoExporter(
                     emptyList()
                 }
 
-                Log.e(
-                    "EXPORT",
-                    "BaseVisual=${trimmedVisualClips.size} (V${baseTrackIndex + 1}), " +
-                            "AudioOnly=${audioOnlyClips.size}, " +
-                            "Text=${trimmedTextClips.size}, " +
-                            "TextSeqs=${textSequences.size}"
-                )
+                val vizSequences = if (vizClips.isNotEmpty()) {
+                    try {
+                        VisualizerBitmapRenderer.renderCombinedOverlays(
+                            context = context,
+                            visualizerClips = vizClips,
+                            allClips = clips,
+                            rangeStart = rangeStart,
+                            W = targetW, H = targetH, fps = fps,
+                            totalDurationMs = exportDurationMs
+                        )
+                    } catch (e: Throwable) {
+                        Log.e("EXPORT", "Visualizer render failed", e)
+                        emptyList()
+                    }
+                } else emptyList()
+
+                val allSequences = textSequences + vizSequences
 
                 ffmpeg = FFmpegExecutor(
                     context = context,
@@ -166,29 +181,35 @@ class VideoExporter(
                         else onSuccess(Uri.fromFile(file))
                     },
                     onError = { msg ->
-                        if (isCancelled) onCancelled()
-                        else onError(msg)
+                        if (isCancelled) onCancelled() else onError(msg)
                     }
                 )
                 ffmpeg?.export(
                     clips = trimmedVisualClips,
                     allClips = clips,
                     outputFile = outputFile,
-                    targetW = targetW,
-                    targetH = targetH,
-                    fps = fps,
-                    bitrateKbps = bitrateKbps,
-                    textSequences = textSequences,
+                    targetW = targetW, targetH = targetH,
+                    fps = fps, bitrateKbps = bitrateKbps,
+                    textSequences = allSequences,
                     audioOnlyClips = audioOnlyClips,
                     explicitDurationMs = exportDurationMs
                 )
             }
 
-            // ─── Only text/stickers ───
-            trimmedTextClips.isNotEmpty() || overlayImageClips.isNotEmpty() -> {
-                exportSynthetic(
-                    textClips = trimmedTextClips + overlayImageClips,
-                    totalDurationMs = exportDurationMs,
+            // ═══════════════════════════════════════════════════════
+            //  CASE 2: No base video but has synthetic layers
+            //         (text / sticker / visualizer) → black bg export
+            // ═══════════════════════════════════════════════════════
+            hasSynthetic -> {
+                exportSyntheticFull(
+                    allClips = clips,
+                    textClips = trimmedTextClips,
+                    overlayImageClips = overlayImageClips,
+                    overlayClips = trimmedOverlayClips,
+                    vizClips = vizClips,
+                    audioOnlyClips = audioOnlyClips,
+                    rangeStart = rangeStart,
+                    rangeEnd = rangeEnd,
                     fileName = fileName,
                     aspectRatio = aspectRatio,
                     resolution = resolution,
@@ -213,6 +234,9 @@ class VideoExporter(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  HELPERS
+    // ═══════════════════════════════════════════════════════════
     private fun trimClipsToRange(
         clips: List<EditorClip>,
         rangeStart: Long,
@@ -223,20 +247,15 @@ class VideoExporter(
             .map { clip ->
                 val clipStart = clip.timelineStartMs
                 val clipEnd = clip.timelineEndMs
-
                 val leftCut = (rangeStart - clipStart).coerceAtLeast(0L)
                 val rightCut = (clipEnd - rangeEnd).coerceAtLeast(0L)
-
                 val speed = clip.speed.coerceAtLeast(0.01f)
                 val sourceLeftCut = (leftCut * speed).toLong()
                 val sourceRightCut = (rightCut * speed).toLong()
-
                 val newSourceStart = clip.sourceStartMs + sourceLeftCut
                 val newSourceEnd = (clip.sourceEndMs - sourceRightCut)
                     .coerceAtLeast(newSourceStart + 33L)
-
                 val newTimelineStart = (clipStart - rangeStart).coerceAtLeast(0L)
-
                 clip.copy(
                     sourceStartMs = newSourceStart,
                     sourceEndMs = newSourceEnd,
@@ -245,9 +264,53 @@ class VideoExporter(
             }
     }
 
-    private fun exportSynthetic(
+    private fun copyUriToCache(uri: Uri, fileName: String): File? {
+        return try {
+            val mime = try {
+                context.contentResolver.getType(uri) ?: ""
+            } catch (_: Throwable) {
+                ""
+            }
+
+            val ext = when {
+                mime.startsWith("audio/mpeg") -> "mp3"
+                mime.startsWith("audio/wav") -> "wav"
+                mime.startsWith("audio/aac") -> "aac"
+                mime.startsWith("audio/mp4") -> "m4a"
+                mime.startsWith("audio/ogg") -> "ogg"
+                mime.startsWith("video/quicktime") -> "mov"
+                mime.startsWith("video/webm") -> "webm"
+                else -> "mp4"
+            }
+
+            val baseName = fileName.substringBeforeLast('.')
+            val realFileName = "$baseName.$ext"
+            val file = File(context.cacheDir, realFileName)
+
+            if (file.exists() && file.length() > 0) return file
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                file.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (file.length() > 0) file else null
+        } catch (e: Exception) {
+            Log.e("FFMPEG", "Copy failed", e)
+            null
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 SYNTHETIC FULL EXPORT (no base video)
+    //  Black canvas + visualizer/text overlays + audio mix
+    // ═══════════════════════════════════════════════════════════
+    private fun exportSyntheticFull(
+        allClips: List<EditorClip>,
         textClips: List<EditorClip>,
-        totalDurationMs: Long,
+        overlayImageClips: List<EditorClip>,
+        overlayClips: List<EditorClip>,
+        vizClips: List<EditorClip>,
+        audioOnlyClips: List<EditorClip>,
+        rangeStart: Long,
+        rangeEnd: Long,
         fileName: String,
         aspectRatio: String,
         resolution: String,
@@ -255,38 +318,133 @@ class VideoExporter(
         bitrateKbps: Int,
         customFolderUri: String?
     ) {
-        val outputFile = createOutputFile(fileName, "mp4")
-        val durSec = (totalDurationMs / 1000.0).coerceAtLeast(1.0)
         val (targetW, targetH) = ExportSettings.targetDimensions(resolution, aspectRatio)
+        val durationMs = (rangeEnd - rangeStart).coerceAtLeast(500L)
 
-        val sequences = try {
-            TextBitmapRenderer.renderCombinedOverlays(
-                context = context,
-                textClips = textClips.filter { it.isTextClip || it.isStickerClip },
-                imageClips = textClips.filter {
-                    it.isVisualClip && it.type.startsWith("image/")
-                },
-                W = targetW,
-                H = targetH,
-                fps = fps,
-                totalDurationMs = totalDurationMs
-            )
-        } catch (e: Throwable) {
-            Log.e("EXPORT", "Synthetic render failed", e)
-            emptyList()
+        // ─── Visualizer PNG sequences (uses original timeline) ───
+        val vizSequences = if (vizClips.isNotEmpty()) {
+            try {
+                VisualizerBitmapRenderer.renderCombinedOverlays(
+                    context = context,
+                    visualizerClips = vizClips,
+                    allClips = allClips,
+                    rangeStart = rangeStart,
+                    W = targetW, H = targetH, fps = fps,
+                    totalDurationMs = durationMs
+                )
+            } catch (e: Throwable) {
+                Log.e("EXPORT", "Visualizer render failed", e)
+                onError("❌ Visualizer render failed: ${e.message}")
+                return
+            }
+        } else emptyList()
+
+        // ─── Text + overlay + image PNG sequences ───
+        val textSequences = if (
+            textClips.isNotEmpty() ||
+            overlayImageClips.isNotEmpty() ||
+            overlayClips.isNotEmpty()
+        ) {
+            try {
+                TextBitmapRenderer.renderCombinedOverlays(
+                    context = context,
+                    textClips = textClips,
+                    imageClips = overlayImageClips,
+                    overlayClips = overlayClips,
+                    W = targetW, H = targetH, fps = fps,
+                    totalDurationMs = durationMs
+                )
+            } catch (e: Throwable) {
+                Log.e("EXPORT", "Text render failed", e)
+                emptyList()
+            }
+        } else emptyList()
+
+        val allSequences = vizSequences + textSequences
+
+        // ═══════════════════════════════════════════════════════
+        //  COLLECT AUDIO
+        //  1) Explicit audio-only clips
+        //  2) Audio auto-linked to visualizers
+        // ═══════════════════════════════════════════════════════
+        val audioToMix = mutableListOf<EditorClip>()
+        audioToMix.addAll(audioOnlyClips)
+
+        vizClips.forEach { viz ->
+            val linkedId = viz.visualizer?.linkedAudioClipId ?: return@forEach
+            val linkedAudio = allClips.firstOrNull {
+                it.id == linkedId && it.isAudio && !it.isAudioEffectClip &&
+                        it.uri.toString().isNotBlank() && it.uri != Uri.EMPTY
+            }
+            if (linkedAudio != null && audioToMix.none { it.id == linkedAudio.id }) {
+                // Localize to range
+                val clipStart = linkedAudio.timelineStartMs
+                val clipEnd = linkedAudio.timelineEndMs
+                if (clipEnd > rangeStart && clipStart < rangeEnd) {
+                    val leftCut = (rangeStart - clipStart).coerceAtLeast(0L)
+                    val rightCut = (clipEnd - rangeEnd).coerceAtLeast(0L)
+                    val speed = linkedAudio.speed.coerceAtLeast(0.01f)
+                    val newSourceStart = linkedAudio.sourceStartMs +
+                            (leftCut * speed).toLong()
+                    val newSourceEnd = (linkedAudio.sourceEndMs -
+                            (rightCut * speed).toLong())
+                        .coerceAtLeast(newSourceStart + 100L)
+                    val newTimelineStart = (clipStart - rangeStart)
+                        .coerceAtLeast(0L)
+                    audioToMix.add(
+                        linkedAudio.copy(
+                            sourceStartMs = newSourceStart,
+                            sourceEndMs = newSourceEnd,
+                            timelineStartMs = newTimelineStart
+                        )
+                    )
+                }
+            }
         }
+
+        // Copy audio files to cache
+        val audioLocalFiles = mutableListOf<File>()
+        val audioLocalClips = mutableListOf<EditorClip>()
+        audioToMix.forEach { clip ->
+            val f = copyUriToCache(clip.uri, "audio_${clip.id}.mp3")
+            if (f != null) {
+                audioLocalFiles.add(f)
+                audioLocalClips.add(clip)
+            }
+        }
+
+        Log.e(
+            "EXPORT",
+            "Synthetic: ${allSequences.size} seq, ${audioLocalFiles.size} audio"
+        )
+
+        // ═══════════════════════════════════════════════════════
+        //  BUILD FFmpeg ARGS
+        // ═══════════════════════════════════════════════════════
+        val outputFile = createOutputFile(fileName, "mp4")
+        val durSec = (durationMs / 1000.0).coerceAtLeast(0.5)
 
         val args = mutableListOf<String>()
         args.add("-y")
+
+        // Video: black canvas
         args.add("-f"); args.add("lavfi")
         args.add("-t"); args.add(durSec.toString())
         args.add("-i"); args.add("color=c=black:s=${targetW}x${targetH}:r=$fps")
 
+        // Silent audio source
         args.add("-f"); args.add("lavfi")
         args.add("-t"); args.add(durSec.toString())
         args.add("-i"); args.add("anullsrc=r=44100:cl=stereo")
 
-        sequences.forEach { seq ->
+        // Real audio inputs
+        audioLocalFiles.forEach { f ->
+            args.add("-i"); args.add(f.absolutePath)
+        }
+
+        // Sequence inputs
+        val seqStartIdx = 2 + audioLocalFiles.size
+        allSequences.forEach { seq ->
             if (seq.startSec > 0.0001) {
                 args.add("-itsoffset"); args.add("%.4f".format(seq.startSec))
             }
@@ -299,8 +457,8 @@ class VideoExporter(
         filterParts.add("[0:v]format=yuva420p[base]")
 
         var lastLabel = "base"
-        sequences.forEachIndexed { idx, seq ->
-            val inIdx = idx + 2
+        allSequences.forEachIndexed { idx, seq ->
+            val inIdx = seqStartIdx + idx
             val srcLabel = "seqsrc$idx"
             val outLabel = "ov$idx"
             filterParts.add("[$inIdx:v]format=rgba[$srcLabel]")
@@ -308,13 +466,43 @@ class VideoExporter(
             val endS = "%.4f".format(seq.endSec)
             filterParts.add(
                 "[$lastLabel][$srcLabel]overlay=0:0:" +
-                        "enable='between(t,$startS,$endS)'" +
-                        "[$outLabel]"
+                        "enable='between(t,$startS,$endS)'[$outLabel]"
             )
             lastLabel = outLabel
         }
         filterParts.add("[$lastLabel]format=yuv420p[outv]")
-        filterParts.add("[1:a]anull[outa]")
+
+        // Audio mix
+        if (audioLocalFiles.isEmpty()) {
+            filterParts.add("[1:a]anull[outa]")
+        } else {
+            val audioLabels = mutableListOf<String>()
+            audioLocalClips.forEachIndexed { idx, clip ->
+                val inputIdx = 2 + idx
+                val durSecClip = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
+                    .coerceAtLeast(0.1)
+                val delayMs = clip.timelineStartMs.toInt().coerceAtLeast(0)
+                val speed = clip.speed.coerceAtLeast(0.01f)
+
+                val chain = mutableListOf<String>()
+                chain.add(
+                    "atrim=start=${clip.sourceStartMs / 1000.0}:duration=$durSecClip"
+                )
+                chain.add("asetpts=PTS-STARTPTS")
+                if (delayMs > 0) chain.add("adelay=$delayMs|$delayMs")
+                if (speed != 1.0f) chain.add("atempo=${speed.coerceIn(0.5f, 2.0f)}")
+                if (clip.volume != 1.0f) chain.add("volume=${clip.volume}")
+                chain.add("aresample=44100")
+
+                val label = "audio$idx"
+                filterParts.add("[$inputIdx:a]${chain.joinToString(",")}[$label]")
+                audioLabels.add("[$label]")
+            }
+            filterParts.add(
+                "${audioLabels.joinToString("")}amix=" +
+                        "inputs=${audioLabels.size}:duration=longest[outa]"
+            )
+        }
 
         args.add("-filter_complex")
         args.add(filterParts.joinToString(";"))
@@ -354,7 +542,7 @@ class VideoExporter(
                         try {
                             val t = stats.time
                             if (t > 0) {
-                                val p = ((t / (totalDurationMs.toDouble() * 1.2))
+                                val p = ((t / (durationMs.toDouble() * 1.2))
                                     .coerceIn(0.0, 0.95)).toFloat()
                                 onProgress(p)
                             }
@@ -369,6 +557,9 @@ class VideoExporter(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  FILE HELPERS
+    // ═══════════════════════════════════════════════════════════
     private fun createOutputFile(fileName: String, format: String): File {
         val dir = File(context.cacheDir, "MoodyExports")
         if (!dir.exists()) dir.mkdirs()
@@ -384,14 +575,10 @@ class VideoExporter(
                 val parentDocUri = DocumentsContract.buildDocumentUriUsingTree(
                     treeUri, parentDocId
                 )
-                val mimeType = if (sourceFile.name.endsWith(".mov")) "video/quicktime"
-                else "video/mp4"
-
+                val mimeType = if (sourceFile.name.endsWith(".mov"))
+                    "video/quicktime" else "video/mp4"
                 val docUri = DocumentsContract.createDocument(
-                    context.contentResolver,
-                    parentDocUri,
-                    mimeType,
-                    sourceFile.name
+                    context.contentResolver, parentDocUri, mimeType, sourceFile.name
                 )
                 if (docUri != null) {
                     context.contentResolver.openOutputStream(docUri)?.use { out ->
@@ -415,7 +602,6 @@ class VideoExporter(
             val uri = context.contentResolver.insert(
                 MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values
             ) ?: return null
-
             context.contentResolver.openOutputStream(uri)?.use { out ->
                 sourceFile.inputStream().use { it.copyTo(out) }
             }

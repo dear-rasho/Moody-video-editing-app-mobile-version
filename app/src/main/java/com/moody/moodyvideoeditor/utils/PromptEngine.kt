@@ -15,6 +15,8 @@ enum class CmdType {
     BRUSH_TYPE,
     BRUSH_DRAW,
     BRUSH_CLEAR,
+    BEAT_ANIMATION,
+    VISUALIZER,       // 🆕
     UNKNOWN
 }
 
@@ -159,7 +161,7 @@ object PromptEngine {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 LINEAR PARSE — handles L1 transitions, C1 slide, ...
+    //  LINEAR PARSE — handles L1 transitions, C1 slide, ...
     // ═══════════════════════════════════════════════════════════
     private fun parseLinear(input: String): ParseResult {
         val commands = mutableListOf<ParsedCommand>()
@@ -177,7 +179,7 @@ object PromptEngine {
         while (i < rawParts.size) {
             val part = rawParts[i]
 
-            // 🆕 Detect "L1 transitions" / "L2 transitions" / "L1 transition"
+            // Detect "L1 transitions" / "L2 transitions" / "L1 transition"
             val layerMatch = Regex(
                 """^l(\d+)\s+transitions?$""",
                 RegexOption.IGNORE_CASE
@@ -198,7 +200,7 @@ object PromptEngine {
 
                     val clipNum = cMatch.groupValues[1]
                     val transName = cMatch.groupValues[2].trim()
-                        .ifBlank { "skip" }  // 🆕 bare "C1" = skip
+                        .ifBlank { "skip" }  // bare "C1" = skip
                     clipPairs.add("$clipNum=$transName")
                     i++
                 }
@@ -329,7 +331,6 @@ object PromptEngine {
         }
 
         // STICKER with optional properties
-        // Format: sticker 😀 animation popIn duration 0.8
         val stickerFull = Regex(
             """^sticker\s+(\S+)(?:\s+(.+))?$""",
             RegexOption.IGNORE_CASE
@@ -344,6 +345,7 @@ object PromptEngine {
                 raw = text
             )
         }
+
         // BRUSH COMMANDS
         Regex(
             """^brush\s+gradient\s+(?:#([0-9a-fA-F]{6})|([a-z]+))\s+to\s+(?:#([0-9a-fA-F]{6})|([a-z]+))$""",
@@ -389,6 +391,171 @@ object PromptEngine {
 
         if (lower == "brush clear" || lower == "clear brush") {
             return ParsedCommand(CmdType.BRUSH_CLEAR, "clear", raw = text)
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        //  🆕 VISUALIZER COMMANDS
+        // ═══════════════════════════════════════════════════════════
+        if (lower == "visualizer" || lower.startsWith("visualizer ")) {
+            val rest = if (lower == "visualizer") "" else lower.substring(11).trim()
+
+            // visualizer add / create / new
+            if (rest == "add" || rest == "create" || rest == "new") {
+                return ParsedCommand(CmdType.VISUALIZER, "add", raw = text)
+            }
+
+            // visualizer remove / delete
+            if (rest == "remove" || rest == "delete") {
+                return ParsedCommand(CmdType.VISUALIZER, "remove", raw = text)
+            }
+
+            // visualizer preset NAME
+            Regex("""^preset\s+(\S+)$""").find(rest)?.let { m ->
+                return ParsedCommand(
+                    CmdType.VISUALIZER, "preset",
+                    stringValue = m.groupValues[1],
+                    raw = text
+                )
+            }
+
+            // visualizer color1 #hex OR name
+            Regex("""^color1\s+(?:#([0-9a-fA-F]{6})|([a-z]+))$""").find(rest)?.let { m ->
+                val hex = m.groupValues[1].ifBlank {
+                    colorNameToHex(m.groupValues[2])
+                }
+                return ParsedCommand(
+                    CmdType.VISUALIZER, "color1",
+                    stringValue = "#$hex",
+                    raw = text
+                )
+            }
+
+            // visualizer color2 #hex OR name
+            Regex("""^color2\s+(?:#([0-9a-fA-F]{6})|([a-z]+))$""").find(rest)?.let { m ->
+                val hex = m.groupValues[1].ifBlank {
+                    colorNameToHex(m.groupValues[2])
+                }
+                return ParsedCommand(
+                    CmdType.VISUALIZER, "color2",
+                    stringValue = "#$hex",
+                    raw = text
+                )
+            }
+
+            // visualizer size N  (15..60 percent)
+            Regex("""^size\s+([\d.]+)$""").find(rest)?.let { m ->
+                return ParsedCommand(
+                    CmdType.VISUALIZER, "size",
+                    value1 = m.groupValues[1].toFloatOrNull(),
+                    raw = text
+                )
+            }
+
+            // visualizer position X Y  (0..100)
+            Regex("""^pos(?:ition)?\s+([\d.]+)\s+([\d.]+)$""").find(rest)?.let { m ->
+                return ParsedCommand(
+                    CmdType.VISUALIZER, "position",
+                    value1 = m.groupValues[1].toFloatOrNull(),
+                    value2 = m.groupValues[2].toFloatOrNull(),
+                    raw = text
+                )
+            }
+
+            // visualizer opacity N (0..100)
+            Regex("""^opacity\s+([\d.]+)$""").find(rest)?.let { m ->
+                return ParsedCommand(
+                    CmdType.VISUALIZER, "opacity",
+                    value1 = m.groupValues[1].toFloatOrNull(),
+                    raw = text
+                )
+            }
+
+            // visualizer glow on/off
+            Regex("""^glow\s+(on|off)$""").find(rest)?.let { m ->
+                return ParsedCommand(
+                    CmdType.VISUALIZER, "glow",
+                    stringValue = m.groupValues[1],
+                    raw = text
+                )
+            }
+
+            // visualizer reaction N (0..2)
+            Regex("""^reaction\s+([\d.]+)$""").find(rest)?.let { m ->
+                return ParsedCommand(
+                    CmdType.VISUALIZER, "reaction",
+                    value1 = m.groupValues[1].toFloatOrNull(),
+                    raw = text
+                )
+            }
+
+            // visualizer text "..." (with optional size)
+            Regex("""^text\s+"([^"]+)"(?:\s+size\s+(\d+))?$""").find(text)?.let { m ->
+                return ParsedCommand(
+                    CmdType.VISUALIZER, "text",
+                    stringValue = m.groupValues[1],
+                    value1 = m.groupValues[2].toFloatOrNull(),
+                    raw = text
+                )
+            }
+
+            // visualizer show text / image
+            Regex("""^show\s+(text|image)$""").find(rest)?.let { m ->
+                return ParsedCommand(
+                    CmdType.VISUALIZER, "show",
+                    stringValue = m.groupValues[1],
+                    raw = text
+                )
+            }
+
+            // visualizer hide text / image
+            Regex("""^hide\s+(text|image)$""").find(rest)?.let { m ->
+                return ParsedCommand(
+                    CmdType.VISUALIZER, "hide",
+                    stringValue = m.groupValues[1],
+                    raw = text
+                )
+            }
+
+            // visualizer order text-top / image-top
+            Regex("""^order\s+(text-top|image-top)$""").find(rest)?.let { m ->
+                return ParsedCommand(
+                    CmdType.VISUALIZER, "order",
+                    stringValue = m.groupValues[1],
+                    raw = text
+                )
+            }
+
+            // Unknown visualizer sub-command
+            return ParsedCommand(
+                CmdType.VISUALIZER, "unknown",
+                stringValue = rest,
+                raw = text
+            )
+        }
+
+        // BEAT ANIMATIONS
+        if (lower.startsWith("beat ")) {
+            val rest = lower.substring(5).trim()
+            val parts = rest.split(Regex("\\s+"))
+
+            if (parts.isNotEmpty() && parts[0].isNotBlank()) {
+                val beatType = parts[0]
+                val amount = parts.getOrNull(1)?.toFloatOrNull()
+
+                val validTypes = setOf(
+                    "pulse", "bounce", "shake", "scale", "rotate", "zoom",
+                    "shiftx", "shifty", "pop", "flash"
+                )
+
+                if (beatType in validTypes) {
+                    return ParsedCommand(
+                        CmdType.BEAT_ANIMATION,
+                        beatType,
+                        value1 = amount,
+                        raw = text
+                    )
+                }
+            }
         }
 
         // ANIMATION

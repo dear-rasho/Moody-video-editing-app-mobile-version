@@ -36,6 +36,10 @@ fun TimelineToolbar(
     onMagnet: () -> Unit,
     onAddVisualLayer: () -> Unit = {},
     onAddAudioLayer: () -> Unit = {},
+    onLink: () -> Unit = {},
+    onUnlink: () -> Unit = {},
+    isLinked: Boolean = false,
+    canLink: Boolean = false,
     zoomSlider: Float,
     totalSec: Float,
     viewportContentWidthDp: Float,
@@ -48,6 +52,7 @@ fun TimelineToolbar(
             .padding(horizontal = 6.dp, vertical = 3.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
+        // ═══ ROW 1 — Action buttons ═══
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -59,9 +64,19 @@ fun TimelineToolbar(
             IconBtn("▤") { onSelectAllTrack() }
             IconBtn("☐") { onDeselectAll() }
             IconBtn("🧲") { onMagnet() }
+
             IconBtn("＋V") { onAddVisualLayer() }
             IconBtn("＋A") { onAddAudioLayer() }
+
+            // 🆕 LINK / UNLINK
+            if (isLinked) {
+                IconBtn("🔓", highlight = true) { onUnlink() }
+            } else if (canLink) {
+                IconBtn("🔗") { onLink() }
+            }
+
             Spacer(Modifier.weight(1f))
+
             Text(
                 TimelineZoom.formatLabel(zoomSlider, totalSec, viewportContentWidthDp),
                 color = Color(0xFFCCCCCC),
@@ -70,6 +85,7 @@ fun TimelineToolbar(
             )
         }
 
+        // ═══ ROW 2 — Zoom slider ═══
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -95,13 +111,20 @@ fun TimelineToolbar(
 }
 
 @Composable
-private fun IconBtn(text: String, onClick: () -> Unit) {
+private fun IconBtn(
+    text: String,
+    highlight: Boolean = false,
+    onClick: () -> Unit
+) {
     Box(
         modifier = Modifier
             .height(30.dp)
             .widthIn(min = 30.dp)
             .clip(RoundedCornerShape(6.dp))
-            .background(Color(0xFF181818))
+            .background(
+                if (highlight) Color(0xFF7C3AED)
+                else Color(0xFF181818)
+            )
             .pointerInput(text) { detectTapGestures { onClick() } }
             .padding(horizontal = 6.dp),
         contentAlignment = Alignment.Center

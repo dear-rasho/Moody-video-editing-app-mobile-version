@@ -6,6 +6,8 @@ import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.data.ToneValue
 import com.moody.moodyvideoeditor.data.TransitionLibrary
 import com.moody.moodyvideoeditor.data.TransitionState
+import com.moody.moodyvideoeditor.data.VisualizerPreset
+import com.moody.moodyvideoeditor.data.VisualizerState
 import com.moody.moodyvideoeditor.viewmodel.EditorViewModel
 import kotlin.math.abs
 
@@ -113,9 +115,6 @@ object PromptExecutor {
                     applied.add("layer transitions: $pattern")
                 }
 
-                // 🆕 Per-clip transitions on a specific layer
-                // Works WITHOUT any layer selected — layer specified in prompt itself
-                // Handles both TRANSITION_LAYER_CLIPS and TRANSITION_CLIP_MAP
                 CmdType.TRANSITION_LAYER_CLIPS,
                 CmdType.TRANSITION_CLIP_MAP -> {
                     val layerNum = cmd.value1?.toInt() ?: 0
@@ -123,9 +122,7 @@ object PromptExecutor {
                     val clipMap = parseLayerClipPairs(pairsStr)
 
                     if (layerNum > 0 && clipMap.isNotEmpty()) {
-                        val appliedCount = viewModel.applyLayerClipTransitions(
-                            layerNum, clipMap
-                        )
+                        viewModel.applyLayerClipTransitions(layerNum, clipMap)
                         val desc = clipMap.entries.joinToString(", ") {
                             "C${it.key} ${it.value}"
                         }
@@ -142,7 +139,6 @@ object PromptExecutor {
         // ═══════════════════════════════════════════════════════
         //  PRIORITY 3 — TEXT + STICKER (timestamp + AUTO-STACKING)
         // ═══════════════════════════════════════════════════════
-
         val textCommands = parsed.commands.filter { it.type == CmdType.TEXT }
         val groupedTexts = textCommands
             .filter { it.startMs != null && it.endMs != null }
@@ -206,31 +202,28 @@ object PromptExecutor {
                     val startMs = cmd.startMs
                     val endMs = cmd.endMs
 
-                    // 🆕 Parse extra properties (animation, etc.)
-                    var state = com.moody.moodyvideoeditor.data.StickerState(emoji = emoji)
+                    var state2 = com.moody.moodyvideoeditor.data.StickerState(emoji = emoji)
                     cmd.extra?.let { props ->
-                        state = applyStickerProps(state, props)
+                        state2 = applyStickerProps(state2, props)
                     }
 
                     if (startMs != null && endMs != null) {
                         viewModel.createStickerAtTime(
-                            emoji = state.emoji,
+                            emoji = state2.emoji,
                             startMs = startMs,
                             endMs = endMs
                         )
-                        // Apply animation on top
                         val sel = viewModel.state.value.selectedClip
                         if (sel != null && sel.isStickerClip) {
-                            viewModel.updateSelectedSticker(state)
+                            viewModel.updateSelectedSticker(state2)
                         }
                         applied.add(
-                            "sticker @${startMs / 1000}s \"${state.emoji}\""
+                            "sticker @${startMs / 1000}s \"${state2.emoji}\""
                         )
                     } else {
-                        viewModel.addOrUpdateSticker(state.emoji)
-                        // Apply animation
-                        viewModel.updateSelectedSticker(state)
-                        applied.add("sticker ${state.emoji}")
+                        viewModel.addOrUpdateSticker(state2.emoji)
+                        viewModel.updateSelectedSticker(state2)
+                        applied.add("sticker ${state2.emoji}")
                     }
                 }
 
@@ -334,6 +327,39 @@ object PromptExecutor {
                         if (sel.isTextClip) {
                             viewModel.setTextAnimation(PromptEngine.animationKey(cmd.key))
                             applied.add("animation ${cmd.key}")
+                        }
+                    }
+
+                    CmdType.BEAT_ANIMATION -> {
+                        val beats = viewModel.state.value.beatTimesMs
+                        if (beats.isEmpty()) {
+                            errors.add(
+                                "No beats detected. Run beat detection first."
+                            )
+                        } else {
+                            val sel = viewModel.state.value.selectedClip
+                            if (sel == null) {
+                                errors.add(
+                                    "Select a clip first to apply beat animation"
+                                )
+                            } else {
+                                val amount = cmd.value1 ?: 100f
+                                val count = viewModel.applyBeatAnimation(
+                                    type = cmd.key,
+                                    amount = amount,
+                                    beatTimesMs = beats
+                                )
+                                if (count > 0) {
+                                    applied.add(
+                                        "beat ${cmd.key} × $count beats " +
+                                                "(amount=$amount)"
+                                    )
+                                } else {
+                                    errors.add(
+                                        "No beats within selected clip range"
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -460,6 +486,224 @@ object PromptExecutor {
                         applied.add("keyframe ${cmd.key}")
                     }
 
+                    // ═════════════════════════════════════════════════
+                    //  🆕 VISUALIZER
+                    // ═════════════════════════════════════════════════
+                    CmdType.VISUALIZER -> {
+                        val s2 = viewModel.state.value
+                        val existingViz = s2.selectedClip
+                            ?.takeIf { it.isVisualizerClip }
+                            ?: s2.clips.firstOrNull { it.isVisualizerClip }
+
+                        when (cmd.key) {
+                            "add", "create", "new" -> {
+                                val ok = viewModel.createVisualizerClip()
+                                if (ok) applied.add("visualizer added")
+                                else errors.add(
+                                    "visualizer add: select an audio clip first"
+                                )
+                            }
+
+                            "remove", "delete" -> {
+                                existingViz?.let {
+                                    viewModel.removeVisualizerLayer(it.id)
+                                    applied.add("visualizer removed")
+                                } ?: errors.add("No visualizer to remove")
+                            }
+
+                            "preset" -> {
+                                val p = resolveVisualizerPreset(
+                                    cmd.stringValue ?: ""
+                                )
+                                if (existingViz != null && p != null) {
+                                    viewModel.updateVisualizerLayer(
+                                        existingViz.id,
+                                        (existingViz.visualizer
+                                            ?: VisualizerState()).copy(preset = p)
+                                    )
+                                    applied.add("visualizer preset ${p.label}")
+                                } else {
+                                    errors.add(
+                                        "Unknown preset: ${cmd.stringValue}"
+                                    )
+                                }
+                            }
+
+                            "color1", "color2" -> {
+                                val hex = cmd.stringValue?.removePrefix("#")
+                                if (existingViz != null && hex != null) {
+                                    val colorLong = 0xFF000000L or
+                                            hex.toLong(16)
+                                    val vs = existingViz.visualizer
+                                        ?: VisualizerState()
+                                    val updated = if (cmd.key == "color1")
+                                        vs.copy(color1 = colorLong)
+                                    else vs.copy(color2 = colorLong)
+                                    viewModel.updateVisualizerLayer(
+                                        existingViz.id, updated
+                                    )
+                                    applied.add("visualizer ${cmd.key} #$hex")
+                                } else {
+                                    errors.add("visualizer ${cmd.key}: failed")
+                                }
+                            }
+
+                            "size" -> {
+                                val pct = cmd.value1 ?: 32f
+                                if (existingViz != null) {
+                                    val sz = (pct / 100f)
+                                        .coerceIn(0.05f, 1.5f)
+                                    val vs = existingViz.visualizer
+                                        ?: VisualizerState()
+                                    viewModel.updateVisualizerLayer(
+                                        existingViz.id, vs.copy(size = sz)
+                                    )
+                                    applied.add("visualizer size ${pct.toInt()}%")
+                                } else errors.add("No visualizer")
+                            }
+
+                            "position" -> {
+                                val x = (cmd.value1 ?: 50f) / 100f
+                                val y = (cmd.value2 ?: 50f) / 100f
+                                if (existingViz != null) {
+                                    val vs = existingViz.visualizer
+                                        ?: VisualizerState()
+                                    viewModel.updateVisualizerLayer(
+                                        existingViz.id,
+                                        vs.copy(
+                                            positionX = x.coerceIn(0f, 1f),
+                                            positionY = y.coerceIn(0f, 1f)
+                                        )
+                                    )
+                                    applied.add("visualizer pos")
+                                } else errors.add("No visualizer")
+                            }
+
+                            "opacity" -> {
+                                val o = ((cmd.value1 ?: 100f) / 100f)
+                                    .coerceIn(0f, 1f)
+                                if (existingViz != null) {
+                                    val vs = existingViz.visualizer
+                                        ?: VisualizerState()
+                                    viewModel.updateVisualizerLayer(
+                                        existingViz.id, vs.copy(opacity = o)
+                                    )
+                                    applied.add("visualizer opacity")
+                                } else errors.add("No visualizer")
+                            }
+
+                            "glow" -> {
+                                val on = cmd.stringValue == "on"
+                                if (existingViz != null) {
+                                    val vs = existingViz.visualizer
+                                        ?: VisualizerState()
+                                    viewModel.updateVisualizerLayer(
+                                        existingViz.id, vs.copy(glow = on)
+                                    )
+                                    applied.add(
+                                        "visualizer glow ${cmd.stringValue}"
+                                    )
+                                } else errors.add("No visualizer")
+                            }
+
+                            "reaction" -> {
+                                val r = (cmd.value1 ?: 1f).coerceIn(0f, 2f)
+                                if (existingViz != null) {
+                                    val vs = existingViz.visualizer
+                                        ?: VisualizerState()
+                                    viewModel.updateVisualizerLayer(
+                                        existingViz.id,
+                                        vs.copy(beatReaction = r)
+                                    )
+                                    applied.add("visualizer reaction $r")
+                                } else errors.add("No visualizer")
+                            }
+
+                            "text" -> {
+                                val content = cmd.stringValue ?: ""
+                                if (existingViz != null) {
+                                    val vs = existingViz.visualizer
+                                        ?: VisualizerState()
+                                    val newTextState = vs.textState.copy(
+                                        content = content,
+                                        fontSize = cmd.value1?.toInt()
+                                            ?: vs.textState.fontSize
+                                    )
+                                    viewModel.updateVisualizerLayer(
+                                        existingViz.id,
+                                        vs.copy(
+                                            textState = newTextState,
+                                            textContent = content,
+                                            showText = true
+                                        )
+                                    )
+                                    applied.add(
+                                        "visualizer text \"$content\""
+                                    )
+                                } else errors.add("No visualizer")
+                            }
+
+                            "show" -> {
+                                if (existingViz != null) {
+                                    val vs = existingViz.visualizer
+                                        ?: VisualizerState()
+                                    val updated = when (cmd.stringValue) {
+                                        "text" -> vs.copy(showText = true)
+                                        "image" -> vs.copy(showImage = true)
+                                        else -> vs
+                                    }
+                                    viewModel.updateVisualizerLayer(
+                                        existingViz.id, updated
+                                    )
+                                    applied.add(
+                                        "visualizer show ${cmd.stringValue}"
+                                    )
+                                } else errors.add("No visualizer")
+                            }
+
+                            "hide" -> {
+                                if (existingViz != null) {
+                                    val vs = existingViz.visualizer
+                                        ?: VisualizerState()
+                                    val updated = when (cmd.stringValue) {
+                                        "text" -> vs.copy(showText = false)
+                                        "image" -> vs.copy(showImage = false)
+                                        else -> vs
+                                    }
+                                    viewModel.updateVisualizerLayer(
+                                        existingViz.id, updated
+                                    )
+                                    applied.add(
+                                        "visualizer hide ${cmd.stringValue}"
+                                    )
+                                } else errors.add("No visualizer")
+                            }
+
+                            "order" -> {
+                                if (existingViz != null) {
+                                    val vs = existingViz.visualizer
+                                        ?: VisualizerState()
+                                    val textTop =
+                                        cmd.stringValue == "text-top"
+                                    viewModel.updateVisualizerLayer(
+                                        existingViz.id,
+                                        vs.copy(textOnTopOfImage = textTop)
+                                    )
+                                    applied.add(
+                                        "visualizer order ${cmd.stringValue}"
+                                    )
+                                } else errors.add("No visualizer")
+                            }
+
+                            else -> {
+                                errors.add(
+                                    "visualizer: unknown command " +
+                                            "'${cmd.stringValue}'"
+                                )
+                            }
+                        }
+                    }
+
                     else -> {}
                 }
             } catch (e: Exception) {
@@ -475,8 +719,7 @@ object PromptExecutor {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 LAYER CLIP TRANSITIONS PARSER
-    //  Input format: "1=slide|2=push left|3=fade|4=zoom in"
+    //  LAYER CLIP TRANSITIONS PARSER
     // ═══════════════════════════════════════════════════════════
     private fun parseLayerClipPairs(pairs: String): Map<Int, String> {
         val result = mutableMapOf<Int, String>()
@@ -486,7 +729,6 @@ object PromptExecutor {
             val parts = pair.split("=", limit = 2)
             if (parts.size == 2) {
                 val num = parts[0].toIntOrNull() ?: return@forEach
-                // 🆕 "skip" / "none" / blank = skip clip
                 val name = parts[1].trim()
                 if (num > 0) {
                     result[num] = name.ifBlank { "skip" }
@@ -494,6 +736,63 @@ object PromptExecutor {
             }
         }
         return result
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 VISUALIZER PRESET RESOLVER
+    // ═══════════════════════════════════════════════════════════
+    private fun resolveVisualizerPreset(name: String): VisualizerPreset? {
+        val clean = name.trim().lowercase()
+            .replace(" ", "")
+            .replace("-", "")
+            .replace("_", "")
+        if (clean.isBlank()) return null
+
+        val aliases = mapOf(
+            "neon" to VisualizerPreset.NEON_GLOW_RING,
+            "glow" to VisualizerPreset.NEON_GLOW_RING,
+            "neonring" to VisualizerPreset.NEON_GLOW_RING,
+            "neonglow" to VisualizerPreset.NEON_GLOW_RING,
+            "spectrum" to VisualizerPreset.FREQUENCY_SPECTRUM_RING,
+            "freq" to VisualizerPreset.FREQUENCY_SPECTRUM_RING,
+            "bars" to VisualizerPreset.FREQUENCY_SPECTRUM_RING,
+            "spectrumring" to VisualizerPreset.FREQUENCY_SPECTRUM_RING,
+            "particle" to VisualizerPreset.PARTICLE_ORBIT_RING,
+            "orbit" to VisualizerPreset.PARTICLE_ORBIT_RING,
+            "particleorbit" to VisualizerPreset.PARTICLE_ORBIT_RING,
+            "liquid" to VisualizerPreset.LIQUID_WAVE_RING,
+            "wave" to VisualizerPreset.LIQUID_WAVE_RING,
+            "liquidwave" to VisualizerPreset.LIQUID_WAVE_RING,
+            "double" to VisualizerPreset.DOUBLE_ORBIT_RINGS,
+            "doubleorbit" to VisualizerPreset.DOUBLE_ORBIT_RINGS,
+            "dots" to VisualizerPreset.DOTTED_RADIAL_WAVE,
+            "dotted" to VisualizerPreset.DOTTED_RADIAL_WAVE,
+            "dottedradial" to VisualizerPreset.DOTTED_RADIAL_WAVE,
+            "vinyl" to VisualizerPreset.VINYL_RECORD_SPIN,
+            "record" to VisualizerPreset.VINYL_RECORD_SPIN,
+            "vinylrecord" to VisualizerPreset.VINYL_RECORD_SPIN,
+            "center" to VisualizerPreset.AUDIO_REACTIVE_CENTER_ART,
+            "art" to VisualizerPreset.AUDIO_REACTIVE_CENTER_ART,
+            "centerart" to VisualizerPreset.AUDIO_REACTIVE_CENTER_ART,
+            "broken" to VisualizerPreset.BROKEN_SEGMENT_RING,
+            "segments" to VisualizerPreset.BROKEN_SEGMENT_RING,
+            "brokenring" to VisualizerPreset.BROKEN_SEGMENT_RING,
+            "vortex" to VisualizerPreset.VORTEX_TUNNEL,
+            "tunnel" to VisualizerPreset.VORTEX_TUNNEL,
+            "vortextunnel" to VisualizerPreset.VORTEX_TUNNEL
+        )
+
+        aliases[clean]?.let { return it }
+
+        VisualizerPreset.values().firstOrNull {
+            it.key.lowercase() == clean
+        }?.let { return it }
+
+        VisualizerPreset.values().firstOrNull {
+            it.label.lowercase().replace(" ", "") == clean
+        }?.let { return it }
+
+        return null
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -792,8 +1091,7 @@ object PromptExecutor {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 STICKER PROPS PARSER
-    //  Format: "animation popIn duration 0.8 opacity 90"
+    //  STICKER PROPS PARSER
     // ═══════════════════════════════════════════════════════════
     private fun applyStickerProps(
         initial: com.moody.moodyvideoeditor.data.StickerState,

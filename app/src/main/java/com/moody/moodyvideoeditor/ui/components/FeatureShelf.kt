@@ -42,6 +42,7 @@ val FEATURES = listOf(
     Feature("chroma", "Chroma", "🟢"),
     Feature("mask", "Mask", "🎭"),
     Feature("brush", "Brush", "🖌️"),
+    Feature("visualizer", "Visualizer", "🎵"),
     Feature("transform", "Transform", "🔲"),
     Feature("crop", "Crop", "📐"),
     Feature("volume", "Volume", "🔊"),

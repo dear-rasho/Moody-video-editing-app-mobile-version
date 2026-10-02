@@ -3,8 +3,10 @@ package com.moody.moodyvideoeditor.data
 data class BeatsState(
     val detected: Boolean = false,
     val count: Int = 0,
-    val filter: String = "all",           // all|hard|medium|soft|hard,med|med,soft
-    val beatTimesMs: List<Long> = emptyList()
+    val filter: String = "all",
+    val beatTimesMs: List<Long> = emptyList(),
+    // 🆕 Parallel list to beatTimesMs — value 0..1 (0=weak, 1=strong)
+    val beatStrengths: List<Float> = emptyList()
 )
 
 object BeatsLibrary {

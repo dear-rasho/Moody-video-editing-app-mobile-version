@@ -1,5 +1,8 @@
 package com.moody.moodyvideoeditor.ui.components
 
+import android.content.Context
+import android.net.Uri
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,9 +40,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -50,6 +56,9 @@ import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.EditorState
 import com.moody.moodyvideoeditor.utils.TimelineRuler
 import com.moody.moodyvideoeditor.utils.TimelineZoom
+import com.moody.moodyvideoeditor.utils.WaveformEngine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -59,7 +68,7 @@ import kotlin.math.roundToInt
 private val TRACK_LABEL_WIDTH = 54.dp
 private val RULER_HEIGHT = 22.dp
 private val VISUAL_TRACK_HEIGHT = 34.dp
-private val AUDIO_TRACK_HEIGHT = 28.dp
+private val AUDIO_TRACK_HEIGHT = 34.dp
 private const val DP_PER_SECOND = 20f
 
 private const val SNAP_ENTER_PX = 14f
@@ -430,7 +439,10 @@ fun Timeline(
                         onTransitionTapped = { id ->
                             selectedTransitionClipId =
                                 if (selectedTransitionClipId == id) null else id
-                        }
+                        },
+                        // 🆕 Beat markers
+                        beatTimesMs = state.beatTimesMs,
+                        showBeats = state.beatsDetected
                     )
                 }
                 Box(Modifier.height(40.dp))
@@ -614,7 +626,9 @@ private fun VisualTrackRow(
                 onTransitionTapped = onTransitionTapped,
                 visualLayerCount = visualLayerCount,
                 audioLayerCount = audioLayerCount,
-                trackHidden = isHidden
+                trackHidden = isHidden,
+                beatTimesMs = emptyList(),
+                showBeats = false
             )
         }
     }
@@ -662,7 +676,9 @@ private fun AudioTrackRow(
     onTransitionDelete: (String) -> Unit = {},
     onTransitionDurationChange: (String, Long) -> Unit = { _, _ -> },
     selectedTransitionClipId: String? = null,
-    onTransitionTapped: (String) -> Unit = {}
+    onTransitionTapped: (String) -> Unit = {},
+    beatTimesMs: List<Long> = emptyList(),
+    showBeats: Boolean = false
 ) {
     val density = LocalDensity.current
     val isSelectedLayer = selectedTrackIndex == trackIndex && selectedIsAudio
@@ -786,7 +802,10 @@ private fun AudioTrackRow(
                 onTransitionTapped = onTransitionTapped,
                 visualLayerCount = visualLayerCount,
                 audioLayerCount = audioLayerCount,
-                trackHidden = isMuted
+                trackHidden = isMuted,
+                // 🆕 Beat markers pass
+                beatTimesMs = beatTimesMs,
+                showBeats = showBeats
             )
         }
     }
@@ -824,9 +843,13 @@ private fun TrackContent(
     onTransitionTapped: (String) -> Unit = {},
     visualLayerCount: Int,
     audioLayerCount: Int,
-    trackHidden: Boolean = false
+    trackHidden: Boolean = false,
+    // 🆕 Beat markers
+    beatTimesMs: List<Long> = emptyList(),
+    showBeats: Boolean = false
 ) {
     val density = LocalDensity.current
+    val context = LocalContext.current
 
     var snapGuideX by remember { mutableFloatStateOf(-1f) }
     var snapLabel by remember { mutableStateOf<String?>(null) }
@@ -873,6 +896,7 @@ private fun TrackContent(
                 val ghostEndPx = ghostEndMs.toFloat() / totalMs * contentWidthPx
                 val ghostWidthPx = (ghostEndPx - ghostStartPx).coerceAtLeast(20f)
                 val ghostColor = when {
+                    ghost.isVisualizerClip -> Color(0xFFFFD166)
                     ghost.isAudioFxClip -> Color(0xFFA855F7)
                     ghost.isSoundFxClip -> Color(0xFF3B82F6)
                     ghost.isFilterLayerClip -> Color(0xFFEC4899)
@@ -881,7 +905,6 @@ private fun TrackContent(
                     ghost.isTextClip -> Color(0xFFEC4899)
                     ghost.isStickerClip -> Color(0xFFF59E0B)
                     ghost.isBrushClip -> Color(0xFF8B5CF6)
-                    ghost.isEffectClip -> Color(0xFFA855F7)
                     ghost.isAdjustmentClip -> Color(0xFF06B6D4)
                     ghost.isOverlayClip -> Color(0xFF3B82F6)
                     ghost.isChromaClip -> Color(0xFF22C55E)
@@ -922,6 +945,7 @@ private fun TrackContent(
             val endPx = clip.timelineEndMs.toFloat() / totalMs * contentWidthPx
             val clipWidthPx = (endPx - startPx).coerceAtLeast(20f)
             val barColor = when {
+                clip.isVisualizerClip -> Color(0xFFFFD166)   // 🆕 Yellow
                 clip.isAudioFxClip -> Color(0xFFA855F7)
                 clip.isSoundFxClip -> Color(0xFF3B82F6)
                 clip.isFilterLayerClip -> Color(0xFFEC4899)
@@ -1123,10 +1147,27 @@ private fun TrackContent(
                     },
                 contentAlignment = Alignment.Center
             ) {
+                // 🆕 Audio waveform background
+                if (clip.isAudio && clip.uri != Uri.EMPTY &&
+                    !clip.type.endsWith("/plain")
+                ) {
+                    AudioWaveformBackground(
+                        context = context,
+                        uri = clip.uri,
+                        sourceStartMs = clip.sourceStartMs,
+                        sourceEndMs = clip.sourceEndMs,
+                        sourceTotalMs = clip.sourceTotalMs,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(4.dp))
+                    )
+                }
+
                 Text(
                     text = clip.name.take(20),
                     color = Color.White, fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold, maxLines = 1
+                    fontWeight = FontWeight.Bold, maxLines = 1,
+                    modifier = Modifier.zIndex(10f)
                 )
 
                 if (isSelected && !isDragging) {
@@ -1141,7 +1182,6 @@ private fun TrackContent(
                                 var startMs = 0L
                                 var endMs = 0L
                                 var activeTarget: SnapTarget? = null
-                                // 🆕 Snapshot pxPerMs at drag start
                                 var dragPxPerMs = 0.01f
 
                                 detectDragGestures(
@@ -1251,7 +1291,6 @@ private fun TrackContent(
                                 var startMs = 0L
                                 var endMs = 0L
                                 var activeTarget: SnapTarget? = null
-                                // 🆕 Snapshot pxPerMs at drag start
                                 var dragPxPerMs = 0.01f
 
                                 detectDragGestures(
@@ -1368,6 +1407,46 @@ private fun TrackContent(
                     onSeek(timeMs)
                 }
             )
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  🆕 BEAT MARKERS — only on audio tracks
+        // ═══════════════════════════════════════════════════════
+        if (isAudio && showBeats && beatTimesMs.isNotEmpty()) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(20f)
+            ) {
+                val w = size.width
+                val h = size.height
+                beatTimesMs.forEach { beatMs ->
+                    val x = (beatMs.toFloat() / totalMs.toFloat()) * w
+                    if (x in -2f..(w + 2f)) {
+                        // Beat line
+                        drawLine(
+                            color = Color(0xFFFFD166).copy(alpha = 0.85f),
+                            start = Offset(x, 0f),
+                            end = Offset(x, h),
+                            strokeWidth = 1.5f
+                        )
+                        // Beat triangle head at top
+                        val path = Path().apply {
+                            moveTo(x, 0f)
+                            lineTo(x - 4f, 6f)
+                            lineTo(x + 4f, 6f)
+                            close()
+                        }
+                        drawPath(path, Color(0xFFFFD166))
+                        // Beat dot at bottom
+                        drawCircle(
+                            color = Color(0xFFFFD166),
+                            radius = 2.5f,
+                            center = Offset(x, h - 3f)
+                        )
+                    }
+                }
+            }
         }
 
         // ═══════════════════════════════════════════════════════
@@ -1502,5 +1581,84 @@ private fun TrackContent(
                 )
             }
         }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  🆕 AUDIO WAVEFORM BACKGROUND
+// ═══════════════════════════════════════════════════════════════
+@Composable
+private fun AudioWaveformBackground(
+    context: Context,
+    uri: Uri,
+    sourceStartMs: Long,
+    sourceEndMs: Long,
+    sourceTotalMs: Long,
+    modifier: Modifier = Modifier
+) {
+    var waveform by remember(uri) { mutableStateOf<FloatArray?>(null) }
+
+    LaunchedEffect(uri) {
+        waveform = withContext(Dispatchers.IO) {
+            WaveformEngine.loadWaveform(context, uri)
+        }
+    }
+
+    Canvas(modifier = modifier) {
+        val wf = waveform ?: return@Canvas
+        if (wf.isEmpty()) return@Canvas
+
+        val w = size.width
+        val h = size.height
+        val midY = h / 2f
+        val maxAmp = h * 0.42f
+
+        // Compute waveform range based on source time
+        val totalMs = if (sourceTotalMs != Long.MAX_VALUE && sourceTotalMs > 0L)
+            sourceTotalMs
+        else (sourceEndMs).coerceAtLeast(1L)
+
+        val startFrac = (sourceStartMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
+        val endFrac = (sourceEndMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
+
+        val startIdx = (startFrac * wf.size).toInt().coerceIn(0, wf.size - 1)
+        val endIdx = (endFrac * wf.size).toInt().coerceIn(startIdx + 1, wf.size)
+
+        val samplesToDraw = (endIdx - startIdx).coerceAtLeast(1)
+        val pxPerSample = w / samplesToDraw.toFloat()
+
+        // Draw waveform bars (mirror top+bottom)
+        var x = 0f
+        for (i in startIdx until endIdx) {
+            val amp = wf[i].coerceIn(0f, 1f)
+            val barH = amp * maxAmp
+
+            // Top half
+            drawLine(
+                color = Color(0xFFFFFFFF).copy(alpha = 0.55f),
+                start = Offset(x, midY - barH),
+                end = Offset(x, midY),
+                strokeWidth = pxPerSample.coerceIn(1f, 2f),
+                cap = StrokeCap.Butt
+            )
+            // Bottom half (mirror)
+            drawLine(
+                color = Color(0xFFFFFFFF).copy(alpha = 0.55f),
+                start = Offset(x, midY),
+                end = Offset(x, midY + barH),
+                strokeWidth = pxPerSample.coerceIn(1f, 2f),
+                cap = StrokeCap.Butt
+            )
+
+            x += pxPerSample
+        }
+
+        // Center line
+        drawLine(
+            color = Color.White.copy(alpha = 0.3f),
+            start = Offset(0f, midY),
+            end = Offset(w, midY),
+            strokeWidth = 1f
+        )
     }
 }

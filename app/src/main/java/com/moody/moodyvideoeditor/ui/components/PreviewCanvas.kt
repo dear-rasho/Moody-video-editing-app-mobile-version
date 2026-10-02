@@ -26,7 +26,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -102,7 +104,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 // ═══════════════════════════════════════════════════════════════
-//  HELPER — Per-clip color matrix (adjustments + filters + global)
+//  HELPER — Per-clip color matrix
 // ═══════════════════════════════════════════════════════════════
 private fun buildClipMatrix(
     clip: EditorClip,
@@ -154,20 +156,19 @@ fun PreviewCanvas(
     aspectMode: Int,
     clips: List<EditorClip>,
     currentPosMs: Long,
+    isPlaying: Boolean = false,
     hiddenVisualTracks: Set<Int> = emptySet(),
     aspectRatioKey: String = "16:9",
     selectedClipId: String? = null,
     multiSelectedIds: Set<String> = emptySet(),
     previewFilters: FilterState? = null,
     previewEffectState: EffectState? = null,
-
     isDrawingMode: Boolean = false,
     activeBrushType: BrushType = BrushType.PEN,
     activeBrushColor: Long = 0xFFFF0000,
     activeBrushWidth: Float = 20f,
     activeBrushOpacity: Float = 1f,
     onBrushStrokeComplete: (BrushStroke) -> Unit = {},
-
     isMaskPenMode: Boolean = false,
     onMaskPointAdd: (Float, Float) -> Unit = { _, _ -> },
     onMaskAnchorMove: (Int, Float, Float) -> Unit = { _, _, _ -> },
@@ -175,23 +176,25 @@ fun PreviewCanvas(
     onMaskPointToggle: (Int) -> Unit = {},
     onMaskPointDelete: (Int) -> Unit = {},
     onClosePath: () -> Unit = {},
-
     onClipSelected: (String) -> Unit = {},
-
     onGroupGestureStart: () -> Unit = {},
     onGroupGestureEnd: () -> Unit = {},
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit =
         { _, _, _, _, _ -> },
-
     onTextPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onTextTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onStickerPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onStickerTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onBrushPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
-    onBrushTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> }
+    onBrushTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onVisualizerPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onVisualizerTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> }
 ) {
     val context = LocalContext.current
 
+    // ═══════════════════════════════════════════════════════════
+    //  ACTIVE CLIPS
+    // ═══════════════════════════════════════════════════════════
     val activeClips = clips
         .filter {
             !it.isAudio &&
@@ -292,7 +295,6 @@ fun PreviewCanvas(
     val combinedMotion = EffectsEngine.combineMotions(motionFrames)
 
     val filterList = activeEffects.mapNotNull { it.effectState?.filters }.toMutableList()
-
     previewEffectState?.filters?.let { filterList.add(it) }
 
     val combinedFilter = if (filterList.isNotEmpty())
@@ -331,7 +333,6 @@ fun PreviewCanvas(
         if (hasFilters && combinedFilter != null) {
             cm.postConcat(EffectsEngine.buildColorMatrix(combinedFilter))
         }
-
         activeFilterLayer?.let { layer ->
             val cfv = ColorFilterValues(
                 brightness = layer.filters.brightness,
@@ -348,7 +349,6 @@ fun PreviewCanvas(
                 cm.postConcat(EffectsEngine.buildColorMatrix(cfv))
             }
         }
-
         previewFilters?.let { pf ->
             val cfv = ColorFilterValues(
                 brightness = pf.brightness,
@@ -365,12 +365,14 @@ fun PreviewCanvas(
                 cm.postConcat(EffectsEngine.buildColorMatrix(cfv))
             }
         }
-
         cm
     }
 
     val opacityAlpha = EffectsEngine.opacityAlpha(combinedFilter)
 
+    // ═══════════════════════════════════════════════════════════
+    //  ROOT BOX
+    // ═══════════════════════════════════════════════════════════
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -732,7 +734,135 @@ fun PreviewCanvas(
                             }
                         }
                     }
+                    // ─────────── 🆕 VISUALIZER (as regular layer) ───────────
+                    clip.isVisualizerClip -> {
+                        val vs = clip.visualizer ?: return@forEach
 
+                        val minDimDp = minOf(canvasW, canvasH)
+                        val radiusDp = vs.size * minDimDp
+                        val diameterDp = radiusDp * 2f
+                        val leftDp = vs.positionX * canvasW - radiusDp
+                        val topDp = vs.positionY * canvasH - radiusDp
+
+                        val isSel = clip.id == selectedClipId
+                        val isMulti = clip.id in multiSelectedIds
+
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            // Visualizer rendered on full canvas
+                            VisualizerOverlay(
+                                state = vs,
+                                visualizerClip = clip,
+                                allClips = clips,
+                                currentPosMs = currentPosMs,
+                                isPlaying = isPlaying,
+                                enabled = true,
+                                modifier = Modifier.fillMaxSize()
+                            )
+
+                            // Interactive gesture box matching visualizer bounds
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = leftDp.dp, y = topDp.dp)
+                                    .size(diameterDp.dp)
+                                    .then(
+                                        if (isSel || isMulti) {
+                                            Modifier.border(
+                                                width = if (isSel) 2.dp else 1.dp,
+                                                color = if (isSel)
+                                                    Color(0xFF60EFFF)
+                                                else Color(0xFFFFD166),
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                        } else Modifier
+                                    )
+                                    .pointerInput(clip.id, isSel, isMulti, canvasW, canvasH) {
+                                        awaitEachGesture {
+                                            awaitFirstDown(requireUnconsumed = false)
+                                            onGroupGestureStart()
+
+                                            val baseX = vs.positionX * 100f
+                                            val baseY = vs.positionY * 100f
+                                            val baseScale = vs.size / 0.32f * 100f
+                                            val baseRot = vs.rotation
+
+                                            var accumPanX = 0f
+                                            var accumPanY = 0f
+                                            var accumZoom = 1f
+                                            var accumRot = 0f
+                                            var lastDist = 0f
+                                            var lastAngle = 0f
+                                            var hasMulti = false
+
+                                            if (!isSel && !isMulti) onClipSelected(clip.id)
+
+                                            var continueGesture = true
+                                            while (continueGesture) {
+                                                val event = awaitPointerEvent()
+                                                val pressed = event.changes.filter { it.pressed }
+                                                if (pressed.isEmpty()) {
+                                                    continueGesture = false
+                                                } else {
+                                                    if (pressed.size == 1) {
+                                                        val ch = pressed.first()
+                                                        val pan = ch.position - ch.previousPosition
+                                                        accumPanX += pan.x
+                                                        accumPanY += pan.y
+                                                        ch.consume()
+                                                    } else if (pressed.size >= 2) {
+                                                        val c1 = pressed[0]
+                                                        val c2 = pressed[1]
+                                                        val d = c1.position - c2.position
+                                                        val dist = sqrt(d.x * d.x + d.y * d.y)
+                                                        val angle = kotlin.math.atan2(d.y, d.x)
+                                                        if (hasMulti && lastDist > 1f) {
+                                                            accumZoom *= dist / lastDist
+                                                            accumRot += Math.toDegrees(
+                                                                (angle - lastAngle).toDouble()
+                                                            ).toFloat()
+                                                        }
+                                                        lastDist = dist
+                                                        lastAngle = angle
+                                                        hasMulti = true
+                                                        c1.consume()
+                                                        c2.consume()
+                                                    }
+
+                                                    val newX = (baseX + accumPanX /
+                                                            size.width * 100f)
+                                                        .coerceIn(0f, 100f)
+                                                    val newY = (baseY + accumPanY /
+                                                            size.height * 100f)
+                                                        .coerceIn(0f, 100f)
+                                                    val newScale = (baseScale * accumZoom)
+                                                        .coerceIn(10f, 500f)
+                                                    val newRot = baseRot + accumRot
+
+                                                    if (isMulti) {
+                                                        onGroupGesture(
+                                                            clip.id, newX, newY,
+                                                            newScale, newRot
+                                                        )
+                                                    } else {
+                                                        onVisualizerPositionChanged(
+                                                            clip.id, newX, newY
+                                                        )
+                                                        onVisualizerTransformChanged(
+                                                            clip.id, newScale, newRot
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            onGroupGestureEnd()
+                                        }
+                                    }
+                                    .pointerInput(clip.id, isMulti) {
+                                        detectTapGestures {
+                                            if (!isMulti) onClipSelected(clip.id)
+                                        }
+                                    }
+                            )
+                        }
+                    }
                     // ─────────── BRUSH ───────────
                     clip.isBrushClip -> {
                         if (clip.brush.strokes.isEmpty()) return@forEach
@@ -786,10 +916,7 @@ fun PreviewCanvas(
                                             )
                                         } else Modifier
                                     )
-                                    .pointerInput(
-                                        clip.id, isSelected, isMulti,
-                                        clip.brush.strokes.size
-                                    ) {
+                                    .pointerInput(clip.id, isSelected, isMulti) {
                                         awaitEachGesture {
                                             awaitFirstDown(requireUnconsumed = false)
                                             onGroupGestureStart()
@@ -943,12 +1070,15 @@ fun PreviewCanvas(
                 }
             }
 
+            // ─────────── OVERLAY EFFECTS ───────────
             if (allOverlays.isNotEmpty()) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     allOverlays.forEach { ov -> OverlayEngine.draw(this, timeSec, ov) }
                 }
             }
 
+
+            // ─────────── VIGNETTE ───────────
             activeAdjustment?.let { adj ->
                 if (adj.vignette > 0f) {
                     val alpha = (adj.vignette / 100f).coerceIn(0f, 1f)
@@ -968,6 +1098,7 @@ fun PreviewCanvas(
                 }
             }
 
+            // ─────────── TRANSITION ───────────
             if (activeTransitionClip != null && outgoingBitmap != null) {
                 val ts = activeTransitionClip.transition!!
                 val progress = (
@@ -978,6 +1109,7 @@ fun PreviewCanvas(
                 TransitionRenderer.Render(outgoingBitmap!!, ts.key, progress)
             }
 
+            // ─────────── MASK PEN ───────────
             if (isMaskPenMode && selectedClip != null) {
                 MaskPenOverlay(
                     maskState = maskToRender
@@ -993,6 +1125,7 @@ fun PreviewCanvas(
                 )
             }
 
+            // ─────────── BRUSH DRAW MODE ───────────
             if (isDrawingMode && !isMaskPenMode) {
                 val brushClip = clips.firstOrNull {
                     it.isBrushClip &&
@@ -1015,6 +1148,7 @@ fun PreviewCanvas(
             }
         }
 
+        // ─────────── SIDE BLACK BARS ───────────
         if (sideBar > 0.5f) {
             Box(
                 modifier = Modifier
@@ -1569,7 +1703,6 @@ private fun BrushDrawLayer(
 
 // ═══════════════════════════════════════════════════════════════
 //  INTERACTIVE TEXT OVERLAY
-//  ✅ FIXED: Dp/px mismatch — canvas pixels use kar rahe hain
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun InteractiveTextOverlay(
@@ -1618,8 +1751,6 @@ private fun InteractiveTextOverlay(
     ) return
 
     val density = LocalDensity.current
-
-    // 🆕 Canvas dimensions in PIXELS — critical for matching export
     val canvasWpx = with(density) { canvasW.dp.toPx() }
     val canvasHpx = with(density) { canvasH.dp.toPx() }
 
@@ -1737,7 +1868,6 @@ private fun InteractiveTextOverlay(
         Box(
             modifier = Modifier
                 .graphicsLayer {
-                    // ✅ FIXED: pixel values use kar rahe hain
                     val posTx = (clampedX - 50f) / 100f * canvasWpx
                     val posTy = (clampedY - 50f) / 100f * canvasHpx
                     translationX = posTx + frame.translateX
@@ -1813,7 +1943,6 @@ private fun InteractiveTextOverlay(
                                     c2.consume()
                                 }
 
-                                // ✅ FIXED: canvas px
                                 val rawX = baseX + accumPanX / canvasWpx * 100f
                                 val rawY = baseY + accumPanY / canvasHpx * 100f
 
@@ -1942,7 +2071,6 @@ private fun InteractiveTextOverlay(
 
 // ═══════════════════════════════════════════════════════════════
 //  INTERACTIVE STICKER OVERLAY
-//  ✅ FIXED: Dp/px mismatch — canvas pixels use kar rahe hain
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun InteractiveStickerOverlay(
@@ -1987,7 +2115,6 @@ private fun InteractiveStickerOverlay(
     )
 
     val density = LocalDensity.current
-    // 🆕 Canvas dimensions in PIXELS — critical for matching export
     val canvasWpx = with(density) { canvasW.dp.toPx() }
     val canvasHpx = with(density) { canvasH.dp.toPx() }
 
@@ -2004,7 +2131,6 @@ private fun InteractiveStickerOverlay(
         Box(
             modifier = Modifier
                 .graphicsLayer {
-                    // ✅ FIXED: pixel values
                     translationX = (clampedX - 50f) / 100f * canvasWpx +
                             frame.translateX
                     translationY = (clampedY - 50f) / 100f * canvasHpx +
@@ -2078,7 +2204,6 @@ private fun InteractiveStickerOverlay(
                                     c2.consume()
                                 }
 
-                                // ✅ FIXED: canvas px
                                 val rawX = baseX + accumPanX / canvasWpx * 100f
                                 val rawY = baseY + accumPanY / canvasHpx * 100f
 
