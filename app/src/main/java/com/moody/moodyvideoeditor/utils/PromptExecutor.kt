@@ -741,6 +741,10 @@ object PromptExecutor {
     // ═══════════════════════════════════════════════════════════
     //  🆕 VISUALIZER PRESET RESOLVER
     // ═══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 VISUALIZER PRESET RESOLVER
+    //  Aliases + key + label matching (100 presets)
+    // ═══════════════════════════════════════════════════════════
     private fun resolveVisualizerPreset(name: String): VisualizerPreset? {
         val clean = name.trim().lowercase()
             .replace(" ", "")
@@ -748,48 +752,213 @@ object PromptExecutor {
             .replace("_", "")
         if (clean.isBlank()) return null
 
-        val aliases = mapOf(
+        // ─── SPECTRUM ───
+        val spectrumAliases = mapOf(
+            "circular" to VisualizerPreset.CIRCULAR_SPECTRUM,
+            "circlespectrum" to VisualizerPreset.CIRCULAR_SPECTRUM,
+            "linear" to VisualizerPreset.LINEAR_WAVEFORM,
+            "waveform" to VisualizerPreset.LINEAR_WAVEFORM,
+            "doublesided" to VisualizerPreset.DOUBLE_SIDED_BARS,
+            "radial" to VisualizerPreset.RADIAL_BARS,
+            "radialbars" to VisualizerPreset.RADIAL_BARS,
+            "innerradial" to VisualizerPreset.INNER_RADIAL_BARS,
+            "heartbeat" to VisualizerPreset.HEARTBEAT_WAVE,
+            "ecgwave" to VisualizerPreset.HEARTBEAT_WAVE,
+            "square" to VisualizerPreset.SQUARE_SPECTRUM,
+            "triangle" to VisualizerPreset.TRIANGLE_BEATS,
+            "hexagon" to VisualizerPreset.HEXAGON_PULSE,
+            "dotmatrix" to VisualizerPreset.DOT_MATRIX,
+            "dotsmatrix" to VisualizerPreset.DOT_MATRIX,
+            "mirrored" to VisualizerPreset.MIRRORED_LINEAR,
+            "glowwaves" to VisualizerPreset.GLOW_WAVES,
+            "thick" to VisualizerPreset.THICK_BARS,
+            "thickbars" to VisualizerPreset.THICK_BARS,
+            "thin" to VisualizerPreset.THIN_STRINGS,
+            "strings" to VisualizerPreset.THIN_STRINGS,
+            "sine" to VisualizerPreset.SINE_WAVE,
+            "3d" to VisualizerPreset.PERSPECTIVE_3D,
+            "perspective" to VisualizerPreset.PERSPECTIVE_3D,
+            "volcano" to VisualizerPreset.FREQUENCY_VOLCANO,
+            "tornado" to VisualizerPreset.TORNADO_SPIRAL,
+            "spiral" to VisualizerPreset.TORNADO_SPIRAL,
+            "dualring" to VisualizerPreset.DUAL_RING,
+            "star" to VisualizerPreset.STAR_BURST,
+            "starburst" to VisualizerPreset.STAR_BURST
+        )
+
+        // ─── PARTICLES ───
+        val particleAliases = mapOf(
+            "bassparticles" to VisualizerPreset.BASS_PARTICLES,
+            "bass" to VisualizerPreset.BASS_PARTICLES,
+            "dust" to VisualizerPreset.FLOATING_DUST,
+            "floatingdust" to VisualizerPreset.FLOATING_DUST,
+            "liquid" to VisualizerPreset.LIQUID_DROPS,
+            "drops" to VisualizerPreset.LIQUID_DROPS,
+            "firefly" to VisualizerPreset.FIREFLY_GLOW,
+            "fireflies" to VisualizerPreset.FIREFLY_GLOW,
+            "smoke" to VisualizerPreset.SMOKE_AURA,
+            "smokeaura" to VisualizerPreset.SMOKE_AURA,
+            "matrix" to VisualizerPreset.MATRIX_RAIN,
+            "matrixrain" to VisualizerPreset.MATRIX_RAIN,
+            "snow" to VisualizerPreset.SNOWFALL,
+            "snowfall" to VisualizerPreset.SNOWFALL,
+            "nebula" to VisualizerPreset.COSMIC_NEBULA,
+            "cosmic" to VisualizerPreset.COSMIC_NEBULA,
+            "spark" to VisualizerPreset.SPARK_TRAIL,
+            "sparks" to VisualizerPreset.SPARK_TRAIL,
+            "ink" to VisualizerPreset.INK_BLEED,
+            "inkbleed" to VisualizerPreset.INK_BLEED,
+            "sand" to VisualizerPreset.SAND_STORM,
+            "sandstorm" to VisualizerPreset.SAND_STORM,
+            "magic" to VisualizerPreset.MAGIC_DUST,
+            "magicdust" to VisualizerPreset.MAGIC_DUST,
+            "meteor" to VisualizerPreset.METEOR_SHOWER,
+            "plasma" to VisualizerPreset.PLASMA_ORBS,
+            "orbs" to VisualizerPreset.PLASMA_ORBS,
+            "confetti" to VisualizerPreset.CONFETTI_POP,
+            "bubbles" to VisualizerPreset.BUBBLES_POP,
+            "electric" to VisualizerPreset.ELECTRIC_STORM,
+            "storm" to VisualizerPreset.ELECTRIC_STORM,
+            "disintegrate" to VisualizerPreset.DISINTEGRATION,
+            "disintegration" to VisualizerPreset.DISINTEGRATION,
+            "galaxy" to VisualizerPreset.GALAXY_VORTEX,
+            "cybergrid" to VisualizerPreset.CYBER_GRID
+        )
+
+        // ─── NEON ───
+        val neonAliases = mapOf(
             "neon" to VisualizerPreset.NEON_GLOW_RING,
             "glow" to VisualizerPreset.NEON_GLOW_RING,
             "neonring" to VisualizerPreset.NEON_GLOW_RING,
             "neonglow" to VisualizerPreset.NEON_GLOW_RING,
-            "spectrum" to VisualizerPreset.FREQUENCY_SPECTRUM_RING,
-            "freq" to VisualizerPreset.FREQUENCY_SPECTRUM_RING,
-            "bars" to VisualizerPreset.FREQUENCY_SPECTRUM_RING,
-            "spectrumring" to VisualizerPreset.FREQUENCY_SPECTRUM_RING,
-            "particle" to VisualizerPreset.PARTICLE_ORBIT_RING,
-            "orbit" to VisualizerPreset.PARTICLE_ORBIT_RING,
-            "particleorbit" to VisualizerPreset.PARTICLE_ORBIT_RING,
-            "liquid" to VisualizerPreset.LIQUID_WAVE_RING,
-            "wave" to VisualizerPreset.LIQUID_WAVE_RING,
-            "liquidwave" to VisualizerPreset.LIQUID_WAVE_RING,
-            "double" to VisualizerPreset.DOUBLE_ORBIT_RINGS,
-            "doubleorbit" to VisualizerPreset.DOUBLE_ORBIT_RINGS,
-            "dots" to VisualizerPreset.DOTTED_RADIAL_WAVE,
-            "dotted" to VisualizerPreset.DOTTED_RADIAL_WAVE,
-            "dottedradial" to VisualizerPreset.DOTTED_RADIAL_WAVE,
-            "vinyl" to VisualizerPreset.VINYL_RECORD_SPIN,
-            "record" to VisualizerPreset.VINYL_RECORD_SPIN,
-            "vinylrecord" to VisualizerPreset.VINYL_RECORD_SPIN,
-            "center" to VisualizerPreset.AUDIO_REACTIVE_CENTER_ART,
-            "art" to VisualizerPreset.AUDIO_REACTIVE_CENTER_ART,
-            "centerart" to VisualizerPreset.AUDIO_REACTIVE_CENTER_ART,
-            "broken" to VisualizerPreset.BROKEN_SEGMENT_RING,
-            "segments" to VisualizerPreset.BROKEN_SEGMENT_RING,
-            "brokenring" to VisualizerPreset.BROKEN_SEGMENT_RING,
-            "vortex" to VisualizerPreset.VORTEX_TUNNEL,
-            "tunnel" to VisualizerPreset.VORTEX_TUNNEL,
-            "vortextunnel" to VisualizerPreset.VORTEX_TUNNEL
+            "rgb" to VisualizerPreset.RGB_GLITCH,
+            "rgbglitch" to VisualizerPreset.RGB_GLITCH,
+            "vaporwave" to VisualizerPreset.VAPORWAVE_GRID,
+            "vapor" to VisualizerPreset.VAPORWAVE_GRID,
+            "vhs" to VisualizerPreset.VHS_NOISE,
+            "vhsnoise" to VisualizerPreset.VHS_NOISE,
+            "laser" to VisualizerPreset.LASER_BEAM,
+            "laserbeam" to VisualizerPreset.LASER_BEAM,
+            "eq" to VisualizerPreset.DIGITAL_EQ,
+            "digitaleq" to VisualizerPreset.DIGITAL_EQ,
+            "chroma" to VisualizerPreset.CHROMA_PULSE,
+            "chromapulse" to VisualizerPreset.CHROMA_PULSE,
+            "scanline" to VisualizerPreset.SCANLINE_DISTORT,
+            "tron" to VisualizerPreset.TRON_WIREFRAME,
+            "tronwireframe" to VisualizerPreset.TRON_WIREFRAME,
+            "led" to VisualizerPreset.LED_MATRIX,
+            "ledmatrix" to VisualizerPreset.LED_MATRIX,
+            "arcade" to VisualizerPreset.ARCADE_GAMEOVER,
+            "lasertunnel" to VisualizerPreset.LASER_TUNNEL,
+            "tracer" to VisualizerPreset.NEON_TRACER,
+            "neontracer" to VisualizerPreset.NEON_TRACER,
+            "pixel" to VisualizerPreset.PIXEL_DISSOLVE,
+            "pixeldissolve" to VisualizerPreset.PIXEL_DISSOLVE,
+            "ecg" to VisualizerPreset.ECG_GRID,
+            "ecggrid" to VisualizerPreset.ECG_GRID,
+            "synth" to VisualizerPreset.SYNTH_SUN,
+            "synthsun" to VisualizerPreset.SYNTH_SUN,
+            "hologram" to VisualizerPreset.HOLOGRAM,
+            "crt" to VisualizerPreset.CRT_FLICKER,
+            "crtflicker" to VisualizerPreset.CRT_FLICKER,
+            "vector" to VisualizerPreset.VECTOR_WAVE,
+            "vectorwave" to VisualizerPreset.VECTOR_WAVE,
+            "glitch" to VisualizerPreset.GLITCH_TWITCH,
+            "glitchtwitch" to VisualizerPreset.GLITCH_TWITCH
         )
 
-        aliases[clean]?.let { return it }
+        // ─── GEOMETRIC ───
+        val geometricAliases = mapOf(
+            "minimal" to VisualizerPreset.MINIMAL_DOTS,
+            "dots" to VisualizerPreset.MINIMAL_DOTS,
+            "minimaldots" to VisualizerPreset.MINIMAL_DOTS,
+            "poly" to VisualizerPreset.ROTATING_POLY,
+            "rotatingpoly" to VisualizerPreset.ROTATING_POLY,
+            "kaleidoscope" to VisualizerPreset.KALEIDOSCOPE,
+            "interlocking" to VisualizerPreset.INTERLOCKING_RINGS,
+            "rings" to VisualizerPreset.INTERLOCKING_RINGS,
+            "expanding" to VisualizerPreset.EXPANDING_SQUARES,
+            "squares" to VisualizerPreset.EXPANDING_SQUARES,
+            "origami" to VisualizerPreset.ORIGAMI,
+            "fractal" to VisualizerPreset.FRACTAL_ZOOM,
+            "fractalzoom" to VisualizerPreset.FRACTAL_ZOOM,
+            "parallax" to VisualizerPreset.PARALLAX_LINES,
+            "isometric" to VisualizerPreset.ISOMETRIC_BLOCKS,
+            "blocks" to VisualizerPreset.ISOMETRIC_BLOCKS,
+            "mirror" to VisualizerPreset.SYMMETRIC_MIRROR,
+            "symmetric" to VisualizerPreset.SYMMETRIC_MIRROR,
+            "crosshair" to VisualizerPreset.CROSSHAIR,
+            "target" to VisualizerPreset.CROSSHAIR,
+            "dna" to VisualizerPreset.DNA_STRAND,
+            "dnastrand" to VisualizerPreset.DNA_STRAND,
+            "concentric" to VisualizerPreset.CONCENTRIC_RINGS,
+            "shards" to VisualizerPreset.FLOATING_SHARDS,
+            "infinitetunnel" to VisualizerPreset.INFINITE_TUNNEL,
+            "morph" to VisualizerPreset.SHAPE_MORPH,
+            "shapemorph" to VisualizerPreset.SHAPE_MORPH,
+            "gyroscope" to VisualizerPreset.GYROSCOPE,
+            "gyro" to VisualizerPreset.GYROSCOPE,
+            "diagonal" to VisualizerPreset.SPLIT_DIAGONAL,
+            "splitdiagonal" to VisualizerPreset.SPLIT_DIAGONAL,
+            "checker" to VisualizerPreset.CHECKERBOARD,
+            "checkerboard" to VisualizerPreset.CHECKERBOARD,
+            "ribbon" to VisualizerPreset.VECTOR_RIBBON,
+            "vectorribbon" to VisualizerPreset.VECTOR_RIBBON
+        )
 
+        // ─── CINEMATIC ───
+        val cinematicAliases = mapOf(
+            "lensflare" to VisualizerPreset.LENS_FLARE,
+            "flare" to VisualizerPreset.LENS_FLARE,
+            "shutter" to VisualizerPreset.CAMERA_SHUTTER,
+            "camerashutter" to VisualizerPreset.CAMERA_SHUTTER,
+            "cinematicdust" to VisualizerPreset.CINEMATIC_DUST,
+            "vignette" to VisualizerPreset.VIGNETTE_BREATHE,
+            "vignettebreathe" to VisualizerPreset.VIGNETTE_BREATHE,
+            "blur" to VisualizerPreset.BLUR_DISSOLVE,
+            "blurdissolve" to VisualizerPreset.BLUR_DISSOLVE,
+            "sunbeams" to VisualizerPreset.SUNBEAMS,
+            "beams" to VisualizerPreset.SUNBEAMS,
+            "rain" to VisualizerPreset.RAINDROPS,
+            "raindrops" to VisualizerPreset.RAINDROPS,
+            "grain" to VisualizerPreset.FILM_GRAIN,
+            "filmgrain" to VisualizerPreset.FILM_GRAIN,
+            "lightleak" to VisualizerPreset.LIGHT_LEAK,
+            "fog" to VisualizerPreset.FOGGY_AMBIANCE,
+            "foggy" to VisualizerPreset.FOGGY_AMBIANCE,
+            "bokeh" to VisualizerPreset.BOKEH_DRIFT,
+            "shadow" to VisualizerPreset.SHADOW_WAVE,
+            "ripple" to VisualizerPreset.WATER_RIPPLE,
+            "waterripple" to VisualizerPreset.WATER_RIPPLE,
+            "cloudy" to VisualizerPreset.CLOUDY_TIMELAPSE,
+            "lightstreak" to VisualizerPreset.LIGHT_STREAK,
+            "streak" to VisualizerPreset.LIGHT_STREAK,
+            "countdown" to VisualizerPreset.VINTAGE_COUNTDOWN,
+            "vintage" to VisualizerPreset.VINTAGE_COUNTDOWN,
+            "golden" to VisualizerPreset.GOLDEN_HOUR,
+            "goldenhour" to VisualizerPreset.GOLDEN_HOUR,
+            "prism" to VisualizerPreset.PRISM_RAINBOW,
+            "rainbow" to VisualizerPreset.PRISM_RAINBOW,
+            "shake" to VisualizerPreset.CAMERA_SHAKE,
+            "camerashake" to VisualizerPreset.CAMERA_SHAKE,
+            "horizon" to VisualizerPreset.HORIZON_ZOOM,
+            "horizonzoom" to VisualizerPreset.HORIZON_ZOOM
+        )
+
+        // Combined lookup
+        val allAliases = spectrumAliases + particleAliases +
+                neonAliases + geometricAliases + cinematicAliases
+
+        allAliases[clean]?.let { return it }
+
+        // Match by enum key (lowercase, no separators)
         VisualizerPreset.values().firstOrNull {
             it.key.lowercase() == clean
         }?.let { return it }
 
+        // Match by label
         VisualizerPreset.values().firstOrNull {
-            it.label.lowercase().replace(" ", "") == clean
+            it.label.lowercase().replace(" ", "").replace("-", "") == clean
         }?.let { return it }
 
         return null
