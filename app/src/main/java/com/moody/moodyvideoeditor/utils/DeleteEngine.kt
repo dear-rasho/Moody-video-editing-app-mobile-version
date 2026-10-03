@@ -2,10 +2,8 @@ package com.moody.moodyvideoeditor.utils
 
 import com.moody.moodyvideoeditor.data.EditorClip
 
-/**
- * Mirrors js/features/delete.js
- * Deletes clip + its linked partner (video ↔ audio).
- */
+// Mirrors js/features/delete.js
+// Deletes clip + its linked partner (video ↔ audio).
 object DeleteEngine {
 
     fun collectForDeletion(target: EditorClip, allClips: List<EditorClip>): Set<String> {

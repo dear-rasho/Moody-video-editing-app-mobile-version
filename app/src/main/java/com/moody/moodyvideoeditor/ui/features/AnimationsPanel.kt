@@ -33,10 +33,8 @@ import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.AnimationsEngine
 
-/**
- * Mirrors js/features/animations.js
- * Standalone animations panel — text clip ke animation property ko set karta hai.
- */
+// Mirrors js/features/animations.js
+// Standalone animations panel — text clip ke animation property ko set karta hai.
 @Composable
 fun AnimationsPanel(
     currentAnimation: String,
@@ -64,7 +62,7 @@ fun AnimationsPanel(
         val currentCategory = AnimationsEngine.CATEGORIES.firstOrNull { it.key == selectedCategory }
             ?: AnimationsEngine.CATEGORIES[0]
 
-        // ─── CATEGORY SHELF ─────────────────────────────
+        // CATEGORY SHELF
         Text(
             "Category",
             color = Color(0xFF888888),
@@ -103,7 +101,7 @@ fun AnimationsPanel(
 
         Spacer(Modifier.height(8.dp))
 
-        // ─── ANIMATION CHIPS ─────────────────────────────
+        // ANIMATION CHIPS
         Text(
             currentCategory.label,
             color = Color(0xFF7C3AED),
@@ -144,7 +142,7 @@ fun AnimationsPanel(
 
         Spacer(Modifier.height(10.dp))
 
-        // ─── DURATION SLIDER ─────────────────────────────
+        // DURATION SLIDER
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -179,7 +177,7 @@ fun AnimationsPanel(
 
         Spacer(Modifier.height(8.dp))
 
-        // ─── PREVIEW BUTTON ──────────────────────────────
+        // PREVIEW BUTTON
         Box(
             modifier = Modifier
                 .fillMaxWidth()

@@ -16,10 +16,8 @@ data class BrushPoint(
     val y: Float
 )
 
-/**
- * 🆕 Gradient ramp configuration for a brush stroke.
- * Color interpolates along the stroke path.
- */
+// 🆕 Gradient ramp configuration for a brush stroke.
+// Color interpolates along the stroke path.
 data class BrushGradient(
     val enabled: Boolean = false,
     val color1: Long = 0xFFFF0000,   // start color

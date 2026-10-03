@@ -112,7 +112,7 @@ fun ExportPanel(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
 
-            // ═══ INFO BAR ═══
+            // INFO BAR
             val targetDims = ExportSettings.targetDimensions(
                 currentResolution, aspectRatio
             )
@@ -135,7 +135,7 @@ fun ExportPanel(
                 )
             }
 
-            // ═══ FILE NAME ═══
+            // FILE NAME
             SectionLabel("File Name")
             Box(
                 modifier = Modifier
@@ -180,7 +180,7 @@ fun ExportPanel(
                 }
             }
 
-            // ═══ RESOLUTION ═══
+            // RESOLUTION
             SectionLabel("Resolution")
             Row(
                 modifier = Modifier
@@ -197,7 +197,7 @@ fun ExportPanel(
                 }
             }
 
-            // ═══ FPS ═══
+            // FPS
             SectionLabel("Frame Rate")
             Row(
                 modifier = Modifier
@@ -214,7 +214,7 @@ fun ExportPanel(
                 }
             }
 
-            // ═══ BITRATE ═══
+            // BITRATE
             SectionLabel("Bitrate")
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -261,7 +261,7 @@ fun ExportPanel(
                 )
             }
 
-            // ═══ FORMAT ═══
+            // FORMAT
             SectionLabel("Format")
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -279,7 +279,7 @@ fun ExportPanel(
                 )
             }
 
-            // ═══ SAVE LOCATION ═══
+            // SAVE LOCATION
             SectionLabel("Save Location")
             Row(
                 modifier = Modifier
@@ -350,7 +350,7 @@ fun ExportPanel(
 
             Spacer(Modifier.height(4.dp))
 
-            // ═══ START BUTTON ═══
+            // START BUTTON
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -370,7 +370,7 @@ fun ExportPanel(
                 )
             }
 
-            // ═══ MESSAGE + COPY ═══
+            // MESSAGE + COPY
             if (exportMessage.isNotBlank()) {
                 val msgColor = when {
                     exportMessage.startsWith("✅") -> Color(0xFF22C55E)

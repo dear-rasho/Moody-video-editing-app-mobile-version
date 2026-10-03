@@ -103,7 +103,7 @@ fun ProjectCard(
             }
     ) {
         Column {
-            // ─── Thumbnail area ───
+            // Thumbnail area
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -136,7 +136,7 @@ fun ProjectCard(
                 }
             }
 
-            // ─── Info area ───
+            // Info area
             Column(modifier = Modifier.padding(8.dp)) {
                 Text(
                     text = project.name,
@@ -156,9 +156,9 @@ fun ProjectCard(
             }
         }
 
-        // ═══════════════════════════════════════════════════════════
+
         //  🆕 DELETE BUTTON — top-right of card
-        // ═══════════════════════════════════════════════════════════
+
         Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)

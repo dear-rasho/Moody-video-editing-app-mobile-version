@@ -78,9 +78,7 @@ object TimelinePlayheadController {
     }
 }
 
-/**
- * Timeline playhead — THIN red line + small triangle head at top.
- */
+// Timeline playhead — THIN red line + small triangle head at top.
 @Composable
 fun TimelinePlayhead(
     currentPosMs: Long,
@@ -103,7 +101,7 @@ fun TimelinePlayhead(
     if (screenX < labelWidthPx - 4f) return
     if (viewportWidthPx > 0f && screenX > viewportWidthPx + 4f) return
 
-    // ─── Thin RED vertical line (1dp) ───
+    // Thin RED vertical line (1dp)
     Box(
         modifier = Modifier
             .offset(x = with(density) { (screenX - 0.5f).toDp() })
@@ -113,7 +111,7 @@ fun TimelinePlayhead(
             .zIndex(100f)
     )
 
-    // ─── RED triangle head at very top ───
+    // RED triangle head at very top
     Box(
         modifier = Modifier
             .offset(

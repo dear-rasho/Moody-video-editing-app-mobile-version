@@ -3,22 +3,31 @@ package com.moody.moodyvideoeditor.utils
 import androidx.compose.ui.text.font.FontFamily
 import com.moody.moodyvideoeditor.data.TextState
 
+// ═══════════════════════════════════════════════════════════════
+//  TEXT RENDER CONTRACT
+//  Shared contract between Compose (preview) and Android (export)
+//  so both render identically.
+// ═══════════════════════════════════════════════════════════════
 object TextRenderContract {
 
-    const val REFERENCE_WIDTH_PX = 400f
+    // ✅ SAME reference as TextScaler
+    const val REFERENCE_WIDTH = 720f
 
-    // ─── SIZE ─────────────────────────────────────
+    // Legacy alias
+    const val REFERENCE_WIDTH_PX = REFERENCE_WIDTH
+
+    // ─── SIZE ────────────────────────────────────────────────────
     fun fontScale(canvasWidthPx: Float): Float =
-        (canvasWidthPx / REFERENCE_WIDTH_PX).coerceIn(0.35f, 3.5f)
+        (canvasWidthPx / REFERENCE_WIDTH).coerceIn(0.1f, 5.0f)
 
     fun scaledFontSize(baseSizePx: Float, canvasWidthPx: Float): Float =
-        (baseSizePx * fontScale(canvasWidthPx)).coerceIn(8f, 400f)
+        (baseSizePx * fontScale(canvasWidthPx)).coerceIn(4f, 600f)
 
-    // ─── POSITION ─────────────────────────────────
+    // ─── POSITION ────────────────────────────────────────────────
     fun posX(percent: Float, canvasW: Float): Float = percent / 100f * canvasW
     fun posY(percent: Float, canvasH: Float): Float = percent / 100f * canvasH
 
-    // ─── FONT ─────────────────────────────────────
+    // ─── FONT FAMILY (Compose) ───────────────────────────────────
     fun resolveFontFamily(name: String): FontFamily {
         val n = name.lowercase().trim()
         return when {
@@ -49,6 +58,7 @@ object TextRenderContract {
         }
     }
 
+    // ─── TYPEFACE (Android) ──────────────────────────────────────
     fun androidTypefaceFor(
         family: FontFamily,
         bold: Boolean,
@@ -71,13 +81,14 @@ object TextRenderContract {
         return android.graphics.Typeface.create(base, style)
     }
 
+    // ─── ALIGNMENT ───────────────────────────────────────────────
     fun androidAlignFor(alignment: String): android.graphics.Paint.Align = when (alignment) {
         "left" -> android.graphics.Paint.Align.LEFT
         "right" -> android.graphics.Paint.Align.RIGHT
         else -> android.graphics.Paint.Align.CENTER
     }
 
-    // ─── GLOW ─────────────────────────────────────
+    // ─── GLOW LAYERS ─────────────────────────────────────────────
     data class GlowLayer(
         val fontScale: Float,
         val blurScale: Float,
@@ -90,7 +101,7 @@ object TextRenderContract {
         GlowLayer(1.15f, 1.60f, 0.25f),
     )
 
-    // ─── HELPERS ──────────────────────────────────
+    // ─── HELPERS ─────────────────────────────────────────────────
     fun weight(st: TextState): Boolean = st.fontWeight == "bold"
     fun italic(st: TextState): Boolean = st.fontStyle == "italic"
 }

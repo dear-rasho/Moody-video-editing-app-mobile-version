@@ -46,7 +46,7 @@ fun CropPanel(
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
 
-            // ─── ASPECT PRESETS ─────────────────────
+            // ASPECT PRESETS
             Text(
                 "Aspect Ratio",
                 color = Color(0xFF888888), fontSize = 9.sp,
@@ -81,13 +81,13 @@ fun CropPanel(
 
             Spacer(Modifier.height(4.dp))
 
-            // ─── SLIDERS ────────────────────────────
+            // SLIDERS
             CropSlider("Left", cropL) { onCropChanged(it, cropR, cropT, cropB) }
             CropSlider("Right", cropR) { onCropChanged(cropL, it, cropT, cropB) }
             CropSlider("Top", cropT) { onCropChanged(cropL, cropR, it, cropB) }
             CropSlider("Bottom", cropB) { onCropChanged(cropL, cropR, cropT, it) }
 
-            // ─── RESET ──────────────────────────────
+            // RESET
             Spacer(Modifier.height(4.dp))
             Box(
                 modifier = Modifier

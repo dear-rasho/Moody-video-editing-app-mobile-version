@@ -2,15 +2,13 @@ package com.moody.moodyvideoeditor.utils
 
 import androidx.compose.ui.graphics.Color
 
-/**
- * Mirrors js/codebase/fontLibrary.js FONT_CATEGORIES
- * + js/features/animations.js ANIMATIONS list.
- */
+// Mirrors js/codebase/fontLibrary.js FONT_CATEGORIES
+// + js/features/animations.js ANIMATIONS list.
 object TextEngine {
 
-    // ═══════════════════════════════════════════════════════════
+
     //  FONT LIST — mirrors fontLibrary.js FONT_CATEGORIES
-    // ═══════════════════════════════════════════════════════════
+
     val FONTS: List<String> = listOf(
         // System (always available)
         "Arial", "Helvetica", "Georgia", "Times New Roman", "Courier New",
@@ -32,9 +30,9 @@ object TextEngine {
         "Russo One", "Righteous", "Monoton", "Audiowide", "Orbitron"
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  ANIMATIONS — mirrors animations.js (100+)
-    // ═══════════════════════════════════════════════════════════
+
     val ANIMATIONS: List<String> = listOf(
         // Basic
         "none", "typewriter", "decoder",
@@ -82,9 +80,9 @@ object TextEngine {
         "silhouette", "explosion", "implosion", "pulse", "shake"
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  ANCHORS — mirrors textRenderer anchor options
-    // ═══════════════════════════════════════════════════════════
+
     val ANCHORS: Map<String, Pair<Float, Float>> = mapOf(
         "top-left" to (0f to 0f),
         "top-center" to (50f to 0f),
@@ -97,9 +95,9 @@ object TextEngine {
         "bottom-right" to (100f to 100f)
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  EASING — mirrors keyframeStore.js easeFn
-    // ═══════════════════════════════════════════════════════════
+
     fun easeFn(t: Float, type: String): Float {
         val x = t.coerceIn(0f, 1f)
         return when (type) {

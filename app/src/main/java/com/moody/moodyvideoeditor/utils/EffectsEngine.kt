@@ -10,18 +10,16 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
-/**
- * Mirrors js/workspace/effectRenderer.js
- * - Motion computation + combination
- * - Filter ColorMatrix builder
- * - Hierarchy: getEffectsAbove()
- * - Multi-effect stacking
- */
+// Mirrors js/workspace/effectRenderer.js
+// - Motion computation + combination
+// - Filter ColorMatrix builder
+// - Hierarchy: getEffectsAbove()
+// - Multi-effect stacking
 object EffectsEngine {
 
-    // ═══════════════════════════════════════════════════════════
+
     //  MOTION FRAME — mirrors effectRenderer.js computeMotion()
-    // ═══════════════════════════════════════════════════════════
+
     data class MotionFrame(
         val tx: Float = 0f,
         val ty: Float = 0f,
@@ -67,10 +65,8 @@ object EffectsEngine {
         }
     }
 
-    /**
-     * Mirrors effectRenderer.js "combineMotions()"
-     * tx/ty add, scale multiply, rotation add.
-     */
+    // Mirrors effectRenderer.js "combineMotions()"
+    // tx/ty add, scale multiply, rotation add.
     fun combineMotions(frames: List<MotionFrame>): MotionFrame {
         if (frames.isEmpty()) return MotionFrame()
         var tx = 0f
@@ -86,10 +82,10 @@ object EffectsEngine {
         return MotionFrame(tx, ty, scale, rot)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  HIERARCHY — mirrors effectRenderer.js getEffectsAbove()
     //  Sirf woh effect clips jo video ke track se UPAR hain.
-    // ═══════════════════════════════════════════════════════════
+
     fun getEffectsAbove(
         clips: List<EditorClip>,
         timeMs: Long,
@@ -105,9 +101,9 @@ object EffectsEngine {
             .sortedBy { it.trackIndex }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  FILTER COMBINING — accumulate multiple effect filters
-    // ═══════════════════════════════════════════════════════════
+
     fun combineFilters(list: List<ColorFilterValues>): ColorFilterValues {
         if (list.isEmpty()) return ColorFilterValues()
         var b = 100f
@@ -144,9 +140,9 @@ object EffectsEngine {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  COLOR MATRIX — mirrors effectRenderer.js buildCssFilter()
-    // ═══════════════════════════════════════════════════════════
+
     fun buildColorMatrix(f: ColorFilterValues?): ColorMatrix {
         val cm = ColorMatrix()
         if (f == null) return cm
@@ -231,9 +227,7 @@ object EffectsEngine {
         return cm
     }
 
-    /**
-     * Proper hue rotation (CSS-style) — matches FFmpeg hue filter.
-     */
+    // Proper hue rotation (CSS-style) — matches FFmpeg hue filter.
     private fun buildHueRotateMatrix(degrees: Float): ColorMatrix {
         val rad = Math.toRadians(degrees.toDouble())
         val cos = cos(rad).toFloat()
@@ -272,9 +266,9 @@ object EffectsEngine {
 
     fun blurRadiusDp(f: ColorFilterValues?): Float = f?.blur ?: 0f
 
-    // ═══════════════════════════════════════════════════════════
+
     //  OVERLAY COLLECTING — returns OverlayState (ready for renderer)
-    // ═══════════════════════════════════════════════════════════
+
     fun collectActiveOverlays(
         clips: List<EditorClip>,
         timeMs: Long,

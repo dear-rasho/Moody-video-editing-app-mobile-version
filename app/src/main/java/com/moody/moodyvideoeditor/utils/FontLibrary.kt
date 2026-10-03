@@ -2,11 +2,9 @@ package com.moody.moodyvideoeditor.utils
 
 import androidx.compose.ui.text.font.FontFamily
 
-/**
- * Mirrors js/codebase/fontLibrary.js
- * Maps font names → Compose FontFamily (via generic fallback).
- * Add .ttf files to res/font later for real custom fonts.
- */
+// Mirrors js/codebase/fontLibrary.js
+// Maps font names → Compose FontFamily (via generic fallback).
+// Add .ttf files to res/font later for real custom fonts.
 object FontLibrary {
 
     // 15 categories — mirrors FONT_CATEGORIES in JS
@@ -110,18 +108,16 @@ object FontLibrary {
         )
     )
 
-    /** All fonts, deduped */
+    // All fonts, deduped
     fun allFonts(): List<String> =
         FONT_CATEGORIES.values.flatten().distinct().sorted()
 
-    /** Category names */
+    // Category names
     fun categories(): List<String> = FONT_CATEGORIES.keys.toList()
 
-    /**
-     * Mirrors JS resolveFontFamily().
-     * If input is category name → first font of that category.
-     * Else return input as-is.
-     */
+    // Mirrors JS resolveFontFamily().
+    // If input is category name → first font of that category.
+    // Else return input as-is.
     fun resolveFontName(input: String): String {
         val raw = input.trim()
         if (raw.isEmpty()) return "Arial"
@@ -130,18 +126,14 @@ object FontLibrary {
         return raw
     }
 
-    /**
-     * Mirrors JS loadGoogleFont() — no-op here. Custom .ttf files
-     * need to be added to res/font/ for real custom fonts.
-     */
+    // Mirrors JS loadGoogleFont() — no-op here. Custom .ttf files
+    // need to be added to res/font/ for real custom fonts.
     fun loadFont(fontName: String) {
         // Silent — Android loads from res/font automatically.
     }
 
-    /**
-     * Maps any font name to a Compose FontFamily.
-     * Uses generic Android families as fallback based on name keywords.
-     */
+    // Maps any font name to a Compose FontFamily.
+    // Uses generic Android families as fallback based on name keywords.
     fun familyFor(fontName: String): FontFamily {
         val n = fontName.lowercase()
         return when {

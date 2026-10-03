@@ -129,9 +129,9 @@ private fun TabChip(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  AI PROMPT TAB
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun PromptContent(context: Context) {
     var copied by remember { mutableStateOf(false) }
@@ -275,9 +275,9 @@ private fun PromptContent(context: Context) {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  MEGA AI PROMPT — Fully Updated
-// ═══════════════════════════════════════════════════════════════
+
 private fun buildFullAiPrompt(): String = """
 You are an AI Prompt Generator for "Moody Video Editor" — an offline mobile video editor app.
 
@@ -741,9 +741,9 @@ Style recipe for similar request:
 Now wait for the user's request. Do not output anything until they tell you what they want.
 """.trimIndent()
 
-// ═══════════════════════════════════════════════════════════════
+
 //  COMMANDS TAB
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun CommandsContent() {
 
@@ -1011,9 +1011,9 @@ private fun CommandCategory(title: String, commands: List<String>) {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  GUIDE TAB
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun GuideContent() {
     GuideSection(

@@ -33,10 +33,8 @@ import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.SpeedEngine
 
-/**
- * Mirrors js/features/speed.js
- * Shows: info bar + presets + fine slider + reset.
- */
+// Mirrors js/features/speed.js
+// Shows: info bar + presets + fine slider + reset.
 @Composable
 fun SpeedPanel(
     clipName: String,
@@ -49,7 +47,7 @@ fun SpeedPanel(
 ) {
     FeaturePanel(title = "⏩ Speed · ${String.format("%.2f", currentSpeed)}x", onClose = onClose) {
 
-        // ─── NO CLIP ──────────────────────────────────
+        // NO CLIP
         if (!hasClipSelected) {
             EmptyState(
                 icon = "👆",
@@ -61,7 +59,7 @@ fun SpeedPanel(
 
         var sliderValue by remember(currentSpeed) { mutableFloatStateOf(currentSpeed) }
 
-        // ─── INFO BAR ─────────────────────────────────
+        // INFO BAR
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -80,7 +78,7 @@ fun SpeedPanel(
 
         Spacer(Modifier.height(8.dp))
 
-        // ─── PRESETS ROW ──────────────────────────────
+        // PRESETS ROW
         Text(
             "Presets",
             color = Color(0xFF888888),
@@ -126,7 +124,7 @@ fun SpeedPanel(
 
         Spacer(Modifier.height(10.dp))
 
-        // ─── FINE SLIDER ──────────────────────────────
+        // FINE SLIDER
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -164,7 +162,7 @@ fun SpeedPanel(
 
         Spacer(Modifier.height(8.dp))
 
-        // ─── RESET ────────────────────────────────────
+        // RESET
         Box(
             modifier = Modifier
                 .fillMaxWidth()

@@ -4,10 +4,8 @@ import android.content.Context
 import android.graphics.Typeface
 import java.io.File
 
-/**
- * Extracts a system font to cache dir for FFmpeg drawtext filter.
- * FFmpeg drawtext on Android needs a real font file path.
- */
+// Extracts a system font to cache dir for FFmpeg drawtext filter.
+// FFmpeg drawtext on Android needs a real font file path.
 object FontFileHelper {
 
     private var cachedFontPath: String? = null

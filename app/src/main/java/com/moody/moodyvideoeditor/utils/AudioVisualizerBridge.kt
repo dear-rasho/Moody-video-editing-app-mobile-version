@@ -2,49 +2,62 @@ package com.moody.moodyvideoeditor.utils
 
 import android.media.audiofx.Visualizer
 import android.util.Log
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 object AudioVisualizerBridge {
 
     private const val TAG = "VISUALIZER"
+    private const val MAX_FFT_SIZE = 4096
 
     private var visualizer: Visualizer? = null
     private var attachedSessionId: Int = 0
-    private var fftSize: Int = 1024
+    private var fftSize: Int = 2048
 
     private val lock = Any()
 
     @Volatile
     private var latestFft: FloatArray = FloatArray(0)
+
     @Volatile
     private var latestWaveform: FloatArray = FloatArray(0)
+
     @Volatile
     private var lastFftMs: Long = 0L
 
-    // 🆕 Beat detection state
+    // Beat detection state
     private val energyHistory = ArrayDeque<Float>()
-    private val maxHistory = 43  // ~1 second at 23 fps
+    private val maxHistory = 43
+
     @Volatile
     private var lastBeatMs: Long = 0L
+
     @Volatile
     private var currentBeatPulse: Float = 0f
 
+    // 🆕 Source sample rate — assume 44100 unless Visualizer reports otherwise
+    private var sampleRateHz: Int = 44100
+
     val isAttached: Boolean get() = visualizer != null
     val currentSessionId: Int get() = attachedSessionId
+    val currentFftSize: Int get() = fftSize
+    val currentSampleRateHz: Int get() = sampleRateHz
 
-    fun attach(sessionId: Int, fftSize: Int = 1024) {
+    fun attach(sessionId: Int, requestedFftSize: Int = 2048) {
         if (sessionId <= 0) return
         if (attachedSessionId == sessionId && visualizer != null) return
         release()
         try {
-            this.fftSize = fftSize
             val v = Visualizer(sessionId)
             val captureRange = try {
                 Visualizer.getCaptureSizeRange()
             } catch (_: Throwable) {
                 intArrayOf(128, 1024)
             }
-            val useSize = fftSize.coerceIn(captureRange[0], captureRange[1])
+            val useSize = requestedFftSize.coerceIn(
+                captureRange[0].coerceAtLeast(128),
+                captureRange[1].coerceAtMost(MAX_FFT_SIZE)
+            )
 
             v.scalingMode = Visualizer.SCALING_MODE_NORMALIZED
             v.measurementMode = Visualizer.MEASUREMENT_MODE_PEAK_RMS
@@ -89,7 +102,6 @@ object AudioVisualizerBridge {
                             out[i] = mag.coerceIn(0f, 1f)
                         }
 
-                        // 🆕 Compute beat detection here
                         val beatResult = detectBeat(out)
 
                         synchronized(lock) {
@@ -108,53 +120,47 @@ object AudioVisualizerBridge {
             visualizer = v
             attachedSessionId = sessionId
 
-            Log.e(TAG, "✅ Attached: session=$sessionId, size=$useSize")
+            Log.e(
+                TAG,
+                "✅ Attached: session=$sessionId, fftSize=$useSize, sampleRate=$sampleRateHz"
+            )
         } catch (e: Throwable) {
             Log.e(TAG, "❌ Attach failed: ${e.message}", e)
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
     //  BEAT DETECTION — Energy-based with adaptive threshold
-    // ═══════════════════════════════════════════════════════════
+
     private fun detectBeat(fft: FloatArray): Float {
         if (fft.isEmpty()) return 0f
 
-        // Bass region = first 5% of bins
         val bassEnd = (fft.size * 0.05f).toInt().coerceAtLeast(1)
         var bassSum = 0f
         for (i in 0 until bassEnd) bassSum += fft[i]
         val bassEnergy = bassSum / bassEnd
 
-        // Rolling average
         val avg = if (energyHistory.isEmpty()) bassEnergy
         else energyHistory.average().toFloat()
 
-        // Variance
         val variance = if (energyHistory.size > 1) {
             energyHistory.map { (it - avg) * (it - avg) }.average().toFloat()
         } else 0f
 
-        // Adaptive threshold
         val threshold = ((-0.0025714f * variance) + 1.5142857f)
             .coerceIn(1.2f, 2.0f)
 
-        // Add to history
         energyHistory.addLast(bassEnergy)
         if (energyHistory.size > maxHistory) energyHistory.removeFirst()
 
-        // Beat detection
         val now = System.currentTimeMillis()
         val isBeat = bassEnergy > threshold * avg && (now - lastBeatMs) > 180L
 
         if (isBeat) {
             lastBeatMs = now
-            // Beat strength = how much above threshold
             val strength = ((bassEnergy / (avg + 0.001f)) - 1f).coerceIn(0f, 1f)
             return strength
         }
 
-        // Decay pulse over time
         val elapsed = (now - lastBeatMs).toFloat() / 1000f
         return (currentBeatPulse * (1f - elapsed * 3f)).coerceAtLeast(0f)
     }
@@ -178,4 +184,60 @@ object AudioVisualizerBridge {
     fun getWaveform(): FloatArray = synchronized(lock) { latestWaveform }
     fun getBeatPulse(): Float = synchronized(lock) { currentBeatPulse }
     fun isFresh(): Boolean = (System.currentTimeMillis() - lastFftMs) < 500L
+
+    // ─── 🆕 PHASE 1 HELPERS ───────────────────────────────────
+
+    /**
+     * Sample FFT into configurable number of bands between start/end Hz.
+     * FFT bin → Hz: binIndex * sampleRate / fftSize
+     */
+    fun sampleBands(
+        fft: FloatArray,
+        bands: Int,
+        startHz: Float,
+        endHz: Float,
+        sampleRate: Int = sampleRateHz
+    ): FloatArray {
+        if (fft.isEmpty() || bands <= 0) return FloatArray(0)
+
+        val n = fft.size * 2       // fft.size = bins, total samples = bins * 2
+        val hzPerBin = sampleRate.toFloat() / n
+        val startBin = (startHz / hzPerBin).toInt().coerceIn(0, fft.size - 1)
+        val endBin = (endHz / hzPerBin).toInt().coerceIn(startBin + 1, fft.size)
+
+        val out = FloatArray(bands)
+        val step = (endBin - startBin).toFloat() / bands
+
+        for (i in 0 until bands) {
+            val binStart = (startBin + i * step).toInt().coerceIn(0, fft.size - 1)
+            val binEnd = (startBin + (i + 1) * step).toInt().coerceIn(binStart + 1, fft.size)
+
+            var sum = 0f
+            var count = 0
+            for (b in binStart until binEnd) {
+                sum += fft[b]
+                count++
+            }
+            out[i] = if (count > 0) (sum / count).coerceIn(0f, 1f) else 0f
+        }
+        return out
+    }
+
+    /**
+     * Average waveform over a window (in samples).
+     * Used for "Audio Duration (ms)" — longer window = smoother.
+     */
+    fun averageWaveform(waveform: FloatArray, windowSamples: Int): FloatArray {
+        if (waveform.isEmpty() || windowSamples <= 1) return waveform
+        val out = FloatArray(waveform.size)
+        val half = windowSamples / 2
+        for (i in waveform.indices) {
+            val lo = (i - half).coerceAtLeast(0)
+            val hi = (i + half).coerceAtMost(waveform.size - 1)
+            var sum = 0f
+            for (j in lo..hi) sum += abs(waveform[j])
+            out[i] = (sum / (hi - lo + 1)).coerceIn(0f, 1f)
+        }
+        return out
+    }
 }

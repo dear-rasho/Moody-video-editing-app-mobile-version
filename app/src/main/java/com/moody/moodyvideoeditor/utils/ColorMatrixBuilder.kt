@@ -3,13 +3,11 @@ package com.moody.moodyvideoeditor.utils
 import android.graphics.ColorMatrix
 import com.moody.moodyvideoeditor.data.AdjustmentData
 
-/**
- * ColorMatrix-based adjustments (real-time).
- * Supported: brightness, contrast, exposure, saturation, temperature,
- *            tint, whites, blacks, shadows, highlights, vibrance (approx),
- *            clarity (approx).
- * NOT supported: vignette, noise, sharpen, color channels.
- */
+// ColorMatrix-based adjustments (real-time).
+// Supported: brightness, contrast, exposure, saturation, temperature,
+// tint, whites, blacks, shadows, highlights, vibrance (approx),
+// clarity (approx).
+// NOT supported: vignette, noise, sharpen, color channels.
 object ColorMatrixBuilder {
 
     fun build(adj: AdjustmentData): ColorMatrix {

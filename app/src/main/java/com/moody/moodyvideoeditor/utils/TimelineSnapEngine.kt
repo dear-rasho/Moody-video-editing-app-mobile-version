@@ -3,10 +3,8 @@ package com.moody.moodyvideoeditor.utils
 import com.moody.moodyvideoeditor.data.EditorClip
 import kotlin.math.abs
 
-/**
- * Mirrors js/workspace/trimHandles.js
- * Snap targets + hysteresis logic for trim handles.
- */
+// Mirrors js/workspace/trimHandles.js
+// Snap targets + hysteresis logic for trim handles.
 data class SnapTarget(
     val timeMs: Long,
     val type: SnapType,
@@ -21,9 +19,7 @@ object TimelineSnapEngine {
     const val SNAP_ENTER_PX = 14f
     const val SNAP_RELEASE_PX = 28f
 
-    /**
-     * Mirrors JS getSnapTargets()
-     */
+    // Mirrors JS getSnapTargets()
     fun buildTargets(
         clips: List<EditorClip>,
         excludeClipId: String?,
@@ -39,10 +35,8 @@ object TimelineSnapEngine {
         return targets
     }
 
-    /**
-     * Mirrors JS trySnap()
-     * Hysteresis: if activeSnap, stay until releaseMs exceeded.
-     */
+    // Mirrors JS trySnap()
+    // Hysteresis: if activeSnap, stay until releaseMs exceeded.
     fun trySnap(
         rawTimeMs: Long,
         targets: List<SnapTarget>,
@@ -72,9 +66,7 @@ object TimelineSnapEngine {
         SnapType.END -> "🔗 End of ${target.clipName?.take(18) ?: "Layer"}"
     }
 
-    /**
-     * Convert px threshold → ms based on timeline width.
-     */
+    // Convert px threshold → ms based on timeline width.
     fun pxToMs(px: Float, totalMs: Long, widthPx: Int): Long {
         if (widthPx <= 0 || totalMs <= 0) return 0
         val msPerPx = totalMs.toFloat() / widthPx.toFloat()

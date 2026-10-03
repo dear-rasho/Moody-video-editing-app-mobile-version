@@ -111,9 +111,9 @@ fun StickersPanel(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  EMOJI VIEW
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun EmojiView(
     selectedCategoryKey: String,
@@ -251,9 +251,9 @@ private fun EmojiView(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  🆕 ANIMATION SUB-VIEW
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun AnimationSubView(
     current: StickerState,

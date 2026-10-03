@@ -22,9 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 
-/**
- * Mirrors js/features/trim.js
- */
+// Mirrors js/features/trim.js
 @Composable
 fun TrimPanel(
     clipName: String,
@@ -47,7 +45,7 @@ fun TrimPanel(
             return@FeaturePanel
         }
 
-        // ─── INFO BOX ─────────────────────────────────
+        // INFO BOX
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -75,7 +73,7 @@ fun TrimPanel(
             return@FeaturePanel
         }
 
-        // ─── PREVIEW BOX ──────────────────────────────
+        // PREVIEW BOX
         val cutLeft = playheadMs - clipStartMs
         val cutRight = clipEndMs - playheadMs
         val totalDur = clipEndMs - clipStartMs
@@ -106,7 +104,7 @@ fun TrimPanel(
             )
         }
 
-        // ─── ACTION CARDS ─────────────────────────────
+        // ACTION CARDS
         Spacer(Modifier.height(8.dp))
 
         Row(

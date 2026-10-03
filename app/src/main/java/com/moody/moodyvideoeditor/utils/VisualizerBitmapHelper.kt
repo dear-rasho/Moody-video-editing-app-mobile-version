@@ -12,12 +12,9 @@ import androidx.compose.ui.graphics.Canvas as ComposeCanvas
 
 object VisualizerBitmapHelper {
 
-    /**
-     * Draw a single visualizer frame onto an Android Canvas.
-     *
-     * @param relativeMs  Time in source audio (ms) — used for beat lookup
-     * @param elapsedSec  Wall time for idle motion (rotation, waves)
-     */
+    // Draw a single visualizer frame onto an Android Canvas.
+    // @param relativeMs  Time in source audio (ms) — used for beat lookup
+    // @param elapsedSec  Wall time for idle motion (rotation, waves)
     fun drawVisualizerFrame(
         canvas: Canvas,
         state: VisualizerState,

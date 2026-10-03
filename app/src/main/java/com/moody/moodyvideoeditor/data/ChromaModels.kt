@@ -1,8 +1,6 @@
 package com.moody.moodyvideoeditor.data
 
-/**
- * Mirrors js/features/chromakey.js DEFAULTS.
- */
+// Mirrors js/features/chromakey.js DEFAULTS.
 data class ChromaState(
     val keyColor: Long = 0xFF00FF00,   // ARGB green default
     val similarity: Float = 30f,       // 0..100

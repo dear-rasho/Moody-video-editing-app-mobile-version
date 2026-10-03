@@ -71,9 +71,9 @@ object BeatsEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  DECODE
-    // ═══════════════════════════════════════════════════════════
+
     private fun decodeAudioToMonoFloat(
         context: Context,
         uri: Uri,
@@ -230,9 +230,9 @@ object BeatsEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  ANALYZE — returns (times, strengths)
-    // ═══════════════════════════════════════════════════════════
+
     private fun analyzeBeatsWithStrengths(
         samples: FloatArray,
         filter: String
@@ -244,7 +244,7 @@ object BeatsEngine {
         val numHops = samples.size / samplesPerHop
         if (numHops < 20) return emptyList<Long>() to emptyList<Float>()
 
-        // ─── Energy envelope (bass-focused) ───
+        // Energy envelope (bass-focused)
         val energy = FloatArray(numHops)
         var lowpass = 0f
         for (h in 0 until numHops) {
@@ -260,14 +260,14 @@ object BeatsEngine {
             energy[h] = lowpass
         }
 
-        // ─── Onset strength ───
+        // Onset strength
         val onset = FloatArray(numHops)
         for (h in 1 until numHops) {
             val diff = energy[h] - energy[h - 1]
             onset[h] = if (diff > 0f) diff else 0f
         }
 
-        // ─── Adaptive threshold ───
+        // Adaptive threshold
         val thresholdWindow = 25
         val threshold = FloatArray(numHops)
         for (h in 0 until numHops) {
@@ -279,7 +279,7 @@ object BeatsEngine {
             threshold[h] = avg * 1.5f + 0.003f
         }
 
-        // ─── Peak pick ───
+        // Peak pick
         val rawBeats = mutableListOf<Pair<Long, Float>>()
         var lastBeatMs = -MIN_BEAT_GAP_MS
         for (h in 1 until numHops - 1) {
@@ -295,7 +295,7 @@ object BeatsEngine {
 
         Log.e(TAG, "Raw peaks found: ${rawBeats.size}")
 
-        // ─── Speech rejection ───
+        // Speech rejection
         if (rawBeats.size < MIN_BEATS) {
             Log.e(TAG, "❌ Speech — only ${rawBeats.size} peaks")
             return emptyList<Long>() to emptyList<Float>()
@@ -328,7 +328,7 @@ object BeatsEngine {
             return emptyList<Long>() to emptyList<Float>()
         }
 
-        // ─── Classify by strength ───
+        // Classify by strength
         val sortedByStrength = rawBeats.sortedBy { it.second }
         val n = sortedByStrength.size
         val softCutoff = (n * SOFT_PERCENTILE).toInt()
@@ -356,7 +356,7 @@ object BeatsEngine {
             }
         }
 
-        // ─── Apply user filter ───
+        // Apply user filter
         val result = when (filter) {
             "hard" -> hardSet.toList()
             "medium" -> mediumSet.toList()
@@ -366,7 +366,7 @@ object BeatsEngine {
             else -> rawBeats.map { it.first }
         }
 
-        // ─── Sort + build parallel strength list ───
+        // Sort + build parallel strength list
         val sortedTimes = result.sorted()
         val strengthList = sortedTimes.map { t ->
             normalizedStrengths[t] ?: 0.5f
@@ -386,9 +386,9 @@ object BeatsEngine {
         return sortedTimes to strengthList
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  SYNTHETIC FALLBACK
-    // ═══════════════════════════════════════════════════════════
+
     fun detectSynthetic(durationMs: Long, filter: String): BeatsState {
         val gap = 500L
         val all = (0..durationMs step gap).toList()

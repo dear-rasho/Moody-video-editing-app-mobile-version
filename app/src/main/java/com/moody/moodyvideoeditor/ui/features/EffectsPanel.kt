@@ -141,9 +141,9 @@ fun EffectsPanel(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
-            // ═══════════════════════════════════════════════════════
+
             //  CATEGORY CHIPS
-            // ═══════════════════════════════════════════════════════
+
             Text(
                 "Category (${EffectLibrary.ALL.size} effects)",
                 color = Color(0xFF888888),
@@ -185,9 +185,9 @@ fun EffectsPanel(
 
             Spacer(Modifier.height(2.dp))
 
-            // ═══════════════════════════════════════════════════════
+
             //  PRESET CHIPS — ANIMATED PREVIEWS
-            // ═══════════════════════════════════════════════════════
+
             val (currentKind, catLabel, catPresets) = CATEGORIES[selectedCategoryIdx]
 
             Text(
@@ -222,9 +222,9 @@ fun EffectsPanel(
                 }
             }
 
-            // ═══════════════════════════════════════════════════════
+
             //  INTENSITY + ACTIONS
-            // ═══════════════════════════════════════════════════════
+
             val current = selectedPreset
             if (current != null) {
                 Spacer(Modifier.height(2.dp))
@@ -419,12 +419,12 @@ fun EffectsPanel(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  EFFECT THUMB CHIP — ANIMATED previews
 //  - Color  → image + ColorMatrix (static)
 //  - Motion → image + LIVE animated transform
 //  - Overlay → image + LIVE animated overlay
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun EffectThumbChip(
     preset: EffectPreset,
@@ -434,7 +434,7 @@ private fun EffectThumbChip(
     clockSec: Float,
     onClick: () -> Unit
 ) {
-    // ─── Color matrix (COLOR only) ───
+    // Color matrix (COLOR only)
     val colorFilter = remember(preset.key, kind) {
         if (kind != EffectKind.COLOR || preset.filters == null) {
             null
@@ -448,7 +448,7 @@ private fun EffectThumbChip(
         }
     }
 
-    // ─── LIVE motion frame (MOTION only) ───
+    // LIVE motion frame (MOTION only)
     val motionFrame = remember(preset.key, kind, clockSec) {
         if (kind != EffectKind.MOTION || preset.motion == null) {
             EffectsEngine.MotionFrame()
@@ -457,7 +457,7 @@ private fun EffectThumbChip(
         }
     }
 
-    // ─── Overlay state (OVERLAY only) ───
+    // Overlay state (OVERLAY only)
     val overlayState = remember(preset.key, kind) {
         if (kind != EffectKind.OVERLAY || preset.overlay == null) null
         else OverlayState(
@@ -557,9 +557,9 @@ private fun EffectThumbChip(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  REFERENCE IMAGE LOADER
-// ═══════════════════════════════════════════════════════════════
+
 private fun loadRefImage(context: android.content.Context): Bitmap? {
     return try {
         val opts = BitmapFactory.Options().apply { inScaled = false }

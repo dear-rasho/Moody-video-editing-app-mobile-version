@@ -31,10 +31,8 @@ data class TransformValues(
 
 object TransformApplier {
 
-    /**
-     * Extract base transform from clip.
-     * Different clip types store values differently.
-     */
+    // Extract base transform from clip.
+    // Different clip types store values differently.
     fun baseOf(clip: EditorClip): TransformValues {
         // Text clip
         if (clip.isTextClip && clip.textState != null) {
@@ -70,9 +68,7 @@ object TransformApplier {
         )
     }
 
-    /**
-     * Sample keyframes at time — returns live transform.
-     */
+    // Sample keyframes at time — returns live transform.
     fun resolveLive(clip: EditorClip, timeSec: Float): TransformValues {
         val base = baseOf(clip)
         val kfs: KeyframeMap = clip.keyframes
@@ -81,9 +77,7 @@ object TransformApplier {
         } else base
     }
 
-    /**
-     * Draw with transform applied — for Canvas-only rendering (export).
-     */
+    // Draw with transform applied — for Canvas-only rendering (export).
     fun DrawScope.applyTransform(W: Float, H: Float, t: TransformValues) {
         if (t.isIdentity()) return
         withTransform({

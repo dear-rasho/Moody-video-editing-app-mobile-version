@@ -3,18 +3,14 @@ package com.moody.moodyvideoeditor.utils
 import android.graphics.ColorMatrix
 import com.moody.moodyvideoeditor.data.FilterState
 
-/**
- * Mirrors js/workspace/effectRenderer.js buildCssFilter()
- * Converts FilterState → ColorMatrix for hardware-accelerated rendering.
- */
+// Mirrors js/workspace/effectRenderer.js buildCssFilter()
+// Converts FilterState → ColorMatrix for hardware-accelerated rendering.
 object FiltersEngine {
 
-    /**
-     * Build Android ColorMatrix from FilterState.
-     * brightness/contrast/saturation/hue/grayscale/sepia/invert are supported.
-     * blur is NOT a ColorMatrix — must be applied separately via BlurEffect.
-     * opacity is applied via alpha layer.
-     */
+    // Build Android ColorMatrix from FilterState.
+    // brightness/contrast/saturation/hue/grayscale/sepia/invert are supported.
+    // blur is NOT a ColorMatrix — must be applied separately via BlurEffect.
+    // opacity is applied via alpha layer.
     fun buildColorMatrix(f: FilterState): ColorMatrix {
         val cm = ColorMatrix()
 
@@ -138,23 +134,17 @@ object FiltersEngine {
         return cm
     }
 
-    /**
-     * Does this filter set need real-time rendering?
-     * Mirrors JS hasAnyChange()
-     */
+    // Does this filter set need real-time rendering?
+    // Mirrors JS hasAnyChange()
     fun hasRealTimeFilters(f: FilterState): Boolean {
         return f.brightness != 100f || f.contrast != 100f || f.saturation != 100f ||
                 f.hue != 0f || f.grayscale != 0f || f.sepia != 0f || f.invert != 0f
     }
 
-    /**
-     * Blur radius in dp (Compose BlurEffect).
-     * Only used when f.blur > 0.
-     */
+    // Blur radius in dp (Compose BlurEffect).
+    // Only used when f.blur > 0.
     fun blurRadiusDp(f: FilterState): Float = f.blur.coerceAtLeast(0f)
 
-    /**
-     * Alpha for the layer — from opacity.
-     */
+    // Alpha for the layer — from opacity.
     fun opacityAlpha(f: FilterState): Float = (f.opacity / 100f).coerceIn(0f, 1f)
 }

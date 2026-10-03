@@ -1,9 +1,7 @@
 package com.moody.moodyvideoeditor.data
 
-/**
- * 100+ transitions categorized, mapped to FFmpeg xfade filters.
- * Transition stored on the RIGHT clip of a pair.
- */
+// 100+ transitions categorized, mapped to FFmpeg xfade filters.
+// Transition stored on the RIGHT clip of a pair.
 data class TransitionState(
     val key: String = "none",
     val durationMs: Long = 500L
@@ -31,7 +29,7 @@ object TransitionLibrary {
     )
 
     val PRESETS: List<TransitionPreset> = listOf(
-        // ═══════════ BASIC & CAMERA (20) ═══════════
+        // BASIC & CAMERA (20)
         TransitionPreset("none", "None", "∅", "basic", ""),
         TransitionPreset("zoomIn", "Zoom In", "🔍", "basic", "zoomin"),
         TransitionPreset("zoomOut", "Zoom Out", "🔎", "basic", "fade"),
@@ -53,7 +51,7 @@ object TransitionLibrary {
         TransitionPreset("cameraRoll", "Camera Roll", "🎥", "basic", "fade"),
         TransitionPreset("diagonalSwift", "Diagonal Swift", "↗️", "basic", "diagtl"),
 
-        // ═══════════ GLITCH & DIGITAL (15) ═══════════
+        // GLITCH & DIGITAL (15)
         TransitionPreset("rgbShift", "RGB Shift", "🌈", "glitch", "hblur"),
         TransitionPreset("pixelateBurst", "Pixelate Burst", "🟦", "glitch", "pixelize"),
         TransitionPreset("horizontalScan", "Horizontal Scan", "📺", "glitch", "hlslice"),
@@ -70,7 +68,7 @@ object TransitionLibrary {
         TransitionPreset("noiseIntercept", "Noise Intercept", "📻", "glitch", "fadegrays"),
         TransitionPreset("staticMelt", "Static Melt", "🫠", "glitch", "smoothdown"),
 
-        // ═══════════ ACTION & SHAKE (15) ═══════════
+        // ACTION & SHAKE (15)
         TransitionPreset("velocityShake", "Velocity Shake", "⚡", "action", "fade"),
         TransitionPreset("verticalBounce", "Vertical Bounce", "🏀", "action", "slideup"),
         TransitionPreset("horizontalJiggle", "Horizontal Jiggle", "↔️", "action", "slideleft"),
@@ -87,7 +85,7 @@ object TransitionLibrary {
         TransitionPreset("wobbleSlide", "Wobble Slide", "🪼", "action", "smoothleft"),
         TransitionPreset("epicStrike", "Epic Strike", "⚔️", "action", "smoothdown"),
 
-        // ═══════════ LIGHT & BLUR (15) ═══════════
+        // LIGHT & BLUR (15)
         TransitionPreset("whiteFlash", "White Flash", "⚪", "light", "fadewhite"),
         TransitionPreset("lightLeakBurst", "Light Leak", "🌅", "light", "fadewhite"),
         TransitionPreset("glowDissolve", "Glow Dissolve", "🌟", "light", "dissolve"),
@@ -104,7 +102,7 @@ object TransitionLibrary {
         TransitionPreset("haloPulse", "Halo Pulse", "💫", "light", "circleopen"),
         TransitionPreset("vignetteBurn", "Vignette Burn", "🔥", "light", "fadewhite"),
 
-        // ═══════════ MATTE & SHAPES (20) ═══════════
+        // MATTE & SHAPES (20)
         TransitionPreset("circleMask", "Circle Mask", "⭕", "matte", "circleopen"),
         TransitionPreset("linearWipe", "Linear Wipe", "▬", "matte", "wipeleft"),
         TransitionPreset("mirrorSplit", "Mirror Split", "🪞", "matte", "horzopen"),
@@ -126,7 +124,7 @@ object TransitionLibrary {
         TransitionPreset("zigzagWipe", "Zigzag Wipe", "〰️", "matte", "hrslice"),
         TransitionPreset("jigsawMask", "Jigsaw Mask", "🧩", "matte", "hblur"),
 
-        // ═══════════ ARTISTIC (15) ═══════════
+        // ARTISTIC (15)
         TransitionPreset("inkSplash", "Ink Splash", "🖋️", "artistic", "circleopen"),
         TransitionPreset("filmBurn", "Film Burn", "🎞️", "artistic", "fadewhite"),
         TransitionPreset("paperTear", "Paper Tear", "📄", "artistic", "vdslice"),

@@ -3,19 +3,15 @@ package com.moody.moodyvideoeditor.utils
 import androidx.media3.exoplayer.ExoPlayer
 import com.moody.moodyvideoeditor.data.EditorClip
 
-/**
- * Mirrors js/workspace/trimPlayback.js
- * - Past sourceEnd → pause at out point
- * - Before sourceStart → jump forward
- * - Free seek allowed (playhead scrub)
- */
+// Mirrors js/workspace/trimPlayback.js
+// - Past sourceEnd → pause at out point
+// - Before sourceStart → jump forward
+// - Free seek allowed (playhead scrub)
 object TrimPlaybackEnforcer {
 
     private const val GUARD_MS = 50L
 
-    /**
-     * Call every playback tick. Returns true if playback was paused.
-     */
+    // Call every playback tick. Returns true if playback was paused.
     fun enforce(player: ExoPlayer, clip: EditorClip?): Boolean {
         if (clip == null) return false
         if (clip.isAudio) return false
@@ -37,10 +33,8 @@ object TrimPlaybackEnforcer {
         return false
     }
 
-    /**
-     * Called on PLAY press — prepare start position.
-     * Returns false if clip is already at end (don't play).
-     */
+    // Called on PLAY press — prepare start position.
+    // Returns false if clip is already at end (don't play).
     fun prepareOnPlay(player: ExoPlayer, clip: EditorClip?): Boolean {
         if (clip == null) return true
         if (clip.isAudio) return true

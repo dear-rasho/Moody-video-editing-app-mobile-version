@@ -105,9 +105,9 @@ fun TransformPanel(
                 }
         ) {
 
-            // ═══════════════════════════════════════════════════════
+
             //  📊 GRAPHS TOGGLE — AT TOP
-            // ═══════════════════════════════════════════════════════
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -145,9 +145,9 @@ fun TransformPanel(
                 }
             }
 
-            // ═══════════════════════════════════════════════════════
+
             //  EASING GRAPHS PANEL (expandable)
-            // ═══════════════════════════════════════════════════════
+
             if (graphsExpanded) {
                 Spacer(Modifier.height(6.dp))
                 EasingGraphPicker(
@@ -164,9 +164,9 @@ fun TransformPanel(
 
             Spacer(Modifier.height(8.dp))
 
-            // ═══════════════════════════════════════════════════════
+
             //  INFO BAR
-            // ═══════════════════════════════════════════════════════
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -187,9 +187,9 @@ fun TransformPanel(
 
             Spacer(Modifier.height(6.dp))
 
-            // ═══════════════════════════════════════════════════════
+
             //  TRANSFORM PROPERTIES
-            // ═══════════════════════════════════════════════════════
+
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -239,9 +239,9 @@ fun TransformPanel(
 
             Spacer(Modifier.height(8.dp))
 
-            // ═══════════════════════════════════════════════════════
+
             //  OPEN FULL KEYFRAME GRAPH
-            // ═══════════════════════════════════════════════════════
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -269,9 +269,9 @@ fun TransformPanel(
 
             Spacer(Modifier.height(6.dp))
 
-            // ═══════════════════════════════════════════════════════
+
             //  RESET
-            // ═══════════════════════════════════════════════════════
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()

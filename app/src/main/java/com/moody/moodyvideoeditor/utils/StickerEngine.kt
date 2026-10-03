@@ -4,15 +4,13 @@ import com.moody.moodyvideoeditor.data.PositionKeyframe
 import com.moody.moodyvideoeditor.data.StickerKeyframes
 import com.moody.moodyvideoeditor.data.ValueKeyframe
 
-/**
- * Mirrors js/features/stickers.js interpolation + easing logic.
- * Interpolates sticker position/scale/rotation at a given time.
- */
+// Mirrors js/features/stickers.js interpolation + easing logic.
+// Interpolates sticker position/scale/rotation at a given time.
 object StickerEngine {
 
-    // ═══════════════════════════════════════════════════════════
+
     //  EASING — mirrors stickers.js getEasedValue()
-    // ═══════════════════════════════════════════════════════════
+
     fun ease(t: Float, type: String): Float {
         val x = t.coerceIn(0f, 1f)
         return when (type) {
@@ -85,9 +83,9 @@ object StickerEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  INTERPOLATORS — mirrors stickers.js interpolate*()
-    // ═══════════════════════════════════════════════════════════
+
     private fun sampleValue(kfs: List<ValueKeyframe>, t: Float, ease: String, base: Float): Float {
         if (kfs.isEmpty()) return base
         if (kfs.size == 1 || t <= kfs[0].time) return kfs[0].value
@@ -127,10 +125,8 @@ object StickerEngine {
         return Pair(last.x, last.y)
     }
 
-    /**
-     * Mirrors JS: sample sticker state at time.
-     * Called per-frame from preview + export.
-     */
+    // Mirrors JS: sample sticker state at time.
+    // Called per-frame from preview + export.
     data class Sampled(
         val x: Float, val y: Float,
         val scale: Float, val rotation: Float
@@ -157,9 +153,9 @@ object StickerEngine {
         return Sampled(x, y, s, r)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  KEYFRAME MANAGEMENT — mirrors JS add/remove
-    // ═══════════════════════════════════════════════════════════
+
     fun addPositionKf(
         list: List<PositionKeyframe>,
         kf: PositionKeyframe,

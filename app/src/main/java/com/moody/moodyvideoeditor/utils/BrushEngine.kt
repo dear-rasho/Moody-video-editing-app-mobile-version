@@ -15,9 +15,9 @@ import kotlin.random.Random
 
 object BrushEngine {
 
-    // ═══════════════════════════════════════════════════════════
+
     //  COLOR SAMPLING — gradient along stroke path
-    // ═══════════════════════════════════════════════════════════
+
     private fun sampleColorAt(stroke: BrushStroke, t: Float): Color {
         val g = stroke.gradient
         if (!g.enabled) return Color(stroke.color)
@@ -48,9 +48,9 @@ object BrushEngine {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  MAIN DRAW
-    // ═══════════════════════════════════════════════════════════
+
     fun drawStroke(
         scope: DrawScope,
         stroke: BrushStroke,
@@ -100,7 +100,7 @@ object BrushEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     private fun buildPath(stroke: BrushStroke, w: Float, h: Float): Path {
         val path = Path()
         stroke.points.forEachIndexed { i, p ->
@@ -111,10 +111,8 @@ object BrushEngine {
         return path
     }
 
-    /**
-     * 🆕 Draw gradient stroke by segmenting path into small chunks
-     * and coloring each chunk by its position along the stroke.
-     */
+    // 🆕 Draw gradient stroke by segmenting path into small chunks
+    // and coloring each chunk by its position along the stroke.
     private fun drawGradientStroke(
         scope: DrawScope,
         stroke: BrushStroke,

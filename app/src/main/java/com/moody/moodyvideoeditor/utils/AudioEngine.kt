@@ -1,9 +1,7 @@
 package com.moody.moodyvideoeditor.utils
 
-/**
- * Audio FX → FFmpeg filter chain builder.
- * Intensity (0..200) scales filter parameters.
- */
+// Audio FX → FFmpeg filter chain builder.
+// Intensity (0..200) scales filter parameters.
 object AudioEngine {
 
     data class AudioPreset(

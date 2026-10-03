@@ -2,21 +2,15 @@ package com.moody.moodyvideoeditor.utils
 
 import com.moody.moodyvideoeditor.data.EditorClip
 
-/**
- * Mirrors js/workspace/timeline.js ripple insert logic.
- *
- * Jab clip ko nayi jagah daala jaye aur wahan overlap ho,
- * to us track ke aage wale clips ko shift karo (right me).
- */
+// Mirrors js/workspace/timeline.js ripple insert logic.
+// Jab clip ko nayi jagah daala jaye aur wahan overlap ho,
+// to us track ke aage wale clips ko shift karo (right me).
 object RippleEngine {
 
-    /**
-     * Ek track ke clips ko reflow karo jab ek naya clip daalna hai.
-     *
-     * @param trackClips us track ke saare clips (moved clip ke alawa)
-     * @param movingClip jo clip move ho raha hai (target position ke saath)
-     * @return updated clips list us track ke liye
-     */
+    // Ek track ke clips ko reflow karo jab ek naya clip daalna hai.
+    // @param trackClips us track ke saare clips (moved clip ke alawa)
+    // @param movingClip jo clip move ho raha hai (target position ke saath)
+    // @return updated clips list us track ke liye
     fun reflowTrack(
         trackClips: List<EditorClip>,
         movingClip: EditorClip
@@ -70,10 +64,8 @@ object RippleEngine {
         return result.sortedBy { it.timelineStartMs }
     }
 
-    /**
-     * Check karta hai ki given track pe given range fit hoga ya nahi
-     * (ripple ke bina, sirf check).
-     */
+    // Check karta hai ki given track pe given range fit hoga ya nahi
+    // (ripple ke bina, sirf check).
     fun hasOverlap(
         trackClips: List<EditorClip>,
         excludeClipId: String?,
@@ -87,10 +79,8 @@ object RippleEngine {
         }
     }
 
-    /**
-     * Kya shift ke baad bhi clips max duration se aage jayenge?
-     * (Ye check karta hai ki nayi layer ki zaroorat hai ya nahi.)
-     */
+    // Kya shift ke baad bhi clips max duration se aage jayenge?
+    // (Ye check karta hai ki nayi layer ki zaroorat hai ya nahi.)
     fun needsNewLayer(
         shiftedTrackClips: List<EditorClip>,
         maxAllowedMs: Long = Long.MAX_VALUE

@@ -24,9 +24,7 @@ import com.moody.moodyvideoeditor.utils.FontLibrary
 import kotlin.math.cos
 import kotlin.math.sin
 
-/**
- * Mirrors js/workspace/textRenderer.js
- */
+// Mirrors js/workspace/textRenderer.js
 @Composable
 fun TextOverlay(
     text: TextState,
@@ -45,7 +43,7 @@ fun TextOverlay(
     val family = FontLibrary.familyFor(text.fontFamily)
     val solidColor = Color(text.color)
 
-    // ─── GRADIENT (angle properly rotates the ramp) ───
+    // GRADIENT (angle properly rotates the ramp)
     val gradient: Brush? = if (text.gradientEnabled) {
         val rad = Math.toRadians(text.gradientAngle.toDouble())
         val dx = cos(rad).toFloat()

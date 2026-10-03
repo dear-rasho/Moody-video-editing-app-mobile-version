@@ -7,17 +7,15 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalInspectionMode
 
-/**
- * Mirrors js/features/animations.js
- * - ANIMATIONS list (100+ animations, categorized)
- * - applyAnimation modifier extension
- * - Easing functions
- */
+// Mirrors js/features/animations.js
+// - ANIMATIONS list (100+ animations, categorized)
+// - applyAnimation modifier extension
+// - Easing functions
 object AnimationsEngine {
 
-    // ═══════════════════════════════════════════════════════════
+
     //  CATEGORIES — mirrors animations.js grouped structure
-    // ═══════════════════════════════════════════════════════════
+
     data class Category(val key: String, val label: String, val animations: List<Anim>)
     data class Anim(val key: String, val label: String)
 
@@ -175,9 +173,9 @@ object AnimationsEngine {
 
     val ALL_ANIMATIONS: List<Anim> = CATEGORIES.flatMap { it.animations }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  EASING — mirrors keyframeStore.js easeFn
-    // ═══════════════════════════════════════════════════════════
+
     fun ease(t: Float, type: String): Float {
         val x = t.coerceIn(0f, 1f)
         return when (type) {
@@ -250,10 +248,10 @@ object AnimationsEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  ANIMATION FRAME — computed properties for a given progress
     //  Mirrors the JS applyAnimation → CSS keyframe effects
-    // ═══════════════════════════════════════════════════════════
+
     data class Frame(
         val alpha: Float = 1f,
         val scaleX: Float = 1f,
@@ -266,11 +264,9 @@ object AnimationsEngine {
         val blurRadiusPx: Float = 0f
     )
 
-    /**
-     * Compute current animation frame.
-     * progress: 0..1 (0 = animation start, 1 = animation complete)
-     * elapsedSec: time since clip start (for looping animations like wave/pulse)
-     */
+    // Compute current animation frame.
+    // progress: 0..1 (0 = animation start, 1 = animation complete)
+    // elapsedSec: time since clip start (for looping animations like wave/pulse)
     fun computeFrame(
         animation: String,
         progress: Float,
@@ -286,7 +282,7 @@ object AnimationsEngine {
         return when (animation) {
             "none" -> Frame()
 
-            // ═══ BASIC ═══
+            // BASIC
             "fadeIn" -> Frame(alpha = p)
             "fadeUp" -> Frame(alpha = p, translateY = (1f - p) * 24f)
             "fadeDown" -> Frame(alpha = p, translateY = (1f - p) * -24f)
@@ -312,7 +308,7 @@ object AnimationsEngine {
                 Frame(alpha = (p * 1.5f).coerceAtMost(1f), blurRadiusPx = (1f - e) * 18f)
             }
 
-            // ═══ REVEALS ═══
+            // REVEALS
             "wordReveal" -> Frame(
                 scaleX = 0.6f + 0.4f * eOB,
                 scaleY = 0.6f + 0.4f * eOB,
@@ -340,7 +336,7 @@ object AnimationsEngine {
 
             "trailFade" -> Frame(alpha = p)
 
-            // ═══ GLITCH ═══
+            // GLITCH
             "glitch" -> Frame(
                 translateX = Math.sin((p * 30f).toDouble()).toFloat() * 4f,
                 translateY = Math.cos((p * 27f).toDouble()).toFloat() * 4f
@@ -383,7 +379,7 @@ object AnimationsEngine {
 
             "interlaced" -> Frame(alpha = (p * 2f).coerceAtMost(1f))
 
-            // ═══ WAVES ═══
+            // WAVES
             "wave" -> Frame(translateY = Math.sin((elapsedSec * 6f).toDouble()).toFloat() * 8f)
             "bounceWave" -> Frame(
                 translateY = -Math.abs(
@@ -431,7 +427,7 @@ object AnimationsEngine {
 
             "circularWave" -> Frame(rotationZ = p * 360f, alpha = p)
 
-            // ═══ BOUNCES ═══
+            // BOUNCES
             "overshootPop" -> Frame(alpha = (p * 2.5f).coerceAtMost(1f), scaleX = eOB, scaleY = eOB)
             "elasticDrop" -> Frame(
                 alpha = (p * 3f).coerceAtMost(1f),
@@ -507,7 +503,7 @@ object AnimationsEngine {
                 alpha = (p * 2f).coerceAtMost(1f)
             )
 
-            // ═══ SLIDERS ═══
+            // SLIDERS
             "flyDiagonalTL" -> Frame(
                 translateX = -(1f - eOC) * 200f,
                 translateY = -(1f - eOC) * 200f,
@@ -559,7 +555,7 @@ object AnimationsEngine {
                 alpha = (p * 2f).coerceAtMost(1f)
             )
 
-            // ═══ ROTATIONS ═══
+            // ROTATIONS
             "flip3DX" -> {
                 val s = 0.01f + 0.99f * Math.abs(Math.cos(((1f - p) * Math.PI / 2f).toDouble()))
                     .toFloat()
@@ -632,7 +628,7 @@ object AnimationsEngine {
                 alpha = (p * 2f).coerceAtMost(1f)
             )
 
-            // ═══ ZOOMS ═══
+            // ZOOMS
             "zoomIn" -> Frame(alpha = p, scaleX = 0.3f + 0.7f * p, scaleY = 0.3f + 0.7f * p)
             "zoomOut" -> Frame(alpha = p, scaleX = 2f - p, scaleY = 2f - p)
             "cinematicZoom" -> Frame(
@@ -701,7 +697,7 @@ object AnimationsEngine {
                 )
             }
 
-            // ═══ SPECIAL ═══
+            // SPECIAL
             "scribble" -> Frame(alpha = 0.2f + 0.8f * p)
             "neonGlow" -> Frame(
                 alpha = 0.85f + Math.sin((elapsedSec * 6f).toDouble()).toFloat() * 0.15f
@@ -737,10 +733,10 @@ object AnimationsEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  MODIFIER EXTENSION — apply animation to any Composable
     //  Mirrors JS applyAnimation(el, key, duration)
-    // ═══════════════════════════════════════════════════════════
+
     fun Modifier.applyAnimation(
         animation: String,
         progress: Float,

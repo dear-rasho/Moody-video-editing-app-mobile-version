@@ -42,10 +42,8 @@ import com.moody.moodyvideoeditor.data.ToneValue
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.ColorWheelEngine
 
-/**
- * Mirrors js/features/colorWheel.js
- * 3 interactive wheels (Shadows/Midtones/Highlights) + HDR White slider.
- */
+// Mirrors js/features/colorWheel.js
+// 3 interactive wheels (Shadows/Midtones/Highlights) + HDR White slider.
 @Composable
 fun ColorWheelPanel(
     state: ColorWheelState,
@@ -67,7 +65,7 @@ fun ColorWheelPanel(
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
 
-            // ─── 3 WHEELS ROW (horizontal scroll) ────────
+            // 3 WHEELS ROW (horizontal scroll)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -88,7 +86,7 @@ fun ColorWheelPanel(
                 }
             }
 
-            // ─── HDR WHITE ───────────────────────────────
+            // HDR WHITE
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -121,7 +119,7 @@ fun ColorWheelPanel(
                 )
             }
 
-            // ─── REMOVE ──────────────────────────────────
+            // REMOVE
             if (state.hasAnyChange) {
                 Spacer(Modifier.height(2.dp))
                 Box(
@@ -145,9 +143,9 @@ fun ColorWheelPanel(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  SINGLE WHEEL COLUMN — label + wheel + intensity slider
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun WheelColumn(
     label: String,
@@ -159,7 +157,7 @@ private fun WheelColumn(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        // ─── Header ─────────────────────────────────
+        // Header
         Row(
             modifier = Modifier.width(130.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -183,13 +181,13 @@ private fun WheelColumn(
             }
         }
 
-        // ─── Interactive Wheel ──────────────────────
+        // Interactive Wheel
         InteractiveWheel(
             value = value,
             onChange = onChange
         )
 
-        // ─── Intensity Slider ───────────────────────
+        // Intensity Slider
         Row(
             modifier = Modifier.width(130.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -217,9 +215,9 @@ private fun WheelColumn(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  INTERACTIVE WHEEL — mirrors JS `.cw-wheel` + puck
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun InteractiveWheel(
     value: ToneValue,

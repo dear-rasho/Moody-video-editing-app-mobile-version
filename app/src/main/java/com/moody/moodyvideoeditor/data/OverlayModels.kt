@@ -1,8 +1,6 @@
 package com.moody.moodyvideoeditor.data
 
-/**
- * Mirrors js/features/overlayRenderer.js — 35+ overlays, categorized.
- */
+// Mirrors js/features/overlayRenderer.js — 35+ overlays, categorized.
 data class OverlayState(
     val type: String = "none",       // e.g. "rain", "snow", "fog"
     val intensity: Float = 100f,     // 0..200
@@ -27,9 +25,7 @@ object OverlayLibrary {
         val presets: List<Preset>
     )
 
-    /**
-     * Mirrors overlayRenderer.js switch cases grouped by section.
-     */
+    // Mirrors overlayRenderer.js switch cases grouped by section.
     val CATEGORIES: List<Category> = listOf(
         Category(
             "particles", "Particles", listOf(

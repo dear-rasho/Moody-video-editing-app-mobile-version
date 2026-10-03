@@ -6,19 +6,17 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-/**
- * Saves/loads project state to local storage as JSON.
- * No external dependencies — uses org.json (built into Android).
- */
+// Saves/loads project state to local storage as JSON.
+// No external dependencies — uses org.json (built into Android).
 object ProjectRepository {
 
     private const val DIR_PROJECTS = "projects"
     private const val DIR_THUMBS = "thumbnails"
     private const val FILE_INDEX = "index.json"
 
-    // ═══════════════════════════════════════════════════════════
+
     //  PUBLIC API
-    // ═══════════════════════════════════════════════════════════
+
 
     fun listProjects(context: Context): List<ProjectMeta> {
         val indexFile = File(getProjectsDir(context), FILE_INDEX)
@@ -89,9 +87,9 @@ object ProjectRepository {
         return File(dir, "$projectId.jpg")
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  INTERNAL — DIRS/INDEX
-    // ═══════════════════════════════════════════════════════════
+
 
     private fun getProjectsDir(context: Context): File {
         val dir = File(context.filesDir, DIR_PROJECTS)
@@ -131,9 +129,9 @@ object ProjectRepository {
         durationMs = o.optLong("durationMs", 0L)
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  INTERNAL — STATE SERIALIZATION
-    // ═══════════════════════════════════════════════════════════
+
 
     private fun editorStateToJson(s: EditorState): JSONObject = JSONObject().apply {
         val arr = JSONArray()
@@ -185,9 +183,9 @@ object ProjectRepository {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  CLIP
-    // ═══════════════════════════════════════════════════════════
+
 
     private fun clipToJson(c: EditorClip): JSONObject = JSONObject().apply {
         put("id", c.id)
@@ -296,9 +294,9 @@ object ProjectRepository {
         keyframes = keyframesFromJson(o.optJSONObject("keyframes"))
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  ADJUSTMENTS
-    // ═══════════════════════════════════════════════════════════
+
     private fun adjustmentsToJson(a: AdjustmentData) = JSONObject().apply {
         put("brightness", a.brightness.toDouble())
         put("contrast", a.contrast.toDouble())
@@ -356,9 +354,9 @@ object ProjectRepository {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  FILTERS
-    // ═══════════════════════════════════════════════════════════
+
     private fun filterToJson(f: FilterState) = JSONObject().apply {
         put("brightness", f.brightness.toDouble())
         put("contrast", f.contrast.toDouble())
@@ -386,9 +384,9 @@ object ProjectRepository {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  COLOR WHEEL
-    // ═══════════════════════════════════════════════════════════
+
     private fun toneToJson(t: ToneValue) = JSONObject().apply {
         put("hue", t.hue.toDouble())
         put("saturation", t.saturation.toDouble())
@@ -421,9 +419,9 @@ object ProjectRepository {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  OVERLAY
-    // ═══════════════════════════════════════════════════════════
+
     private fun overlayToJson(o: OverlayState) = JSONObject().apply {
         put("type", o.type)
         put("intensity", o.intensity.toDouble())
@@ -439,9 +437,9 @@ object ProjectRepository {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  EFFECT STATE
-    // ═══════════════════════════════════════════════════════════
+
     private fun effectStateToJson(e: EffectState) = JSONObject().apply {
         put("kind", e.kind)
         put("presetKey", e.presetKey ?: JSONObject.NULL)
@@ -480,9 +478,9 @@ object ProjectRepository {
         }
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  TEXT
-    // ═══════════════════════════════════════════════════════════
+
     private fun textSegmentToJson(s: TextSegment) = JSONObject().apply {
         put("start", s.start)
         put("end", s.end)
@@ -597,9 +595,9 @@ object ProjectRepository {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  STICKER
-    // ═══════════════════════════════════════════════════════════
+
     private fun stickerStateToJson(s: StickerState) = JSONObject().apply {
         put("emoji", s.emoji)
         put("x", s.x.toDouble())
@@ -616,9 +614,9 @@ object ProjectRepository {
         rotation = o.optDouble("rotation", 0.0).toFloat()
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  CHROMA
-    // ═══════════════════════════════════════════════════════════
+
     private fun chromaToJson(c: ChromaState) = JSONObject().apply {
         put("keyColor", c.keyColor)
         put("similarity", c.similarity.toDouble())
@@ -635,9 +633,9 @@ object ProjectRepository {
         intensity = o.optDouble("intensity", 100.0).toFloat()
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  FREEZE
-    // ═══════════════════════════════════════════════════════════
+
     private fun freezeToJson(f: FreezeState) = JSONObject().apply {
         put("durationMs", f.durationMs)
         put("atTimeMs", f.atTimeMs)
@@ -648,9 +646,9 @@ object ProjectRepository {
         atTimeMs = o.optLong("atTimeMs", 0L)
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  TRANSITION
-    // ═══════════════════════════════════════════════════════════
+
     private fun transitionToJson(t: TransitionState) = JSONObject().apply {
         put("key", t.key)
         put("durationMs", t.durationMs)
@@ -661,9 +659,9 @@ object ProjectRepository {
         durationMs = o.optLong("durationMs", 500L)
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  RATIO
-    // ═══════════════════════════════════════════════════════════
+
     private fun ratioToJson(r: RatioState) = JSONObject().apply {
         put("key", r.key)
         put("w", r.w)
@@ -676,9 +674,9 @@ object ProjectRepository {
         h = o.optInt("h", 9)
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  MASK
-    // ═══════════════════════════════════════════════════════════
+
     private fun maskToJson(m: MaskState) = JSONObject().apply {
         put("type", m.type.name)
         put("centerX", m.centerX.toDouble())
@@ -845,9 +843,9 @@ object ProjectRepository {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  BRUSH
-    // ═══════════════════════════════════════════════════════════
+
     private fun brushToJson(b: BrushState) = JSONObject().apply {
         val arr = JSONArray()
         b.strokes.forEach { s ->
@@ -941,9 +939,9 @@ object ProjectRepository {
         return BrushState(strokes = strokes)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  KEYFRAMES
-    // ═══════════════════════════════════════════════════════════
+
     private fun keyframesFromJson(o: JSONObject?): Map<String, List<Keyframe>> {
         if (o == null) return emptyMap()
         val result = mutableMapOf<String, List<Keyframe>>()
@@ -968,9 +966,9 @@ object ProjectRepository {
         return result
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  🆕 VISUALIZER
-    // ═══════════════════════════════════════════════════════════
+
     private fun visualizerToJson(v: VisualizerState): JSONObject =
         JSONObject().apply {
             put("preset", v.preset.key)

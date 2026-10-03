@@ -4,9 +4,9 @@ import com.moody.moodyvideoeditor.data.EditorClip
 
 object TimelineTools {
 
-    // ═══════════════════════════════════════════════════════════
+
     //  MAGNET — close gaps from playhead onwards (SAME layer)
-    // ═══════════════════════════════════════════════════════════
+
     fun closeGapsFromPlayhead(
         track: List<EditorClip>,
         playheadMs: Long
@@ -32,7 +32,7 @@ object TimelineTools {
         return result
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     fun selectForwardOnLayer(
         track: List<EditorClip>,
         anchor: EditorClip
@@ -53,9 +53,9 @@ object TimelineTools {
         return sorted.subList(0, idx + 1).map { it.id }.toSet()
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  SMART MEDIA PLACEMENT
-    // ═══════════════════════════════════════════════════════════
+
     data class Placement(val trackIndex: Int, val createNewLayer: Boolean)
 
     fun findPlacement(

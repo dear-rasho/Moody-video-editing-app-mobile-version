@@ -1,8 +1,6 @@
 package com.moody.moodyvideoeditor.data
 
-/**
- * Project metadata (metadata only — full state saved separately).
- */
+// Project metadata (metadata only — full state saved separately).
 data class ProjectMeta(
     val id: String,
     val name: String,

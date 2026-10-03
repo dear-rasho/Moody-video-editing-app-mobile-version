@@ -3,10 +3,8 @@ package com.moody.moodyvideoeditor.utils
 import com.moody.moodyvideoeditor.data.TextSegment
 import com.moody.moodyvideoeditor.data.TextState
 
-/**
- * Blueprint for a complete typography template.
- * Layout coordinates are RELATIVE (0-100%) — scales to any ratio.
- */
+// Blueprint for a complete typography template.
+// Layout coordinates are RELATIVE (0-100%) — scales to any ratio.
 data class TypographyTemplateBlueprint(
     val templateId: String,
     val label: String,
@@ -46,12 +44,12 @@ data class TextNodeBlueprint(
 
 object TypographyTemplates {
 
-    // ═══════════════════════════════════════════════════════════
+
     //  ALL TEMPLATES
-    // ═══════════════════════════════════════════════════════════
+
     val ALL: List<TypographyTemplateBlueprint> = listOf(
 
-        // ─── 1. MOTIVATIONAL ──────────────────────────────────
+        // 1. MOTIVATIONAL
         TypographyTemplateBlueprint(
             templateId = "motiv",
             label = "Motivational",
@@ -113,7 +111,7 @@ object TypographyTemplates {
             )
         ),
 
-        // ─── 2. CINEMATIC ─────────────────────────────────────
+        // 2. CINEMATIC
         TypographyTemplateBlueprint(
             templateId = "cinematic",
             label = "Cinematic",
@@ -152,7 +150,7 @@ object TypographyTemplates {
             )
         ),
 
-        // ─── 3. TIKTOK TRENDY ─────────────────────────────────
+        // 3. TIKTOK TRENDY
         TypographyTemplateBlueprint(
             templateId = "trendy",
             label = "TikTok Trendy",
@@ -225,7 +223,7 @@ object TypographyTemplates {
             )
         ),
 
-        // ─── 4. BOLD IMPACT ───────────────────────────────────
+        // 4. BOLD IMPACT
         TypographyTemplateBlueprint(
             templateId = "impact",
             label = "Bold Impact",
@@ -268,7 +266,7 @@ object TypographyTemplates {
             )
         ),
 
-        // ─── 5. NEON GLOW ─────────────────────────────────────
+        // 5. NEON GLOW
         TypographyTemplateBlueprint(
             templateId = "neon",
             label = "Neon Glow",
@@ -313,7 +311,7 @@ object TypographyTemplates {
             )
         ),
 
-        // ─── 6. MINIMAL ───────────────────────────────────────
+        // 6. MINIMAL
         TypographyTemplateBlueprint(
             templateId = "minimal",
             label = "Minimal",
@@ -350,7 +348,7 @@ object TypographyTemplates {
             )
         ),
 
-        // ─── 7. RETRO ─────────────────────────────────────────
+        // 7. RETRO
         TypographyTemplateBlueprint(
             templateId = "retro",
             label = "Retro",
@@ -393,7 +391,7 @@ object TypographyTemplates {
             )
         ),
 
-        // ─── 8. QUOTE ─────────────────────────────────────────
+        // 8. QUOTE
         TypographyTemplateBlueprint(
             templateId = "quote",
             label = "Quote",
@@ -434,7 +432,7 @@ object TypographyTemplates {
             )
         ),
 
-        // ─── 9. WORDS CASCADE (auto-stack mix sizes) ──────────
+        // 9. WORDS CASCADE (auto-stack mix sizes)
         TypographyTemplateBlueprint(
             templateId = "cascade",
             label = "Cascade",
@@ -508,7 +506,7 @@ object TypographyTemplates {
             )
         ),
 
-        // ─── 10. SPLIT WORDS (mixed typography showcase) ──────
+        // 10. SPLIT WORDS (mixed typography showcase)
         TypographyTemplateBlueprint(
             templateId = "split",
             label = "Split Words",
@@ -538,9 +536,9 @@ object TypographyTemplates {
         )
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  HELPERS
-    // ═══════════════════════════════════════════════════════════
+
     fun find(id: String): TypographyTemplateBlueprint? =
         ALL.firstOrNull { it.templateId.equals(id, ignoreCase = true) }
 
@@ -549,10 +547,8 @@ object TypographyTemplates {
 
     fun categories(): List<String> = ALL.map { it.category }.distinct()
 
-    /**
-     * Convert blueprint node → TextState.
-     * fontSize is computed from fontSizePct relative to canvas width.
-     */
+    // Convert blueprint node → TextState.
+    // fontSize is computed from fontSizePct relative to canvas width.
     fun toTextState(
         node: TextNodeBlueprint,
         canvasWidthPx: Float,

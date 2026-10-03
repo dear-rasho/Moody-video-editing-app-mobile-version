@@ -1,11 +1,9 @@
 package com.moody.moodyvideoeditor.utils
 
-/**
- * Aspect ratio helpers — ratio key → actual value + target dimensions.
- */
+// Aspect ratio helpers — ratio key → actual value + target dimensions.
 object RatioHelper {
 
-    /** Ratio key → float value (width / height) */
+    // Ratio key → float value (width / height)
     fun ratioValue(key: String): Float = when (key) {
         "9:16" -> 9f / 16f
         "1:1" -> 1f
@@ -16,7 +14,7 @@ object RatioHelper {
         else -> 16f / 9f
     }
 
-    /** Ratio key → target export dimensions (W × H) */
+    // Ratio key → target export dimensions (W × H)
     fun targetDimensions(key: String): Pair<Int, Int> = when (key) {
         "9:16" -> 720 to 1280
         "1:1" -> 720 to 720
@@ -27,7 +25,7 @@ object RatioHelper {
         else -> 1280 to 720
     }
 
-    /** Short label for UI */
+    // Short label for UI
     fun shortLabel(key: String): String = when (key) {
         "16:9" -> "16:9"
         "9:16" -> "9:16"

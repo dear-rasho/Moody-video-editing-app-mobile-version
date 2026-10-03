@@ -8,15 +8,13 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/**
- * Mirrors js/workspace/effectRenderer.js applyColorWheel()
- * RGB ↔ HSL helpers + tone-based color grading math.
- */
+// Mirrors js/workspace/effectRenderer.js applyColorWheel()
+// RGB ↔ HSL helpers + tone-based color grading math.
 object ColorWheelEngine {
 
-    // ═══════════════════════════════════════════════════════════
+
     //  RGB ↔ HSL — mirrors effectRenderer.js
-    // ═══════════════════════════════════════════════════════════
+
     data class Hsl(val h: Float, val s: Float, val l: Float)
     data class Rgb(val r: Float, val g: Float, val b: Float)
 
@@ -60,20 +58,18 @@ object ColorWheelEngine {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  TONE WEIGHTS — mirrors effectRenderer.js applyColorWheel
     //  Shadows: weight from luminance (higher at dark)
     //  Midtones: peak at 0.5
     //  Highlights: peak at 1.0
-    // ═══════════════════════════════════════════════════════════
+
     private fun shadowWeight(lum: Float): Float = max(0f, 1f - lum * 2f)
     private fun midtoneWeight(lum: Float): Float = max(0f, 1f - abs(lum - 0.5f) * 2f)
     private fun highlightWeight(lum: Float): Float = max(0f, lum * 2f - 1f)
 
-    /**
-     * Apply color wheel grading to a single pixel.
-     * Returns adjusted RGB.
-     */
+    // Apply color wheel grading to a single pixel.
+    // Returns adjusted RGB.
     fun applyPixel(
         rIn: Float,
         gIn: Float,
@@ -153,19 +149,15 @@ object ColorWheelEngine {
         )
     }
 
-    /**
-     * Whether the wheel should be applied at all.
-     */
+    // Whether the wheel should be applied at all.
     fun isActive(state: ColorWheelState): Boolean = state.hasAnyChange
 
-    // ═══════════════════════════════════════════════════════════
+
     //  PUCK POSITION — for the wheel UI
     //  Mirrors JS updatePuck()
-    // ═══════════════════════════════════════════════════════════
-    /**
-     * Convert (hue, sat) → normalized (x, y) in [-1, 1] range.
-     * Hue: angle (0..360). Sat: distance (0..1).
-     */
+
+    // Convert (hue, sat) → normalized (x, y) in [-1, 1] range.
+    // Hue: angle (0..360). Sat: distance (0..1).
     fun puckOffset(hue: Float, saturation: Float): Pair<Float, Float> {
         val angleRad = (hue / 360f) * 2f * Math.PI.toFloat()
         val dist = (saturation / 100f).coerceIn(0f, 1f)
@@ -175,10 +167,8 @@ object ColorWheelEngine {
         )
     }
 
-    /**
-     * Convert drag position (x, y) in wheel → (hue, sat).
-     * x, y are in range [-1, 1] relative to wheel center.
-     */
+    // Convert drag position (x, y) in wheel → (hue, sat).
+    // x, y are in range [-1, 1] relative to wheel center.
     fun positionToHueSat(x: Float, y: Float): Pair<Float, Float> {
         val dist = sqrt(x * x + y * y).coerceIn(0f, 1f)
         val sat = dist * 100f

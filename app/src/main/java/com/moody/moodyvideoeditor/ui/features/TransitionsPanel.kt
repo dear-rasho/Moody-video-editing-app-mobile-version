@@ -73,7 +73,7 @@ fun TransitionsPanel(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
-            // ═══ STATUS BAR ═══
+            // STATUS BAR
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -119,7 +119,7 @@ fun TransitionsPanel(
                 }
             }
 
-            // ═══ CATEGORY CHIPS ═══
+            // CATEGORY CHIPS
             Text(
                 "Category",
                 color = Color(0xFF888888),
@@ -159,7 +159,7 @@ fun TransitionsPanel(
                 }
             }
 
-            // ═══ PRESET CHIPS ═══
+            // PRESET CHIPS
             val catPresets = TransitionLibrary.presetsInCategory(activeCategory)
 
             Text(
@@ -195,7 +195,7 @@ fun TransitionsPanel(
                 }
             }
 
-            // ═══ DURATION SLIDER ═══
+            // DURATION SLIDER
             if (current.isActive) {
                 Spacer(Modifier.height(4.dp))
                 Row(

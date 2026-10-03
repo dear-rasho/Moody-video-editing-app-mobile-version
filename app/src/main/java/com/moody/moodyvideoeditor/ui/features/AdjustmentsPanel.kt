@@ -45,7 +45,7 @@ fun AdjustmentsPanel(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            // ═══ LIGHT ═══
+            // LIGHT
             GroupLabel("Light")
             SliderRow("Brightness", adj.brightness) { onAdjChanged(adj.copy(brightness = it)) }
             SliderRow("Contrast", adj.contrast) { onAdjChanged(adj.copy(contrast = it)) }
@@ -55,24 +55,24 @@ fun AdjustmentsPanel(
             SliderRow("Shadows", adj.shadows) { onAdjChanged(adj.copy(shadows = it)) }
             SliderRow("Highlights", adj.highlights) { onAdjChanged(adj.copy(highlights = it)) }
 
-            // ═══ COLOR ═══
+            // COLOR
             GroupLabel("Color")
             SliderRow("Saturation", adj.saturation) { onAdjChanged(adj.copy(saturation = it)) }
             SliderRow("Vibrance", adj.vibrance) { onAdjChanged(adj.copy(vibrance = it)) }
             SliderRow("Clarity", adj.clarity) { onAdjChanged(adj.copy(clarity = it)) }
 
-            // ═══ TEMPERATURE ═══
+            // TEMPERATURE
             GroupLabel("Temperature")
             SliderRow("Temp", adj.temperature) { onAdjChanged(adj.copy(temperature = it)) }
             SliderRow("Tint", adj.tint) { onAdjChanged(adj.copy(tint = it)) }
 
-            // ═══ DETAILS ═══
+            // DETAILS
             GroupLabel("Details")
             SliderRow("Noise", adj.noise) { onAdjChanged(adj.copy(noise = it)) }
             SliderRow("Sharpen", adj.sharpen) { onAdjChanged(adj.copy(sharpen = it)) }
             SliderRow("Vignette", adj.vignette) { onAdjChanged(adj.copy(vignette = it)) }
 
-            // ═══ COLOR CHANNELS ═══
+            // COLOR CHANNELS
             GroupLabel("Color Channels")
             SliderRow("Reds", adj.reds) { onAdjChanged(adj.copy(reds = it)) }
             SliderRow("Oranges", adj.oranges) { onAdjChanged(adj.copy(oranges = it)) }
@@ -85,7 +85,7 @@ fun AdjustmentsPanel(
             SliderRow("Skin Tones", adj.skinTones) { onAdjChanged(adj.copy(skinTones = it)) }
         }
 
-        // ═══ RESET BUTTON ═══
+        // RESET BUTTON
         Box(
             modifier = Modifier
                 .height(30.dp)

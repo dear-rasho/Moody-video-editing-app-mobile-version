@@ -18,9 +18,9 @@ import kotlin.math.sqrt
 
 object MaskEngine {
 
-    // ═══════════════════════════════════════════════════════════
+
     //  SAMPLE — keyframe interpolation (now with per-point path)
-    // ═══════════════════════════════════════════════════════════
+
     fun sampleAt(state: MaskState, timeSec: Float): MaskState {
         if (state.keyframes.isEmpty()) return state
         val kfs = state.keyframes.sortedBy { it.timeMs }
@@ -93,9 +93,9 @@ object MaskEngine {
 
     private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
 
-    // ═══════════════════════════════════════════════════════════
+
     //  AUTO HANDLES
-    // ═══════════════════════════════════════════════════════════
+
     fun autoHandleOffsets(
         pts: List<MaskPoint>,
         index: Int,
@@ -110,9 +110,9 @@ object MaskEngine {
         return (tx * strength) to (ty * strength)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  EXPANSION
-    // ═══════════════════════════════════════════════════════════
+
     private fun expandPoint(
         pts: List<MaskPoint>,
         index: Int,
@@ -139,9 +139,9 @@ object MaskEngine {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  BUILD PATH (cubic bezier)
-    // ═══════════════════════════════════════════════════════════
+
     fun buildCustomPath(
         pts: List<MaskPoint>,
         w: Float,
@@ -209,9 +209,9 @@ object MaskEngine {
         return path
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  DRAW MASK
-    // ═══════════════════════════════════════════════════════════
+
     fun drawMask(
         canvas: Canvas,
         state: MaskState,
@@ -366,9 +366,9 @@ object MaskEngine {
         return path
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  KEYFRAME CRUD
-    // ═══════════════════════════════════════════════════════════
+
     fun addKeyframe(state: MaskState, k: MaskKeyframe): MaskState {
         val list = state.keyframes.toMutableList()
         val idx = list.indexOfFirst { abs(it.timeMs - k.timeMs) < 50 }
@@ -387,9 +387,9 @@ object MaskEngine {
     fun hasKeyframeAt(state: MaskState, timeMs: Long): Boolean =
         state.keyframes.any { abs(it.timeMs - timeMs) < 50 }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  POINT OPS
-    // ═══════════════════════════════════════════════════════════
+
     fun addPoint(state: MaskState, pt: MaskPoint): MaskState {
         val base = if (state.type != MaskType.CUSTOM) MaskState(type = MaskType.CUSTOM)
         else state

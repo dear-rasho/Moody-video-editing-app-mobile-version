@@ -11,29 +11,25 @@ import com.moody.moodyvideoeditor.data.TransitionState
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/**
- * Mirrors js/workspace/transitionEngine.js
- * Renders transition overlays on top of the preview canvas.
- */
+// Mirrors js/workspace/transitionEngine.js
+// Renders transition overlays on top of the preview canvas.
 object TransitionEngine {
 
-    /** Is the transition currently active at this timeline position? */
+    // Is the transition currently active at this timeline position?
     fun isActive(state: TransitionState?, clipStartMs: Long, currentPosMs: Long): Boolean {
         if (state == null || !state.isActive) return false
         val dur = state.durationMs
         return currentPosMs >= clipStartMs && currentPosMs < clipStartMs + dur
     }
 
-    /** 0..1 progress through the transition */
+    // 0..1 progress through the transition
     fun progress(state: TransitionState, clipStartMs: Long, currentPosMs: Long): Float {
         val dur = state.durationMs.coerceAtLeast(1L)
         val p = (currentPosMs - clipStartMs).toFloat() / dur.toFloat()
         return p.coerceIn(0f, 1f)
     }
 
-    /**
-     * Draws a transition overlay on top of the given scope.
-     */
+    // Draws a transition overlay on top of the given scope.
     fun draw(
         scope: DrawScope,
         W: Float,
@@ -46,51 +42,51 @@ object TransitionEngine {
         val p = progress(state, clipStartMs, timeMs)
 
         when (state.key) {
-            // ─── FADES ─────────────────────────────
+            // FADES
             "fade" -> drawFade(scope, W, H, p, Color.Black, fadeOut = false)
             "dissolve" -> drawFade(scope, W, H, p, Color.Black, fadeOut = false)
             "fadeBlack" -> drawFade(scope, W, H, p, Color.Black, fadeOut = true)
             "fadeWhite" -> drawFade(scope, W, H, p, Color.White, fadeOut = true)
 
-            // ─── FLASH ────────────────────────────
+            // FLASH
             "flashWhite" -> drawFlash(scope, W, H, p, Color.White)
 
-            // ─── BLUR (approx via white veil) ─────
+            // BLUR (approx via white veil)
             "blur" -> drawFade(scope, W, H, p, Color(0xAAFFFFFF), fadeOut = false)
 
-            // ─── SLIDES / PUSHES ──────────────────
+            // SLIDES / PUSHES
             "pushLeft", "slideLeft" -> drawSlide(scope, W, H, p, direction = 0)
             "pushRight", "slideRight" -> drawSlide(scope, W, H, p, direction = 1)
             "pushUp", "slideUp" -> drawSlide(scope, W, H, p, direction = 2)
             "pushDown", "slideDown" -> drawSlide(scope, W, H, p, direction = 3)
 
-            // ─── WIPES ────────────────────────────
+            // WIPES
             "wipeLeft" -> drawWipe(scope, W, H, p, direction = 0)
             "wipeRight" -> drawWipe(scope, W, H, p, direction = 1)
             "wipeUp" -> drawWipe(scope, W, H, p, direction = 2)
             "wipeDown" -> drawWipe(scope, W, H, p, direction = 3)
 
-            // ─── SHAPES ───────────────────────────
+            // SHAPES
             "circleIn" -> drawCircleIn(scope, W, H, p)
             "irisBox" -> drawIrisBox(scope, W, H, p)
             "clockWipe" -> drawClockWipe(scope, W, H, p)
 
-            // ─── ZOOMS ────────────────────────────
+            // ZOOMS
             "zoomIn", "zoomOut", "crossZoom" ->
                 drawFade(scope, W, H, p, Color.Black, fadeOut = false)
 
-            // ─── SPINS ────────────────────────────
+            // SPINS
             "spinCW", "spinCCW", "swirl" ->
                 drawFade(scope, W, H, p, Color.Black, fadeOut = false)
 
-            // ─── GLITCH ───────────────────────────
+            // GLITCH
             "rgbSplit", "glitch" -> drawGlitch(scope, W, H, p)
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  OVERLAY DRAWERS
-    // ═══════════════════════════════════════════════════════════
+
 
     private fun drawFade(
         scope: DrawScope,
@@ -124,7 +120,7 @@ object TransitionEngine {
         )
     }
 
-    /** direction: 0=left, 1=right, 2=up, 3=down */
+    // direction: 0=left, 1=right, 2=up, 3=down
     private fun drawSlide(scope: DrawScope, W: Float, H: Float, p: Float, direction: Int) {
         val slide = 1f - p
         val barW = W * 0.4f
@@ -182,7 +178,7 @@ object TransitionEngine {
         }
     }
 
-    /** direction: 0=from left, 1=from right, 2=from top, 3=from bottom */
+    // direction: 0=from left, 1=from right, 2=from top, 3=from bottom
     private fun drawWipe(scope: DrawScope, W: Float, H: Float, p: Float, direction: Int) {
         val alpha = (1f - p).coerceIn(0f, 1f)
         when (direction) {

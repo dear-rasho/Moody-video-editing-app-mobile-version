@@ -6,22 +6,20 @@ import com.moody.moodyvideoeditor.data.KeyframeMap
 import kotlin.math.abs
 import kotlin.math.pow
 
-/**
- * Mirrors js/workspace/keyframeStore.js
- * - Keyframe CRUD
- * - Sampling (interpolation)
- * - 28 easing functions
- * - Auto-keyframe behavior
- */
+// Mirrors js/workspace/keyframeStore.js
+// - Keyframe CRUD
+// - Sampling (interpolation)
+// - 28 easing functions
+// - Auto-keyframe behavior
 object KeyframeStore {
 
     private const val DEFAULT_EASE = "quadInOut"
     private const val TOLERANCE = 0.05f
     private const val STRICT_TOLERANCE = 0.02f
 
-    // ═══════════════════════════════════════════════════════════
+
     //  READ
-    // ═══════════════════════════════════════════════════════════
+
     fun getKeyframes(map: KeyframeMap, prop: String): List<Keyframe> =
         map[prop] ?: emptyList()
 
@@ -41,9 +39,9 @@ object KeyframeStore {
     fun getPropsWithKeyframeAt(map: KeyframeMap, time: Float): List<String> =
         KeyframeLibrary.ANIMATABLE_PROPS.filter { hasKeyframeAt(map, it, time) }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  WRITE
-    // ═══════════════════════════════════════════════════════════
+
     fun setKeyframe(
         map: KeyframeMap,
         prop: String,
@@ -119,9 +117,9 @@ object KeyframeStore {
 
     fun clearAll(map: KeyframeMap): KeyframeMap = emptyMap()
 
-    // ═══════════════════════════════════════════════════════════
+
     //  AUTO-KEYFRAME — mirrors keyframeStore.js autoKeyframeIfActive()
-    // ═══════════════════════════════════════════════════════════
+
     fun autoKeyframeIfActive(
         map: KeyframeMap,
         prop: String,
@@ -141,9 +139,9 @@ object KeyframeStore {
         return map + (prop to list)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  SAMPLE
-    // ═══════════════════════════════════════════════════════════
+
     fun sample(map: KeyframeMap, prop: String, time: Float, baseValue: Float): Float {
         val list = getKeyframes(map, prop)
         if (list.isEmpty()) return baseValue
@@ -187,9 +185,9 @@ object KeyframeStore {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  EASING — mirrors keyframeStore.js easeFn()
-    // ═══════════════════════════════════════════════════════════
+
     fun easeFn(tRaw: Float, type: String): Float {
         val t = tRaw.coerceIn(0f, 1f)
         return when (type) {

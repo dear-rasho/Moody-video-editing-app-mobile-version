@@ -43,9 +43,9 @@ object PromptExecutor {
         val state = viewModel.state.value
         val selected = state.selectedClip
 
-        // ═══════════════════════════════════════════════════════
+
         //  PRIORITY 0 — TEMPLATES
-        // ═══════════════════════════════════════════════════════
+
         for (cmd in parsed.commands) {
             if (cmd.type == CmdType.TEMPLATE) {
                 val tmpl = TypographyTemplates.find(cmd.key)
@@ -62,9 +62,9 @@ object PromptExecutor {
             }
         }
 
-        // ═══════════════════════════════════════════════════════
+
         //  PRIORITY 1 — GLOBAL (Ratio, Tighten, Clear)
-        // ═══════════════════════════════════════════════════════
+
         for (cmd in parsed.commands) {
             when (cmd.type) {
                 CmdType.RATIO -> {
@@ -89,9 +89,9 @@ object PromptExecutor {
             }
         }
 
-        // ═══════════════════════════════════════════════════════
+
         //  PRIORITY 2 — TRANSITIONS
-        // ═══════════════════════════════════════════════════════
+
         for (cmd in parsed.commands) {
             when (cmd.type) {
                 CmdType.TRANSITION_ALL -> {
@@ -136,29 +136,45 @@ object PromptExecutor {
             }
         }
 
-        // ═══════════════════════════════════════════════════════
-        //  PRIORITY 3 — TEXT + STICKER (timestamp + AUTO-STACKING)
-        // ═══════════════════════════════════════════════════════
+
+        //  PRIORITY 3 — TEXT + STICKER (smart auto-stack)
+        //
+        //  Rules:
+        //  1. If user provided "position X Y" → RESPECT IT (no auto-stack)
+        //  2. If user did NOT provide position → AUTO-STACK evenly
+        //  3. Single text without position → centered (50, 50)
+        //
+        //  This matches manual typing behaviour when position is given,
+        //  and keeps multi-text blocks readable when it's not.
+
         val textCommands = parsed.commands.filter { it.type == CmdType.TEXT }
+
         val groupedTexts = textCommands
             .filter { it.startMs != null && it.endMs != null }
             .groupBy { "${it.startMs}_${it.endMs}" }
 
-        val textPositions = mutableMapOf<ParsedCommand, Pair<Float, Float>>()
+        val autoStackPositions = mutableMapOf<ParsedCommand, Pair<Float, Float>>()
 
         for ((_, group) in groupedTexts) {
-            val count = group.size
-            if (count == 0) continue
+            if (group.isEmpty()) continue
+
+            // Only the ones without explicit position
+            val withoutPosition = group.filter { cmd ->
+                !hasUserPosition(cmd)
+            }
+
+            if (withoutPosition.isEmpty()) continue
 
             val topMargin = 15f
             val bottomMargin = 85f
-            val spacing = if (count > 1) (bottomMargin - topMargin) / (count - 1)
+            val spacing = if (withoutPosition.size > 1)
+                (bottomMargin - topMargin) / (withoutPosition.size - 1)
             else 50f
 
-            group.forEachIndexed { index, cmd ->
-                val y = if (count == 1) 50f
+            withoutPosition.forEachIndexed { index, cmd ->
+                val y = if (withoutPosition.size == 1) 50f
                 else topMargin + index * spacing
-                textPositions[cmd] = 50f to y
+                autoStackPositions[cmd] = 50f to y
             }
         }
 
@@ -175,11 +191,13 @@ object PromptExecutor {
                     val endMs = cmd.endMs
 
                     if (startMs != null && endMs != null) {
-                        val userSetPosition =
-                            cmd.extra?.contains("position", ignoreCase = true) == true
-                        if (!userSetPosition) {
-                            textPositions[cmd]?.let { (x, y) ->
-                                textState = textState.copy(positionX = x, positionY = y)
+                        // Apply auto-stack ONLY if user did not specify position
+                        if (!hasUserPosition(cmd)) {
+                            autoStackPositions[cmd]?.let { (x, y) ->
+                                textState = textState.copy(
+                                    positionX = x,
+                                    positionY = y
+                                )
                             }
                         }
 
@@ -233,9 +251,9 @@ object PromptExecutor {
 
         val hasMulti = state.multiSelectedIds.isNotEmpty()
 
-        // ═══════════════════════════════════════════════════════
+
         //  PRIORITY 4 — SELECTED CLIP MUTATIONS
-        // ═══════════════════════════════════════════════════════
+
         for (cmd in parsed.commands) {
             try {
                 when (cmd.type) {
@@ -486,9 +504,9 @@ object PromptExecutor {
                         applied.add("keyframe ${cmd.key}")
                     }
 
-                    // ═════════════════════════════════════════════════
-                    //  🆕 VISUALIZER
-                    // ═════════════════════════════════════════════════
+
+                    //  VISUALIZER
+
                     CmdType.VISUALIZER -> {
                         val s2 = viewModel.state.value
                         val existingViz = s2.selectedClip
@@ -718,9 +736,26 @@ object PromptExecutor {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
+    //  HELPERS
+
+    /**
+     * Does this command have an explicit user position?
+     * We look for "position", "pos", "posx", "posy", "x", "y" tokens.
+     */
+    private fun hasUserPosition(cmd: ParsedCommand): Boolean {
+        val extra = cmd.extra ?: return false
+        val lower = extra.lowercase()
+        return lower.contains("position")
+                || lower.contains("pos ")
+                || lower.contains("posx")
+                || lower.contains("posy")
+                || Regex("""(^|\s)x\s+[\d.-]""").containsMatchIn(lower)
+                || Regex("""(^|\s)y\s+[\d.-]""").containsMatchIn(lower)
+    }
+
     //  LAYER CLIP TRANSITIONS PARSER
-    // ═══════════════════════════════════════════════════════════
+
     private fun parseLayerClipPairs(pairs: String): Map<Int, String> {
         val result = mutableMapOf<Int, String>()
         if (pairs.isBlank()) return result
@@ -738,13 +773,9 @@ object PromptExecutor {
         return result
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 VISUALIZER PRESET RESOLVER
-    // ═══════════════════════════════════════════════════════════
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 VISUALIZER PRESET RESOLVER
-    //  Aliases + key + label matching (100 presets)
-    // ═══════════════════════════════════════════════════════════
+
+    //  VISUALIZER PRESET RESOLVER
+
     private fun resolveVisualizerPreset(name: String): VisualizerPreset? {
         val clean = name.trim().lowercase()
             .replace(" ", "")
@@ -752,8 +783,15 @@ object PromptExecutor {
             .replace("_", "")
         if (clean.isBlank()) return null
 
-        // ─── SPECTRUM ───
+        // SPECTRUM
         val spectrumAliases = mapOf(
+            "audisphere" to VisualizerPreset.AUDIO_SPHERE,
+            "sphere" to VisualizerPreset.AUDIO_SPHERE,
+            "waveformring" to VisualizerPreset.WAVEFORM_RING,
+            "ring" to VisualizerPreset.WAVEFORM_RING,
+            "symmetricwave" to VisualizerPreset.SYMMETRIC_WAVE,
+            "symmetric" to VisualizerPreset.SYMMETRIC_WAVE,
+            "mirrorwave" to VisualizerPreset.SYMMETRIC_WAVE,
             "circular" to VisualizerPreset.CIRCULAR_SPECTRUM,
             "circlespectrum" to VisualizerPreset.CIRCULAR_SPECTRUM,
             "linear" to VisualizerPreset.LINEAR_WAVEFORM,
@@ -786,7 +824,7 @@ object PromptExecutor {
             "starburst" to VisualizerPreset.STAR_BURST
         )
 
-        // ─── PARTICLES ───
+        // PARTICLES
         val particleAliases = mapOf(
             "bassparticles" to VisualizerPreset.BASS_PARTICLES,
             "bass" to VisualizerPreset.BASS_PARTICLES,
@@ -825,7 +863,7 @@ object PromptExecutor {
             "cybergrid" to VisualizerPreset.CYBER_GRID
         )
 
-        // ─── NEON ───
+        // NEON
         val neonAliases = mapOf(
             "neon" to VisualizerPreset.NEON_GLOW_RING,
             "glow" to VisualizerPreset.NEON_GLOW_RING,
@@ -867,7 +905,7 @@ object PromptExecutor {
             "glitchtwitch" to VisualizerPreset.GLITCH_TWITCH
         )
 
-        // ─── GEOMETRIC ───
+        // GEOMETRIC
         val geometricAliases = mapOf(
             "minimal" to VisualizerPreset.MINIMAL_DOTS,
             "dots" to VisualizerPreset.MINIMAL_DOTS,
@@ -906,7 +944,7 @@ object PromptExecutor {
             "vectorribbon" to VisualizerPreset.VECTOR_RIBBON
         )
 
-        // ─── CINEMATIC ───
+        // CINEMATIC
         val cinematicAliases = mapOf(
             "lensflare" to VisualizerPreset.LENS_FLARE,
             "flare" to VisualizerPreset.LENS_FLARE,
@@ -945,18 +983,15 @@ object PromptExecutor {
             "horizonzoom" to VisualizerPreset.HORIZON_ZOOM
         )
 
-        // Combined lookup
         val allAliases = spectrumAliases + particleAliases +
                 neonAliases + geometricAliases + cinematicAliases
 
         allAliases[clean]?.let { return it }
 
-        // Match by enum key (lowercase, no separators)
         VisualizerPreset.values().firstOrNull {
             it.key.lowercase() == clean
         }?.let { return it }
 
-        // Match by label
         VisualizerPreset.values().firstOrNull {
             it.label.lowercase().replace(" ", "").replace("-", "") == clean
         }?.let { return it }
@@ -964,9 +999,9 @@ object PromptExecutor {
         return null
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  TEXT PROPS PARSER
-    // ═══════════════════════════════════════════════════════════
+
     private fun applyTextProps(initial: TextState, props: String): TextState {
         var st = initial
         val tokens = props.split(Regex("\\s+"))
@@ -1259,9 +1294,9 @@ object PromptExecutor {
         else -> 50f to 50f
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  STICKER PROPS PARSER
-    // ═══════════════════════════════════════════════════════════
+
     private fun applyStickerProps(
         initial: com.moody.moodyvideoeditor.data.StickerState,
         props: String

@@ -103,9 +103,9 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-// ═══════════════════════════════════════════════════════════════
+
 //  HELPER — Per-clip color matrix
-// ═══════════════════════════════════════════════════════════════
+
 private fun buildClipMatrix(
     clip: EditorClip,
     globalMatrix: android.graphics.ColorMatrix,
@@ -144,9 +144,9 @@ private fun buildClipMatrix(
     return if (hasChange) cm else null
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  MAIN PREVIEW CANVAS
-// ═══════════════════════════════════════════════════════════════
+
 @OptIn(UnstableApi::class)
 @Composable
 fun PreviewCanvas(
@@ -192,9 +192,9 @@ fun PreviewCanvas(
 ) {
     val context = LocalContext.current
 
-    // ═══════════════════════════════════════════════════════════
+
     //  ACTIVE CLIPS
-    // ═══════════════════════════════════════════════════════════
+
     val activeClips = clips
         .filter {
             !it.isAudio &&
@@ -370,9 +370,9 @@ fun PreviewCanvas(
 
     val opacityAlpha = EffectsEngine.opacityAlpha(combinedFilter)
 
-    // ═══════════════════════════════════════════════════════════
+
     //  ROOT BOX
-    // ═══════════════════════════════════════════════════════════
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -410,7 +410,7 @@ fun PreviewCanvas(
 
             activeClips.forEach { clip ->
                 when {
-                    // ─────────── VIDEO ───────────
+                    // VIDEO
                     clip.isVisualClip && !clip.type.startsWith("image/") -> {
                         if (clip.id != topVideoClip?.id) return@forEach
                         val videoTransform2 = TransformApplier.resolveLive(
@@ -525,7 +525,7 @@ fun PreviewCanvas(
                         }
                     }
 
-                    // ─────────── IMAGE ───────────
+                    // IMAGE
                     clip.isVisualClip && clip.type.startsWith("image/") -> {
                         val imgLocalSec =
                             ((currentPosMs - clip.timelineStartMs) / 1000f)
@@ -734,7 +734,7 @@ fun PreviewCanvas(
                             }
                         }
                     }
-                    // ─────────── 🆕 VISUALIZER (as regular layer) ───────────
+                    // 🆕 VISUALIZER (as regular layer)
                     clip.isVisualizerClip -> {
                         val vs = clip.visualizer ?: return@forEach
 
@@ -863,7 +863,7 @@ fun PreviewCanvas(
                             )
                         }
                     }
-                    // ─────────── BRUSH ───────────
+                    // BRUSH
                     clip.isBrushClip -> {
                         if (clip.brush.strokes.isEmpty()) return@forEach
                         val localTimeSec =
@@ -1020,7 +1020,7 @@ fun PreviewCanvas(
                         }
                     }
 
-                    // ─────────── TEXT ───────────
+                    // TEXT
                     clip.isTextClip -> {
                         val st = clip.textState ?: return@forEach
                         InteractiveTextOverlay(
@@ -1044,7 +1044,7 @@ fun PreviewCanvas(
                         )
                     }
 
-                    // ─────────── STICKER ───────────
+                    // STICKER
                     clip.isStickerClip -> {
                         val ss = clip.stickerState ?: return@forEach
                         InteractiveStickerOverlay(
@@ -1070,7 +1070,7 @@ fun PreviewCanvas(
                 }
             }
 
-            // ─────────── OVERLAY EFFECTS ───────────
+            // OVERLAY EFFECTS
             if (allOverlays.isNotEmpty()) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     allOverlays.forEach { ov -> OverlayEngine.draw(this, timeSec, ov) }
@@ -1078,7 +1078,7 @@ fun PreviewCanvas(
             }
 
 
-            // ─────────── VIGNETTE ───────────
+            // VIGNETTE
             activeAdjustment?.let { adj ->
                 if (adj.vignette > 0f) {
                     val alpha = (adj.vignette / 100f).coerceIn(0f, 1f)
@@ -1098,7 +1098,7 @@ fun PreviewCanvas(
                 }
             }
 
-            // ─────────── TRANSITION ───────────
+            // TRANSITION
             if (activeTransitionClip != null && outgoingBitmap != null) {
                 val ts = activeTransitionClip.transition!!
                 val progress = (
@@ -1109,7 +1109,7 @@ fun PreviewCanvas(
                 TransitionRenderer.Render(outgoingBitmap!!, ts.key, progress)
             }
 
-            // ─────────── MASK PEN ───────────
+            // MASK PEN
             if (isMaskPenMode && selectedClip != null) {
                 MaskPenOverlay(
                     maskState = maskToRender
@@ -1125,7 +1125,7 @@ fun PreviewCanvas(
                 )
             }
 
-            // ─────────── BRUSH DRAW MODE ───────────
+            // BRUSH DRAW MODE
             if (isDrawingMode && !isMaskPenMode) {
                 val brushClip = clips.firstOrNull {
                     it.isBrushClip &&
@@ -1148,7 +1148,7 @@ fun PreviewCanvas(
             }
         }
 
-        // ─────────── SIDE BLACK BARS ───────────
+        // SIDE BLACK BARS
         if (sideBar > 0.5f) {
             Box(
                 modifier = Modifier
@@ -1196,9 +1196,9 @@ fun PreviewCanvas(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  MASKED CLIP CONTENT WRAPPER
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun MaskedClipContent(
     mask: MaskState,
@@ -1385,9 +1385,9 @@ private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  MASK PEN OVERLAY
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun MaskPenOverlay(
     maskState: MaskState, canvasW: Float, canvasH: Float,
@@ -1617,9 +1617,9 @@ private fun MaskPenOverlay(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  BRUSH DRAW LAYER
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun BrushDrawLayer(
     brushType: BrushType,
@@ -1701,8 +1701,16 @@ private fun BrushDrawLayer(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  INTERACTIVE TEXT OVERLAY
+
+// ═══════════════════════════════════════════════════════════════
+//  INTERACTIVE TEXT OVERLAY — Compose preview of text clip
+//  Matches TextBitmapRenderer (export) EXACTLY.
+// ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+//  INTERACTIVE TEXT OVERLAY — matches export exactly
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun InteractiveTextOverlay(
@@ -1754,15 +1762,24 @@ private fun InteractiveTextOverlay(
     val canvasWpx = with(density) { canvasW.dp.toPx() }
     val canvasHpx = with(density) { canvasH.dp.toPx() }
 
-    val effFontSize = TextScaler.fontSize(textState.fontSize, canvasW)
-    val effLetterSpacing = TextScaler.letterSpacing(textState.letterSpacing, canvasW)
+    // ─── FONT SIZE — matches export: canvasWpx / 720 ────────────
+    val effFontSize = TextScaler.fontSize(
+        baseSize = textState.fontSize,
+        canvasWidthPx = canvasWpx
+    )
+    val effLetterSpacing = TextScaler.letterSpacing(
+        base = textState.letterSpacing,
+        canvasWidthPx = canvasWpx
+    )
     val effLineHeight = TextScaler.lineHeight(effFontSize, textState.lineHeight)
-    val effMaxWidth = TextScaler.maxTextWidth(canvasW, textState.maxWidth)
+    val effMaxWidth = TextScaler.maxTextWidth(
+        maxWidthPct = textState.maxWidth,
+        canvasWidthPx = canvasWpx
+    )
 
     val userStrokeDp = textState.strokeWidth.coerceAtLeast(0f)
-    val strokeWidthPx = with(density) {
-        (userStrokeDp * 2f).coerceAtLeast(2f).dp.toPx()
-    }
+    val strokeWidthPx = (userStrokeDp * 2f * (canvasWpx / 720f))
+        .coerceAtLeast(1f)
 
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
 
@@ -1770,8 +1787,8 @@ private fun InteractiveTextOverlay(
         measurer.measure(
             text = displayContent,
             style = androidx.compose.ui.text.TextStyle(
-                fontSize = effFontSize.sp,
-                letterSpacing = effLetterSpacing.sp
+                fontSize = (effFontSize / density.density).sp,
+                letterSpacing = (effLetterSpacing / density.density).sp
             ),
             constraints = androidx.compose.ui.unit.Constraints(maxWidth = Int.MAX_VALUE),
             maxLines = 1,
@@ -1779,21 +1796,25 @@ private fun InteractiveTextOverlay(
         )
     }
 
-    val allowedWidthPx = with(density) { effMaxWidth.dp.toPx() }
-    val finalFontSize = if (naturalMeasure.size.width > allowedWidthPx) {
+    val allowedWidthPx = effMaxWidth
+    val finalFontSizePx = if (naturalMeasure.size.width > allowedWidthPx) {
         val ratio = allowedWidthPx / naturalMeasure.size.width.toFloat()
-        (effFontSize * ratio).coerceAtLeast(10f)
+        (effFontSize * ratio).coerceAtLeast(8f)
     } else effFontSize
 
+    val finalFontSizeSp = (finalFontSizePx / density.density).sp
+    val finalLetterSpacingSp = (effLetterSpacing / density.density).sp
+    val finalLineHeightSp = (effLineHeight / density.density).sp
+
     val finalMeasure = remember(
-        displayContent, finalFontSize, effLetterSpacing, effLineHeight
+        displayContent, finalFontSizeSp, finalLetterSpacingSp, finalLineHeightSp
     ) {
         measurer.measure(
             text = displayContent,
             style = androidx.compose.ui.text.TextStyle(
-                fontSize = finalFontSize.sp,
-                letterSpacing = effLetterSpacing.sp,
-                lineHeight = effLineHeight.sp
+                fontSize = finalFontSizeSp,
+                letterSpacing = finalLetterSpacingSp,
+                lineHeight = finalLineHeightSp
             ),
             constraints = androidx.compose.ui.unit.Constraints(maxWidth = Int.MAX_VALUE),
             softWrap = false
@@ -1803,14 +1824,9 @@ private fun InteractiveTextOverlay(
     val textWidthDp = with(density) { finalMeasure.size.width.toDp().value }
     val textHeightDp = with(density) { finalMeasure.size.height.toDp().value }
 
-    val (clampedX, clampedY) = TextScaler.clampPosition(
-        x = sampled.x,
-        y = sampled.y,
-        textWidthDp = textWidthDp,
-        textHeightDp = textHeightDp,
-        canvasWidthDp = canvasW,
-        canvasHeightDp = canvasH
-    )
+    // Simple clamp — matches export
+    val clampedX = sampled.x.coerceIn(0f, 100f)
+    val clampedY = sampled.y.coerceIn(0f, 100f)
 
     val family = FontLibrary.familyFor(textState.fontFamily)
     val solidColor = Color(textState.color)
@@ -1833,8 +1849,11 @@ private fun InteractiveTextOverlay(
         if (textState.shadowEnabled) {
             androidx.compose.ui.graphics.Shadow(
                 color = Color(textState.shadowColor),
-                offset = Offset(textState.shadowOffsetX, textState.shadowOffsetY),
-                blurRadius = textState.shadowBlur.coerceAtLeast(0f)
+                offset = Offset(
+                    textState.shadowOffsetX * (canvasWpx / 720f),
+                    textState.shadowOffsetY * (canvasWpx / 720f)
+                ),
+                blurRadius = textState.shadowBlur * (canvasWpx / 720f)
             )
         } else null
 
@@ -1857,9 +1876,9 @@ private fun InteractiveTextOverlay(
     }
 
     val glowDensity = density.density
-    val glowSizePx = with(density) { finalFontSize.sp.toPx() }
-    val glowLetterSpacingEm = if (finalFontSize <= 0f) 0f
-    else (effLetterSpacing / finalFontSize).coerceIn(-0.3f, 0.3f)
+    val glowSizePx = finalFontSizePx
+    val glowLetterSpacingEm = if (finalFontSizePx <= 0f) 0f
+    else (effLetterSpacing / finalFontSizePx).coerceIn(-0.3f, 0.3f)
 
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -1868,8 +1887,10 @@ private fun InteractiveTextOverlay(
         Box(
             modifier = Modifier
                 .graphicsLayer {
-                    val posTx = (clampedX - 50f) / 100f * canvasWpx
-                    val posTy = (clampedY - 50f) / 100f * canvasHpx
+                    // ✅ FIX: use canvasW / canvasH (DP), NOT canvasWpx/canvasHpx
+                    // translationX/Y are interpreted as DP by Compose.
+                    val posTx = (clampedX - 50f) / 100f * canvasW
+                    val posTy = (clampedY - 50f) / 100f * canvasH
                     translationX = posTx + frame.translateX
                     translationY = posTy + frame.translateY
                     scaleX = (sampled.scale / 100f) * frame.scaleX
@@ -1888,7 +1909,7 @@ private fun InteractiveTextOverlay(
                     } else Modifier
                 )
                 .padding(8.dp)
-                .pointerInput(clip.id, isSelected, isMulti, canvasWpx, canvasHpx) {
+                .pointerInput(clip.id, isSelected, isMulti, canvasW, canvasH) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
                         isDragging = true
@@ -1943,13 +1964,12 @@ private fun InteractiveTextOverlay(
                                     c2.consume()
                                 }
 
-                                val rawX = baseX + accumPanX / canvasWpx * 100f
-                                val rawY = baseY + accumPanY / canvasHpx * 100f
+                                // ✅ FIX: pan in dp (not px)
+                                val rawX = baseX + accumPanX / canvasW * 100f
+                                val rawY = baseY + accumPanY / canvasH * 100f
 
-                                val (cx, cy) = TextScaler.clampPosition(
-                                    rawX, rawY, textWidthDp, textHeightDp,
-                                    canvasW, canvasH
-                                )
+                                val cx = rawX.coerceIn(0f, 100f)
+                                val cy = rawY.coerceIn(0f, 100f)
                                 val newScale = (baseScale * accumZoom)
                                     .coerceIn(10f, 500f)
                                 val newRot = baseRot + accumRot
@@ -1986,6 +2006,7 @@ private fun InteractiveTextOverlay(
                     )
                     val textSizePx = glowSizePx
                     val letterSpacingEm = glowLetterSpacingEm
+                    val glowRadiusPx = textState.glowRadius * (canvasWpx / 720f)
 
                     Canvas(
                         modifier = Modifier.matchParentSize()
@@ -2004,7 +2025,7 @@ private fun InteractiveTextOverlay(
                                 this.letterSpacing = letterSpacingEm
                                 alpha = (layer.alpha * 255).toInt().coerceIn(0, 255)
                                 setShadowLayer(
-                                    textState.glowRadius * layer.blurScale * glowDensity,
+                                    glowRadiusPx * layer.blurScale * glowDensity,
                                     0f, 0f, glowColorInt
                                 )
                             }
@@ -2025,7 +2046,7 @@ private fun InteractiveTextOverlay(
                     Text(
                         text = displayContent,
                         color = Color(textState.strokeColor),
-                        fontSize = finalFontSize.sp,
+                        fontSize = finalFontSizeSp,
                         fontWeight = weight,
                         fontStyle = fontSty,
                         fontFamily = family,
@@ -2040,8 +2061,8 @@ private fun InteractiveTextOverlay(
                                 cap = androidx.compose.ui.graphics.StrokeCap.Round,
                                 miter = 4f
                             ),
-                            letterSpacing = effLetterSpacing.sp,
-                            lineHeight = effLineHeight.sp
+                            letterSpacing = finalLetterSpacingSp,
+                            lineHeight = finalLineHeightSp
                         )
                     )
                 }
@@ -2049,7 +2070,7 @@ private fun InteractiveTextOverlay(
                 Text(
                     text = displayContent,
                     color = if (gradient != null) Color.Unspecified else solidColor,
-                    fontSize = finalFontSize.sp,
+                    fontSize = finalFontSizeSp,
                     fontWeight = weight,
                     fontStyle = fontSty,
                     fontFamily = family,
@@ -2060,17 +2081,18 @@ private fun InteractiveTextOverlay(
                     style = androidx.compose.ui.text.TextStyle(
                         brush = gradient,
                         shadow = shadowStyle,
-                        letterSpacing = effLetterSpacing.sp,
-                        lineHeight = effLineHeight.sp
+                        letterSpacing = finalLetterSpacingSp,
+                        lineHeight = finalLineHeightSp
                     )
                 )
             }
         }
     }
 }
+//  INTERACTIVE STICKER OVERLAY
 
 // ═══════════════════════════════════════════════════════════════
-//  INTERACTIVE STICKER OVERLAY
+//  INTERACTIVE STICKER OVERLAY — matches export exactly
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun InteractiveStickerOverlay(
@@ -2104,25 +2126,28 @@ private fun InteractiveStickerOverlay(
         com.moody.moodyvideoeditor.utils.AnimationsEngine.Frame()
     }
 
-    val effStickerSize = TextScaler.fontSize(
-        baseSize = 48,
-        canvasWidthDp = canvasW
-    )
-
-    val stickerSizeDp = effStickerSize * (sampled.scale / 100f)
-    val (clampedX, clampedY) = TextScaler.clampPosition(
-        sampled.x, sampled.y, stickerSizeDp, stickerSizeDp, canvasW, canvasH
-    )
-
     val density = LocalDensity.current
     val canvasWpx = with(density) { canvasW.dp.toPx() }
     val canvasHpx = with(density) { canvasH.dp.toPx() }
+
+    // Font size — matches export: 48 * (canvasWpx / 720)
+    val effStickerSizePx = TextScaler.fontSize(
+        baseSize = 48,
+        canvasWidthPx = canvasWpx
+    )
+
+    // Clamp position
+    val clampedX = sampled.x.coerceIn(0f, 100f)
+    val clampedY = sampled.y.coerceIn(0f, 100f)
 
     val borderColor = when {
         isSelected -> Color(0xFF60EFFF)
         isMulti -> Color(0xFFFFD166)
         else -> Color.Transparent
     }
+
+    // Font size in sp (for Text composable)
+    val effStickerSizeSp = (effStickerSizePx / density.density).sp
 
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -2131,10 +2156,11 @@ private fun InteractiveStickerOverlay(
         Box(
             modifier = Modifier
                 .graphicsLayer {
-                    translationX = (clampedX - 50f) / 100f * canvasWpx +
-                            frame.translateX
-                    translationY = (clampedY - 50f) / 100f * canvasHpx +
-                            frame.translateY
+                    // ✅ FIX: use canvasW / canvasH (DP), NOT canvasWpx/canvasHpx
+                    val posTx = (clampedX - 50f) / 100f * canvasW
+                    val posTy = (clampedY - 50f) / 100f * canvasH
+                    translationX = posTx + frame.translateX
+                    translationY = posTy + frame.translateY
                     scaleX = (sampled.scale / 100f) * frame.scaleX
                     scaleY = (sampled.scale / 100f) * frame.scaleY
                     rotationZ = sampled.rotation + frame.rotationZ
@@ -2151,7 +2177,7 @@ private fun InteractiveStickerOverlay(
                     } else Modifier
                 )
                 .padding(6.dp)
-                .pointerInput(clip.id, isSelected, isMulti, canvasWpx, canvasHpx) {
+                .pointerInput(clip.id, isSelected, isMulti, canvasW, canvasH) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
                         onGroupGestureStart()
@@ -2204,13 +2230,12 @@ private fun InteractiveStickerOverlay(
                                     c2.consume()
                                 }
 
-                                val rawX = baseX + accumPanX / canvasWpx * 100f
-                                val rawY = baseY + accumPanY / canvasHpx * 100f
+                                // ✅ FIX: pan in dp (not px)
+                                val rawX = baseX + accumPanX / canvasW * 100f
+                                val rawY = baseY + accumPanY / canvasH * 100f
 
-                                val (cx, cy) = TextScaler.clampPosition(
-                                    rawX, rawY, stickerSizeDp, stickerSizeDp,
-                                    canvasW, canvasH
-                                )
+                                val cx = rawX.coerceIn(0f, 100f)
+                                val cy = rawY.coerceIn(0f, 100f)
                                 val newScale = (baseScale * accumZoom)
                                     .coerceIn(10f, 500f)
                                 val newRot = baseRot + accumRot
@@ -2231,7 +2256,10 @@ private fun InteractiveStickerOverlay(
                 },
             contentAlignment = Alignment.Center
         ) {
-            Text(text = stickerState.emoji, fontSize = effStickerSize.sp)
+            Text(
+                text = stickerState.emoji,
+                fontSize = effStickerSizeSp
+            )
         }
     }
 }

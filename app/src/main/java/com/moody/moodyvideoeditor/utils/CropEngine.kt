@@ -5,15 +5,13 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 
-/**
- * Mirrors js/features/crop.js
- * Crop values are normalized 0..1 in EditorClip (cropL, cropR, cropT, cropB).
- */
+// Mirrors js/features/crop.js
+// Crop values are normalized 0..1 in EditorClip (cropL, cropR, cropT, cropB).
 object CropEngine {
 
     const val MAX_CROP = 0.45f
 
-    /** Clamp all four values + prevent overlap */
+    // Clamp all four values + prevent overlap
     fun clamp(l: Float, r: Float, t: Float, b: Float): Quad {
         var cl = l.coerceIn(0f, MAX_CROP)
         var cr = r.coerceIn(0f, MAX_CROP)
@@ -30,7 +28,7 @@ object CropEngine {
 
     data class Quad(val l: Float, val r: Float, val t: Float, val b: Float)
 
-    /** Draw black masks outside the crop rect — used in preview overlay */
+    // Draw black masks outside the crop rect — used in preview overlay
     fun drawMasks(scope: DrawScope, W: Float, H: Float, q: Quad) {
         // Top
         scope.drawRect(Color.Black.copy(alpha = 0.6f), Offset.Zero, Size(W, H * q.t))
@@ -50,7 +48,7 @@ object CropEngine {
         )
     }
 
-    /** Aspect preset crop values (16:9, 1:1 etc.) */
+    // Aspect preset crop values (16:9, 1:1 etc.)
     fun presetFor(aspectKey: String, frameW: Float, frameH: Float): Quad {
         val frameAR = if (frameH > 0f) frameW / frameH else 16f / 9f
         val targetAR = when (aspectKey) {

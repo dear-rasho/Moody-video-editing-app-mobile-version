@@ -76,7 +76,7 @@ fun BeatsPanel(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
-            // ═══ FILTER CHIPS ═══
+            // FILTER CHIPS
             Text(
                 "Beat Range Filter",
                 color = Color(0xFF888888), fontSize = 9.sp,
@@ -174,7 +174,7 @@ fun BeatsPanel(
                 }
             }
 
-            // ═══ DETECTING PROGRESS ═══
+            // DETECTING PROGRESS
             if (detecting) {
                 Column(
                     modifier = Modifier
@@ -207,7 +207,7 @@ fun BeatsPanel(
                 }
             }
 
-            // ═══ WARNING ═══
+            // WARNING
             if (!detecting && errorMessage != null) {
                 Box(
                     modifier = Modifier
@@ -225,7 +225,7 @@ fun BeatsPanel(
                 }
             }
 
-            // ═══ SPEECH DETECTED ═══
+            // SPEECH DETECTED
             if (!detecting && !state.detected && state.filter != "all") {
                 Box(
                     modifier = Modifier
@@ -250,7 +250,7 @@ fun BeatsPanel(
                 }
             }
 
-            // ═══ RESULT ═══
+            // RESULT
             if (!detecting && state.detected) {
                 // Stats
                 Column(
@@ -342,7 +342,7 @@ fun BeatsPanel(
                     )
                 }
 
-                // ═══ COPY OPTIONS ═══
+                // COPY OPTIONS
                 Text(
                     "📋 Copy Beat Data (persistent)",
                     color = Color(0xFF888888), fontSize = 9.sp,
@@ -446,9 +446,9 @@ fun BeatsPanel(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  BEAT ROW ITEM
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun BeatRowItem(
     index: Int,
@@ -506,9 +506,9 @@ private fun BeatRowItem(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  COPY ROW
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun CopyRow(
     label: String,
@@ -569,9 +569,9 @@ private fun CopyRow(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  HELPERS
-// ═══════════════════════════════════════════════════════════════
+
 private fun copyToClipboard(context: Context, label: String, text: String) {
     try {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE)

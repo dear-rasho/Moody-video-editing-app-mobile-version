@@ -1,9 +1,7 @@
 package com.moody.moodyvideoeditor.utils
 
-/**
- * Mirrors js/features/volume.js
- * Applied to ExoPlayer + used in FFmpeg export (volume filter).
- */
+// Mirrors js/features/volume.js
+// Applied to ExoPlayer + used in FFmpeg export (volume filter).
 object VolumeEngine {
     const val MIN_VOLUME = 0f
     const val MAX_VOLUME = 1.0f
@@ -14,7 +12,7 @@ object VolumeEngine {
     fun effectiveVolume(volume: Float, isMuted: Boolean): Float =
         if (isMuted) 0f else clamp(volume)
 
-    /** FFmpeg volume filter */
+    // FFmpeg volume filter
     fun buildFfmpegFilter(volume: Float, isMuted: Boolean): String {
         val v = effectiveVolume(volume, isMuted)
         return "volume=${"%.3f".format(v)}"

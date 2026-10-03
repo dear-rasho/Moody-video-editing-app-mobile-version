@@ -6,6 +6,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -34,13 +36,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -58,15 +60,15 @@ import com.moody.moodyvideoeditor.utils.TimelineRuler
 import com.moody.moodyvideoeditor.utils.TimelineZoom
 import com.moody.moodyvideoeditor.utils.WaveformEngine
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-// ═══════════════════════════════════════════════════════════════
-//  CONSTANTS
-// ═══════════════════════════════════════════════════════════════
+
 private val TRACK_LABEL_WIDTH = 54.dp
 private val RULER_HEIGHT = 22.dp
+private val SCROLLBAR_HEIGHT = 10.dp
 private val VISUAL_TRACK_HEIGHT = 34.dp
 private val AUDIO_TRACK_HEIGHT = 34.dp
 private const val DP_PER_SECOND = 20f
@@ -86,9 +88,7 @@ private data class DragVisual(
     val sourceTrack: Int = -1
 )
 
-// ═══════════════════════════════════════════════════════════════
-//  MAIN TIMELINE
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 fun Timeline(
     state: EditorState,
@@ -111,6 +111,7 @@ fun Timeline(
     val density = LocalDensity.current
     val hScroll = rememberScrollState()
     val vScroll = rememberScrollState()
+    val coroutineScope = rememberCoroutineScope()
 
     val labelWidthPx = with(density) { TRACK_LABEL_WIDTH.toPx() }
 
@@ -181,7 +182,6 @@ fun Timeline(
             .background(Color(0xFF0A0A0A))
             .onSizeChanged { viewportWidthPx = it.width.toFloat() }
     ) {
-        // ═══ RULER ═══
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -245,11 +245,61 @@ fun Timeline(
             }
         }
 
-        // ═══ TRACKS + PLAYHEAD ═══
+        // FIX: 2-finger scroll ONLY when a layer is selected.
+        // If no layer/clip selected → block 2-finger gesture entirely.
+        val hasAnySelection = state.selectedClipId != null ||
+                state.multiSelectedIds.isNotEmpty()
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
+                .pointerInput(hasAnySelection) {
+                    awaitEachGesture {
+                        val firstDown = awaitFirstDown(requireUnconsumed = false)
+                        firstDown.consume()   // ← prevent leakage to child gestures
+
+                        var twoFingerActive = false
+
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.filter { it.pressed }
+                            if (pressed.isEmpty()) break
+
+                            // 🔒 If nothing is selected → consume & ignore everything
+                            if (!hasAnySelection) {
+                                pressed.forEach { it.consume() }
+                                continue
+                            }
+
+                            if (pressed.size >= 2) {
+                                twoFingerActive = true
+                                var sumX = 0f
+                                var sumY = 0f
+                                pressed.forEach { change ->
+                                    val pan = change.position - change.previousPosition
+                                    sumX += pan.x
+                                    sumY += pan.y
+                                    change.consume()
+                                }
+                                val avgX = sumX / pressed.size
+                                val avgY = sumY / pressed.size
+
+                                val newH = (hScroll.value - avgX.toInt())
+                                    .coerceIn(0, hScroll.maxValue)
+                                val newV = (vScroll.value - avgY.toInt())
+                                    .coerceIn(0, vScroll.maxValue)
+
+                                coroutineScope.launch {
+                                    hScroll.scrollTo(newH)
+                                    vScroll.scrollTo(newV)
+                                }
+                            } else if (twoFingerActive) {
+                                pressed.forEach { it.consume() }
+                            }
+                        }
+                    }
+                }
         ) {
             Column(
                 modifier = Modifier
@@ -356,7 +406,6 @@ fun Timeline(
                     }
                 }
 
-                // Audio tracks
                 for (i in 0 until state.audioLayerCount) {
                     if (dragVisual.active && dragVisual.isAudio &&
                         dragVisual.targetTrack == i &&
@@ -440,7 +489,6 @@ fun Timeline(
                             selectedTransitionClipId =
                                 if (selectedTransitionClipId == id) null else id
                         },
-                        // 🆕 Beat markers
                         beatTimesMs = state.beatTimesMs,
                         showBeats = state.beatsDetected
                     )
@@ -457,12 +505,128 @@ fun Timeline(
                 viewportWidthPx = viewportWidthPx
             )
         }
+
+        TimelineScrollbar(
+            hScroll = hScroll,
+            contentWidthPx = contentWidthPx,
+            viewportWidthPx = viewportWidthPx,
+            labelWidthPx = labelWidthPx
+        )
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  VISUAL TRACK ROW
-// ═══════════════════════════════════════════════════════════════
+
+@Composable
+private fun TimelineScrollbar(
+    hScroll: ScrollState,
+    contentWidthPx: Float,
+    viewportWidthPx: Float,
+    labelWidthPx: Float
+) {
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+
+    val contentVisibleWidthPx = (viewportWidthPx - labelWidthPx).coerceAtLeast(1f)
+    val maxScroll = (contentWidthPx - contentVisibleWidthPx).coerceAtLeast(0f)
+
+    if (maxScroll <= 1f) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(SCROLLBAR_HEIGHT)
+                .background(Color(0xFF0A0A0A))
+        )
+        return
+    }
+
+    val trackWidthDp = with(density) {
+        contentVisibleWidthPx.toDp()
+    }
+
+    val thumbFraction = (contentVisibleWidthPx / contentWidthPx)
+        .coerceIn(0.05f, 1f)
+    val thumbWidthDp = trackWidthDp * thumbFraction
+
+    val scrollFraction = (hScroll.value.toFloat() / maxScroll)
+        .coerceIn(0f, 1f)
+    val maxThumbOffsetDp = trackWidthDp - thumbWidthDp
+    val thumbOffsetDp = maxThumbOffsetDp * scrollFraction
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(SCROLLBAR_HEIGHT)
+            .background(Color(0xFF0A0A0A))
+    ) {
+        Box(
+            modifier = Modifier
+                .width(TRACK_LABEL_WIDTH)
+                .fillMaxHeight()
+                .background(Color(0xFF0A0A0A))
+        )
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .padding(horizontal = 0.dp, vertical = 2.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(Color(0xFF1A1A1A))
+                .pointerInput(maxScroll, contentVisibleWidthPx) {
+                    detectTapGestures { offset ->
+                        val tapFraction = (offset.x / size.width)
+                            .coerceIn(0f, 1f)
+                        val targetScroll = (tapFraction * maxScroll).toInt()
+                        scope.launch {
+                            hScroll.scrollTo(targetScroll)
+                        }
+                    }
+                }
+                .pointerInput(maxScroll, contentVisibleWidthPx, thumbWidthDp) {
+                    var accumulatedDrag = 0f
+                    var startingScroll = 0
+
+                    detectDragGestures(
+                        onDragStart = { _ ->
+                            accumulatedDrag = 0f
+                            startingScroll = hScroll.value
+                        },
+                        onDrag = { change, drag ->
+                            change.consume()
+                            accumulatedDrag += drag.x
+
+                            val trackWidthPxLocal = size.width.toFloat()
+                            val thumbWidthPxLocal = with(density) {
+                                thumbWidthDp.toPx()
+                            }
+                            val maxThumbOffsetPxLocal =
+                                (trackWidthPxLocal - thumbWidthPxLocal)
+                                    .coerceAtLeast(1f)
+
+                            val scrollDelta =
+                                (accumulatedDrag / maxThumbOffsetPxLocal) * maxScroll
+                            val newScroll = (startingScroll + scrollDelta)
+                                .coerceIn(0f, maxScroll)
+                            scope.launch {
+                                hScroll.scrollTo(newScroll.toInt())
+                            }
+                        }
+                    )
+                }
+        ) {
+            Box(
+                modifier = Modifier
+                    .offset(x = thumbOffsetDp)
+                    .width(thumbWidthDp.coerceAtLeast(20.dp))
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Color(0xFF7C3AED))
+            )
+        }
+    }
+}
+
+
 @Composable
 private fun VisualTrackRow(
     trackIndex: Int,
@@ -535,7 +699,10 @@ private fun VisualTrackRow(
                         else -> Color.Transparent
                     }
                 )
-                .pointerInput(trackIndex, visualLayerCount) {
+                // FIX: label drag ONLY when a layer is selected
+                .pointerInput(trackIndex, visualLayerCount, isSelectedLayer) {
+                    if (!isSelectedLayer) return@pointerInput   // ← block if not selected
+
                     var accumulatedY = 0f
                     val stepPxLocal = with(density) { VISUAL_TRACK_HEIGHT.toPx() }
                     detectVerticalDragGestures(
@@ -634,9 +801,7 @@ private fun VisualTrackRow(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  AUDIO TRACK ROW
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun AudioTrackRow(
     trackIndex: Int,
@@ -711,7 +876,10 @@ private fun AudioTrackRow(
                         else -> Color.Transparent
                     }
                 )
-                .pointerInput(trackIndex, audioLayerCount) {
+                // FIX: label drag ONLY when a layer is selected
+                .pointerInput(trackIndex, audioLayerCount, isSelectedLayer) {
+                    if (!isSelectedLayer) return@pointerInput   // ← block if not selected
+
                     var accumulatedY = 0f
                     val stepPxLocal = with(density) { AUDIO_TRACK_HEIGHT.toPx() }
                     detectVerticalDragGestures(
@@ -803,7 +971,6 @@ private fun AudioTrackRow(
                 visualLayerCount = visualLayerCount,
                 audioLayerCount = audioLayerCount,
                 trackHidden = isMuted,
-                // 🆕 Beat markers pass
                 beatTimesMs = beatTimesMs,
                 showBeats = showBeats
             )
@@ -811,9 +978,7 @@ private fun AudioTrackRow(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  TRACK CONTENT
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun TrackContent(
     clips: List<EditorClip>,
@@ -844,7 +1009,6 @@ private fun TrackContent(
     visualLayerCount: Int,
     audioLayerCount: Int,
     trackHidden: Boolean = false,
-    // 🆕 Beat markers
     beatTimesMs: List<Long> = emptyList(),
     showBeats: Boolean = false
 ) {
@@ -870,11 +1034,21 @@ private fun TrackContent(
             .pointerInput(clips, totalMs, contentWidthPx) {
                 detectTapGestures { offset ->
                     if (contentWidthPx <= 0f || totalMs <= 0L) return@detectTapGestures
-                    onSeek(
-                        TimelinePlayheadController.seekTimeFromClick(
-                            offset.x, contentWidthPx, totalMs
+
+                    // FIX: only seek if tapping EMPTY space, not on a clip
+                    val tappedClip = clips.firstOrNull { clip ->
+                        val startPx = clip.timelineStartMs.toFloat() / totalMs * contentWidthPx
+                        val endPx = clip.timelineEndMs.toFloat() / totalMs * contentWidthPx
+                        offset.x in startPx..endPx
+                    }
+
+                    if (tappedClip == null) {
+                        onSeek(
+                            TimelinePlayheadController.seekTimeFromClick(
+                                offset.x, contentWidthPx, totalMs
+                            )
                         )
-                    )
+                    }
                 }
             }
     ) {
@@ -887,7 +1061,6 @@ private fun TrackContent(
         val enterMs = (SNAP_ENTER_PX / pxPerMs).toLong().coerceAtLeast(SNAP_MIN_GAP_MS)
         val releaseMs = (SNAP_RELEASE_PX / pxPerMs).toLong().coerceAtLeast(enterMs * 2)
 
-        // Ghost
         draggingClipId?.let { dragId ->
             val ghost = clips.firstOrNull { it.id == dragId }
             if (ghost != null) {
@@ -945,7 +1118,7 @@ private fun TrackContent(
             val endPx = clip.timelineEndMs.toFloat() / totalMs * contentWidthPx
             val clipWidthPx = (endPx - startPx).coerceAtLeast(20f)
             val barColor = when {
-                clip.isVisualizerClip -> Color(0xFFFFD166)   // 🆕 Yellow
+                clip.isVisualizerClip -> Color(0xFFFFD166)
                 clip.isAudioFxClip -> Color(0xFFA855F7)
                 clip.isSoundFxClip -> Color(0xFF3B82F6)
                 clip.isFilterLayerClip -> Color(0xFFEC4899)
@@ -1147,7 +1320,6 @@ private fun TrackContent(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                // 🆕 Audio waveform background
                 if (clip.isAudio && clip.uri != Uri.EMPTY &&
                     !clip.type.endsWith("/plain")
                 ) {
@@ -1190,36 +1362,44 @@ private fun TrackContent(
                                         startMs = clip.sourceStartMs
                                         endMs = clip.sourceEndMs
                                         activeTarget = null
-                                        dragPxPerMs = if (totalMs > 0L && contentWidthPx > 0f)
-                                            contentWidthPx / totalMs.toFloat()
-                                        else 0.01f
+                                        dragPxPerMs =
+                                            if (totalMs > 0L && contentWidthPx > 0f)
+                                                contentWidthPx / totalMs.toFloat()
+                                            else 0.01f
                                     },
                                     onDrag = { change, drag ->
                                         change.consume()
                                         accumX += drag.x
                                         val dMs = (accumX / dragPxPerMs).toLong()
                                         val newStart = (startMs + dMs)
-                                            .coerceIn(0L, endMs - EditorClip.MIN_DURATION_MS)
+                                            .coerceIn(
+                                                0L,
+                                                endMs - EditorClip.MIN_DURATION_MS
+                                            )
 
                                         val newStartTimelineMs =
-                                            clip.timelineStartMs + (newStart - clip.sourceStartMs)
+                                            clip.timelineStartMs +
+                                                    (newStart - clip.sourceStartMs)
 
                                         val targets = mutableListOf<SnapTarget>()
-                                        allClips.filter { it.id != clip.id }.forEach { other ->
-                                            targets.add(
-                                                SnapTarget(
-                                                    other.timelineStartMs,
-                                                    "Start of ${other.name.take(14)}"
+                                        allClips.filter { it.id != clip.id }
+                                            .forEach { other ->
+                                                targets.add(
+                                                    SnapTarget(
+                                                        other.timelineStartMs,
+                                                        "Start of ${other.name.take(14)}"
+                                                    )
                                                 )
-                                            )
-                                            targets.add(
-                                                SnapTarget(
-                                                    other.timelineEndMs,
-                                                    "End of ${other.name.take(14)}"
+                                                targets.add(
+                                                    SnapTarget(
+                                                        other.timelineEndMs,
+                                                        "End of ${other.name.take(14)}"
+                                                    )
                                                 )
-                                            )
-                                        }
-                                        targets.add(SnapTarget(currentPosMs, "Playhead"))
+                                            }
+                                        targets.add(
+                                            SnapTarget(currentPosMs, "Playhead")
+                                        )
 
                                         var bestTarget: SnapTarget? = null
                                         var bestDist = enterMs
@@ -1241,11 +1421,17 @@ private fun TrackContent(
 
                                         if (bestTarget != null) {
                                             activeTarget = bestTarget
-                                            val deltaMs = bestTarget!!.timeMs - clip.timelineStartMs
-                                            val finalSourceStart = clip.sourceStartMs + deltaMs
-                                            onTrimLeft(finalSourceStart.coerceAtLeast(0L))
-                                            snapGuideX = (bestTarget!!.timeMs.toFloat() /
-                                                    totalMs.toFloat()) * contentWidthPx
+                                            val deltaMs = bestTarget!!.timeMs -
+                                                    clip.timelineStartMs
+                                            val finalSourceStart =
+                                                clip.sourceStartMs + deltaMs
+                                            onTrimLeft(
+                                                finalSourceStart.coerceAtLeast(0L)
+                                            )
+                                            snapGuideX =
+                                                (bestTarget!!.timeMs.toFloat() /
+                                                        totalMs.toFloat()) *
+                                                        contentWidthPx
                                             snapLabel = "Snap: ${bestTarget!!.label}"
                                         } else {
                                             activeTarget = null
@@ -1299,16 +1485,18 @@ private fun TrackContent(
                                         startMs = clip.sourceStartMs
                                         endMs = clip.sourceEndMs
                                         activeTarget = null
-                                        dragPxPerMs = if (totalMs > 0L && contentWidthPx > 0f)
-                                            contentWidthPx / totalMs.toFloat()
-                                        else 0.01f
+                                        dragPxPerMs =
+                                            if (totalMs > 0L && contentWidthPx > 0f)
+                                                contentWidthPx / totalMs.toFloat()
+                                            else 0.01f
                                     },
                                     onDrag = { change, drag ->
                                         change.consume()
                                         accumX += drag.x
                                         val dMs = (accumX / dragPxPerMs).toLong()
-                                        val maxEnd = if (clip.sourceTotalMs != Long.MAX_VALUE)
-                                            clip.sourceTotalMs else Long.MAX_VALUE
+                                        val maxEnd =
+                                            if (clip.sourceTotalMs != Long.MAX_VALUE)
+                                                clip.sourceTotalMs else Long.MAX_VALUE
                                         val newEnd = (endMs + dMs)
                                             .coerceIn(
                                                 startMs + EditorClip.MIN_DURATION_MS,
@@ -1316,24 +1504,28 @@ private fun TrackContent(
                                             )
 
                                         val newEndTimelineMs =
-                                            clip.timelineStartMs + (newEnd - clip.sourceStartMs)
+                                            clip.timelineStartMs +
+                                                    (newEnd - clip.sourceStartMs)
 
                                         val targets = mutableListOf<SnapTarget>()
-                                        allClips.filter { it.id != clip.id }.forEach { other ->
-                                            targets.add(
-                                                SnapTarget(
-                                                    other.timelineStartMs,
-                                                    "Start of ${other.name.take(14)}"
+                                        allClips.filter { it.id != clip.id }
+                                            .forEach { other ->
+                                                targets.add(
+                                                    SnapTarget(
+                                                        other.timelineStartMs,
+                                                        "Start of ${other.name.take(14)}"
+                                                    )
                                                 )
-                                            )
-                                            targets.add(
-                                                SnapTarget(
-                                                    other.timelineEndMs,
-                                                    "End of ${other.name.take(14)}"
+                                                targets.add(
+                                                    SnapTarget(
+                                                        other.timelineEndMs,
+                                                        "End of ${other.name.take(14)}"
+                                                    )
                                                 )
-                                            )
-                                        }
-                                        targets.add(SnapTarget(currentPosMs, "Playhead"))
+                                            }
+                                        targets.add(
+                                            SnapTarget(currentPosMs, "Playhead")
+                                        )
 
                                         var bestTarget: SnapTarget? = null
                                         var bestDist = enterMs
@@ -1355,11 +1547,17 @@ private fun TrackContent(
 
                                         if (bestTarget != null) {
                                             activeTarget = bestTarget
-                                            val deltaMs = bestTarget!!.timeMs - clip.timelineStartMs
-                                            val finalSourceEnd = clip.sourceStartMs + deltaMs
-                                            onTrimRight(finalSourceEnd.coerceAtMost(maxEnd))
-                                            snapGuideX = (bestTarget!!.timeMs.toFloat() /
-                                                    totalMs.toFloat()) * contentWidthPx
+                                            val deltaMs = bestTarget!!.timeMs -
+                                                    clip.timelineStartMs
+                                            val finalSourceEnd =
+                                                clip.sourceStartMs + deltaMs
+                                            onTrimRight(
+                                                finalSourceEnd.coerceAtMost(maxEnd)
+                                            )
+                                            snapGuideX =
+                                                (bestTarget!!.timeMs.toFloat() /
+                                                        totalMs.toFloat()) *
+                                                        contentWidthPx
                                             snapLabel = "Snap: ${bestTarget!!.label}"
                                         } else {
                                             activeTarget = null
@@ -1409,49 +1607,10 @@ private fun TrackContent(
             )
         }
 
-        // ═══════════════════════════════════════════════════════
-        //  🆕 BEAT MARKERS — only on audio tracks
-        // ═══════════════════════════════════════════════════════
-        if (isAudio && showBeats && beatTimesMs.isNotEmpty()) {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .zIndex(20f)
-            ) {
-                val w = size.width
-                val h = size.height
-                beatTimesMs.forEach { beatMs ->
-                    val x = (beatMs.toFloat() / totalMs.toFloat()) * w
-                    if (x in -2f..(w + 2f)) {
-                        // Beat line
-                        drawLine(
-                            color = Color(0xFFFFD166).copy(alpha = 0.85f),
-                            start = Offset(x, 0f),
-                            end = Offset(x, h),
-                            strokeWidth = 1.5f
-                        )
-                        // Beat triangle head at top
-                        val path = Path().apply {
-                            moveTo(x, 0f)
-                            lineTo(x - 4f, 6f)
-                            lineTo(x + 4f, 6f)
-                            close()
-                        }
-                        drawPath(path, Color(0xFFFFD166))
-                        // Beat dot at bottom
-                        drawCircle(
-                            color = Color(0xFFFFD166),
-                            radius = 2.5f,
-                            center = Offset(x, h - 3f)
-                        )
-                    }
-                }
-            }
-        }
+        // FIX: beat markers hidden by default — user can toggle in Beats panel
+        // Removed auto-draw to keep timeline clean.
+        // (was: if (isAudio && showBeats && beatTimesMs.isNotEmpty()) { ... })
 
-        // ═══════════════════════════════════════════════════════
-        //  TRANSITION MARKERS
-        // ═══════════════════════════════════════════════════════
         clips.forEach { clip ->
             val trans = clip.transition
             if (trans != null && trans.isActive) {
@@ -1467,7 +1626,9 @@ private fun TrackContent(
 
                     Box(
                         modifier = Modifier
-                            .offset(x = with(density) { (junctionPx - 14f).toDp() })
+                            .offset(
+                                x = with(density) { (junctionPx - 14f).toDp() }
+                            )
                             .width(28.dp)
                             .height(20.dp)
                             .zIndex(25f)
@@ -1498,7 +1659,9 @@ private fun TrackContent(
                         Box(
                             modifier = Modifier
                                 .offset(
-                                    x = with(density) { (junctionPx + 12f).toDp() },
+                                    x = with(density) {
+                                        (junctionPx + 12f).toDp()
+                                    },
                                     y = (-2).dp
                                 )
                                 .size(16.dp)
@@ -1584,9 +1747,7 @@ private fun TrackContent(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  🆕 AUDIO WAVEFORM BACKGROUND
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun AudioWaveformBackground(
     context: Context,
@@ -1613,13 +1774,14 @@ private fun AudioWaveformBackground(
         val midY = h / 2f
         val maxAmp = h * 0.42f
 
-        // Compute waveform range based on source time
         val totalMs = if (sourceTotalMs != Long.MAX_VALUE && sourceTotalMs > 0L)
             sourceTotalMs
         else (sourceEndMs).coerceAtLeast(1L)
 
-        val startFrac = (sourceStartMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
-        val endFrac = (sourceEndMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
+        val startFrac = (sourceStartMs.toFloat() / totalMs.toFloat())
+            .coerceIn(0f, 1f)
+        val endFrac = (sourceEndMs.toFloat() / totalMs.toFloat())
+            .coerceIn(0f, 1f)
 
         val startIdx = (startFrac * wf.size).toInt().coerceIn(0, wf.size - 1)
         val endIdx = (endFrac * wf.size).toInt().coerceIn(startIdx + 1, wf.size)
@@ -1627,13 +1789,11 @@ private fun AudioWaveformBackground(
         val samplesToDraw = (endIdx - startIdx).coerceAtLeast(1)
         val pxPerSample = w / samplesToDraw.toFloat()
 
-        // Draw waveform bars (mirror top+bottom)
         var x = 0f
         for (i in startIdx until endIdx) {
             val amp = wf[i].coerceIn(0f, 1f)
             val barH = amp * maxAmp
 
-            // Top half
             drawLine(
                 color = Color(0xFFFFFFFF).copy(alpha = 0.55f),
                 start = Offset(x, midY - barH),
@@ -1641,7 +1801,6 @@ private fun AudioWaveformBackground(
                 strokeWidth = pxPerSample.coerceIn(1f, 2f),
                 cap = StrokeCap.Butt
             )
-            // Bottom half (mirror)
             drawLine(
                 color = Color(0xFFFFFFFF).copy(alpha = 0.55f),
                 start = Offset(x, midY),
@@ -1653,7 +1812,6 @@ private fun AudioWaveformBackground(
             x += pxPerSample
         }
 
-        // Center line
         drawLine(
             color = Color.White.copy(alpha = 0.3f),
             start = Offset(0f, midY),

@@ -45,7 +45,7 @@ fun ChromaKeyPanel(
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
 
-            // ─── COLOR PRESETS ──────────────────────
+            // COLOR PRESETS
             Text(
                 "Key Color",
                 color = Color(0xFF888888), fontSize = 9.sp,
@@ -66,7 +66,7 @@ fun ChromaKeyPanel(
 
             Spacer(Modifier.height(4.dp))
 
-            // ─── SLIDERS ────────────────────────────
+            // SLIDERS
             SliderRow(
                 "Similarity",
                 state.similarity
@@ -75,7 +75,7 @@ fun ChromaKeyPanel(
             SliderRow("Spill", state.spill) { onStateChanged(state.copy(spill = it)) }
             SliderRow("Intensity", state.intensity) { onStateChanged(state.copy(intensity = it)) }
 
-            // ─── REMOVE ─────────────────────────────
+            // REMOVE
             Spacer(Modifier.height(4.dp))
             Box(
                 modifier = Modifier
