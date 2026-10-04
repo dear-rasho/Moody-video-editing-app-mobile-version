@@ -90,6 +90,7 @@ import com.moody.moodyvideoeditor.ui.features.TrimPanel
 import com.moody.moodyvideoeditor.ui.features.VisualizerPanel
 import com.moody.moodyvideoeditor.ui.features.VolumePanel
 import com.moody.moodyvideoeditor.utils.AudioPreviewEngine
+import com.moody.moodyvideoeditor.utils.AudioVisualizerBridge
 import com.moody.moodyvideoeditor.utils.CropEngine
 import com.moody.moodyvideoeditor.utils.PromptEngine
 import com.moody.moodyvideoeditor.utils.PromptExecutor
@@ -225,8 +226,43 @@ fun EditorScreen(
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 AUDIO VISUALIZER BRIDGE — aggressive attach
+    //  Feeds live FFT data to VisualizerEngine for real reactivity.
+    //  Retries every 300ms until an audio session is available.
+    // ═══════════════════════════════════════════════════════════
+    LaunchedEffect(Unit) {
+        while (true) {
+            val vidSid = try {
+                exoPlayer.audioSessionId
+            } catch (_: Throwable) {
+                0
+            }
+            val audSid = try {
+                audioExoPlayer.audioSessionId
+            } catch (_: Throwable) {
+                0
+            }
+            val sid = if (audSid > 0) audSid else vidSid
+
+            if (sid > 0) {
+                if (!AudioVisualizerBridge.isAttached ||
+                    AudioVisualizerBridge.currentSessionId != sid
+                ) {
+                    AudioVisualizerBridge.attach(sid, 1024)
+                    Log.e("VISUALIZER", "🎧 Bridge attached to session $sid")
+                }
+            }
+            delay(300)
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose {
+            try {
+                AudioVisualizerBridge.release()
+            } catch (_: Throwable) {
+            }
             exoPlayer.release()
             audioExoPlayer.release()
         }
@@ -299,7 +335,9 @@ fun EditorScreen(
         }
     }
 
-    LaunchedEffect(state.volume, state.isMuted, activeClipTrackMuted, anyActiveAudioMuted) {
+    LaunchedEffect(
+        state.volume, state.isMuted, activeClipTrackMuted, anyActiveAudioMuted
+    ) {
         exoPlayer.volume = when {
             state.isMuted -> 0f
             activeClipTrackMuted -> 0f
@@ -508,7 +546,7 @@ fun EditorScreen(
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  VISUALIZER IMAGE PICKER — JFIF/HEIC fixed
+    //  VISUALIZER IMAGE PICKER
     // ═══════════════════════════════════════════════════════════
     val vizImagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -577,7 +615,9 @@ fun EditorScreen(
                                 context.contentResolver
                                     .openInputStream(uri)?.use { input ->
                                         cacheFile.outputStream()
-                                            .use { output -> input.copyTo(output) }
+                                            .use { output ->
+                                                input.copyTo(output)
+                                            }
                                     }
                                 Uri.fromFile(cacheFile)
                             } catch (e: Exception) {
@@ -690,7 +730,6 @@ fun EditorScreen(
             context = context,
             onProgress = { p ->
                 exportProgress = p
-                // 🆕 Phase-based messaging
                 exportMessage = when {
                     p < 0.05f -> "⏳ Preparing… ${(p * 100).toInt()}%"
                     p < 0.20f -> "🎨 Rendering text & stickers… " +
@@ -756,7 +795,7 @@ fun EditorScreen(
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  VISUALIZER CREATION WITH BEAT DETECTION (Manual)
+    //  VISUALIZER CREATION WITH BEAT DETECTION
     // ═══════════════════════════════════════════════════════════
     fun launchVisualizerCreation() {
         isDetectingBeats = true
@@ -857,10 +896,14 @@ fun EditorScreen(
                 activeBrushOpacity = brushOpacity,
                 isMaskPenMode = isMaskPenMode,
                 onBrushStrokeComplete = { stroke ->
-                    val targetBrush = state.selectedClip?.takeIf { it.isBrushClip }
+                    val targetBrush = state.selectedClip
+                        ?.takeIf { it.isBrushClip }
                         ?: state.clips.lastOrNull { it.isBrushClip }
                     val strokeWithGradient = stroke.copy(gradient = brushGradient)
-                    viewModel.addStrokeToBrushClip(targetBrush?.id, strokeWithGradient)
+                    viewModel.addStrokeToBrushClip(
+                        targetBrush?.id,
+                        strokeWithGradient
+                    )
                 },
                 onMaskPointAdd = { x, y -> viewModel.addMaskPoint(x, y) },
                 onMaskAnchorMove = { index, x, y ->
@@ -869,7 +912,9 @@ fun EditorScreen(
                 onMaskHandleMove = { index, isIn, dx, dy ->
                     viewModel.moveMaskHandle(index, isIn, dx, dy)
                 },
-                onMaskPointToggle = { index -> viewModel.toggleMaskPointSmooth(index) },
+                onMaskPointToggle = { index ->
+                    viewModel.toggleMaskPointSmooth(index)
+                },
                 onMaskPointDelete = { index -> viewModel.deleteMaskPoint(index) },
                 onClosePath = { viewModel.setMaskClosed(true) },
                 onClipSelected = { clipId ->
@@ -878,7 +923,8 @@ fun EditorScreen(
                 },
                 onGroupGestureStart = { viewModel.beginGroupGesture() },
                 onGroupGestureEnd = { viewModel.endGroupGesture() },
-                onGroupGesture = { clipId: String, x: Float, y: Float, scale: Float, rot: Float ->
+                onGroupGesture = { clipId: String, x: Float, y: Float,
+                                   scale: Float, rot: Float ->
                     viewModel.applyGroupTransform(clipId, x, y, scale, rot)
                 },
                 onTextPositionChanged = { clipId: String, x: Float, y: Float ->
@@ -988,7 +1034,9 @@ fun EditorScreen(
                             activePanel = "visualizer"
                         }
                     },
-                    onTrackTapped = { ti, aud -> viewModel.selectTrack(ti, aud) },
+                    onTrackTapped = { ti, aud ->
+                        viewModel.selectTrack(ti, aud)
+                    },
                     onTrimLeft = { ns -> viewModel.trimClipLeft(ns) },
                     onTrimRight = { ne -> viewModel.trimClipRight(ne) },
                     onTrimCommit = { viewModel.commitTrim() },
@@ -1060,7 +1108,8 @@ fun EditorScreen(
                             it.isVisualClip &&
                                     state.currentPosMs >= it.timelineStartMs &&
                                     state.currentPosMs < it.timelineEndMs &&
-                                    !state.hiddenVisualTracks.contains(it.trackIndex)
+                                    !state.hiddenVisualTracks
+                                        .contains(it.trackIndex)
                         }
                         if (activeVisual != null) exoPlayer.play()
 
@@ -1070,7 +1119,8 @@ fun EditorScreen(
                                     it.uri != Uri.EMPTY &&
                                     state.currentPosMs >= it.timelineStartMs &&
                                     state.currentPosMs < it.timelineEndMs &&
-                                    !state.mutedAudioTracks.contains(it.trackIndex)
+                                    !state.mutedAudioTracks
+                                        .contains(it.trackIndex)
                         }
                         if (activeAudio != null) audioExoPlayer.play()
                     }
@@ -1170,7 +1220,8 @@ fun EditorScreen(
 
                 "animations" -> AnimationsPanel(
                     currentAnimation = selected?.textState?.animation ?: "none",
-                    currentDuration = selected?.textState?.animationDuration ?: 0.6f,
+                    currentDuration = selected?.textState?.animationDuration
+                        ?: 0.6f,
                     hasTextClipSelected = selected?.isTextClip == true ||
                             state.multiSelectedIds.isNotEmpty(),
                     onAnimationSelected = { viewModel.setTextAnimation(it) },
@@ -1195,7 +1246,9 @@ fun EditorScreen(
                         initialFilters = editLayer?.filters,
                         previewClip = selected,
                         previewTimeMs = state.currentPosMs,
-                        onPreviewFilters = { viewModel.setPreviewFilters(it) },
+                        onPreviewFilters = {
+                            viewModel.setPreviewFilters(it)
+                        },
                         onApplyAsLayer = { filters ->
                             viewModel.createFilterLayer(filters)
                             filterEditLayerId = null
@@ -1299,7 +1352,10 @@ fun EditorScreen(
                             other.id != sel.id &&
                                     other.isAudio == sel.isAudio &&
                                     other.trackIndex == sel.trackIndex &&
-                                    abs(other.timelineEndMs - sel.timelineStartMs) < 100L
+                                    abs(
+                                        other.timelineEndMs -
+                                                sel.timelineStartMs
+                                    ) < 100L
                         }
                         if (hasLeft) sel
                         else {
@@ -1308,7 +1364,8 @@ fun EditorScreen(
                                         other.isAudio == sel.isAudio &&
                                         other.trackIndex == sel.trackIndex &&
                                         abs(
-                                            other.timelineStartMs - sel.timelineEndMs
+                                            other.timelineStartMs -
+                                                    sel.timelineEndMs
                                         ) < 100L
                             }.minByOrNull { it.timelineStartMs }
                         }
@@ -1318,8 +1375,12 @@ fun EditorScreen(
                         current = target?.transition ?: TransitionState(),
                         hasPairAvailable = target != null,
                         hintText = when {
-                            selected == null -> "Pehle timeline pe ek clip select karo."
-                            target == null -> "Is clip ke saath koi adjacent clip chahiye."
+                            selected == null ->
+                                "Pehle timeline pe ek clip select karo."
+
+                            target == null ->
+                                "Is clip ke saath koi adjacent clip chahiye."
+
                             else -> "Transition lagao"
                         },
                         onTransitionChanged = { newState ->
@@ -1430,10 +1491,11 @@ fun EditorScreen(
                     val hasAnySelected = selected != null ||
                             state.multiSelectedIds.isNotEmpty()
                     val currentTimeSec = selected?.let {
-                        ((state.currentPosMs - it.timelineStartMs).toFloat() / 1000f)
-                            .coerceAtLeast(0f)
+                        ((state.currentPosMs - it.timelineStartMs)
+                            .toFloat() / 1000f).coerceAtLeast(0f)
                     } ?: 0f
-                    val clipDurSec = selected?.let { it.durationMs / 1000f } ?: 5f
+                    val clipDurSec = selected?.let { it.durationMs / 1000f }
+                        ?: 5f
                     val base = selected?.let { TransformApplier.baseOf(it) }
                         ?: TransformValues()
                     TransformPanel(
@@ -1451,10 +1513,16 @@ fun EditorScreen(
                         onToggleKeyframe = { prop ->
                             viewModel.toggleKeyframeAtPlayhead(prop)
                         },
-                        onSetEase = { ease -> viewModel.setEaseAtPlayhead(ease) },
-                        onResetAll = { viewModel.resetAllSelectedTransforms() },
+                        onSetEase = { ease ->
+                            viewModel.setEaseAtPlayhead(ease)
+                        },
+                        onResetAll = {
+                            viewModel.resetAllSelectedTransforms()
+                        },
                         onUpdateKeyframe = { prop, oldT, newT, newV ->
-                            viewModel.updateKeyframeInGraph(prop, oldT, newT, newV)
+                            viewModel.updateKeyframeInGraph(
+                                prop, oldT, newT, newV
+                            )
                         },
                         onDeleteKeyframe = { prop, t ->
                             viewModel.deleteKeyframeFromGraph(prop, t)
@@ -1505,9 +1573,13 @@ fun EditorScreen(
                             AudioPreviewEngine.release()
                             try {
                                 exoPlayer.playbackParameters =
-                                    androidx.media3.common.PlaybackParameters(1f, 1f)
+                                    androidx.media3.common.PlaybackParameters(
+                                        1f, 1f
+                                    )
                                 audioExoPlayer.playbackParameters =
-                                    androidx.media3.common.PlaybackParameters(1f, 1f)
+                                    androidx.media3.common.PlaybackParameters(
+                                        1f, 1f
+                                    )
                             } catch (_: Throwable) {
                             }
                         },
@@ -1530,9 +1602,9 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                // ═══════════════════════════════════════════════════════
-                //  VISUALIZER — Manual button + selected-audio only
-                // ═══════════════════════════════════════════════════════
+                // ═══════════════════════════════════════════════════
+                //  VISUALIZER
+                // ═══════════════════════════════════════════════════
                 "visualizer" -> {
                     val selectedAudioId: String? = selected?.takeIf {
                         it.isAudio && !it.isAudioEffectClip
@@ -1542,7 +1614,8 @@ fun EditorScreen(
                         ?: state.clips.firstOrNull { clip ->
                             clip.isVisualizerClip &&
                                     selectedAudioId != null &&
-                                    clip.visualizer?.linkedAudioClipId == selectedAudioId
+                                    clip.visualizer?.linkedAudioClipId ==
+                                    selectedAudioId
                         }
 
                     when {
@@ -1555,8 +1628,10 @@ fun EditorScreen(
                                     .padding(20.dp)
                             ) {
                                 Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    horizontalAlignment =
+                                        Alignment.CenterHorizontally,
+                                    verticalArrangement =
+                                        Arrangement.spacedBy(10.dp)
                                 ) {
                                     Text("🎵", fontSize = 36.sp)
                                     Text(
@@ -1566,7 +1641,8 @@ fun EditorScreen(
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
-                                        "Analyzing linked audio. This may take a few seconds.",
+                                        "Analyzing linked audio. " +
+                                                "This may take a few seconds.",
                                         color = Color(0xFF888888),
                                         fontSize = 10.sp,
                                         textAlign = TextAlign.Center
@@ -1581,12 +1657,13 @@ fun EditorScreen(
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth(
-                                                    beatDetectionProgress.coerceIn(
-                                                        0f, 1f
-                                                    )
+                                                    beatDetectionProgress
+                                                        .coerceIn(0f, 1f)
                                                 )
                                                 .height(4.dp)
-                                                .background(Color(0xFF60EFFF))
+                                                .background(
+                                                    Color(0xFF60EFFF)
+                                                )
                                         )
                                     }
                                 }
@@ -1602,8 +1679,10 @@ fun EditorScreen(
                                     .padding(16.dp)
                             ) {
                                 Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    horizontalAlignment =
+                                        Alignment.CenterHorizontally,
+                                    verticalArrangement =
+                                        Arrangement.spacedBy(8.dp)
                                 ) {
                                     Text("❌", fontSize = 32.sp)
                                     Text(
@@ -1652,8 +1731,10 @@ fun EditorScreen(
                                         .padding(16.dp)
                                 ) {
                                     Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        horizontalAlignment =
+                                            Alignment.CenterHorizontally,
+                                        verticalArrangement =
+                                            Arrangement.spacedBy(8.dp)
                                     ) {
                                         Text("⚠️", fontSize = 32.sp)
                                         Text(
@@ -1665,9 +1746,9 @@ fun EditorScreen(
                                         Text(
                                             "Visualizer only reacts to its " +
                                                     "linked audio clip. " +
-                                                    "Please select an audio clip " +
-                                                    "on the timeline, then tap " +
-                                                    "Visualizer again.",
+                                                    "Please select an audio " +
+                                                    "clip on the timeline, " +
+                                                    "then tap Visualizer again.",
                                             color = Color(0xFF888888),
                                             fontSize = 11.sp,
                                             textAlign = TextAlign.Center
@@ -1683,7 +1764,8 @@ fun EditorScreen(
                                                     }
                                                 }
                                                 .padding(horizontal = 20.dp),
-                                            contentAlignment = Alignment.Center
+                                            contentAlignment =
+                                                Alignment.Center
                                         ) {
                                             Text(
                                                 "OK",
@@ -1703,20 +1785,24 @@ fun EditorScreen(
                                         .padding(16.dp)
                                 ) {
                                     Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                        horizontalAlignment =
+                                            Alignment.CenterHorizontally,
+                                        verticalArrangement =
+                                            Arrangement.spacedBy(10.dp)
                                     ) {
                                         Text("🎵", fontSize = 36.sp)
                                         Text(
-                                            "Create Visualizer for \"${sel.name.take(20)}\"",
+                                            "Create Visualizer for " +
+                                                    "\"${sel.name.take(20)}\"",
                                             color = Color.White,
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold,
                                             textAlign = TextAlign.Center
                                         )
                                         Text(
-                                            "Beats will be detected from this audio. " +
-                                                    "This may take a few seconds.",
+                                            "Beats will be detected from " +
+                                                    "this audio. This may " +
+                                                    "take a few seconds.",
                                             color = Color(0xFF888888),
                                             fontSize = 10.sp,
                                             textAlign = TextAlign.Center
@@ -1732,7 +1818,8 @@ fun EditorScreen(
                                                     }
                                                 }
                                                 .padding(horizontal = 24.dp),
-                                            contentAlignment = Alignment.Center
+                                            contentAlignment =
+                                                Alignment.Center
                                         ) {
                                             Text(
                                                 "✨ Create Visualizer",
@@ -1757,10 +1844,11 @@ fun EditorScreen(
                                     ?: return@LaunchedEffect
                                 viewModel.updateVisualizerLayer(
                                     vizClip.id,
-                                    (vizClip.visualizer ?: VisualizerState()).copy(
-                                        imageUri = uri,
-                                        showImage = true
-                                    )
+                                    (vizClip.visualizer ?: VisualizerState())
+                                        .copy(
+                                            imageUri = uri,
+                                            showImage = true
+                                        )
                                 )
                                 pendingVizImageUri = null
                             }
@@ -1770,10 +1858,13 @@ fun EditorScreen(
                             }
 
                             VisualizerPanel(
-                                current = vizClip.visualizer ?: VisualizerState(),
+                                current = vizClip.visualizer
+                                    ?: VisualizerState(),
                                 hasAudio = hasAudio,
                                 onStateChanged = {
-                                    viewModel.updateVisualizerLayer(vizClip.id, it)
+                                    viewModel.updateVisualizerLayer(
+                                        vizClip.id, it
+                                    )
                                 },
                                 onPickImage = {
                                     vizImagePicker.launch(
@@ -1795,7 +1886,8 @@ fun EditorScreen(
                                 onClearImage = {
                                     viewModel.updateVisualizerLayer(
                                         vizClip.id,
-                                        (vizClip.visualizer ?: VisualizerState()).copy(
+                                        (vizClip.visualizer
+                                            ?: VisualizerState()).copy(
                                             imageUri = null,
                                             showImage = false
                                         )
@@ -1870,7 +1962,8 @@ fun EditorScreen(
             currentFolderUri = state.exportFolderUri,
             fileName = exportFileName,
             startMs = exportStartMs,
-            endMs = if (exportEndMs > 0L) exportEndMs else state.totalDurationMs,
+            endMs = if (exportEndMs > 0L) exportEndMs
+            else state.totalDurationMs,
             useCustomRange = useCustomRange,
             onUseCustomRangeChange = { useCustomRange = it },
             onFileNameChange = { exportFileName = it },

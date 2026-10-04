@@ -40,7 +40,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -1409,45 +1408,6 @@ private fun TrackContent(
             )
         }
 
-        // ═══════════════════════════════════════════════════════
-        //  🆕 BEAT MARKERS — only on audio tracks
-        // ═══════════════════════════════════════════════════════
-        if (isAudio && showBeats && beatTimesMs.isNotEmpty()) {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .zIndex(20f)
-            ) {
-                val w = size.width
-                val h = size.height
-                beatTimesMs.forEach { beatMs ->
-                    val x = (beatMs.toFloat() / totalMs.toFloat()) * w
-                    if (x in -2f..(w + 2f)) {
-                        // Beat line
-                        drawLine(
-                            color = Color(0xFFFFD166).copy(alpha = 0.85f),
-                            start = Offset(x, 0f),
-                            end = Offset(x, h),
-                            strokeWidth = 1.5f
-                        )
-                        // Beat triangle head at top
-                        val path = Path().apply {
-                            moveTo(x, 0f)
-                            lineTo(x - 4f, 6f)
-                            lineTo(x + 4f, 6f)
-                            close()
-                        }
-                        drawPath(path, Color(0xFFFFD166))
-                        // Beat dot at bottom
-                        drawCircle(
-                            color = Color(0xFFFFD166),
-                            radius = 2.5f,
-                            center = Offset(x, h - 3f)
-                        )
-                    }
-                }
-            }
-        }
 
         // ═══════════════════════════════════════════════════════
         //  TRANSITION MARKERS

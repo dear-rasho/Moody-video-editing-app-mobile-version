@@ -10,7 +10,6 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -29,6 +28,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -42,13 +43,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,6 +64,7 @@ import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.VisualizerEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+
 
 @Composable
 fun VisualizerPanel(
@@ -110,7 +115,6 @@ fun VisualizerPanel(
     // ═══════════════════════════════════════════════════════════
     val context = LocalContext.current
 
-    // Reference image (same as FiltersPanel/EffectsPanel use)
     var refBitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(Unit) {
         refBitmap = withContext(Dispatchers.IO) {
@@ -118,7 +122,6 @@ fun VisualizerPanel(
         }
     }
 
-    // 🆕 Shared animation clock (0..10 sec loop)
     val infiniteTransition = rememberInfiniteTransition(label = "vizClock")
     val clockSec by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -134,7 +137,7 @@ fun VisualizerPanel(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 420.dp)
+                .heightIn(max = 600.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -156,7 +159,6 @@ fun VisualizerPanel(
                 }
             }
 
-            // ═══ BEAT STATUS ═══
             if (current.hasBeats) {
                 Box(
                     modifier = Modifier
@@ -182,7 +184,7 @@ fun VisualizerPanel(
             }
 
             // ═══════════════════════════════════════════════════════
-            //  PRESET PICKER — CATEGORIES + ANIMATED PREVIEW CARDS
+            //  PRESET PICKER
             // ═══════════════════════════════════════════════════════
             PresetPicker(
                 current = current,
@@ -193,21 +195,23 @@ fun VisualizerPanel(
                 }
             )
 
-            // ═══ BEAT REACTION ═══
-            SliderRow("Beat Reaction", current.beatReaction, 0f..2f, "%.2f") {
+            // ═══════════════════════════════════════════════════════
+            //  BEAT REACTION
+            // ═══════════════════════════════════════════════════════
+            ValueSliderRow(
+                label = "Beat Reaction",
+                value = current.beatReaction,
+                range = 0f..2f,
+                format = "%.2f"
+            ) {
                 onStateChanged(current.copy(beatReaction = it))
             }
 
             // ═══════════════════════════════════════════════════════
-            //  CIRCLE CONTENT (Image + Text)
+            //  CIRCLE CONTENT
             // ═══════════════════════════════════════════════════════
             Spacer(Modifier.height(4.dp))
-            Text(
-                "Circle Content",
-                color = Color(0xFF60EFFF), fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(start = 4.dp)
-            )
+            SectionLabel("Circle Content")
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -229,7 +233,6 @@ fun VisualizerPanel(
                 }
             }
 
-            // Stacking order toggle
             if (current.showImage && current.showText) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -260,7 +263,6 @@ fun VisualizerPanel(
                 }
             }
 
-            // ─── TEXT SUB-SECTION ───
             if (current.showText) {
                 Box(
                     modifier = Modifier
@@ -306,11 +308,11 @@ fun VisualizerPanel(
                     }
                 }
 
-                SliderRow(
-                    "Text Size",
-                    current.textState.fontSize.toFloat(),
-                    8f..200f,
-                    "%.0f"
+                ValueSliderRow(
+                    label = "Text Size",
+                    value = current.textState.fontSize.toFloat(),
+                    range = 8f..200f,
+                    format = "%.0f"
                 ) { v ->
                     val newTextState = current.textState.copy(fontSize = v.toInt())
                     onStateChanged(
@@ -322,7 +324,6 @@ fun VisualizerPanel(
                 }
             }
 
-            // ─── IMAGE SUB-SECTION ───
             if (current.showImage) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -374,28 +375,267 @@ fun VisualizerPanel(
                     ToggleRow("Idle Rotation", current.imageIdleRotation) {
                         onStateChanged(current.copy(imageIdleRotation = it))
                     }
-                    SliderRow("Img Size", current.imageScale, 0.2f..1f, "%.2f") {
+                    ValueSliderRow(
+                        "Img Size", current.imageScale, 0.2f..1f, "%.2f"
+                    ) {
                         onStateChanged(current.copy(imageScale = it))
                     }
-                    SliderRow("Img Pulse", current.imagePulseAmount, 0f..0.5f, "%.2f") {
+                    ValueSliderRow(
+                        "Img Pulse", current.imagePulseAmount, 0f..0.5f, "%.2f"
+                    ) {
                         onStateChanged(current.copy(imagePulseAmount = it))
                     }
-                    SliderRow("Img Opacity", current.imageOpacity, 0f..1f, "%.2f") {
+                    ValueSliderRow(
+                        "Img Opacity", current.imageOpacity, 0f..1f, "%.2f"
+                    ) {
                         onStateChanged(current.copy(imageOpacity = it))
                     }
                 }
             }
 
             // ═══════════════════════════════════════════════════════
-            //  STYLE — colors + size + position
+            //  AUDIO ANALYSIS
             // ═══════════════════════════════════════════════════════
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Ring Style",
-                color = Color(0xFF888888), fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(start = 4.dp)
-            )
+            Spacer(Modifier.height(6.dp))
+            SectionLabel("Audio Analysis")
+
+            ValueSliderRow("Start Hz", current.startFrequencyHz, 20f..2000f, "%.0f") { v ->
+                onStateChanged(
+                    current.copy(
+                        startFrequencyHz = v.coerceAtMost(current.endFrequencyHz - 20f)
+                    )
+                )
+            }
+
+            ValueSliderRow("End Hz", current.endFrequencyHz, 20f..2000f, "%.0f") { v ->
+                onStateChanged(
+                    current.copy(
+                        endFrequencyHz = v.coerceAtLeast(current.startFrequencyHz + 20f)
+                    )
+                )
+            }
+
+            ValueSliderRow("Bands", current.bands.toFloat(), 1f..6400f, "%.0f") { v ->
+                onStateChanged(current.copy(bands = v.toInt().coerceIn(1, 6400)))
+            }
+
+            ValueSliderRow("Max Height", current.maxHeight, 0.1f..3.0f, "%.2f") { v ->
+                onStateChanged(current.copy(maxHeight = v))
+            }
+
+            ValueSliderRow(
+                "Audio Window",
+                current.audioWindowMs.toFloat(),
+                20f..2000f,
+                "%.0f"
+            ) { v ->
+                onStateChanged(
+                    current.copy(audioWindowMs = v.toInt().coerceIn(20, 2000))
+                )
+            }
+
+            ValueSliderRow(
+                "Audio Offset",
+                current.audioOffsetMs.toFloat(),
+                -500f..500f,
+                "%.0f"
+            ) { v ->
+                onStateChanged(
+                    current.copy(audioOffsetMs = v.toInt().coerceIn(-500, 500))
+                )
+            }
+
+            // ═══════════════════════════════════════════════════════
+            //  BAND INFLUENCES
+            // ═══════════════════════════════════════════════════════
+            Spacer(Modifier.height(6.dp))
+            SectionLabel("Band Influence")
+
+            ValueSliderRow("Bass", current.bassInfluence, 0f..2f, "%.2f") { v ->
+                onStateChanged(current.copy(bassInfluence = v))
+            }
+            ValueSliderRow("Mid", current.midInfluence, 0f..2f, "%.2f") { v ->
+                onStateChanged(current.copy(midInfluence = v))
+            }
+            ValueSliderRow("Treble", current.trebleInfluence, 0f..2f, "%.2f") { v ->
+                onStateChanged(current.copy(trebleInfluence = v))
+            }
+            ValueSliderRow("Overall", current.overallSensitivity, 0f..3f, "%.2f") { v ->
+                onStateChanged(current.copy(overallSensitivity = v))
+            }
+
+            // ═══════════════════════════════════════════════════════
+            //  SMOOTHING
+            // ═══════════════════════════════════════════════════════
+            Spacer(Modifier.height(6.dp))
+            SectionLabel("Smoothing")
+
+            ValueSliderRow("Sensitivity", current.sensitivity, 0.5f..3f, "%.2f") { v ->
+                onStateChanged(current.copy(sensitivity = v))
+            }
+            ValueSliderRow("Attack", current.attack, 0f..1f, "%.2f") { v ->
+                onStateChanged(current.copy(attack = v))
+            }
+            ValueSliderRow("Release", current.release, 0f..1f, "%.2f") { v ->
+                onStateChanged(current.copy(release = v))
+            }
+            ValueSliderRow("Lerp", current.lerpFactor, 0.05f..0.95f, "%.2f") { v ->
+                onStateChanged(current.copy(lerpFactor = v))
+            }
+
+            // ═══════════════════════════════════════════════════════
+            //  BEAT RESPONSE
+            // ═══════════════════════════════════════════════════════
+            Spacer(Modifier.height(6.dp))
+            SectionLabel("Beat Response")
+
+            ValueSliderRow("Beat Pulse", current.beatPulse, 0f..2f, "%.2f") { v ->
+                onStateChanged(current.copy(beatPulse = v))
+            }
+            ValueSliderRow("Beat Glow", current.beatGlow, 0f..2f, "%.2f") { v ->
+                onStateChanged(current.copy(beatGlow = v))
+            }
+            ValueSliderRow(
+                "Pulse Duration",
+                current.beatPulseDurationMs.toFloat(),
+                50f..1000f,
+                "%.0f"
+            ) { v ->
+                onStateChanged(
+                    current.copy(
+                        beatPulseDurationMs = v.toLong().coerceIn(50L, 1000L)
+                    )
+                )
+            }
+
+            // ═══════════════════════════════════════════════════════
+            //  SHAPE / STYLE
+            // ═══════════════════════════════════════════════════════
+            Spacer(Modifier.height(6.dp))
+            SectionLabel("Shape & Style")
+
+            ValueSliderRow("Line Width", current.lineWidth, 0.5f..20f, "%.1f") { v ->
+                onStateChanged(current.copy(lineWidth = v))
+            }
+
+            ValueSliderRow(
+                "Particle Size",
+                current.particleSize,
+                0.5f..5.0f,
+                "%.2f"
+            ) { v ->
+                onStateChanged(current.copy(particleSize = v))
+            }
+
+            // ═══════════════════════════════════════════════════════
+            //  DISPLAY STYLE
+            // ═══════════════════════════════════════════════════════
+            Spacer(Modifier.height(6.dp))
+            SectionLabel("Display Style")
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(
+                    "digital" to "📊 Digital",
+                    "analog_lines" to "〰️ Lines",
+                    "analog_dots" to "• Dots"
+                ).forEach { (key, label) ->
+                    val active = current.displayStyle == key
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(34.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (active) Color(0xFFFFD166)
+                                else Color(0xFF181818)
+                            )
+                            .pointerInput(key) {
+                                detectTapGestures {
+                                    onStateChanged(
+                                        current.copy(displayStyle = key)
+                                    )
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            label,
+                            color = if (active) Color.Black else Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════
+            //  SIDE MODE
+            // ═══════════════════════════════════════════════════════
+            Spacer(Modifier.height(6.dp))
+            SectionLabel("Side Mode")
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(
+                    "a" to "A (up)",
+                    "b" to "B (down)",
+                    "both" to "Both"
+                ).forEach { (key, label) ->
+                    val active = current.sideMode == key
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(34.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (active) Color(0xFFFFD166)
+                                else Color(0xFF181818)
+                            )
+                            .pointerInput(key) {
+                                detectTapGestures {
+                                    onStateChanged(current.copy(sideMode = key))
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            label,
+                            color = if (active) Color.Black else Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════
+            //  GLOW
+            // ═══════════════════════════════════════════════════════
+            Spacer(Modifier.height(6.dp))
+            SectionLabel("Glow")
+
+            ToggleRow("Glow", current.glow) {
+                onStateChanged(current.copy(glow = it))
+            }
+            ValueSliderRow(
+                "Intensity", current.glowIntensity, 0f..1f, "%.2f"
+            ) { v ->
+                onStateChanged(current.copy(glowIntensity = v))
+            }
+            ToggleRow("Peak Hold", current.peakHold) {
+                onStateChanged(current.copy(peakHold = it))
+            }
+
+            // ═══════════════════════════════════════════════════════
+            //  RING STYLE
+            // ═══════════════════════════════════════════════════════
+            Spacer(Modifier.height(6.dp))
+            SectionLabel("Ring Style")
 
             ColorPickerField(
                 label = "Color A",
@@ -408,24 +648,20 @@ fun VisualizerPanel(
                 onChange = { onStateChanged(current.copy(color2 = it)) }
             )
 
-            SliderRow("Size", current.size, 0.15f..0.6f, "%.2f") {
+            ValueSliderRow("Size", current.size, 0.15f..0.6f, "%.2f") {
                 onStateChanged(current.copy(size = it))
             }
-            SliderRow("Pos X", current.positionX, 0f..1f, "%.2f") {
+            ValueSliderRow("Pos X", current.positionX, 0f..1f, "%.2f") {
                 onStateChanged(current.copy(positionX = it))
             }
-            SliderRow("Pos Y", current.positionY, 0f..1f, "%.2f") {
+            ValueSliderRow("Pos Y", current.positionY, 0f..1f, "%.2f") {
                 onStateChanged(current.copy(positionY = it))
             }
-            SliderRow("Opacity", current.opacity, 0f..1f, "%.2f") {
+            ValueSliderRow("Opacity", current.opacity, 0f..1f, "%.2f") {
                 onStateChanged(current.copy(opacity = it))
             }
 
-            ToggleRow("Glow", current.glow) {
-                onStateChanged(current.copy(glow = it))
-            }
-
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(8.dp))
 
             Box(
                 modifier = Modifier
@@ -446,8 +682,9 @@ fun VisualizerPanel(
     }
 }
 
+
 // ═══════════════════════════════════════════════════════════════
-//  🆕 PRESET PICKER — category tabs + animated preview grid
+//  PRESET PICKER
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun PresetPicker(
@@ -461,7 +698,6 @@ private fun PresetPicker(
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
 
-        // ─── CATEGORY TABS ───
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -493,7 +729,6 @@ private fun PresetPicker(
             }
         }
 
-        // ─── PRESET CARDS ROW ───
         Text(
             "Tap to preview · ${categoryPresets.size} presets",
             color = Color(0xFF888888),
@@ -521,8 +756,9 @@ private fun PresetPicker(
     }
 }
 
+
 // ═══════════════════════════════════════════════════════════════
-//  SINGLE PRESET CARD — reference image + LIVE visualizer preview
+//  SINGLE PRESET CARD
 // ═══════════════════════════════════════════════════════════════
 @Composable
 private fun VisualizerPreviewCard(
@@ -534,20 +770,30 @@ private fun VisualizerPreviewCard(
 ) {
     val hasImage = refBitmap != null && !refBitmap.isRecycled
 
-    // Preview state — small size, uses live color defaults
     val previewState = remember(preset) {
         VisualizerState(
             preset = preset,
             color1 = 0xFFFFD166,
             color2 = 0xFF00E5FF,
-            size = 0.38f,
+            size = 0.42f,
             positionX = 0.5f,
             positionY = 0.5f,
             opacity = 1f,
             glow = true,
-            showImage = false,
+            showImage = true,
+            imageScale = 0.55f,
+            imageOpacity = 1f,
             showText = false
         )
+    }
+
+    LaunchedEffect(refBitmap, preset.key) {
+        if (refBitmap != null && !refBitmap.isRecycled) {
+            VisualizerEngine.setCenterImage(
+                "preview_${preset.key}",
+                refBitmap.asImageBitmap()
+            )
+        }
     }
 
     Column(
@@ -555,7 +801,9 @@ private fun VisualizerPreviewCard(
             .width(76.dp)
             .height(102.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(if (isSelected) Color(0xFF2A1F4D) else Color(0xFF181818))
+            .background(
+                if (isSelected) Color(0xFF2A1F4D) else Color(0xFF181818)
+            )
             .then(
                 if (isSelected) Modifier.border(
                     1.5.dp, Color(0xFF7C3AED),
@@ -570,29 +818,19 @@ private fun VisualizerPreviewCard(
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
 
-        // Preview box
         Box(
             modifier = Modifier
                 .size(60.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(Color(0xFF0F0F0F))
         ) {
-            if (hasImage) {
-                Image(
-                    bitmap = refBitmap!!.asImageBitmap(),
-                    contentDescription = preset.label,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-
-            // Live animated visualizer overlay
             Canvas(modifier = Modifier.fillMaxSize()) {
                 try {
                     drawVisualizerPreview(
                         preset = preset,
                         state = previewState,
-                        clockSec = clockSec
+                        clockSec = clockSec,
+                        refBitmap = refBitmap
                     )
                 } catch (e: Throwable) {
                     Log.e("VIZ_PREVIEW", "Preview failed: ${preset.key}", e)
@@ -608,7 +846,6 @@ private fun VisualizerPreviewCard(
             }
         }
 
-        // Icon + label
         Text(preset.icon, fontSize = 12.sp)
 
         Text(
@@ -623,19 +860,31 @@ private fun VisualizerPreviewCard(
     }
 }
 
+
 // ═══════════════════════════════════════════════════════════════
-//  PREVIEW DRAW — uses engine's drawPreview with clock time
+//  PREVIEW DRAW
 // ═══════════════════════════════════════════════════════════════
 private fun DrawScope.drawVisualizerPreview(
     preset: VisualizerPreset,
     state: VisualizerState,
-    clockSec: Float
+    clockSec: Float,
+    refBitmap: Bitmap?
 ) {
-    // Scale down: base size 0.38 → visually fits inside 60dp preview
     val previewState = state.copy(
         preset = preset,
         opacity = 1f
     )
+
+    if (refBitmap != null && !refBitmap.isRecycled) {
+        try {
+            VisualizerEngine.setCenterImage(
+                "preview_${preset.key}",
+                refBitmap.asImageBitmap()
+            )
+        } catch (_: Throwable) {
+        }
+    }
+
     VisualizerEngine.drawPreview(
         scope = this,
         state = previewState,
@@ -644,9 +893,21 @@ private fun DrawScope.drawVisualizerPreview(
     )
 }
 
+
 // ═══════════════════════════════════════════════════════════════
-//  HELPER COMPOSABLES
+//  REUSABLE COMPONENTS
 // ═══════════════════════════════════════════════════════════════
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text.uppercase(),
+        color = Color(0xFFFFD166),
+        fontSize = 9.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 2.dp)
+    )
+}
+
 @Composable
 private fun ToggleChip(
     label: String,
@@ -672,45 +933,11 @@ private fun ToggleChip(
 }
 
 @Composable
-private fun SliderRow(
+private fun ToggleRow(
     label: String,
-    value: Float,
-    range: ClosedFloatingPointRange<Float>,
-    format: String,
-    onChange: (Float) -> Unit
+    checked: Boolean,
+    onChange: (Boolean) -> Unit
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Text(
-            label, color = Color(0xFF888888), fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(80.dp)
-        )
-        Slider(
-            value = value.coerceIn(range.start, range.endInclusive),
-            onValueChange = onChange,
-            valueRange = range,
-            modifier = Modifier.weight(1f),
-            colors = SliderDefaults.colors(
-                thumbColor = Color(0xFFFFD166),
-                activeTrackColor = Color(0xFFFFD166),
-                inactiveTrackColor = Color(0xFF303030)
-            )
-        )
-        Text(
-            String.format(format, value),
-            color = Color.White, fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(44.dp)
-        )
-    }
-}
-
-@Composable
-private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
@@ -724,7 +951,9 @@ private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
             modifier = Modifier
                 .height(28.dp)
                 .clip(RoundedCornerShape(6.dp))
-                .background(if (checked) Color(0xFFFFD166) else Color(0xFF181818))
+                .background(
+                    if (checked) Color(0xFFFFD166) else Color(0xFF181818)
+                )
                 .pointerInput(checked) {
                     detectTapGestures { onChange(!checked) }
                 }
@@ -740,8 +969,103 @@ private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
     }
 }
 
+@Composable
+private fun ValueSliderRow(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    format: String,
+    onChange: (Float) -> Unit
+) {
+    var textValue by remember(value) {
+        mutableStateOf(String.format(format, value))
+    }
+    var isFocused by remember { mutableStateOf(false) }
+
+    if (!isFocused) {
+        val newStr = String.format(format, value)
+        if (textValue != newStr) textValue = newStr
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            label,
+            color = Color(0xFF888888),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.width(80.dp)
+        )
+
+        Slider(
+            value = value.coerceIn(range.start, range.endInclusive),
+            onValueChange = onChange,
+            valueRange = range,
+            modifier = Modifier.weight(1f),
+            colors = SliderDefaults.colors(
+                thumbColor = Color(0xFFFFD166),
+                activeTrackColor = Color(0xFFFFD166),
+                inactiveTrackColor = Color(0xFF303030)
+            )
+        )
+
+        Box(
+            modifier = Modifier
+                .width(64.dp)
+                .height(28.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color(0xFF0F0F0F))
+                .padding(horizontal = 6.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            BasicTextField(
+                value = textValue,
+                onValueChange = { newText ->
+                    val filtered = newText.filter {
+                        it.isDigit() || it == '-' || it == '.' || it == '+'
+                    }
+                    textValue = filtered
+                    filtered.toFloatOrNull()?.let { v ->
+                        onChange(v.coerceIn(range.start, range.endInclusive))
+                    }
+                },
+                singleLine = true,
+                textStyle = TextStyle(
+                    color = Color(0xFFFFD166),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                ),
+                cursorBrush = SolidColor(Color(0xFFFFD166)),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { focusState ->
+                        isFocused = focusState.isFocused
+                        if (!focusState.isFocused) {
+                            textValue.toFloatOrNull()?.let { v ->
+                                onChange(
+                                    v.coerceIn(
+                                        range.start,
+                                        range.endInclusive
+                                    )
+                                )
+                            }
+                        }
+                    }
+            )
+        }
+    }
+}
+
+
 // ═══════════════════════════════════════════════════════════════
-//  REFERENCE IMAGE LOADER (same as Filters/Effects panels)
+//  REFERENCE IMAGE LOADER
 // ═══════════════════════════════════════════════════════════════
 private fun loadRefImage(context: android.content.Context): Bitmap? {
     return try {

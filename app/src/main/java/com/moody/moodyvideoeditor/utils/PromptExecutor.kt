@@ -63,7 +63,7 @@ object PromptExecutor {
         }
 
         // ═══════════════════════════════════════════════════════
-        //  PRIORITY 1 — GLOBAL (Ratio, Tighten, Clear)
+        //  PRIORITY 1 — GLOBAL
         // ═══════════════════════════════════════════════════════
         for (cmd in parsed.commands) {
             when (cmd.type) {
@@ -137,7 +137,7 @@ object PromptExecutor {
         }
 
         // ═══════════════════════════════════════════════════════
-        //  PRIORITY 3 — TEXT + STICKER (timestamp + AUTO-STACKING)
+        //  PRIORITY 3 — TEXT + STICKER
         // ═══════════════════════════════════════════════════════
         val textCommands = parsed.commands.filter { it.type == CmdType.TEXT }
         val groupedTexts = textCommands
@@ -152,7 +152,8 @@ object PromptExecutor {
 
             val topMargin = 15f
             val bottomMargin = 85f
-            val spacing = if (count > 1) (bottomMargin - topMargin) / (count - 1)
+            val spacing = if (count > 1)
+                (bottomMargin - topMargin) / (count - 1)
             else 50f
 
             group.forEachIndexed { index, cmd ->
@@ -179,7 +180,9 @@ object PromptExecutor {
                             cmd.extra?.contains("position", ignoreCase = true) == true
                         if (!userSetPosition) {
                             textPositions[cmd]?.let { (x, y) ->
-                                textState = textState.copy(positionX = x, positionY = y)
+                                textState = textState.copy(
+                                    positionX = x, positionY = y
+                                )
                             }
                         }
 
@@ -189,7 +192,8 @@ object PromptExecutor {
                             endMs = endMs
                         )
                         applied.add(
-                            "text @${startMs / 1000}s-${endMs / 1000}s \"$content\""
+                            "text @${startMs / 1000}s-${endMs / 1000}s " +
+                                    "\"$content\""
                         )
                     } else {
                         viewModel.createTextClip(textState)
@@ -202,7 +206,9 @@ object PromptExecutor {
                     val startMs = cmd.startMs
                     val endMs = cmd.endMs
 
-                    var state2 = com.moody.moodyvideoeditor.data.StickerState(emoji = emoji)
+                    var state2 = com.moody.moodyvideoeditor.data.StickerState(
+                        emoji = emoji
+                    )
                     cmd.extra?.let { props ->
                         state2 = applyStickerProps(state2, props)
                     }
@@ -244,7 +250,10 @@ object PromptExecutor {
                         val value = cmd.value1 ?: continue
                         val existing = state.clips.firstOrNull {
                             it.isAdjustmentClip &&
-                                    abs(it.timelineStartMs - target.timelineStartMs) < 100
+                                    abs(
+                                        it.timelineStartMs -
+                                                target.timelineStartMs
+                                    ) < 100
                         }
                         if (existing != null) {
                             val newAdj = PromptEngine.withAdjustment(
@@ -297,15 +306,20 @@ object PromptExecutor {
                             "cropL", "cropR", "cropT", "cropB" -> {
                                 val cur = selected ?: continue
                                 viewModel.setCrop(
-                                    if (cmd.key == "cropL") value / 100f else cur.cropL,
-                                    if (cmd.key == "cropR") value / 100f else cur.cropR,
-                                    if (cmd.key == "cropT") value / 100f else cur.cropT,
-                                    if (cmd.key == "cropB") value / 100f else cur.cropB
+                                    if (cmd.key == "cropL") value / 100f
+                                    else cur.cropL,
+                                    if (cmd.key == "cropR") value / 100f
+                                    else cur.cropR,
+                                    if (cmd.key == "cropT") value / 100f
+                                    else cur.cropT,
+                                    if (cmd.key == "cropB") value / 100f
+                                    else cur.cropB
                                 )
                             }
                         }
                         val label = if (hasMultiT) {
-                            "${cmd.key} $value → ${state.multiSelectedIds.size} clips"
+                            "${cmd.key} $value → " +
+                                    "${state.multiSelectedIds.size} clips"
                         } else "${cmd.key} $value"
                         applied.add(label)
                     }
@@ -316,7 +330,8 @@ object PromptExecutor {
                         viewModel.updateTransition(
                             TransitionState(
                                 key = preset?.key ?: cmd.key,
-                                durationMs = (dur * 1000f).toLong().coerceIn(200L, 3000L)
+                                durationMs = (dur * 1000f).toLong()
+                                    .coerceIn(200L, 3000L)
                             )
                         )
                         applied.add("transition ${cmd.key} ${dur}s")
@@ -325,7 +340,9 @@ object PromptExecutor {
                     CmdType.ANIMATION -> {
                         val sel = selected ?: continue
                         if (sel.isTextClip) {
-                            viewModel.setTextAnimation(PromptEngine.animationKey(cmd.key))
+                            viewModel.setTextAnimation(
+                                PromptEngine.animationKey(cmd.key)
+                            )
                             applied.add("animation ${cmd.key}")
                         }
                     }
@@ -340,7 +357,8 @@ object PromptExecutor {
                             val sel = viewModel.state.value.selectedClip
                             if (sel == null) {
                                 errors.add(
-                                    "Select a clip first to apply beat animation"
+                                    "Select a clip first to apply " +
+                                            "beat animation"
                                 )
                             } else {
                                 val amount = cmd.value1 ?: 100f
@@ -370,7 +388,8 @@ object PromptExecutor {
                             viewModel.updateSelectedText(
                                 st.copy(
                                     fontFamily = cmd.key,
-                                    fontSize = cmd.value1?.toInt() ?: st.fontSize
+                                    fontSize = cmd.value1?.toInt()
+                                        ?: st.fontSize
                                 )
                             )
                             applied.add("font ${cmd.key}")
@@ -381,7 +400,9 @@ object PromptExecutor {
                         val sel = selected ?: continue
                         if (sel.isTextClip) {
                             val st = sel.textState ?: continue
-                            viewModel.updateSelectedText(st.copy(alignment = cmd.key))
+                            viewModel.updateSelectedText(
+                                st.copy(alignment = cmd.key)
+                            )
                             applied.add("align ${cmd.key}")
                         }
                     }
@@ -409,15 +430,19 @@ object PromptExecutor {
 
                     CmdType.CHROMA -> {
                         val rest = cmd.key
-                        val hexRegex = Regex("""#([0-9a-fA-F]{6})""").find(rest)
+                        val hexRegex = Regex("""#([0-9a-fA-F]{6})""")
+                            .find(rest)
                         val colorLong = hexRegex?.let {
                             try {
-                                (0xFF000000L) or it.groupValues[1].toLong(16)
+                                (0xFF000000L) or
+                                        it.groupValues[1].toLong(16)
                             } catch (_: Exception) {
                                 null
                             }
                         } ?: 0xFF00FF00
-                        viewModel.updateSelectedChroma(ChromaState(keyColor = colorLong))
+                        viewModel.updateSelectedChroma(
+                            ChromaState(keyColor = colorLong)
+                        )
                         applied.add("chroma $rest")
                     }
 
@@ -430,9 +455,12 @@ object PromptExecutor {
                         if (cmd.key == "off") {
                             applied.add("brush gradient off")
                         } else {
-                            val parts = cmd.stringValue?.split(",") ?: emptyList()
+                            val parts = cmd.stringValue?.split(",")
+                                ?: emptyList()
                             if (parts.size == 2) {
-                                applied.add("brush gradient ${parts[0]} → ${parts[1]}")
+                                applied.add(
+                                    "brush gradient ${parts[0]} → ${parts[1]}"
+                                )
                             }
                         }
                     }
@@ -465,7 +493,9 @@ object PromptExecutor {
                         when (cmd.key) {
                             "hdr" -> cw = cw.copy(hdrWhite = cmd.value1 ?: 100f)
                             "shadows", "midtones", "highlights" -> {
-                                val hue = colorToHue(cmd.stringValue ?: "red")
+                                val hue = colorToHue(
+                                    cmd.stringValue ?: "red"
+                                )
                                 val tone = ToneValue(
                                     hue,
                                     cmd.value1 ?: 0f,
@@ -486,9 +516,9 @@ object PromptExecutor {
                         applied.add("keyframe ${cmd.key}")
                     }
 
-                    // ═════════════════════════════════════════════════
-                    //  🆕 VISUALIZER
-                    // ═════════════════════════════════════════════════
+                    // ═══════════════════════════════════════════
+                    //  VISUALIZER
+                    // ═══════════════════════════════════════════
                     CmdType.VISUALIZER -> {
                         val s2 = viewModel.state.value
                         val existingViz = s2.selectedClip
@@ -500,7 +530,8 @@ object PromptExecutor {
                                 val ok = viewModel.createVisualizerClip()
                                 if (ok) applied.add("visualizer added")
                                 else errors.add(
-                                    "visualizer add: select an audio clip first"
+                                    "visualizer add: select an audio " +
+                                            "clip first"
                                 )
                             }
 
@@ -519,9 +550,12 @@ object PromptExecutor {
                                     viewModel.updateVisualizerLayer(
                                         existingViz.id,
                                         (existingViz.visualizer
-                                            ?: VisualizerState()).copy(preset = p)
+                                            ?: VisualizerState())
+                                            .copy(preset = p)
                                     )
-                                    applied.add("visualizer preset ${p.label}")
+                                    applied.add(
+                                        "visualizer preset ${p.label}"
+                                    )
                                 } else {
                                     errors.add(
                                         "Unknown preset: ${cmd.stringValue}"
@@ -542,7 +576,9 @@ object PromptExecutor {
                                     viewModel.updateVisualizerLayer(
                                         existingViz.id, updated
                                     )
-                                    applied.add("visualizer ${cmd.key} #$hex")
+                                    applied.add(
+                                        "visualizer ${cmd.key} #$hex"
+                                    )
                                 } else {
                                     errors.add("visualizer ${cmd.key}: failed")
                                 }
@@ -558,7 +594,9 @@ object PromptExecutor {
                                     viewModel.updateVisualizerLayer(
                                         existingViz.id, vs.copy(size = sz)
                                     )
-                                    applied.add("visualizer size ${pct.toInt()}%")
+                                    applied.add(
+                                        "visualizer size ${pct.toInt()}%"
+                                    )
                                 } else errors.add("No visualizer")
                             }
 
@@ -739,12 +777,12 @@ object PromptExecutor {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 VISUALIZER PRESET RESOLVER
+    //  VISUALIZER PRESET RESOLVER
     // ═══════════════════════════════════════════════════════════
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 VISUALIZER PRESET RESOLVER
-    //  Aliases + key + label matching (100 presets)
-    // ═══════════════════════════════════════════════════════════
+    /**
+     * Resolve a preset name from user prompt → VisualizerPreset.
+     * Supports 100 preset keys + legacy aliases.
+     */
     private fun resolveVisualizerPreset(name: String): VisualizerPreset? {
         val clean = name.trim().lowercase()
             .replace(" ", "")
@@ -752,213 +790,148 @@ object PromptExecutor {
             .replace("_", "")
         if (clean.isBlank()) return null
 
-        // ─── SPECTRUM ───
-        val spectrumAliases = mapOf(
-            "circular" to VisualizerPreset.CIRCULAR_SPECTRUM,
-            "circlespectrum" to VisualizerPreset.CIRCULAR_SPECTRUM,
-            "linear" to VisualizerPreset.LINEAR_WAVEFORM,
-            "waveform" to VisualizerPreset.LINEAR_WAVEFORM,
-            "doublesided" to VisualizerPreset.DOUBLE_SIDED_BARS,
-            "radial" to VisualizerPreset.RADIAL_BARS,
-            "radialbars" to VisualizerPreset.RADIAL_BARS,
-            "innerradial" to VisualizerPreset.INNER_RADIAL_BARS,
-            "heartbeat" to VisualizerPreset.HEARTBEAT_WAVE,
-            "ecgwave" to VisualizerPreset.HEARTBEAT_WAVE,
-            "square" to VisualizerPreset.SQUARE_SPECTRUM,
-            "triangle" to VisualizerPreset.TRIANGLE_BEATS,
-            "hexagon" to VisualizerPreset.HEXAGON_PULSE,
-            "dotmatrix" to VisualizerPreset.DOT_MATRIX,
-            "dotsmatrix" to VisualizerPreset.DOT_MATRIX,
-            "mirrored" to VisualizerPreset.MIRRORED_LINEAR,
-            "glowwaves" to VisualizerPreset.GLOW_WAVES,
-            "thick" to VisualizerPreset.THICK_BARS,
-            "thickbars" to VisualizerPreset.THICK_BARS,
-            "thin" to VisualizerPreset.THIN_STRINGS,
-            "strings" to VisualizerPreset.THIN_STRINGS,
-            "sine" to VisualizerPreset.SINE_WAVE,
-            "3d" to VisualizerPreset.PERSPECTIVE_3D,
-            "perspective" to VisualizerPreset.PERSPECTIVE_3D,
-            "volcano" to VisualizerPreset.FREQUENCY_VOLCANO,
-            "tornado" to VisualizerPreset.TORNADO_SPIRAL,
-            "spiral" to VisualizerPreset.TORNADO_SPIRAL,
-            "dualring" to VisualizerPreset.DUAL_RING,
-            "star" to VisualizerPreset.STAR_BURST,
-            "starburst" to VisualizerPreset.STAR_BURST
-        )
-
-        // ─── PARTICLES ───
-        val particleAliases = mapOf(
-            "bassparticles" to VisualizerPreset.BASS_PARTICLES,
-            "bass" to VisualizerPreset.BASS_PARTICLES,
-            "dust" to VisualizerPreset.FLOATING_DUST,
-            "floatingdust" to VisualizerPreset.FLOATING_DUST,
-            "liquid" to VisualizerPreset.LIQUID_DROPS,
-            "drops" to VisualizerPreset.LIQUID_DROPS,
-            "firefly" to VisualizerPreset.FIREFLY_GLOW,
-            "fireflies" to VisualizerPreset.FIREFLY_GLOW,
-            "smoke" to VisualizerPreset.SMOKE_AURA,
-            "smokeaura" to VisualizerPreset.SMOKE_AURA,
-            "matrix" to VisualizerPreset.MATRIX_RAIN,
-            "matrixrain" to VisualizerPreset.MATRIX_RAIN,
-            "snow" to VisualizerPreset.SNOWFALL,
-            "snowfall" to VisualizerPreset.SNOWFALL,
-            "nebula" to VisualizerPreset.COSMIC_NEBULA,
-            "cosmic" to VisualizerPreset.COSMIC_NEBULA,
-            "spark" to VisualizerPreset.SPARK_TRAIL,
-            "sparks" to VisualizerPreset.SPARK_TRAIL,
-            "ink" to VisualizerPreset.INK_BLEED,
-            "inkbleed" to VisualizerPreset.INK_BLEED,
-            "sand" to VisualizerPreset.SAND_STORM,
-            "sandstorm" to VisualizerPreset.SAND_STORM,
-            "magic" to VisualizerPreset.MAGIC_DUST,
-            "magicdust" to VisualizerPreset.MAGIC_DUST,
-            "meteor" to VisualizerPreset.METEOR_SHOWER,
-            "plasma" to VisualizerPreset.PLASMA_ORBS,
-            "orbs" to VisualizerPreset.PLASMA_ORBS,
-            "confetti" to VisualizerPreset.CONFETTI_POP,
-            "bubbles" to VisualizerPreset.BUBBLES_POP,
-            "electric" to VisualizerPreset.ELECTRIC_STORM,
-            "storm" to VisualizerPreset.ELECTRIC_STORM,
-            "disintegrate" to VisualizerPreset.DISINTEGRATION,
-            "disintegration" to VisualizerPreset.DISINTEGRATION,
-            "galaxy" to VisualizerPreset.GALAXY_VORTEX,
-            "cybergrid" to VisualizerPreset.CYBER_GRID
-        )
-
-        // ─── NEON ───
-        val neonAliases = mapOf(
-            "neon" to VisualizerPreset.NEON_GLOW_RING,
-            "glow" to VisualizerPreset.NEON_GLOW_RING,
-            "neonring" to VisualizerPreset.NEON_GLOW_RING,
-            "neonglow" to VisualizerPreset.NEON_GLOW_RING,
-            "rgb" to VisualizerPreset.RGB_GLITCH,
-            "rgbglitch" to VisualizerPreset.RGB_GLITCH,
-            "vaporwave" to VisualizerPreset.VAPORWAVE_GRID,
-            "vapor" to VisualizerPreset.VAPORWAVE_GRID,
-            "vhs" to VisualizerPreset.VHS_NOISE,
-            "vhsnoise" to VisualizerPreset.VHS_NOISE,
-            "laser" to VisualizerPreset.LASER_BEAM,
-            "laserbeam" to VisualizerPreset.LASER_BEAM,
-            "eq" to VisualizerPreset.DIGITAL_EQ,
-            "digitaleq" to VisualizerPreset.DIGITAL_EQ,
-            "chroma" to VisualizerPreset.CHROMA_PULSE,
-            "chromapulse" to VisualizerPreset.CHROMA_PULSE,
-            "scanline" to VisualizerPreset.SCANLINE_DISTORT,
-            "tron" to VisualizerPreset.TRON_WIREFRAME,
-            "tronwireframe" to VisualizerPreset.TRON_WIREFRAME,
-            "led" to VisualizerPreset.LED_MATRIX,
-            "ledmatrix" to VisualizerPreset.LED_MATRIX,
-            "arcade" to VisualizerPreset.ARCADE_GAMEOVER,
-            "lasertunnel" to VisualizerPreset.LASER_TUNNEL,
-            "tracer" to VisualizerPreset.NEON_TRACER,
-            "neontracer" to VisualizerPreset.NEON_TRACER,
-            "pixel" to VisualizerPreset.PIXEL_DISSOLVE,
-            "pixeldissolve" to VisualizerPreset.PIXEL_DISSOLVE,
-            "ecg" to VisualizerPreset.ECG_GRID,
-            "ecggrid" to VisualizerPreset.ECG_GRID,
-            "synth" to VisualizerPreset.SYNTH_SUN,
-            "synthsun" to VisualizerPreset.SYNTH_SUN,
-            "hologram" to VisualizerPreset.HOLOGRAM,
-            "crt" to VisualizerPreset.CRT_FLICKER,
-            "crtflicker" to VisualizerPreset.CRT_FLICKER,
-            "vector" to VisualizerPreset.VECTOR_WAVE,
-            "vectorwave" to VisualizerPreset.VECTOR_WAVE,
-            "glitch" to VisualizerPreset.GLITCH_TWITCH,
-            "glitchtwitch" to VisualizerPreset.GLITCH_TWITCH
-        )
-
-        // ─── GEOMETRIC ───
-        val geometricAliases = mapOf(
-            "minimal" to VisualizerPreset.MINIMAL_DOTS,
-            "dots" to VisualizerPreset.MINIMAL_DOTS,
-            "minimaldots" to VisualizerPreset.MINIMAL_DOTS,
-            "poly" to VisualizerPreset.ROTATING_POLY,
-            "rotatingpoly" to VisualizerPreset.ROTATING_POLY,
-            "kaleidoscope" to VisualizerPreset.KALEIDOSCOPE,
-            "interlocking" to VisualizerPreset.INTERLOCKING_RINGS,
-            "rings" to VisualizerPreset.INTERLOCKING_RINGS,
-            "expanding" to VisualizerPreset.EXPANDING_SQUARES,
-            "squares" to VisualizerPreset.EXPANDING_SQUARES,
-            "origami" to VisualizerPreset.ORIGAMI,
-            "fractal" to VisualizerPreset.FRACTAL_ZOOM,
-            "fractalzoom" to VisualizerPreset.FRACTAL_ZOOM,
-            "parallax" to VisualizerPreset.PARALLAX_LINES,
-            "isometric" to VisualizerPreset.ISOMETRIC_BLOCKS,
-            "blocks" to VisualizerPreset.ISOMETRIC_BLOCKS,
-            "mirror" to VisualizerPreset.SYMMETRIC_MIRROR,
-            "symmetric" to VisualizerPreset.SYMMETRIC_MIRROR,
-            "crosshair" to VisualizerPreset.CROSSHAIR,
-            "target" to VisualizerPreset.CROSSHAIR,
-            "dna" to VisualizerPreset.DNA_STRAND,
-            "dnastrand" to VisualizerPreset.DNA_STRAND,
-            "concentric" to VisualizerPreset.CONCENTRIC_RINGS,
-            "shards" to VisualizerPreset.FLOATING_SHARDS,
-            "infinitetunnel" to VisualizerPreset.INFINITE_TUNNEL,
-            "morph" to VisualizerPreset.SHAPE_MORPH,
-            "shapemorph" to VisualizerPreset.SHAPE_MORPH,
-            "gyroscope" to VisualizerPreset.GYROSCOPE,
-            "gyro" to VisualizerPreset.GYROSCOPE,
-            "diagonal" to VisualizerPreset.SPLIT_DIAGONAL,
-            "splitdiagonal" to VisualizerPreset.SPLIT_DIAGONAL,
-            "checker" to VisualizerPreset.CHECKERBOARD,
-            "checkerboard" to VisualizerPreset.CHECKERBOARD,
-            "ribbon" to VisualizerPreset.VECTOR_RIBBON,
-            "vectorribbon" to VisualizerPreset.VECTOR_RIBBON
-        )
-
-        // ─── CINEMATIC ───
-        val cinematicAliases = mapOf(
-            "lensflare" to VisualizerPreset.LENS_FLARE,
-            "flare" to VisualizerPreset.LENS_FLARE,
-            "shutter" to VisualizerPreset.CAMERA_SHUTTER,
-            "camerashutter" to VisualizerPreset.CAMERA_SHUTTER,
-            "cinematicdust" to VisualizerPreset.CINEMATIC_DUST,
-            "vignette" to VisualizerPreset.VIGNETTE_BREATHE,
-            "vignettebreathe" to VisualizerPreset.VIGNETTE_BREATHE,
-            "blur" to VisualizerPreset.BLUR_DISSOLVE,
-            "blurdissolve" to VisualizerPreset.BLUR_DISSOLVE,
-            "sunbeams" to VisualizerPreset.SUNBEAMS,
-            "beams" to VisualizerPreset.SUNBEAMS,
-            "rain" to VisualizerPreset.RAINDROPS,
-            "raindrops" to VisualizerPreset.RAINDROPS,
-            "grain" to VisualizerPreset.FILM_GRAIN,
-            "filmgrain" to VisualizerPreset.FILM_GRAIN,
-            "lightleak" to VisualizerPreset.LIGHT_LEAK,
-            "fog" to VisualizerPreset.FOGGY_AMBIANCE,
-            "foggy" to VisualizerPreset.FOGGY_AMBIANCE,
-            "bokeh" to VisualizerPreset.BOKEH_DRIFT,
-            "shadow" to VisualizerPreset.SHADOW_WAVE,
-            "ripple" to VisualizerPreset.WATER_RIPPLE,
-            "waterripple" to VisualizerPreset.WATER_RIPPLE,
-            "cloudy" to VisualizerPreset.CLOUDY_TIMELAPSE,
-            "lightstreak" to VisualizerPreset.LIGHT_STREAK,
-            "streak" to VisualizerPreset.LIGHT_STREAK,
-            "countdown" to VisualizerPreset.VINTAGE_COUNTDOWN,
-            "vintage" to VisualizerPreset.VINTAGE_COUNTDOWN,
-            "golden" to VisualizerPreset.GOLDEN_HOUR,
-            "goldenhour" to VisualizerPreset.GOLDEN_HOUR,
-            "prism" to VisualizerPreset.PRISM_RAINBOW,
-            "rainbow" to VisualizerPreset.PRISM_RAINBOW,
-            "shake" to VisualizerPreset.CAMERA_SHAKE,
-            "camerashake" to VisualizerPreset.CAMERA_SHAKE,
-            "horizon" to VisualizerPreset.HORIZON_ZOOM,
-            "horizonzoom" to VisualizerPreset.HORIZON_ZOOM
-        )
-
-        // Combined lookup
-        val allAliases = spectrumAliases + particleAliases +
-                neonAliases + geometricAliases + cinematicAliases
-
-        allAliases[clean]?.let { return it }
-
-        // Match by enum key (lowercase, no separators)
+        // 1) Direct key match
         VisualizerPreset.values().firstOrNull {
             it.key.lowercase() == clean
         }?.let { return it }
 
-        // Match by label
+        // 2) Label match
         VisualizerPreset.values().firstOrNull {
-            it.label.lowercase().replace(" ", "").replace("-", "") == clean
+            it.label.lowercase().replace(" ", "") == clean
+        }?.let { return it }
+
+        // 3) Short aliases
+        val aliases = mapOf(
+            // Spectrum
+            "bars" to VisualizerPreset.CIRCULAR_SPECTRUM,
+            "bar" to VisualizerPreset.CIRCULAR_SPECTRUM,
+            "circular" to VisualizerPreset.CIRCULAR_SPECTRUM,
+            "circle" to VisualizerPreset.CIRCULAR_SPECTRUM,
+            "linear" to VisualizerPreset.LINEAR_WAVEFORM,
+            "linearwave" to VisualizerPreset.LINEAR_WAVEFORM,
+            "radial" to VisualizerPreset.RADIAL_BARS,
+            "inner" to VisualizerPreset.INNER_RADIAL_BARS,
+            "heartbeat" to VisualizerPreset.HEARTBEAT_WAVE,
+            "square" to VisualizerPreset.SQUARE_SPECTRUM,
+            "triangle" to VisualizerPreset.TRIANGLE_BEATS,
+            "hexagon" to VisualizerPreset.HEXAGON_PULSE,
+            "dot" to VisualizerPreset.DOT_MATRIX,
+            "dots" to VisualizerPreset.DOT_MATRIX,
+            "mirrored" to VisualizerPreset.MIRRORED_LINEAR,
+            "glow" to VisualizerPreset.GLOW_WAVES,
+            "thick" to VisualizerPreset.THICK_BARS,
+            "thin" to VisualizerPreset.THIN_STRINGS,
+            "sine" to VisualizerPreset.SINE_WAVE,
+            "perspective" to VisualizerPreset.PERSPECTIVE_3D,
+            "volcano" to VisualizerPreset.FREQUENCY_VOLCANO,
+            "tornado" to VisualizerPreset.TORNADO_SPIRAL,
+            "dual" to VisualizerPreset.DUAL_RING,
+            "star" to VisualizerPreset.STAR_BURST,
+
+            // Particles
+            "particles" to VisualizerPreset.BASS_PARTICLES,
+            "dust" to VisualizerPreset.FLOATING_DUST,
+            "drops" to VisualizerPreset.LIQUID_DROPS,
+            "firefly" to VisualizerPreset.FIREFLY_GLOW,
+            "smoke" to VisualizerPreset.SMOKE_AURA,
+            "matrix" to VisualizerPreset.MATRIX_RAIN,
+            "snow" to VisualizerPreset.SNOWFALL,
+            "nebula" to VisualizerPreset.COSMIC_NEBULA,
+            "spark" to VisualizerPreset.SPARK_TRAIL,
+            "ink" to VisualizerPreset.INK_BLEED,
+            "sand" to VisualizerPreset.SAND_STORM,
+            "magic" to VisualizerPreset.MAGIC_DUST,
+            "meteor" to VisualizerPreset.METEOR_SHOWER,
+            "plasma" to VisualizerPreset.PLASMA_ORBS,
+            "confetti" to VisualizerPreset.CONFETTI_POP,
+            "bubbles" to VisualizerPreset.BUBBLES_POP,
+            "electric" to VisualizerPreset.ELECTRIC_STORM,
+            "disintegration" to VisualizerPreset.DISINTEGRATION,
+            "galaxy" to VisualizerPreset.GALAXY_VORTEX,
+            "cybergrid" to VisualizerPreset.CYBER_GRID,
+
+            // Neon
+            "neon" to VisualizerPreset.NEON_GLOW_RING,
+            "neonring" to VisualizerPreset.NEON_GLOW_RING,
+            "rgb" to VisualizerPreset.RGB_GLITCH,
+            "glitch" to VisualizerPreset.RGB_GLITCH,
+            "vaporwave" to VisualizerPreset.VAPORWAVE_GRID,
+            "vhs" to VisualizerPreset.VHS_NOISE,
+            "laser" to VisualizerPreset.LASER_BEAM,
+            "eq" to VisualizerPreset.DIGITAL_EQ,
+            "chroma" to VisualizerPreset.CHROMA_PULSE,
+            "scanline" to VisualizerPreset.SCANLINE_DISTORT,
+            "tron" to VisualizerPreset.TRON_WIREFRAME,
+            "led" to VisualizerPreset.LED_MATRIX,
+            "arcade" to VisualizerPreset.ARCADE_GAMEOVER,
+            "tunnel" to VisualizerPreset.LASER_TUNNEL,
+            "tracer" to VisualizerPreset.NEON_TRACER,
+            "pixel" to VisualizerPreset.PIXEL_DISSOLVE,
+            "ecg" to VisualizerPreset.ECG_GRID,
+            "synth" to VisualizerPreset.SYNTH_SUN,
+            "hologram" to VisualizerPreset.HOLOGRAM,
+            "crt" to VisualizerPreset.CRT_FLICKER,
+            "vector" to VisualizerPreset.VECTOR_WAVE,
+
+            // Geometric
+            "minimal" to VisualizerPreset.MINIMAL_DOTS,
+            "rotating" to VisualizerPreset.ROTATING_POLY,
+            "kaleidoscope" to VisualizerPreset.KALEIDOSCOPE,
+            "interlock" to VisualizerPreset.INTERLOCKING_RINGS,
+            "expanding" to VisualizerPreset.EXPANDING_SQUARES,
+            "origami" to VisualizerPreset.ORIGAMI,
+            "fractal" to VisualizerPreset.FRACTAL_ZOOM,
+            "parallax" to VisualizerPreset.PARALLAX_LINES,
+            "isometric" to VisualizerPreset.ISOMETRIC_BLOCKS,
+            "mirror" to VisualizerPreset.SYMMETRIC_MIRROR,
+            "crosshair" to VisualizerPreset.CROSSHAIR,
+            "dna" to VisualizerPreset.DNA_STRAND,
+            "concentric" to VisualizerPreset.CONCENTRIC_RINGS,
+            "shards" to VisualizerPreset.FLOATING_SHARDS,
+            "infinite" to VisualizerPreset.INFINITE_TUNNEL,
+            "morph" to VisualizerPreset.SHAPE_MORPH,
+            "gyroscope" to VisualizerPreset.GYROSCOPE,
+            "diagonal" to VisualizerPreset.SPLIT_DIAGONAL,
+            "checker" to VisualizerPreset.CHECKERBOARD,
+            "ribbon" to VisualizerPreset.VECTOR_RIBBON,
+
+            // Cinematic
+            "lensflare" to VisualizerPreset.LENS_FLARE,
+            "shutter" to VisualizerPreset.CAMERA_SHUTTER,
+            "cinematicdust" to VisualizerPreset.CINEMATIC_DUST,
+            "vignette" to VisualizerPreset.VIGNETTE_BREATHE,
+            "blur" to VisualizerPreset.BLUR_DISSOLVE,
+            "sunbeams" to VisualizerPreset.SUNBEAMS,
+            "rain" to VisualizerPreset.RAINDROPS,
+            "grain" to VisualizerPreset.FILM_GRAIN,
+            "lightleak" to VisualizerPreset.LIGHT_LEAK,
+            "fog" to VisualizerPreset.FOGGY_AMBIANCE,
+            "bokeh" to VisualizerPreset.BOKEH_DRIFT,
+            "shadow" to VisualizerPreset.SHADOW_WAVE,
+            "ripple" to VisualizerPreset.WATER_RIPPLE,
+            "cloudy" to VisualizerPreset.CLOUDY_TIMELAPSE,
+            "streak" to VisualizerPreset.LIGHT_STREAK,
+            "countdown" to VisualizerPreset.VINTAGE_COUNTDOWN,
+            "golden" to VisualizerPreset.GOLDEN_HOUR,
+            "prism" to VisualizerPreset.PRISM_RAINBOW,
+            "shake" to VisualizerPreset.CAMERA_SHAKE,
+            "horizon" to VisualizerPreset.HORIZON_ZOOM,
+
+            // Premium
+            "sphere" to VisualizerPreset.AUDIO_SPHERE,
+            "audioshpere" to VisualizerPreset.AUDIO_SPHERE,
+            "waveformring" to VisualizerPreset.WAVEFORM_RING,
+            "symmetric" to VisualizerPreset.SYMMETRIC_WAVE
+        )
+
+        aliases[clean]?.let { return it }
+
+        // 4) Fuzzy contains
+        VisualizerPreset.values().firstOrNull {
+            val k = it.key.lowercase()
+            val l = it.label.lowercase().replace(" ", "")
+            k.contains(clean) || clean.contains(k) ||
+                    l.contains(clean) || clean.contains(l)
         }?.let { return it }
 
         return null
@@ -1155,7 +1128,11 @@ object PromptExecutor {
 
                 "animation", "anim" -> {
                     val a = tokens.getOrNull(i + 1)
-                    if (a != null) st = st.copy(animation = PromptEngine.animationKey(a))
+                    if (a != null) {
+                        st = st.copy(
+                            animation = PromptEngine.animationKey(a)
+                        )
+                    }
                     i += 2
                 }
 
@@ -1183,20 +1160,28 @@ object PromptExecutor {
                 "position", "pos" -> {
                     val x = tokens.getOrNull(i + 1)?.toFloatOrNull()
                     val y = tokens.getOrNull(i + 2)?.toFloatOrNull()
-                    if (x != null) st = st.copy(positionX = x.coerceIn(0f, 100f))
-                    if (y != null) st = st.copy(positionY = y.coerceIn(0f, 100f))
+                    if (x != null) {
+                        st = st.copy(positionX = x.coerceIn(0f, 100f))
+                    }
+                    if (y != null) {
+                        st = st.copy(positionY = y.coerceIn(0f, 100f))
+                    }
                     i += 3
                 }
 
                 "posx", "x" -> {
                     val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
-                    if (v != null) st = st.copy(positionX = v.coerceIn(0f, 100f))
+                    if (v != null) {
+                        st = st.copy(positionX = v.coerceIn(0f, 100f))
+                    }
                     i += 2
                 }
 
                 "posy", "y" -> {
                     val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
-                    if (v != null) st = st.copy(positionY = v.coerceIn(0f, 100f))
+                    if (v != null) {
+                        st = st.copy(positionY = v.coerceIn(0f, 100f))
+                    }
                     i += 2
                 }
 
@@ -1236,7 +1221,9 @@ object PromptExecutor {
 
                 "opacity" -> {
                     val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
-                    if (v != null) st = st.copy(opacity = v.coerceIn(0f, 100f))
+                    if (v != null) {
+                        st = st.copy(opacity = v.coerceIn(0f, 100f))
+                    }
                     i += 2
                 }
 
@@ -1275,7 +1262,9 @@ object PromptExecutor {
                 "animation", "anim" -> {
                     val a = tokens.getOrNull(i + 1)
                     if (a != null) {
-                        st = st.copy(animation = PromptEngine.animationKey(a))
+                        st = st.copy(
+                            animation = PromptEngine.animationKey(a)
+                        )
                     }
                     i += 2
                 }
@@ -1288,7 +1277,9 @@ object PromptExecutor {
 
                 "opacity" -> {
                     val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
-                    if (v != null) st = st.copy(opacity = v.coerceIn(0f, 100f))
+                    if (v != null) {
+                        st = st.copy(opacity = v.coerceIn(0f, 100f))
+                    }
                     i += 2
                 }
 
@@ -1302,7 +1293,9 @@ object PromptExecutor {
 
                 "scale", "size" -> {
                     val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
-                    if (v != null) st = st.copy(scale = v.coerceIn(10f, 500f))
+                    if (v != null) {
+                        st = st.copy(scale = v.coerceIn(10f, 500f))
+                    }
                     i += 2
                 }
 

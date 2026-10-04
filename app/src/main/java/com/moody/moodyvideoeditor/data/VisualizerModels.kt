@@ -7,6 +7,13 @@ enum class VisualizerPreset(
     val category: String
 ) {
     // ═══════════════════════════════════════════════════════════
+    //  0️⃣ PREMIUM (3)
+    // ═══════════════════════════════════════════════════════════
+    AUDIO_SPHERE("audioSphere", "Audio Sphere", "🔊", "spectrum"),
+    WAVEFORM_RING("waveformRing", "Waveform Ring", "🌊", "spectrum"),
+    SYMMETRIC_WAVE("symmetricWave", "Symmetric Wave", "⚡", "spectrum"),
+
+    // ═══════════════════════════════════════════════════════════
     //  1️⃣ SPECTRUM (20)
     // ═══════════════════════════════════════════════════════════
     CIRCULAR_SPECTRUM("circularSpectrum", "Circular Spectrum", "🔵", "spectrum"),
@@ -135,7 +142,6 @@ enum class VisualizerPreset(
             "cinematic" to "🎬 Cinematic"
         )
 
-        // Legacy keys from old 10-preset versions → map to new
         private val LEGACY_KEY_MAP = mapOf(
             "frequencySpectrumRing" to RADIAL_BARS,
             "particleOrbitRing" to BASS_PARTICLES,
@@ -158,16 +164,27 @@ enum class VisualizerPreset(
     }
 }
 
+/**
+ * Visualizer state — full config.
+ *
+ * 🚫 Text/image fields UNTOUCHED (bade mushkil se fix hue the):
+ *    textState, showText, textContent, textOnTopOfImage,
+ *    imageUri, showImage, imageScale, imageOpacity,
+ *    imageIdleRotation, imageIdleSpeed, imagePulseAmount, imageBassOnly
+ */
 data class VisualizerState(
     val preset: VisualizerPreset = VisualizerPreset.NEON_GLOW_RING,
     val linkedAudioClipId: String? = null,
 
+    // Colors
     val color1: Long = 0xFFFFD166,
     val color2: Long = 0xFFFFA500,
 
+    // Audio response
     val sensitivity: Float = 1.5f,
     val smoothing: Float = 0.65f,
 
+    // Transform
     val size: Float = 0.32f,
     val positionX: Float = 0.5f,
     val positionY: Float = 0.5f,
@@ -175,6 +192,9 @@ data class VisualizerState(
     val opacity: Float = 1f,
     val glow: Boolean = true,
 
+    // ═══════════════════════════════════════════════════════════
+    //  🚫 CENTER IMAGE — DO NOT TOUCH
+    // ═══════════════════════════════════════════════════════════
     val imageUri: String? = null,
     val showImage: Boolean = false,
     val imageScale: Float = 0.55f,
@@ -185,6 +205,9 @@ data class VisualizerState(
     val imagePulseAmount: Float = 0.15f,
     val imageBassOnly: Boolean = true,
 
+    // ═══════════════════════════════════════════════════════════
+    //  🚫 CENTER TEXT — DO NOT TOUCH
+    // ═══════════════════════════════════════════════════════════
     val showText: Boolean = false,
     val textContent: String = "🎵",
     val textState: TextState = TextState(
@@ -196,17 +219,70 @@ data class VisualizerState(
     ),
     val textOnTopOfImage: Boolean = true,
 
+    // Band boosts
     val bassRingBoost: Float = 1.0f,
     val midBarBoost: Float = 1.0f,
     val trebleSpikeBoost: Float = 1.0f,
 
+    // Beat sync
     val beatTimesMs: List<Long> = emptyList(),
     val beatStrengths: List<Float> = emptyList(),
     val beatReaction: Float = 1.0f,
     val beatPulseDurationMs: Long = 260L,
     val useBeatSync: Boolean = true,
 
-    val lerpFactor: Float = 0.20f
+    val lerpFactor: Float = 0.20f,
+
+    // ═══════════════════════════════════════════════════════════
+    //  AUDIO ANALYSIS — USER CONTROLLABLE
+    // ═══════════════════════════════════════════════════════════
+    /** Lower cutoff frequency (Hz) — 20..2000 */
+    val startFrequencyHz: Float = 20f,
+
+    /** Upper cutoff frequency (Hz) — 20..2000 */
+    val endFrequencyHz: Float = 2000f,
+
+    /** Number of frequency bands / displayed samples — 1..6400 */
+    val bands: Int = 64,
+
+    /** Maximum bar height multiplier — 0.1..3.0 */
+    val maxHeight: Float = 1.0f,
+
+    /** Audio analysis window in ms — 20..2000 */
+    val audioWindowMs: Int = 40,
+
+    /** Audio timing offset in ms — -500..500 */
+    val audioOffsetMs: Int = 0,
+
+    /** Display style: "digital" | "analog_lines" | "analog_dots" */
+    val displayStyle: String = "digital",
+
+    /** Side mode: "a" | "b" | "both" */
+    val sideMode: String = "both",
+
+    /** Line width in px — 0.5..20 */
+    val lineWidth: Float = 2.5f,
+
+    /** Particle size multiplier — 0.5..5.0 */
+    val particleSize: Float = 1.0f,
+
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 NEW FIELDS — audio-reactive enhancements
+    // ═══════════════════════════════════════════════════════════
+    val bassInfluence: Float = 1.0f,
+    val midInfluence: Float = 1.0f,
+    val trebleInfluence: Float = 1.0f,
+    val overallSensitivity: Float = 1.0f,
+
+    val attack: Float = 0.80f,
+    val release: Float = 0.60f,
+
+    val peakHold: Boolean = true,
+
+    val beatPulse: Float = 0.20f,
+    val beatGlow: Float = 0.50f,
+
+    val glowIntensity: Float = 0.30f
 ) {
     val isActive: Boolean get() = opacity > 0f
 
