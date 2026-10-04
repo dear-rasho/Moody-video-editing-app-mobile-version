@@ -52,7 +52,7 @@ fun TimelineToolbar(
             .padding(horizontal = 6.dp, vertical = 3.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        // ═══ ROW 1 — Action buttons ═══
+        // ROW 1 — Action buttons
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -85,7 +85,7 @@ fun TimelineToolbar(
             )
         }
 
-        // ═══ ROW 2 — Zoom slider ═══
+        // ROW 2 — Zoom slider
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,

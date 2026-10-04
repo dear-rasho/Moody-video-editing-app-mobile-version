@@ -2,10 +2,8 @@ package com.moody.moodyvideoeditor.data
 
 import java.util.UUID
 
-/**
- * Mirrors js/features/stickers.js CATEGORIES + st.sticker object.
- * 🆕 Animation + opacity support added (like text clips).
- */
+// Mirrors js/features/stickers.js CATEGORIES + st.sticker object.
+// 🆕 Animation + opacity support added (like text clips).
 data class StickerState(
     val emoji: String = "",
     val x: Float = 50f,              // 0..100 %

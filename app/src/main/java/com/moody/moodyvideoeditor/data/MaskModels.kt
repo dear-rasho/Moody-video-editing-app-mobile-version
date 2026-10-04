@@ -93,11 +93,11 @@ data class MaskState(
 
     val hasKeyframes: Boolean get() = keyframes.isNotEmpty()
 
-    /** 🆕 Only true when explicitly closed by user */
+    // 🆕 Only true when explicitly closed by user
     val hasCustomPath: Boolean
         get() = type == MaskType.CUSTOM && customPoints.size >= 3 && customClosed
 
-    /** Has at least 3 points but user hasn't closed yet */
+    // Has at least 3 points but user hasn't closed yet
     val isReadyToClose: Boolean
         get() = type == MaskType.CUSTOM && customPoints.size >= 3 && !customClosed
 

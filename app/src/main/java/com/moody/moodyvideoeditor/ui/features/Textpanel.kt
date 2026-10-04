@@ -207,9 +207,9 @@ fun TextPanel(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  OPTIONS SHELF — now with new options
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun OptionsShelf(hasText: Boolean, onSelect: (String) -> Unit) {
     val options = listOf(
@@ -263,9 +263,9 @@ private fun OptionsShelf(hasText: Boolean, onSelect: (String) -> Unit) {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  SUB-VIEWS
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun AddTextSub(
     initial: String,
@@ -704,13 +704,11 @@ private fun AnimationsSub(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  SHARED COMPONENTS
-// ═══════════════════════════════════════════════════════════════
 
-/**
- * 🆕 Generic slider sub-view (used for size, gaps, line-height, etc.)
- */
+//  SHARED COMPONENTS
+
+
+// 🆕 Generic slider sub-view (used for size, gaps, line-height, etc.)
 @Composable
 private fun SliderSub(
     title: String,

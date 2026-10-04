@@ -20,14 +20,11 @@ import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.KeyframeLibrary
 import kotlin.math.abs
 
-/**
- * Keyframe markers drawn in TRACK coordinate space (not clipped by clip Box).
- *
- * Shows:
- *   - ♦ badge on top-right of clip (indicates clip has kf)
- *   - ♦ dots at each keyframe time
- *   - ♦ highlighted at playhead if kf exists there
- */
+// Keyframe markers drawn in TRACK coordinate space (not clipped by clip Box).
+// Shows:
+// - ♦ badge on top-right of clip (indicates clip has kf)
+// - ♦ dots at each keyframe time
+// - ♦ highlighted at playhead if kf exists there
 @Composable
 fun KeyframeMarkerOverlay(
     clip: EditorClip,
@@ -55,7 +52,7 @@ fun KeyframeMarkerOverlay(
     // Force recompose on keyframe change
     key(clip.keyframes.hashCode(), clip.id) {
 
-        // ─── Top-right ♦ badge ─────────────────────
+        // Top-right ♦ badge
         Box(
             modifier = Modifier
                 .offset(
@@ -76,7 +73,7 @@ fun KeyframeMarkerOverlay(
             )
         }
 
-        // ─── ♦ dots at each keyframe time ─────────
+        // ♦ dots at each keyframe time
         times.sorted().forEach { tSec ->
             val tMs = (tSec * 1000f).toLong()
             if (tMs < 0L || tMs > clipDurMs) return@forEach

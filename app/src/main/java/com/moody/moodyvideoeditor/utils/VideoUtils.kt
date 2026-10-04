@@ -22,7 +22,7 @@ object VideoUtils {
     }
 
     fun getVideoDuration(context: Context, uri: Uri): Long {
-        // ═══ Attempt 1 — MediaMetadataRetriever ═══
+        // Attempt 1 — MediaMetadataRetriever
         try {
             val retriever = android.media.MediaMetadataRetriever()
             retriever.setDataSource(context, uri)
@@ -35,7 +35,7 @@ object VideoUtils {
             e.printStackTrace()
         }
 
-        // ═══ Attempt 2 — MediaExtractor fallback ═══
+        // Attempt 2 — MediaExtractor fallback
         try {
             val extractor = android.media.MediaExtractor()
             extractor.setDataSource(context, uri, null)
@@ -53,7 +53,7 @@ object VideoUtils {
             e.printStackTrace()
         }
 
-        // ═══ Attempt 3 — ExoPlayer sync metadata ═══
+        // Attempt 3 — ExoPlayer sync metadata
         try {
             val player = androidx.media3.exoplayer.ExoPlayer.Builder(context).build()
             val mediaItem = androidx.media3.common.MediaItem.fromUri(uri)

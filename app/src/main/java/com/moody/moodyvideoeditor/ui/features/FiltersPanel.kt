@@ -110,9 +110,9 @@ fun FiltersPanel(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
-            // ═══════════════════════════════════════════════════════
+
             //  CATEGORY CHIPS
-            // ═══════════════════════════════════════════════════════
+
             Text(
                 "Category (${FilterState.PRESETS.size} filters)",
                 color = Color(0xFF888888),
@@ -154,9 +154,9 @@ fun FiltersPanel(
 
             Spacer(Modifier.height(2.dp))
 
-            // ═══════════════════════════════════════════════════════
+
             //  PRESET CHIPS — Reference image with filter applied
-            // ═══════════════════════════════════════════════════════
+
             val categoryPresets = FilterState.presetsInCategory(selectedCategory)
 
             Text(
@@ -190,9 +190,9 @@ fun FiltersPanel(
                 }
             }
 
-            // ═══════════════════════════════════════════════════════
+
             //  INTENSITY SLIDER
-            // ═══════════════════════════════════════════════════════
+
             selectedPreset?.let { preset ->
                 Spacer(Modifier.height(2.dp))
                 Row(
@@ -235,9 +235,9 @@ fun FiltersPanel(
 
             Spacer(Modifier.height(6.dp))
 
-            // ═══════════════════════════════════════════════════════
+
             //  ACTION BUTTONS
-            // ═══════════════════════════════════════════════════════
+
             if (isEditMode) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -357,9 +357,9 @@ fun FiltersPanel(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  🆕 REFERENCE IMAGE LOADER
-// ═══════════════════════════════════════════════════════════════
+
 private fun loadRefImage(context: android.content.Context): Bitmap? {
     return try {
         // Decode from drawable resource
@@ -391,9 +391,9 @@ private fun loadRefImage(context: android.content.Context): Bitmap? {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+
 //  FILTER THUMB CHIP — reference image + filter applied
-// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun FilterThumbChip(
     preset: FilterPreset,
@@ -475,9 +475,7 @@ private fun FilterThumbChip(
     }
 }
 
-/**
- * Scale preset values by intensity (0-200%).
- */
+// Scale preset values by intensity (0-200%).
 private fun scalePresetIntensity(
     preset: FilterPreset,
     intensityPct: Float

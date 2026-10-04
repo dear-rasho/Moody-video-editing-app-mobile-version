@@ -64,7 +64,7 @@ fun AudioPanel(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
-            // ═══ FX CHIPS — LEFT/RIGHT SCROLLABLE ═══
+            // FX CHIPS — LEFT/RIGHT SCROLLABLE
             val filtered = AudioEngine.AUDIO_FX.filter { it.key != "none" }
 
             Text(
@@ -97,7 +97,7 @@ fun AudioPanel(
 
             Spacer(Modifier.height(4.dp))
 
-            // ═══ INTENSITY + APPLY ═══
+            // INTENSITY + APPLY
             val current = selectedFx
             if (current != null) {
                 val preset = filtered.firstOrNull { it.key == current }

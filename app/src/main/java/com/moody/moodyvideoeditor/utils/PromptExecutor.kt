@@ -43,9 +43,9 @@ object PromptExecutor {
         val state = viewModel.state.value
         val selected = state.selectedClip
 
-        // ═══════════════════════════════════════════════════════
+
         //  PRIORITY 0 — TEMPLATES
-        // ═══════════════════════════════════════════════════════
+
         for (cmd in parsed.commands) {
             if (cmd.type == CmdType.TEMPLATE) {
                 val tmpl = TypographyTemplates.find(cmd.key)
@@ -62,9 +62,15 @@ object PromptExecutor {
             }
         }
 
+<<<<<<< HEAD
         // ═══════════════════════════════════════════════════════
         //  PRIORITY 1 — GLOBAL
         // ═══════════════════════════════════════════════════════
+=======
+
+        //  PRIORITY 1 — GLOBAL (Ratio, Tighten, Clear)
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         for (cmd in parsed.commands) {
             when (cmd.type) {
                 CmdType.RATIO -> {
@@ -89,9 +95,9 @@ object PromptExecutor {
             }
         }
 
-        // ═══════════════════════════════════════════════════════
+
         //  PRIORITY 2 — TRANSITIONS
-        // ═══════════════════════════════════════════════════════
+
         for (cmd in parsed.commands) {
             when (cmd.type) {
                 CmdType.TRANSITION_ALL -> {
@@ -136,30 +142,56 @@ object PromptExecutor {
             }
         }
 
+<<<<<<< HEAD
         // ═══════════════════════════════════════════════════════
         //  PRIORITY 3 — TEXT + STICKER
         // ═══════════════════════════════════════════════════════
+=======
+
+        //  PRIORITY 3 — TEXT + STICKER (smart auto-stack)
+        //
+        //  Rules:
+        //  1. If user provided "position X Y" → RESPECT IT (no auto-stack)
+        //  2. If user did NOT provide position → AUTO-STACK evenly
+        //  3. Single text without position → centered (50, 50)
+        //
+        //  This matches manual typing behaviour when position is given,
+        //  and keeps multi-text blocks readable when it's not.
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         val textCommands = parsed.commands.filter { it.type == CmdType.TEXT }
+
         val groupedTexts = textCommands
             .filter { it.startMs != null && it.endMs != null }
             .groupBy { "${it.startMs}_${it.endMs}" }
 
-        val textPositions = mutableMapOf<ParsedCommand, Pair<Float, Float>>()
+        val autoStackPositions = mutableMapOf<ParsedCommand, Pair<Float, Float>>()
 
         for ((_, group) in groupedTexts) {
-            val count = group.size
-            if (count == 0) continue
+            if (group.isEmpty()) continue
+
+            // Only the ones without explicit position
+            val withoutPosition = group.filter { cmd ->
+                !hasUserPosition(cmd)
+            }
+
+            if (withoutPosition.isEmpty()) continue
 
             val topMargin = 15f
             val bottomMargin = 85f
+<<<<<<< HEAD
             val spacing = if (count > 1)
                 (bottomMargin - topMargin) / (count - 1)
+=======
+            val spacing = if (withoutPosition.size > 1)
+                (bottomMargin - topMargin) / (withoutPosition.size - 1)
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             else 50f
 
-            group.forEachIndexed { index, cmd ->
-                val y = if (count == 1) 50f
+            withoutPosition.forEachIndexed { index, cmd ->
+                val y = if (withoutPosition.size == 1) 50f
                 else topMargin + index * spacing
-                textPositions[cmd] = 50f to y
+                autoStackPositions[cmd] = 50f to y
             }
         }
 
@@ -176,12 +208,21 @@ object PromptExecutor {
                     val endMs = cmd.endMs
 
                     if (startMs != null && endMs != null) {
+<<<<<<< HEAD
                         val userSetPosition =
                             cmd.extra?.contains("position", ignoreCase = true) == true
                         if (!userSetPosition) {
                             textPositions[cmd]?.let { (x, y) ->
                                 textState = textState.copy(
                                     positionX = x, positionY = y
+=======
+                        // Apply auto-stack ONLY if user did not specify position
+                        if (!hasUserPosition(cmd)) {
+                            autoStackPositions[cmd]?.let { (x, y) ->
+                                textState = textState.copy(
+                                    positionX = x,
+                                    positionY = y
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                                 )
                             }
                         }
@@ -239,9 +280,9 @@ object PromptExecutor {
 
         val hasMulti = state.multiSelectedIds.isNotEmpty()
 
-        // ═══════════════════════════════════════════════════════
+
         //  PRIORITY 4 — SELECTED CLIP MUTATIONS
-        // ═══════════════════════════════════════════════════════
+
         for (cmd in parsed.commands) {
             try {
                 when (cmd.type) {
@@ -516,9 +557,15 @@ object PromptExecutor {
                         applied.add("keyframe ${cmd.key}")
                     }
 
+<<<<<<< HEAD
                     // ═══════════════════════════════════════════
                     //  VISUALIZER
                     // ═══════════════════════════════════════════
+=======
+
+                    //  VISUALIZER
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                     CmdType.VISUALIZER -> {
                         val s2 = viewModel.state.value
                         val existingViz = s2.selectedClip
@@ -756,9 +803,26 @@ object PromptExecutor {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
+    //  HELPERS
+
+    /**
+     * Does this command have an explicit user position?
+     * We look for "position", "pos", "posx", "posy", "x", "y" tokens.
+     */
+    private fun hasUserPosition(cmd: ParsedCommand): Boolean {
+        val extra = cmd.extra ?: return false
+        val lower = extra.lowercase()
+        return lower.contains("position")
+                || lower.contains("pos ")
+                || lower.contains("posx")
+                || lower.contains("posy")
+                || Regex("""(^|\s)x\s+[\d.-]""").containsMatchIn(lower)
+                || Regex("""(^|\s)y\s+[\d.-]""").containsMatchIn(lower)
+    }
+
     //  LAYER CLIP TRANSITIONS PARSER
-    // ═══════════════════════════════════════════════════════════
+
     private fun parseLayerClipPairs(pairs: String): Map<Int, String> {
         val result = mutableMapOf<Int, String>()
         if (pairs.isBlank()) return result
@@ -776,6 +840,7 @@ object PromptExecutor {
         return result
     }
 
+<<<<<<< HEAD
     // ═══════════════════════════════════════════════════════════
     //  VISUALIZER PRESET RESOLVER
     // ═══════════════════════════════════════════════════════════
@@ -783,6 +848,11 @@ object PromptExecutor {
      * Resolve a preset name from user prompt → VisualizerPreset.
      * Supports 100 preset keys + legacy aliases.
      */
+=======
+
+    //  VISUALIZER PRESET RESOLVER
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     private fun resolveVisualizerPreset(name: String): VisualizerPreset? {
         val clean = name.trim().lowercase()
             .replace(" ", "")
@@ -790,12 +860,223 @@ object PromptExecutor {
             .replace("_", "")
         if (clean.isBlank()) return null
 
+<<<<<<< HEAD
         // 1) Direct key match
+=======
+        // SPECTRUM
+        val spectrumAliases = mapOf(
+            "audisphere" to VisualizerPreset.AUDIO_SPHERE,
+            "sphere" to VisualizerPreset.AUDIO_SPHERE,
+            "waveformring" to VisualizerPreset.WAVEFORM_RING,
+            "ring" to VisualizerPreset.WAVEFORM_RING,
+            "symmetricwave" to VisualizerPreset.SYMMETRIC_WAVE,
+            "symmetric" to VisualizerPreset.SYMMETRIC_WAVE,
+            "mirrorwave" to VisualizerPreset.SYMMETRIC_WAVE,
+            "circular" to VisualizerPreset.CIRCULAR_SPECTRUM,
+            "circlespectrum" to VisualizerPreset.CIRCULAR_SPECTRUM,
+            "linear" to VisualizerPreset.LINEAR_WAVEFORM,
+            "waveform" to VisualizerPreset.LINEAR_WAVEFORM,
+            "doublesided" to VisualizerPreset.DOUBLE_SIDED_BARS,
+            "radial" to VisualizerPreset.RADIAL_BARS,
+            "radialbars" to VisualizerPreset.RADIAL_BARS,
+            "innerradial" to VisualizerPreset.INNER_RADIAL_BARS,
+            "heartbeat" to VisualizerPreset.HEARTBEAT_WAVE,
+            "ecgwave" to VisualizerPreset.HEARTBEAT_WAVE,
+            "square" to VisualizerPreset.SQUARE_SPECTRUM,
+            "triangle" to VisualizerPreset.TRIANGLE_BEATS,
+            "hexagon" to VisualizerPreset.HEXAGON_PULSE,
+            "dotmatrix" to VisualizerPreset.DOT_MATRIX,
+            "dotsmatrix" to VisualizerPreset.DOT_MATRIX,
+            "mirrored" to VisualizerPreset.MIRRORED_LINEAR,
+            "glowwaves" to VisualizerPreset.GLOW_WAVES,
+            "thick" to VisualizerPreset.THICK_BARS,
+            "thickbars" to VisualizerPreset.THICK_BARS,
+            "thin" to VisualizerPreset.THIN_STRINGS,
+            "strings" to VisualizerPreset.THIN_STRINGS,
+            "sine" to VisualizerPreset.SINE_WAVE,
+            "3d" to VisualizerPreset.PERSPECTIVE_3D,
+            "perspective" to VisualizerPreset.PERSPECTIVE_3D,
+            "volcano" to VisualizerPreset.FREQUENCY_VOLCANO,
+            "tornado" to VisualizerPreset.TORNADO_SPIRAL,
+            "spiral" to VisualizerPreset.TORNADO_SPIRAL,
+            "dualring" to VisualizerPreset.DUAL_RING,
+            "star" to VisualizerPreset.STAR_BURST,
+            "starburst" to VisualizerPreset.STAR_BURST
+        )
+
+        // PARTICLES
+        val particleAliases = mapOf(
+            "bassparticles" to VisualizerPreset.BASS_PARTICLES,
+            "bass" to VisualizerPreset.BASS_PARTICLES,
+            "dust" to VisualizerPreset.FLOATING_DUST,
+            "floatingdust" to VisualizerPreset.FLOATING_DUST,
+            "liquid" to VisualizerPreset.LIQUID_DROPS,
+            "drops" to VisualizerPreset.LIQUID_DROPS,
+            "firefly" to VisualizerPreset.FIREFLY_GLOW,
+            "fireflies" to VisualizerPreset.FIREFLY_GLOW,
+            "smoke" to VisualizerPreset.SMOKE_AURA,
+            "smokeaura" to VisualizerPreset.SMOKE_AURA,
+            "matrix" to VisualizerPreset.MATRIX_RAIN,
+            "matrixrain" to VisualizerPreset.MATRIX_RAIN,
+            "snow" to VisualizerPreset.SNOWFALL,
+            "snowfall" to VisualizerPreset.SNOWFALL,
+            "nebula" to VisualizerPreset.COSMIC_NEBULA,
+            "cosmic" to VisualizerPreset.COSMIC_NEBULA,
+            "spark" to VisualizerPreset.SPARK_TRAIL,
+            "sparks" to VisualizerPreset.SPARK_TRAIL,
+            "ink" to VisualizerPreset.INK_BLEED,
+            "inkbleed" to VisualizerPreset.INK_BLEED,
+            "sand" to VisualizerPreset.SAND_STORM,
+            "sandstorm" to VisualizerPreset.SAND_STORM,
+            "magic" to VisualizerPreset.MAGIC_DUST,
+            "magicdust" to VisualizerPreset.MAGIC_DUST,
+            "meteor" to VisualizerPreset.METEOR_SHOWER,
+            "plasma" to VisualizerPreset.PLASMA_ORBS,
+            "orbs" to VisualizerPreset.PLASMA_ORBS,
+            "confetti" to VisualizerPreset.CONFETTI_POP,
+            "bubbles" to VisualizerPreset.BUBBLES_POP,
+            "electric" to VisualizerPreset.ELECTRIC_STORM,
+            "storm" to VisualizerPreset.ELECTRIC_STORM,
+            "disintegrate" to VisualizerPreset.DISINTEGRATION,
+            "disintegration" to VisualizerPreset.DISINTEGRATION,
+            "galaxy" to VisualizerPreset.GALAXY_VORTEX,
+            "cybergrid" to VisualizerPreset.CYBER_GRID
+        )
+
+        // NEON
+        val neonAliases = mapOf(
+            "neon" to VisualizerPreset.NEON_GLOW_RING,
+            "glow" to VisualizerPreset.NEON_GLOW_RING,
+            "neonring" to VisualizerPreset.NEON_GLOW_RING,
+            "neonglow" to VisualizerPreset.NEON_GLOW_RING,
+            "rgb" to VisualizerPreset.RGB_GLITCH,
+            "rgbglitch" to VisualizerPreset.RGB_GLITCH,
+            "vaporwave" to VisualizerPreset.VAPORWAVE_GRID,
+            "vapor" to VisualizerPreset.VAPORWAVE_GRID,
+            "vhs" to VisualizerPreset.VHS_NOISE,
+            "vhsnoise" to VisualizerPreset.VHS_NOISE,
+            "laser" to VisualizerPreset.LASER_BEAM,
+            "laserbeam" to VisualizerPreset.LASER_BEAM,
+            "eq" to VisualizerPreset.DIGITAL_EQ,
+            "digitaleq" to VisualizerPreset.DIGITAL_EQ,
+            "chroma" to VisualizerPreset.CHROMA_PULSE,
+            "chromapulse" to VisualizerPreset.CHROMA_PULSE,
+            "scanline" to VisualizerPreset.SCANLINE_DISTORT,
+            "tron" to VisualizerPreset.TRON_WIREFRAME,
+            "tronwireframe" to VisualizerPreset.TRON_WIREFRAME,
+            "led" to VisualizerPreset.LED_MATRIX,
+            "ledmatrix" to VisualizerPreset.LED_MATRIX,
+            "arcade" to VisualizerPreset.ARCADE_GAMEOVER,
+            "lasertunnel" to VisualizerPreset.LASER_TUNNEL,
+            "tracer" to VisualizerPreset.NEON_TRACER,
+            "neontracer" to VisualizerPreset.NEON_TRACER,
+            "pixel" to VisualizerPreset.PIXEL_DISSOLVE,
+            "pixeldissolve" to VisualizerPreset.PIXEL_DISSOLVE,
+            "ecg" to VisualizerPreset.ECG_GRID,
+            "ecggrid" to VisualizerPreset.ECG_GRID,
+            "synth" to VisualizerPreset.SYNTH_SUN,
+            "synthsun" to VisualizerPreset.SYNTH_SUN,
+            "hologram" to VisualizerPreset.HOLOGRAM,
+            "crt" to VisualizerPreset.CRT_FLICKER,
+            "crtflicker" to VisualizerPreset.CRT_FLICKER,
+            "vector" to VisualizerPreset.VECTOR_WAVE,
+            "vectorwave" to VisualizerPreset.VECTOR_WAVE,
+            "glitch" to VisualizerPreset.GLITCH_TWITCH,
+            "glitchtwitch" to VisualizerPreset.GLITCH_TWITCH
+        )
+
+        // GEOMETRIC
+        val geometricAliases = mapOf(
+            "minimal" to VisualizerPreset.MINIMAL_DOTS,
+            "dots" to VisualizerPreset.MINIMAL_DOTS,
+            "minimaldots" to VisualizerPreset.MINIMAL_DOTS,
+            "poly" to VisualizerPreset.ROTATING_POLY,
+            "rotatingpoly" to VisualizerPreset.ROTATING_POLY,
+            "kaleidoscope" to VisualizerPreset.KALEIDOSCOPE,
+            "interlocking" to VisualizerPreset.INTERLOCKING_RINGS,
+            "rings" to VisualizerPreset.INTERLOCKING_RINGS,
+            "expanding" to VisualizerPreset.EXPANDING_SQUARES,
+            "squares" to VisualizerPreset.EXPANDING_SQUARES,
+            "origami" to VisualizerPreset.ORIGAMI,
+            "fractal" to VisualizerPreset.FRACTAL_ZOOM,
+            "fractalzoom" to VisualizerPreset.FRACTAL_ZOOM,
+            "parallax" to VisualizerPreset.PARALLAX_LINES,
+            "isometric" to VisualizerPreset.ISOMETRIC_BLOCKS,
+            "blocks" to VisualizerPreset.ISOMETRIC_BLOCKS,
+            "mirror" to VisualizerPreset.SYMMETRIC_MIRROR,
+            "symmetric" to VisualizerPreset.SYMMETRIC_MIRROR,
+            "crosshair" to VisualizerPreset.CROSSHAIR,
+            "target" to VisualizerPreset.CROSSHAIR,
+            "dna" to VisualizerPreset.DNA_STRAND,
+            "dnastrand" to VisualizerPreset.DNA_STRAND,
+            "concentric" to VisualizerPreset.CONCENTRIC_RINGS,
+            "shards" to VisualizerPreset.FLOATING_SHARDS,
+            "infinitetunnel" to VisualizerPreset.INFINITE_TUNNEL,
+            "morph" to VisualizerPreset.SHAPE_MORPH,
+            "shapemorph" to VisualizerPreset.SHAPE_MORPH,
+            "gyroscope" to VisualizerPreset.GYROSCOPE,
+            "gyro" to VisualizerPreset.GYROSCOPE,
+            "diagonal" to VisualizerPreset.SPLIT_DIAGONAL,
+            "splitdiagonal" to VisualizerPreset.SPLIT_DIAGONAL,
+            "checker" to VisualizerPreset.CHECKERBOARD,
+            "checkerboard" to VisualizerPreset.CHECKERBOARD,
+            "ribbon" to VisualizerPreset.VECTOR_RIBBON,
+            "vectorribbon" to VisualizerPreset.VECTOR_RIBBON
+        )
+
+        // CINEMATIC
+        val cinematicAliases = mapOf(
+            "lensflare" to VisualizerPreset.LENS_FLARE,
+            "flare" to VisualizerPreset.LENS_FLARE,
+            "shutter" to VisualizerPreset.CAMERA_SHUTTER,
+            "camerashutter" to VisualizerPreset.CAMERA_SHUTTER,
+            "cinematicdust" to VisualizerPreset.CINEMATIC_DUST,
+            "vignette" to VisualizerPreset.VIGNETTE_BREATHE,
+            "vignettebreathe" to VisualizerPreset.VIGNETTE_BREATHE,
+            "blur" to VisualizerPreset.BLUR_DISSOLVE,
+            "blurdissolve" to VisualizerPreset.BLUR_DISSOLVE,
+            "sunbeams" to VisualizerPreset.SUNBEAMS,
+            "beams" to VisualizerPreset.SUNBEAMS,
+            "rain" to VisualizerPreset.RAINDROPS,
+            "raindrops" to VisualizerPreset.RAINDROPS,
+            "grain" to VisualizerPreset.FILM_GRAIN,
+            "filmgrain" to VisualizerPreset.FILM_GRAIN,
+            "lightleak" to VisualizerPreset.LIGHT_LEAK,
+            "fog" to VisualizerPreset.FOGGY_AMBIANCE,
+            "foggy" to VisualizerPreset.FOGGY_AMBIANCE,
+            "bokeh" to VisualizerPreset.BOKEH_DRIFT,
+            "shadow" to VisualizerPreset.SHADOW_WAVE,
+            "ripple" to VisualizerPreset.WATER_RIPPLE,
+            "waterripple" to VisualizerPreset.WATER_RIPPLE,
+            "cloudy" to VisualizerPreset.CLOUDY_TIMELAPSE,
+            "lightstreak" to VisualizerPreset.LIGHT_STREAK,
+            "streak" to VisualizerPreset.LIGHT_STREAK,
+            "countdown" to VisualizerPreset.VINTAGE_COUNTDOWN,
+            "vintage" to VisualizerPreset.VINTAGE_COUNTDOWN,
+            "golden" to VisualizerPreset.GOLDEN_HOUR,
+            "goldenhour" to VisualizerPreset.GOLDEN_HOUR,
+            "prism" to VisualizerPreset.PRISM_RAINBOW,
+            "rainbow" to VisualizerPreset.PRISM_RAINBOW,
+            "shake" to VisualizerPreset.CAMERA_SHAKE,
+            "camerashake" to VisualizerPreset.CAMERA_SHAKE,
+            "horizon" to VisualizerPreset.HORIZON_ZOOM,
+            "horizonzoom" to VisualizerPreset.HORIZON_ZOOM
+        )
+
+        val allAliases = spectrumAliases + particleAliases +
+                neonAliases + geometricAliases + cinematicAliases
+
+        allAliases[clean]?.let { return it }
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         VisualizerPreset.values().firstOrNull {
             it.key.lowercase() == clean
         }?.let { return it }
 
+<<<<<<< HEAD
         // 2) Label match
+=======
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         VisualizerPreset.values().firstOrNull {
             it.label.lowercase().replace(" ", "") == clean
         }?.let { return it }
@@ -937,9 +1218,9 @@ object PromptExecutor {
         return null
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  TEXT PROPS PARSER
-    // ═══════════════════════════════════════════════════════════
+
     private fun applyTextProps(initial: TextState, props: String): TextState {
         var st = initial
         val tokens = props.split(Regex("\\s+"))
@@ -1246,9 +1527,9 @@ object PromptExecutor {
         else -> 50f to 50f
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  STICKER PROPS PARSER
-    // ═══════════════════════════════════════════════════════════
+
     private fun applyStickerProps(
         initial: com.moody.moodyvideoeditor.data.StickerState,
         props: String

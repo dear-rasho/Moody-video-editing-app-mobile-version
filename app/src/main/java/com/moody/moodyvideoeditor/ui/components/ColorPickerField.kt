@@ -208,7 +208,7 @@ fun ColorPickerField(
     }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────
+// Helpers
 private fun computeHsvFromWheel(offset: Offset, sizeW: Float, currentV: Float): FloatArray {
     val radius = sizeW / 2f
     val cx = radius

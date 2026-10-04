@@ -1,8 +1,6 @@
 package com.moody.moodyvideoeditor.data
 
-/**
- * Timeline pe clip drag karne ki state.
- */
+// Timeline pe clip drag karne ki state.
 data class DragState(
     val clipId: String,
     val startClientX: Float,

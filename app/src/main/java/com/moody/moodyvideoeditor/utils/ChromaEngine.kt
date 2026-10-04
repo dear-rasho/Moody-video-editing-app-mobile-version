@@ -3,14 +3,12 @@ package com.moody.moodyvideoeditor.utils
 import android.graphics.ColorMatrix
 import com.moody.moodyvideoeditor.data.ChromaState
 
-/**
- * Mirrors js/workspace/exportRenderer.js applyChromaToData()
- * Preview = simplified via ColorMatrix (approximation).
- * Export = full per-pixel removal via FFmpeg chromakey filter.
- */
+// Mirrors js/workspace/exportRenderer.js applyChromaToData()
+// Preview = simplified via ColorMatrix (approximation).
+// Export = full per-pixel removal via FFmpeg chromakey filter.
 object ChromaEngine {
 
-    /** RGB → distance-based approx ColorMatrix (preview only) */
+    // RGB → distance-based approx ColorMatrix (preview only)
     fun buildApproxMatrix(state: ChromaState): ColorMatrix {
         val cm = ColorMatrix()
         // Approx: reduce saturation of key color via hue rotation
@@ -24,7 +22,7 @@ object ChromaEngine {
         return cm
     }
 
-    /** Extract RGB from packed ARGB long */
+    // Extract RGB from packed ARGB long
     fun toRgb(colorLong: Long): Triple<Int, Int, Int> {
         val r = ((colorLong shr 16) and 0xFF).toInt()
         val g = ((colorLong shr 8) and 0xFF).toInt()
@@ -32,7 +30,7 @@ object ChromaEngine {
         return Triple(r, g, b)
     }
 
-    /** FFmpeg chromakey filter string — used in export */
+    // FFmpeg chromakey filter string — used in export
     fun buildFfmpegFilter(state: ChromaState): String {
         val (r, g, b) = toRgb(state.keyColor)
         val hex = String.format("0x%02X%02X%02X", r, g, b)

@@ -41,10 +41,8 @@ import com.moody.moodyvideoeditor.data.KeyframeLibrary
 import com.moody.moodyvideoeditor.utils.KeyframeStore
 import kotlin.math.abs
 
-/**
- * Keyframe Graph — fullscreen, horizontal-scrollable time axis.
- * Each 1 second = 80 dp.
- */
+// Keyframe Graph — fullscreen, horizontal-scrollable time axis.
+// Each 1 second = 80 dp.
 @Composable
 fun KeyframeGraphDialog(
     clipName: String,
@@ -101,7 +99,7 @@ fun KeyframeGraphDialog(
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
 
-            // ─── HEADER ─────────────────────────────────
+            // HEADER
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -136,7 +134,7 @@ fun KeyframeGraphDialog(
                 }
             }
 
-            // ─── LEGEND ─────────────────────────────────
+            // LEGEND
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -169,7 +167,7 @@ fun KeyframeGraphDialog(
                 }
             }
 
-            // ─── SCROLLABLE CANVAS ──────────────────────
+            // SCROLLABLE CANVAS
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -285,7 +283,7 @@ fun KeyframeGraphDialog(
                             val plotW = size.width - padL - padR
                             val plotH = size.height - padT - padB
 
-                            // ─── HORIZONTAL GRID (per second) ───
+                            // HORIZONTAL GRID (per second)
                             val totalSeconds = clipDurationSec.toInt() + 1
                             for (s in 0..totalSeconds) {
                                 val sec = s.toFloat()
@@ -299,7 +297,7 @@ fun KeyframeGraphDialog(
                                 )
                             }
 
-                            // ─── HORIZONTAL GRID (values) ───
+                            // HORIZONTAL GRID (values)
                             for (i in 0..4) {
                                 val y = padT + plotH * (i / 4f)
                                 drawLine(
@@ -310,7 +308,7 @@ fun KeyframeGraphDialog(
                                 )
                             }
 
-                            // ─── BORDER ───
+                            // BORDER
                             drawRect(
                                 color = Color(0xFF262626),
                                 topLeft = Offset(padL, padT),
@@ -318,7 +316,7 @@ fun KeyframeGraphDialog(
                                 style = Stroke(width = 1.5f)
                             )
 
-                            // ─── CURVES + DOTS ───
+                            // CURVES + DOTS
                             activeProps.forEach { prop ->
                                 val kfs = (keyframeMap[prop] ?: emptyList()).sortedBy { it.time }
                                 if (kfs.isEmpty()) return@forEach
@@ -358,14 +356,14 @@ fun KeyframeGraphDialog(
                                 }
                             }
 
-                            // ─── TIME LABELS ───
+                            // TIME LABELS
                             // (Canvas can't draw text; skip)
                         }
                     }
                 }
             }
 
-            // ─── HINT ───────────────────────────────────
+            // HINT
             Text(
                 "Drag dots to move (X = time, Y = value)  •  swipe canvas horizontally",
                 color = Color(0xFF666666),

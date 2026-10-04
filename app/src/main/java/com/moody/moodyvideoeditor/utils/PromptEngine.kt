@@ -83,9 +83,9 @@ object PromptEngine {
 
     private val EFFECT_NAMES = EffectLibrary.ALL.map { it.key }.toSet()
 
-    // ═══════════════════════════════════════════════════════════
+
     //  MAIN PARSE
-    // ═══════════════════════════════════════════════════════════
+
     fun parse(input: String): ParseResult {
         val trimmed = input.trim()
         if (trimmed.isBlank()) return ParseResult(emptyList(), emptyList())
@@ -116,9 +116,9 @@ object PromptEngine {
         return result
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  TIMESTAMPED PARSE
-    // ═══════════════════════════════════════════════════════════
+
     private fun parseTimestamped(input: String): ParseResult {
         val commands = mutableListOf<ParsedCommand>()
         val unknown = mutableListOf<String>()
@@ -160,9 +160,9 @@ object PromptEngine {
         return ParseResult(commands, unknown)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  LINEAR PARSE — handles L1 transitions, C1 slide, ...
-    // ═══════════════════════════════════════════════════════════
+
     private fun parseLinear(input: String): ParseResult {
         val commands = mutableListOf<ParsedCommand>()
         val unknown = mutableListOf<String>()
@@ -234,9 +234,9 @@ object PromptEngine {
         return ParseResult(commands, unknown)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  PARSE ONE
-    // ═══════════════════════════════════════════════════════════
+
     private fun parseOne(text: String): ParsedCommand? {
         val lower = text.lowercase().trim()
         if (lower.isBlank()) return null
@@ -393,9 +393,9 @@ object PromptEngine {
             return ParsedCommand(CmdType.BRUSH_CLEAR, "clear", raw = text)
         }
 
-        // ═══════════════════════════════════════════════════════════
+
         //  🆕 VISUALIZER COMMANDS
-        // ═══════════════════════════════════════════════════════════
+
         if (lower == "visualizer" || lower.startsWith("visualizer ")) {
             val rest = if (lower == "visualizer") "" else lower.substring(11).trim()
 
@@ -681,9 +681,9 @@ object PromptEngine {
         return null
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  HELPERS
-    // ═══════════════════════════════════════════════════════════
+
     fun withAdjustment(adj: AdjustmentData, key: String, v: Float): AdjustmentData = when (key) {
         "brightness" -> adj.copy(brightness = v)
         "contrast" -> adj.copy(contrast = v)

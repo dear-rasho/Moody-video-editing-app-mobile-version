@@ -6,16 +6,25 @@ enum class VisualizerPreset(
     val icon: String,
     val category: String
 ) {
+<<<<<<< HEAD
     // ═══════════════════════════════════════════════════════════
     //  0️⃣ PREMIUM (3)
     // ═══════════════════════════════════════════════════════════
+=======
+
+    //  0️⃣ NEW — Premium (Phase 1 additions)
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     AUDIO_SPHERE("audioSphere", "Audio Sphere", "🔊", "spectrum"),
     WAVEFORM_RING("waveformRing", "Waveform Ring", "🌊", "spectrum"),
     SYMMETRIC_WAVE("symmetricWave", "Symmetric Wave", "⚡", "spectrum"),
 
+<<<<<<< HEAD
     // ═══════════════════════════════════════════════════════════
+=======
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     //  1️⃣ SPECTRUM (20)
-    // ═══════════════════════════════════════════════════════════
+
     CIRCULAR_SPECTRUM("circularSpectrum", "Circular Spectrum", "🔵", "spectrum"),
     LINEAR_WAVEFORM("linearWaveform", "Linear Waveform", "〰️", "spectrum"),
     DOUBLE_SIDED_BARS("doubleSidedBars", "Double-Sided", "↕️", "spectrum"),
@@ -37,9 +46,9 @@ enum class VisualizerPreset(
     DUAL_RING("dualRing", "Dual Ring", "💠", "spectrum"),
     STAR_BURST("starBurst", "Star Burst", "⭐", "spectrum"),
 
-    // ═══════════════════════════════════════════════════════════
+
     //  2️⃣ PARTICLES (20)
-    // ═══════════════════════════════════════════════════════════
+
     BASS_PARTICLES("bassParticles", "Bass Particles", "💥", "particles"),
     FLOATING_DUST("floatingDust", "Floating Dust", "🌫️", "particles"),
     LIQUID_DROPS("liquidDrops", "Liquid Drops", "💧", "particles"),
@@ -61,9 +70,9 @@ enum class VisualizerPreset(
     GALAXY_VORTEX("galaxyVortex", "Galaxy Vortex", "🌠", "particles"),
     CYBER_GRID("cyberGrid", "Cyber Grid", "🕸️", "particles"),
 
-    // ═══════════════════════════════════════════════════════════
+
     //  3️⃣ NEON / CYBER (20)
-    // ═══════════════════════════════════════════════════════════
+
     NEON_GLOW_RING("neonGlowRing", "Neon Glow Ring", "💫", "neon"),
     RGB_GLITCH("rgbGlitch", "RGB Glitch", "🌈", "neon"),
     VAPORWAVE_GRID("vaporwaveGrid", "Vaporwave", "🌴", "neon"),
@@ -85,9 +94,9 @@ enum class VisualizerPreset(
     VECTOR_WAVE("vectorWave", "Vector Wave", "📊", "neon"),
     GLITCH_TWITCH("glitchTwitch", "Glitch Twitch", "📳", "neon"),
 
-    // ═══════════════════════════════════════════════════════════
+
     //  4️⃣ GEOMETRIC (20)
-    // ═══════════════════════════════════════════════════════════
+
     MINIMAL_DOTS("minimalDots", "Minimal Dots", "⚫", "geometric"),
     ROTATING_POLY("rotatingPoly", "Rotating Poly", "🔶", "geometric"),
     KALEIDOSCOPE("kaleidoscope", "Kaleidoscope", "🔯", "geometric"),
@@ -109,9 +118,9 @@ enum class VisualizerPreset(
     CHECKERBOARD("checkerboard", "Checkerboard", "🏁", "geometric"),
     VECTOR_RIBBON("vectorRibbon", "Vector Ribbon", "🎗️", "geometric"),
 
-    // ═══════════════════════════════════════════════════════════
+
     //  5️⃣ CINEMATIC (20)
-    // ═══════════════════════════════════════════════════════════
+
     LENS_FLARE("lensFlare", "Lens Flare", "🔆", "cinematic"),
     CAMERA_SHUTTER("cameraShutter", "Camera Shutter", "📷", "cinematic"),
     CINEMATIC_DUST("cinematicDust", "Cinematic Dust", "✨", "cinematic"),
@@ -233,9 +242,14 @@ data class VisualizerState(
 
     val lerpFactor: Float = 0.20f,
 
+<<<<<<< HEAD
     // ═══════════════════════════════════════════════════════════
     //  AUDIO ANALYSIS — USER CONTROLLABLE
     // ═══════════════════════════════════════════════════════════
+=======
+    // ─── 🆕 PHASE 1 PROPERTIES ───────────────────────────────
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     /** Lower cutoff frequency (Hz) — 20..2000 */
     val startFrequencyHz: Float = 20f,
 
@@ -245,7 +259,11 @@ data class VisualizerState(
     /** Number of frequency bands / displayed samples — 1..6400 */
     val bands: Int = 64,
 
+<<<<<<< HEAD
     /** Maximum bar height multiplier — 0.1..3.0 */
+=======
+    /** Maximum bar height (fraction of base radius) — 0.1..3.0 */
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     val maxHeight: Float = 1.0f,
 
     /** Audio analysis window in ms — 20..2000 */
@@ -260,6 +278,7 @@ data class VisualizerState(
     /** Side mode: "a" | "b" | "both" */
     val sideMode: String = "both",
 
+<<<<<<< HEAD
     /** Line width in px — 0.5..20 */
     val lineWidth: Float = 2.5f,
 
@@ -283,6 +302,13 @@ data class VisualizerState(
     val beatGlow: Float = 0.50f,
 
     val glowIntensity: Float = 0.30f
+=======
+    /** Line width in px — 0.5..20 (used by analog styles) */
+    val lineWidth: Float = 2.5f,
+
+    /** Particle size multiplier — 0.5..5.0 (used by particle presets) */
+    val particleSize: Float = 1.0f
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
 ) {
     val isActive: Boolean get() = opacity > 0f
 

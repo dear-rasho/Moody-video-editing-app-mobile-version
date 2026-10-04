@@ -37,10 +37,8 @@ import com.moody.moodyvideoeditor.data.OverlayLibrary
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 
-/**
- * Mirrors js/features/overlays.js
- * Category shelf → preset grid → intensity + color.
- */
+// Mirrors js/features/overlays.js
+// Category shelf → preset grid → intensity + color.
 @Composable
 fun OverlaysPanel(
     current: OverlayState,
@@ -72,7 +70,7 @@ fun OverlaysPanel(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
-            // ─── CATEGORY SHELF ────────────────────────
+            // CATEGORY SHELF
             Text(
                 "Category",
                 color = Color(0xFF888888),
@@ -110,7 +108,7 @@ fun OverlaysPanel(
                 }
             }
 
-            // ─── PRESET GRID ──────────────────────────
+            // PRESET GRID
             Text(
                 currentCategory.label,
                 color = Color(0xFF7C3AED),
@@ -149,7 +147,7 @@ fun OverlaysPanel(
                 }
             }
 
-            // ─── INTENSITY + COLOR (only if active) ───
+            // INTENSITY + COLOR (only if active)
             if (current.isActive) {
                 Spacer(Modifier.height(2.dp))
 

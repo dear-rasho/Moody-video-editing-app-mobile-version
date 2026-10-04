@@ -40,18 +40,24 @@ fun VisualizerOverlay(
 
     val context = LocalContext.current
 
-    // ═══════════════════════════════════════════════════════════
+
     //  FIND LINKED AUDIO CLIP
-    // ═══════════════════════════════════════════════════════════
+
     val linkedAudio = remember(state.linkedAudioClipId, allClips) {
         state.linkedAudioClipId?.let { id ->
             allClips.firstOrNull { it.id == id && it.isAudio }
         }
     }
 
+<<<<<<< HEAD
     // ═══════════════════════════════════════════════════════════
     //  LOAD CENTER IMAGE — robust
     // ═══════════════════════════════════════════════════════════
+=======
+
+    //  LOAD CENTER IMAGE — robust
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     LaunchedEffect(state.imageUri, state.showImage) {
         val uri = state.imageUri
 
@@ -78,9 +84,9 @@ fun VisualizerOverlay(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  ELAPSED TIME — for idle motion (rotation, waves)
-    // ═══════════════════════════════════════════════════════════
+
     var elapsedSec by remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(isPlaying) {
@@ -95,11 +101,11 @@ fun VisualizerOverlay(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  COMPUTE relativeMs FROM PLAYHEAD
     //  Maps timeline position → audio source position
     //  SAME formula used in export → perfect sync
-    // ═══════════════════════════════════════════════════════════
+
     val relativeMs = remember(currentPosMs, linkedAudio) {
         val audio = linkedAudio ?: return@remember 0L
         val timelineOffset = (currentPosMs - audio.timelineStartMs).coerceAtLeast(0L)
@@ -107,9 +113,15 @@ fun VisualizerOverlay(
         (audio.sourceStartMs + (timelineOffset * speed).toLong())
     }
 
+<<<<<<< HEAD
     // ═══════════════════════════════════════════════════════════
     //  DRAW
     // ═══════════════════════════════════════════════════════════
+=======
+
+    //  DRAW — passes relativeMs (not rawFft) to engine
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     Canvas(modifier = modifier) {
         VisualizerEngine.draw(
             scope = this,

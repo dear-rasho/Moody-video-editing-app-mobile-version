@@ -202,7 +202,7 @@ fun BrushPanel(
                 }
             }
 
-            // ─── Color Mode Toggle ───
+            // Color Mode Toggle
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -260,7 +260,7 @@ fun BrushPanel(
                 }
             }
 
-            // ─── Solid Color Palette (only when NOT gradient) ───
+            // Solid Color Palette (only when NOT gradient)
             if (!activeGradient.enabled) {
                 Text(
                     "Color",
@@ -295,7 +295,7 @@ fun BrushPanel(
                     }
                 }
             } else {
-                // ─── Gradient Configuration ───
+                // Gradient Configuration
                 Text(
                     "Gradient Ramp",
                     color = Color(0xFF888888), fontSize = 9.sp,

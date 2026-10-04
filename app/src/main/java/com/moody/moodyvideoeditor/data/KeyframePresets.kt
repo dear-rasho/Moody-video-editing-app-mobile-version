@@ -1,9 +1,7 @@
 package com.moody.moodyvideoeditor.data
 
-/**
- * Ready-made keyframe animation patterns.
- * Tap a preset → auto-applies keyframes across the clip duration.
- */
+// Ready-made keyframe animation patterns.
+// Tap a preset → auto-applies keyframes across the clip duration.
 data class PresetKeyframe(
     val prop: String,      // "x", "y", "scale", "rotation", "opacity"
     val timeFrac: Float,   // 0.0 = start, 1.0 = end

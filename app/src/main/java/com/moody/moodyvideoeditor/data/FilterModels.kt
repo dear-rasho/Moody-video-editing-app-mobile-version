@@ -1,9 +1,7 @@
 package com.moody.moodyvideoeditor.data
 
-/**
- * Mirrors js/features/filters.js FILTERS list.
- * 9 CSS filter primitives with individual min/max/default.
- */
+// Mirrors js/features/filters.js FILTERS list.
+// 9 CSS filter primitives with individual min/max/default.
 data class FilterState(
     val brightness: Float = 100f,
     val contrast: Float = 100f,
@@ -75,9 +73,9 @@ data class FilterState(
             Meta("invert", "Invert", "🔄", 0f, 100f, 1f, 0f, "%")
         )
 
-        // ═══════════════════════════════════════════════════════════
+
         //  🆕 FILTER PRESETS — 135 total
-        // ═══════════════════════════════════════════════════════════
+
         val PRESET_CATEGORIES = listOf(
             "cinematic" to "🎬 Cinematic & Movies",
             "retro" to "📸 Retro & Vintage",
@@ -90,7 +88,7 @@ data class FilterState(
         )
 
         val PRESETS: List<FilterPreset> = listOf(
-            // ═══════════ 🎬 CINEMATIC (20) ═══════════
+            // 🎬 CINEMATIC (20)
             FilterPreset(
                 "badbunny",
                 "Bad Bunny",
@@ -282,7 +280,7 @@ data class FilterState(
                 sepia = 5f
             ),
 
-            // ═══════════ 📸 RETRO & VINTAGE (20) ═══════════
+            // 📸 RETRO & VINTAGE (20)
             FilterPreset(
                 "flashccd",
                 "Flash CCD",
@@ -482,7 +480,7 @@ data class FilterState(
                 sepia = 10f
             ),
 
-            // ═══════════ ✨ 4K & SHARPNESS (15) ═══════════
+            // ✨ 4K & SHARPNESS (15)
             FilterPreset(
                 "clearhd",
                 "Clear HD",
@@ -619,7 +617,7 @@ data class FilterState(
                 saturation = 110f
             ),
 
-            // ═══════════ 🍃 AESTHETIC (15) ═══════════
+            // 🍃 AESTHETIC (15)
             FilterPreset(
                 "coolvibes",
                 "Cool Vibes",
@@ -766,7 +764,7 @@ data class FilterState(
                 hue = 45f
             ),
 
-            // ═══════════ 🎨 CYBER & NEON (15) ═══════════
+            // 🎨 CYBER & NEON (15)
             FilterPreset(
                 "neonphoto",
                 "Neon Photo",
@@ -915,7 +913,7 @@ data class FilterState(
                 hue = 180f
             ),
 
-            // ═══════════ 🌆 TRAVEL & LANDSCAPE (15) ═══════════
+            // 🌆 TRAVEL & LANDSCAPE (15)
             FilterPreset(
                 "horizonblue",
                 "Horizon Blue",
@@ -1064,7 +1062,7 @@ data class FilterState(
                 hue = 200f
             ),
 
-            // ═══════════ 👤 PORTRAIT & GLOW (20) ═══════════
+            // 👤 PORTRAIT & GLOW (20)
             FilterPreset(
                 "boldglamour",
                 "Bold Glamour",
@@ -1255,7 +1253,7 @@ data class FilterState(
                 saturation = 105f
             ),
 
-            // ═══════════ 🌫️ ATMOSPHERIC & MOODY (15) ═══════════
+            // 🌫️ ATMOSPHERIC & MOODY (15)
             FilterPreset(
                 "darknoise",
                 "Dark Noise",
@@ -1405,9 +1403,7 @@ data class FilterState(
     }
 }
 
-/**
- * 🆕 Filter preset with pre-configured values.
- */
+// 🆕 Filter preset with pre-configured values.
 data class FilterPreset(
     val key: String,
     val label: String,

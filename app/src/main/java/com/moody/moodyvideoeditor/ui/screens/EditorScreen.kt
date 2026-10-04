@@ -74,6 +74,7 @@ import com.moody.moodyvideoeditor.ui.features.ColorWheelPanel
 import com.moody.moodyvideoeditor.ui.features.CropPanel
 import com.moody.moodyvideoeditor.ui.features.EffectsPanel
 import com.moody.moodyvideoeditor.ui.features.ExportDialog
+import com.moody.moodyvideoeditor.ui.features.ExportOverlay
 import com.moody.moodyvideoeditor.ui.features.FiltersPanel
 import com.moody.moodyvideoeditor.ui.features.FreezePanel
 import com.moody.moodyvideoeditor.ui.features.MaskPanel
@@ -97,10 +98,10 @@ import com.moody.moodyvideoeditor.utils.PromptExecutor
 import com.moody.moodyvideoeditor.utils.SpeedEngine
 import com.moody.moodyvideoeditor.utils.TransformApplier
 import com.moody.moodyvideoeditor.utils.TransformValues
-import com.moody.moodyvideoeditor.utils.VideoExporter
 import com.moody.moodyvideoeditor.utils.VideoUtils
 import com.moody.moodyvideoeditor.utils.VisualizerEngine
 import com.moody.moodyvideoeditor.viewmodel.EditorViewModel
+import com.moody.moodyvideoeditor.viewmodel.ExportUiStateBundle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -125,9 +126,11 @@ fun EditorScreen(
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
 
-    // ═══════════════════════════════════════════════════════════
-    //  PROJECT LOAD / AUTO-SAVE
-    // ═══════════════════════════════════════════════════════════
+    // Observe export state from service via ViewModel
+    val exportState by viewModel.exportState.collectAsState()
+
+
+    // Project load and auto-save
     LaunchedEffect(projectId) {
         if (projectId.isNotBlank() && viewModel.getProjectId() != projectId) {
             viewModel.loadProject(context, projectId)
@@ -153,9 +156,8 @@ fun EditorScreen(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  PANEL STATE
-    // ═══════════════════════════════════════════════════════════
+
+    // Panel state
     var activePanel by remember {
         mutableStateOf<String?>(if (startInCodeMode) "code" else null)
     }
@@ -165,9 +167,8 @@ fun EditorScreen(
     var filterEditLayerId by remember { mutableStateOf<String?>(null) }
     var effectEditLayerId by remember { mutableStateOf<String?>(null) }
 
-    // ═══════════════════════════════════════════════════════════
-    //  BRUSH STATE
-    // ═══════════════════════════════════════════════════════════
+
+    // Brush state
     var isDrawingMode by remember { mutableStateOf(false) }
     var isMaskPenMode by remember { mutableStateOf(false) }
     var brushType by remember { mutableStateOf(BrushType.PEN) }
@@ -178,46 +179,35 @@ fun EditorScreen(
         mutableStateOf(com.moody.moodyvideoeditor.data.BrushGradient())
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  IMPORT STATE
-    // ═══════════════════════════════════════════════════════════
+
+    // Import state
     var pendingUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var pendingVizImageUri by remember { mutableStateOf<String?>(null) }
 
-    // ═══════════════════════════════════════════════════════════
-    //  VISUALIZER DETECTION STATE
-    // ═══════════════════════════════════════════════════════════
+
+    // Visualizer detection state
     var isDetectingBeats by remember { mutableStateOf(false) }
     var beatDetectionProgress by remember { mutableFloatStateOf(0f) }
     var beatDetectionError by remember { mutableStateOf<String?>(null) }
 
-    // ═══════════════════════════════════════════════════════════
-    //  EXPORT STATE
-    // ═══════════════════════════════════════════════════════════
-    var isExporting by remember { mutableStateOf(false) }
-    var exportProgress by remember { mutableFloatStateOf(0f) }
-    var exportMessage by remember { mutableStateOf("") }
-    var exportFileName by remember { mutableStateOf("") }
+
+    // Export dialog state
     var exportStartMs by remember { mutableLongStateOf(0L) }
     var exportEndMs by remember { mutableLongStateOf(0L) }
     var useCustomRange by remember { mutableStateOf(false) }
     var showCancelConfirm by remember { mutableStateOf(false) }
-    var activeExporter by remember { mutableStateOf<VideoExporter?>(null) }
 
-    // ═══════════════════════════════════════════════════════════
-    //  PROMPT STATE
-    // ═══════════════════════════════════════════════════════════
+
+    // Prompt state
     var promptFeedback by remember { mutableStateOf("") }
     var promptFeedbackType by remember { mutableStateOf("none") }
 
-    // ═══════════════════════════════════════════════════════════
-    //  PLAYBACK STATE
-    // ═══════════════════════════════════════════════════════════
+
+    // Playback state
     var isPlaybackActive by remember { mutableStateOf(false) }
 
-    // ═══════════════════════════════════════════════════════════
-    //  TWO EXOPLAYERS
-    // ═══════════════════════════════════════════════════════════
+
+    // Two ExoPlayers
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
     }
@@ -268,18 +258,16 @@ fun EditorScreen(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  VISUALIZER CACHE CLEANUP
-    // ═══════════════════════════════════════════════════════════
+
+    // Visualizer cache cleanup
     DisposableEffect(Unit) {
         onDispose {
             VisualizerEngine.clearCache()
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  AUDIO FX PREVIEW — release on panel change
-    // ═══════════════════════════════════════════════════════════
+
+    // Audio FX preview release on panel change
     LaunchedEffect(activePanel) {
         if (activePanel != "audiofx" && activePanel != "soundfx") {
             AudioPreviewEngine.release()
@@ -293,9 +281,8 @@ fun EditorScreen(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  PREVIEW CLEAR ON TRACK HIDE
-    // ═══════════════════════════════════════════════════════════
+
+    // Preview clear on track hide
     LaunchedEffect(state.hiddenVisualTracks, filterEditLayerId, effectEditLayerId) {
         val editFilter = filterEditLayerId?.let { id ->
             state.clips.firstOrNull { it.id == id }
@@ -316,9 +303,8 @@ fun EditorScreen(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  MUTE STATE
-    // ═══════════════════════════════════════════════════════════
+
+    // Mute state helpers
     val activeClipTrackMuted = remember(state.selectedClip, state.mutedAudioTracks) {
         val sel = state.selectedClip
         sel != null && sel.isAudio && state.mutedAudioTracks.contains(sel.trackIndex)
@@ -346,9 +332,8 @@ fun EditorScreen(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  VIDEO PLAYBACK SYNC
-    // ═══════════════════════════════════════════════════════════
+
+    // Video playback sync
     LaunchedEffect(state.currentPosMs, state.clips, state.hiddenVisualTracks) {
         val playheadMs = state.currentPosMs
         val activeClip = state.clips
@@ -413,9 +398,8 @@ fun EditorScreen(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  AUDIO PLAYBACK SYNC
-    // ═══════════════════════════════════════════════════════════
+
+    // Audio playback sync
     LaunchedEffect(state.currentPosMs, state.clips, state.mutedAudioTracks) {
         val playheadMs = state.currentPosMs
         val activeAudio = state.clips
@@ -487,9 +471,8 @@ fun EditorScreen(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  PLAYHEAD TICKER
-    // ═══════════════════════════════════════════════════════════
+
+    // Playhead ticker
     LaunchedEffect(isPlaybackActive) {
         if (!isPlaybackActive) {
             try {
@@ -518,9 +501,8 @@ fun EditorScreen(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  MEDIA PICKERS
-    // ═══════════════════════════════════════════════════════════
+
+    // Media picker
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
@@ -532,64 +514,71 @@ fun EditorScreen(
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
-        uri?.let { folderUri ->
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    folderUri,
-                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                            Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            } catch (_: Exception) {
-            }
-            viewModel.setExportFolderUri(folderUri.toString())
+        if (uri == null) {
+            Log.e("FOLDER_PICK", "User cancelled folder picker")
+            return@rememberLauncherForActivityResult
         }
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            Log.e("FOLDER_PICK", "Permission granted: $uri")
+        } catch (e: Exception) {
+            Log.e("FOLDER_PICK", "Permission failed: ${e.message}", e)
+        }
+        viewModel.setExportFolderUri(uri.toString())
+        Log.e("FOLDER_PICK", "Saved URI: $uri")
     }
 
+<<<<<<< HEAD
     // ═══════════════════════════════════════════════════════════
     //  VISUALIZER IMAGE PICKER
     // ═══════════════════════════════════════════════════════════
+=======
+    // Visualizer image picker
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     val vizImagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
-        uri?.let {
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    it, Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            } catch (_: Exception) {
-            }
-
-            val name = VideoUtils.getFileName(context, it).lowercase()
-            val needsConvert = name.endsWith(".jfif") ||
-                    name.endsWith(".jif") ||
-                    name.endsWith(".jfi") ||
-                    name.endsWith(".heic") ||
-                    name.endsWith(".heif")
-
-            val finalUri = if (needsConvert) {
-                try {
-                    val cacheFile = java.io.File(
-                        context.cacheDir,
-                        "viz_${System.currentTimeMillis()}_${it.hashCode()}.jpg"
-                    )
-                    context.contentResolver.openInputStream(it)?.use { input ->
-                        cacheFile.outputStream().use { out -> input.copyTo(out) }
-                    }
-                    Uri.fromFile(cacheFile)
-                } catch (e: Exception) {
-                    Log.e("VIZ_IMAGE", "Convert failed", e)
-                    it
-                }
-            } else it
-
-            pendingVizImageUri = finalUri.toString()
-            Log.e("VIZ_IMAGE", "Picked: $name → $finalUri")
+        if (uri == null) {
+            Log.e("VIZ_IMAGE", "User cancelled")
+            return@rememberLauncherForActivityResult
         }
+
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (e: Exception) {
+            Log.e("VIZ_IMAGE", "Permission failed", e)
+        }
+
+        val name = VideoUtils.getFileName(context, uri).lowercase()
+        Log.e("VIZ_IMAGE", "Picked: $name ($uri)")
+
+        // Always copy to cache for stability
+        val cacheUri = try {
+            val cacheFile = java.io.File(
+                context.cacheDir,
+                "viz_${System.currentTimeMillis()}_${uri.hashCode()}.jpg"
+            )
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                cacheFile.outputStream().use { out -> input.copyTo(out) }
+            }
+            Uri.fromFile(cacheFile)
+        } catch (e: Exception) {
+            Log.e("VIZ_IMAGE", "Cache copy failed, using original", e)
+            uri
+        }
+
+        pendingVizImageUri = cacheUri.toString()
+        Log.e("VIZ_IMAGE", "Final URI: $cacheUri")
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  MULTI-IMPORT PROCESSING
-    // ═══════════════════════════════════════════════════════════
+
+    // Multi-import processing
     LaunchedEffect(pendingUris) {
         val uris = pendingUris
         if (uris.isEmpty()) return@LaunchedEffect
@@ -658,9 +647,8 @@ fun EditorScreen(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  PROMPT RUNNER
-    // ═══════════════════════════════════════════════════════════
+
+    // Prompt runner
     fun runPrompt(input: String) {
         try {
             val parsed = PromptEngine.parse(input)
@@ -668,36 +656,29 @@ fun EditorScreen(
             promptFeedbackType = report.statusType
             val sb = StringBuilder()
             if (report.successCount > 0) {
-                sb.append("✅ Applied ${report.successCount}:\n")
-                sb.append(report.applied.joinToString("\n") { "  • $it" })
+                sb.append("Applied ${report.successCount}:\n")
+                sb.append(report.applied.joinToString("\n") { "  - $it" })
             }
             if (report.unknownCount > 0) {
                 if (sb.isNotEmpty()) sb.append("\n\n")
-                sb.append("⚠️ Unknown (${report.unknownCount}):\n")
-                sb.append(report.unknown.joinToString("\n") { "  • $it" })
+                sb.append("Unknown (${report.unknownCount}):\n")
+                sb.append(report.unknown.joinToString("\n") { "  - $it" })
             }
             if (report.errorCount > 0) {
                 if (sb.isNotEmpty()) sb.append("\n\n")
-                sb.append("❌ Errors (${report.errorCount}):\n")
-                sb.append(report.errors.joinToString("\n") { "  • $it" })
+                sb.append("Errors (${report.errorCount}):\n")
+                sb.append(report.errors.joinToString("\n") { "  - $it" })
             }
             if (sb.isEmpty()) sb.append("Nothing to apply")
             promptFeedback = sb.toString()
         } catch (e: Exception) {
-            promptFeedback = "❌ ${e.message}"
+            promptFeedback = "Error: ${e.message}"
             promptFeedbackType = "error"
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  EXPORT
-    // ═══════════════════════════════════════════════════════════
-    fun startExport() {
-        if (state.clips.isEmpty()) {
-            exportMessage = "❌ No clips to export"
-            return
-        }
 
+<<<<<<< HEAD
         val totalDur = state.totalDurationMs
 
         val rangeStart: Long
@@ -797,6 +778,9 @@ fun EditorScreen(
     // ═══════════════════════════════════════════════════════════
     //  VISUALIZER CREATION WITH BEAT DETECTION
     // ═══════════════════════════════════════════════════════════
+=======
+    // Visualizer creation with beat detection
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     fun launchVisualizerCreation() {
         isDetectingBeats = true
         beatDetectionProgress = 0f
@@ -820,55 +804,74 @@ fun EditorScreen(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  MAIN LAYOUT
-    // ═══════════════════════════════════════════════════════════
+
+    // Main layout
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF121212))
     ) {
 
-        // ─── TOP BAR ───
-        Row(
+        // Top bar with title and export button below
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(56.dp)
                 .background(Color(0xFF0A0A0A))
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.Filled.ArrowBack, "Back", tint = Color.White)
-            }
-            Text(
-                "Editor",
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f)
-            )
-            Box(
+            Row(
                 modifier = Modifier
-                    .padding(end = 10.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF7C3AED).copy(alpha = 0.2f))
-                    .pointerInput(Unit) {
-                        detectTapGestures { activePanel = "export" }
-                    }
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Filled.ArrowBack, "Back", tint = Color.White)
+                }
                 Text(
-                    "💾 Export",
-                    color = Color(0xFF7C3AED),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
+                    "Editor",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
                 )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .height(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF7C3AED))
+                        .pointerInput(Unit) {
+                            detectTapGestures { activePanel = "export" }
+                        }
+                        .padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Text("💾", fontSize = 13.sp)
+                        Text(
+                            "Export",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         }
 
-        // ─── PREVIEW ───
+        // Preview
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -954,7 +957,7 @@ fun EditorScreen(
             )
         }
 
-        // ─── CONTROL BAR ───
+        // Control bar
         ControlBar(
             onMediaClick = {
                 picker.launch(
@@ -974,7 +977,7 @@ fun EditorScreen(
             onRatioClick = { activePanel = "ratio" }
         )
 
-        // ─── TIMELINE ───
+        // Timeline
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1045,7 +1048,8 @@ fun EditorScreen(
                         if (exoPlayer.isPlaying) exoPlayer.pause()
                         if (audioExoPlayer.isPlaying) audioExoPlayer.pause()
                         viewModel.setCurrentPos(t)
-                        viewModel.clearAllSelection()
+                        // FIX: don't clear selection on seek
+                        // (user might be scrubbing with a clip selected)
                         val sel = state.selectedClip
                         if (sel != null && sel.isVisualClip) {
                             val localMs = (t - sel.timelineStartMs)
@@ -1081,7 +1085,7 @@ fun EditorScreen(
             }
         }
 
-        // ─── PLAYBACK CONTROLS ───
+        // Playback controls
         PlaybackControls(
             isPlaying = isPlaybackActive,
             isMuted = state.isMuted,
@@ -1141,9 +1145,8 @@ fun EditorScreen(
             onKeyframe = { viewModel.toggleKeyframeAll() }
         )
 
-        // ═══════════════════════════════════════════════════════
-        //  FEATURE PANEL / SHELF
-        // ═══════════════════════════════════════════════════════
+
+        // Feature panel or shelf
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1602,9 +1605,12 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
+<<<<<<< HEAD
                 // ═══════════════════════════════════════════════════
                 //  VISUALIZER
                 // ═══════════════════════════════════════════════════
+=======
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                 "visualizer" -> {
                     val selectedAudioId: String? = selected?.takeIf {
                         it.isAudio && !it.isAudioEffectClip
@@ -1635,7 +1641,7 @@ fun EditorScreen(
                                 ) {
                                     Text("🎵", fontSize = 36.sp)
                                     Text(
-                                        "Detecting beats…",
+                                        "Detecting beats...",
                                         color = Color(0xFF60EFFF),
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold
@@ -1657,13 +1663,41 @@ fun EditorScreen(
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth(
+<<<<<<< HEAD
                                                     beatDetectionProgress
                                                         .coerceIn(0f, 1f)
+=======
+                                                    beatDetectionProgress.coerceIn(0f, 1f)
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                                                 )
                                                 .height(4.dp)
                                                 .background(
                                                     Color(0xFF60EFFF)
                                                 )
+                                        )
+                                    }
+
+                                    // BACK button
+                                    Box(
+                                        modifier = Modifier
+                                            .height(36.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color(0xFF181818))
+                                            .pointerInput(Unit) {
+                                                detectTapGestures {
+                                                    isDetectingBeats = false
+                                                    beatDetectionError = null
+                                                    activePanel = null
+                                                }
+                                            }
+                                            .padding(horizontal = 20.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            "✕ Cancel",
+                                            color = Color(0xFFAAAAAA),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
                                         )
                                     }
                                 }
@@ -1692,26 +1726,54 @@ fun EditorScreen(
                                         fontWeight = FontWeight.Bold,
                                         textAlign = TextAlign.Center
                                     )
-                                    Box(
-                                        modifier = Modifier
-                                            .height(36.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(Color(0xFF7C3AED))
-                                            .pointerInput(Unit) {
-                                                detectTapGestures {
-                                                    beatDetectionError = null
-                                                    activePanel = null
-                                                }
-                                            }
-                                            .padding(horizontal = 20.dp),
-                                        contentAlignment = Alignment.Center
+
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Text(
-                                            "OK",
-                                            color = Color.White,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        // BACK button
+                                        Box(
+                                            modifier = Modifier
+                                                .height(36.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(Color(0xFF181818))
+                                                .pointerInput(Unit) {
+                                                    detectTapGestures {
+                                                        beatDetectionError = null
+                                                        activePanel = null
+                                                    }
+                                                }
+                                                .padding(horizontal = 20.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                "✕ Back",
+                                                color = Color(0xFFAAAAAA),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        // Retry button
+                                        Box(
+                                            modifier = Modifier
+                                                .height(36.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(Color(0xFF7C3AED))
+                                                .pointerInput(Unit) {
+                                                    detectTapGestures {
+                                                        beatDetectionError = null
+                                                    }
+                                                }
+                                                .padding(horizontal = 20.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                "↻ Retry",
+                                                color = Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1722,7 +1784,12 @@ fun EditorScreen(
                             val selectedIsAudio = sel != null &&
                                     sel.isAudio && !sel.isAudioEffectClip
 
+                            val anyVisualizerInTimeline = state.clips.any {
+                                it.isVisualizerClip
+                            }
+
                             if (!selectedIsAudio) {
+<<<<<<< HEAD
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1766,17 +1833,139 @@ fun EditorScreen(
                                                 .padding(horizontal = 20.dp),
                                             contentAlignment =
                                                 Alignment.Center
+=======
+                                if (anyVisualizerInTimeline) {
+                                    // Visualizer exists but not selected
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Color(0xFF1A1F3A))
+                                            .padding(16.dp)
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(10.dp)
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                                         ) {
+                                            Text("🎵", fontSize = 36.sp)
                                             Text(
-                                                "OK",
+                                                "Visualizer exists on timeline",
                                                 color = Color.White,
-                                                fontSize = 12.sp,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                textAlign = TextAlign.Center
+                                            )
+                                            Text(
+                                                "Tap it on the timeline to edit, " +
+                                                        "or select an audio clip to create a new one.",
+                                                color = Color(0xFF888888),
+                                                fontSize = 10.sp,
+                                                textAlign = TextAlign.Center
+                                            )
+
+                                            // BACK button
+                                            Box(
+                                                modifier = Modifier
+                                                    .height(40.dp)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(Color(0xFF7C3AED))
+                                                    .pointerInput(Unit) {
+                                                        detectTapGestures {
+                                                            activePanel = null
+                                                        }
+                                                    }
+                                                    .padding(horizontal = 24.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    "✕ Back to Editor",
+                                                    color = Color.White,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // No visualizer, no audio
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Color(0xFF2A0F0F))
+                                            .padding(16.dp)
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Text("⚠️", fontSize = 32.sp)
+                                            Text(
+                                                "Select an audio clip first",
+                                                color = Color(0xFFFF6B6B),
+                                                fontSize = 14.sp,
                                                 fontWeight = FontWeight.Bold
                                             )
+                                            Text(
+                                                "Visualizer only reacts to its linked audio clip. " +
+                                                        "Please select an audio clip on the timeline.",
+                                                color = Color(0xFF888888),
+                                                fontSize = 11.sp,
+                                                textAlign = TextAlign.Center
+                                            )
+
+                                            // BACK + OK buttons
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .height(36.dp)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .background(Color(0xFF181818))
+                                                        .pointerInput(Unit) {
+                                                            detectTapGestures {
+                                                                activePanel = null
+                                                            }
+                                                        }
+                                                        .padding(horizontal = 20.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(
+                                                        "✕ Back",
+                                                        color = Color(0xFFAAAAAA),
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+
+                                                Box(
+                                                    modifier = Modifier
+                                                        .height(36.dp)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .background(Color(0xFF7C3AED))
+                                                        .pointerInput(Unit) {
+                                                            detectTapGestures {
+                                                                activePanel = null
+                                                            }
+                                                        }
+                                                        .padding(horizontal = 20.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(
+                                                        "✓ OK",
+                                                        color = Color.White,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             } else {
+                                // Audio selected — create visualizer
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1800,13 +1989,18 @@ fun EditorScreen(
                                             textAlign = TextAlign.Center
                                         )
                                         Text(
+<<<<<<< HEAD
                                             "Beats will be detected from " +
                                                     "this audio. This may " +
                                                     "take a few seconds.",
+=======
+                                            "Beats will be detected from this audio.",
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                                             color = Color(0xFF888888),
                                             fontSize = 10.sp,
                                             textAlign = TextAlign.Center
                                         )
+<<<<<<< HEAD
                                         Box(
                                             modifier = Modifier
                                                 .height(44.dp)
@@ -1820,19 +2014,56 @@ fun EditorScreen(
                                                 .padding(horizontal = 24.dp),
                                             contentAlignment =
                                                 Alignment.Center
+=======
+
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                                         ) {
-                                            Text(
-                                                "✨ Create Visualizer",
-                                                color = Color.White,
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
+                                            // BACK button
+                                            Box(
+                                                modifier = Modifier
+                                                    .height(44.dp)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(Color(0xFF181818))
+                                                    .pointerInput(Unit) {
+                                                        detectTapGestures {
+                                                            activePanel = null
+                                                        }
+                                                    }
+                                                    .padding(horizontal = 16.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    "✕ Cancel",
+                                                    color = Color(0xFFAAAAAA),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+
+                                            // CREATE button
+                                            Box(
+                                                modifier = Modifier
+                                                    .height(44.dp)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(Color(0xFF7C3AED))
+                                                    .pointerInput(sel.id) {
+                                                        detectTapGestures {
+                                                            launchVisualizerCreation()
+                                                        }
+                                                    }
+                                                    .padding(horizontal = 24.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    "✨ Create Visualizer",
+                                                    color = Color.White,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
                                         }
-                                        Text(
-                                            "Or use Code Mode: visualizer add",
-                                            color = Color(0xFF666666),
-                                            fontSize = 9.sp
-                                        )
                                     }
                                 }
                             }
@@ -1947,46 +2178,90 @@ fun EditorScreen(
         }
     }
 
-    // ─── EXPORT DIALOG ───
+
+    // Export config dialog
     if (activePanel == "export") {
         ExportDialog(
-            isExporting = isExporting,
-            exportProgress = exportProgress,
-            exportMessage = exportMessage,
-            currentResolution = state.exportResolution,
-            currentFps = state.exportFps,
-            currentBitrate = state.exportBitrateKbps,
-            currentFormat = state.exportFormat,
-            aspectRatio = state.aspectRatio,
+            isExporting = exportState.isExporting,
+            exportProgress = exportState.progress,
+            exportMessage = exportState.message,
             timelineDurationMs = state.totalDurationMs,
-            currentFolderUri = state.exportFolderUri,
-            fileName = exportFileName,
+            aspectRatio = state.aspectRatio,
             startMs = exportStartMs,
             endMs = if (exportEndMs > 0L) exportEndMs
             else state.totalDurationMs,
             useCustomRange = useCustomRange,
             onUseCustomRangeChange = { useCustomRange = it },
-            onFileNameChange = { exportFileName = it },
             onStartChange = { exportStartMs = it },
             onEndChange = { exportEndMs = it },
-            onResolutionChange = { viewModel.setExportResolution(it) },
-            onFpsChange = { viewModel.setExportFps(it) },
-            onBitrateChange = { viewModel.setExportBitrate(it) },
-            onFormatChange = { viewModel.setExportFormat(it) },
+            currentFolderUri = state.exportFolderUri,
             onChooseFolder = { folderPicker.launch(null) },
             onResetFolder = { viewModel.setExportFolderUri(null) },
-            onStartExport = { startExport() },
+            onStartExport = { config ->
+                // Build bundle and hand to ViewModel
+                val clipsForExport = state.clips.filter {
+                    !state.hiddenVisualTracks.contains(it.trackIndex)
+                }
+                val startMs = if (config.useCustomRange) config.startMs else 0L
+                val endMs = if (config.useCustomRange) config.endMs
+                else state.totalDurationMs
+
+                val bundle = ExportUiStateBundle(
+                    fileName = config.fileName,
+                    mode = config.mode,
+                    resolution = config.resolution,
+                    fps = config.fps,
+                    bitrateKbps = config.bitrateKbps,
+                    videoFormat = config.videoFormat,
+                    audioFormat = config.audioFormat,
+                    audioBitrateKbps = config.audioBitrateKbps,
+                    imageFormat = config.imageFormat,
+                    jpegQuality = config.jpegQuality,
+                    aspectRatio = config.aspectRatio,
+                    folderUri = config.customFolderUri,
+                    startMs = startMs,
+                    endMs = endMs,
+                    totalDurationMs = state.totalDurationMs,
+                    clips = clipsForExport
+                )
+
+                viewModel.setExportResolution(config.resolution)
+                viewModel.setExportFps(config.fps)
+                viewModel.setExportBitrate(config.bitrateKbps)
+                viewModel.setExportFormat(config.videoFormat)
+
+                viewModel.startExport(context, bundle)
+                activePanel = null
+            },
             onCancelExport = { showCancelConfirm = true },
             onDismiss = {
-                if (!isExporting) {
+                if (!exportState.isExporting) {
                     activePanel = null
-                    exportMessage = ""
                 }
             }
         )
     }
 
-    // ─── CANCEL CONFIRM ───
+
+    // CapCut-style full screen export overlay
+    if (exportState.isExporting ||
+        exportState.isCompleted ||
+        exportState.isCancelled ||
+        exportState.errorMessage != null
+    ) {
+        ExportOverlay(
+            state = exportState,
+            onCancel = {
+                viewModel.cancelExport(context)
+            },
+            onDismiss = {
+                viewModel.clearExportState()
+            }
+        )
+    }
+
+
+    // Cancel confirmation dialog
     if (showCancelConfirm) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showCancelConfirm = false },
@@ -2013,7 +2288,7 @@ fun EditorScreen(
                         .background(Color(0xFFFF3B3B).copy(alpha = 0.2f))
                         .pointerInput(Unit) {
                             detectTapGestures {
-                                activeExporter?.cancel()
+                                viewModel.cancelExport(context)
                                 showCancelConfirm = false
                             }
                         }

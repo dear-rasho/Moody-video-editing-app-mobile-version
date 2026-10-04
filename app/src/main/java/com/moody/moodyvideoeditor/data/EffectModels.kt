@@ -1,9 +1,7 @@
 package com.moody.moodyvideoeditor.data
 
-/**
- * Mirrors js/features/effect.js PRESETS array.
- * Each preset has a kind: motion | color | overlay.
- */
+// Mirrors js/features/effect.js PRESETS array.
+// Each preset has a kind: motion | color | overlay.
 data class EffectPreset(
     val key: String,
     val label: String,
@@ -16,14 +14,14 @@ data class EffectPreset(
 
 enum class EffectKind { MOTION, COLOR, OVERLAY }
 
-/** Mirrors MOTION_MAP values from beatsEngine.js */
+// Mirrors MOTION_MAP values from beatsEngine.js
 data class MotionConfig(
     val type: String,       // shake | bounce | pulse | zoomPulse | rotate | glitch
     val intensity: Float,   // 40..220
     val speed: Float        // 0.4..7.0
 )
 
-/** Mirrors effect.js filter values (subset of full FilterState — only what presets use) */
+// Mirrors effect.js filter values (subset of full FilterState — only what presets use)
 data class ColorFilterValues(
     val brightness: Float = 100f,
     val contrast: Float = 100f,
@@ -36,7 +34,7 @@ data class ColorFilterValues(
     val opacity: Float = 100f
 )
 
-/** Mirrors OVERLAY presets in effect.js */
+// Mirrors OVERLAY presets in effect.js
 data class OverlayConfig(
     val type: String,       // rain | snow | fog | lightLeak | ...
     val intensity: Float = 100f,
@@ -45,9 +43,9 @@ data class OverlayConfig(
 
 object EffectLibrary {
 
-    // ═══════════════════════════════════════════════════════════
+
     //  MOTION EFFECTS — mirrors effect.js motion presets
-    // ═══════════════════════════════════════════════════════════
+
     val MOTION_EFFECTS: List<EffectPreset> = listOf(
         // Shake family
         EffectPreset("shake", "Shake", "📳", EffectKind.MOTION, MotionConfig("shake", 90f, 1.2f)),
@@ -253,9 +251,9 @@ object EffectLibrary {
         EffectPreset("spark", "Spark", "✨", EffectKind.MOTION, MotionConfig("glitch", 75f, 4.8f))
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  COLOR EFFECTS — mirrors effect.js color presets
-    // ═══════════════════════════════════════════════════════════
+
     val COLOR_EFFECTS: List<EffectPreset> = listOf(
         // Original
         EffectPreset(
@@ -978,9 +976,9 @@ object EffectLibrary {
         )
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  OVERLAY EFFECTS — mirrors effect.js overlay presets
-    // ═══════════════════════════════════════════════════════════
+
     val OVERLAY_EFFECTS: List<EffectPreset> = listOf(
         // Particles
         EffectPreset("oRain", "Rain", "🌧️", EffectKind.OVERLAY, overlay = OverlayConfig("rain")),

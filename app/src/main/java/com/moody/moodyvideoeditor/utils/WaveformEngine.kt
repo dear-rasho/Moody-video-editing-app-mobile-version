@@ -42,9 +42,9 @@ object WaveformEngine {
 
     fun clearCache() = cache.clear()
 
-    // ═══════════════════════════════════════════════════════════
+
     //  EXTRACT AMPLITUDE ARRAY
-    // ═══════════════════════════════════════════════════════════
+
     private fun extractAmplitudes(context: Context, uri: Uri): FloatArray {
         val extractor = MediaExtractor()
         try {

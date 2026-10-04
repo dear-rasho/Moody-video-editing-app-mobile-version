@@ -12,13 +12,11 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
-/**
- * Mirrors js/workspace/overlayRenderer.js
- * Deterministic overlay rendering — same frame = same pattern.
- */
+// Mirrors js/workspace/overlayRenderer.js
+// Deterministic overlay rendering — same frame = same pattern.
 object OverlayEngine {
 
-    /** Mirrors JS hash(n) — pseudo-random deterministic */
+    // Mirrors JS hash(n) — pseudo-random deterministic
     fun hash(n: Double): Double {
         val x = sin(n * 12.9898 + 78.233) * 43758.5453
         return x - kotlin.math.floor(x)
@@ -27,9 +25,9 @@ object OverlayEngine {
     private fun fI(v: Float, min: Int = 0, max: Int = 255): Int =
         v.toInt().coerceIn(min, max)
 
-    // ═══════════════════════════════════════════════════════════
+
     //  MAIN DISPATCH
-    // ═══════════════════════════════════════════════════════════
+
     fun draw(
         scope: DrawScope,
         time: Float,
@@ -98,9 +96,9 @@ object OverlayEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  PARTICLES
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawRain(
         scope: DrawScope,
         W: Float,
@@ -300,9 +298,9 @@ object OverlayEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  ATMOSPHERE
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawFog(scope: DrawScope, W: Float, H: Float, time: Float, I: Float, color: Color) {
         val r = fI(color.red * 255f)
         val g = fI(color.green * 255f)
@@ -393,9 +391,9 @@ object OverlayEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  NOISE / TEXTURE
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawNoise(
         scope: DrawScope,
         W: Float,
@@ -475,9 +473,9 @@ object OverlayEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  LIGHT
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawLightLeak(scope: DrawScope, W: Float, H: Float, time: Float, I: Float) {
         val x = W * (0.5f + sin((time * 0.6f).toDouble()).toFloat() * 0.4f)
         val size = maxOf(W, H) * 0.9f
@@ -587,9 +585,9 @@ object OverlayEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  FLICKER
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawFlicker(
         scope: DrawScope,
         W: Float,
@@ -616,9 +614,9 @@ object OverlayEngine {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  TONE WASH
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawToneWash(
         scope: DrawScope,
         W: Float,
@@ -634,9 +632,9 @@ object OverlayEngine {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  EDGES
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawSharpenEdges(scope: DrawScope, W: Float, H: Float, I: Float) {
         val a = (I * 0.4f).coerceIn(0f, 1f)
         scope.drawRect(
@@ -656,9 +654,9 @@ object OverlayEngine {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  MISC
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawVignette(scope: DrawScope, W: Float, H: Float, I: Float) {
         val radius = maxOf(W, H) * 0.75f
         scope.drawRect(

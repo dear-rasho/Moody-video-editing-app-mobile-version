@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -19,7 +20,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -51,62 +51,98 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.utils.ExportSettings
 
-/**
- * Full-screen modal export dialog with:
- *  - File name
- *  - 🆕 Custom range toggle (OFF = full timeline)
- *  - Custom start/end time (only when ON)
- *  - Format, resolution, fps, bitrate
- *  - Save location
- *  - Cancel button during export
- */
+data class ExportConfig(
+    val mode: String,
+    val fileName: String,
+    val startMs: Long,
+    val endMs: Long,
+    val useCustomRange: Boolean,
+    val videoFormat: String,
+    val resolution: String,
+    val fps: Int,
+    val bitrateKbps: Int,
+    val audioFormat: String,
+    val audioBitrateKbps: Int,
+    val imageFormat: String,
+    val jpegQuality: Int,
+    val customFolderUri: String?,
+    val aspectRatio: String
+)
+
 @Composable
 fun ExportDialog(
     isExporting: Boolean,
     exportProgress: Float,
     exportMessage: String,
-    currentResolution: String,
-    currentFps: Int,
-    currentBitrate: Int,
-    currentFormat: String,
-    aspectRatio: String,
     timelineDurationMs: Long,
-    currentFolderUri: String?,
-    fileName: String,
+    aspectRatio: String,
     startMs: Long,
     endMs: Long,
-    // 🆕 Custom range toggle
     useCustomRange: Boolean,
     onUseCustomRangeChange: (Boolean) -> Unit,
-    onFileNameChange: (String) -> Unit,
     onStartChange: (Long) -> Unit,
     onEndChange: (Long) -> Unit,
-    onResolutionChange: (String) -> Unit,
-    onFpsChange: (Int) -> Unit,
-    onBitrateChange: (Int) -> Unit,
-    onFormatChange: (String) -> Unit,
+    currentFolderUri: String?,
     onChooseFolder: () -> Unit,
     onResetFolder: () -> Unit,
-    onStartExport: () -> Unit,
+    onStartExport: (ExportConfig) -> Unit,
     onCancelExport: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+
+    var exportMode by remember { mutableStateOf("video") }
+    var audioFormat by remember { mutableStateOf("mp3") }
+    var audioBitrateKbps by remember { mutableStateOf(192) }
+    var imageFormat by remember { mutableStateOf("png") }
+    var jpegQuality by remember { mutableStateOf(90) }
+
+    var fileName by remember {
+        mutableStateOf("MoodyExport_${System.currentTimeMillis()}")
+    }
+
+    var videoFormat by remember { mutableStateOf("mp4") }
+    var resolution by remember { mutableStateOf("720p") }
+    var fps by remember { mutableStateOf(30) }
+    var bitrateKbps by remember { mutableStateOf(8000) }
+
     var messageCopied by remember { mutableStateOf(false) }
-// 🆕 Auto-init custom range jab ON ho
+
     LaunchedEffect(useCustomRange, timelineDurationMs) {
         if (useCustomRange && endMs <= 0L) {
             onStartChange(0L)
             onEndChange(timelineDurationMs)
         }
     }
+
+    fun doExport() {
+        val config = ExportConfig(
+            mode = exportMode,
+            fileName = fileName.ifBlank {
+                "MoodyExport_${System.currentTimeMillis()}"
+            },
+            startMs = startMs,
+            endMs = endMs,
+            useCustomRange = useCustomRange,
+            videoFormat = videoFormat,
+            resolution = resolution,
+            fps = fps,
+            bitrateKbps = bitrateKbps,
+            audioFormat = audioFormat,
+            audioBitrateKbps = audioBitrateKbps,
+            imageFormat = imageFormat,
+            jpegQuality = jpegQuality,
+            customFolderUri = currentFolderUri,
+            aspectRatio = aspectRatio
+        )
+        onStartExport(config)
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xE6000000))
-            .pointerInput(Unit) {
-                // Block touches behind
-            }
+            .pointerInput(Unit) {}
     ) {
         Box(
             modifier = Modifier
@@ -123,7 +159,6 @@ fun ExportDialog(
                     )
             ) {
 
-                // ═══ HEADER ═══
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -133,7 +168,7 @@ fun ExportDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "💾 Export Video",
+                        "💾 Export",
                         color = Color.White,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
@@ -148,7 +183,7 @@ fun ExportDialog(
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(Color(0xFF7C3AED))
                                 .pointerInput(Unit) {
-                                    detectTapGestures { onStartExport() }
+                                    detectTapGestures { doExport() }
                                 }
                                 .padding(horizontal = 14.dp),
                             contentAlignment = Alignment.Center
@@ -183,7 +218,6 @@ fun ExportDialog(
                     }
                 }
 
-                // ═══ CONTENT ═══
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -193,7 +227,40 @@ fun ExportDialog(
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
 
-                    // ═══ FILE NAME ═══
+                    SectionLabel("What to Export")
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ModeCard(
+                            icon = "🎬",
+                            label = "Video",
+                            desc = "MP4 / MOV",
+                            active = exportMode == "video",
+                            enabled = !isExporting,
+                            modifier = Modifier.weight(1f)
+                        ) { exportMode = "video" }
+
+                        ModeCard(
+                            icon = "🎵",
+                            label = "Audio",
+                            desc = "MP3 / M4A",
+                            active = exportMode == "audio",
+                            enabled = !isExporting,
+                            modifier = Modifier.weight(1f)
+                        ) { exportMode = "audio" }
+
+                        ModeCard(
+                            icon = "🖼️",
+                            label = "Images",
+                            desc = "PNG / JPEG",
+                            active = exportMode == "image",
+                            enabled = !isExporting,
+                            modifier = Modifier.weight(1f)
+                        ) { exportMode = "image" }
+                    }
+
                     SectionLabel("File Name")
                     Box(
                         modifier = Modifier
@@ -210,16 +277,9 @@ fun ExportDialog(
                         ) {
                             Text("📄", fontSize = 14.sp)
                             Box(modifier = Modifier.weight(1f)) {
-                                if (fileName.isBlank()) {
-                                    Text(
-                                        "MoodyExport_${System.currentTimeMillis()}",
-                                        color = Color(0xFF555555),
-                                        fontSize = 11.sp
-                                    )
-                                }
                                 BasicTextField(
                                     value = fileName,
-                                    onValueChange = onFileNameChange,
+                                    onValueChange = { fileName = it },
                                     singleLine = true,
                                     enabled = !isExporting,
                                     textStyle = TextStyle(
@@ -232,114 +292,42 @@ fun ExportDialog(
                                 )
                             }
                             Text(
-                                ".${if (currentFormat == "mov") "mov" else "mp4"}",
+                                ".${currentExt(exportMode, videoFormat, audioFormat, imageFormat)}",
                                 color = Color(0xFF666666),
                                 fontSize = 10.sp
                             )
                         }
                     }
 
-                    // ═══════════════════════════════════════════════
-                    //  🆕 EXPORT RANGE TOGGLE
-                    // ═══════════════════════════════════════════════
-// ═══════════════════════════════════════════════
-//  🆕 EXPORT RANGE — Two Mutually Exclusive Buttons
-// ═══════════════════════════════════════════════
                     SectionLabel("Export Range")
 
-// Two buttons row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // ─── FULL DURATION BUTTON ───
-                        val isFullActive = !useCustomRange
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(56.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(
-                                    if (isFullActive) Color(0xFF7C3AED)
-                                    else Color(0xFF1A1A1A)
-                                )
-                                .pointerInput(useCustomRange, isExporting) {
-                                    if (!isExporting && useCustomRange) {
-                                        detectTapGestures {
-                                            onUseCustomRangeChange(false)
-                                        }
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
+                        RangeButton(
+                            title = "▶  Full Duration",
+                            subtitle = formatDuration(timelineDurationMs),
+                            active = !useCustomRange,
+                            enabled = !isExporting,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
-                                Text(
-                                    "▶  Full Duration",
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    formatDuration(timelineDurationMs),
-                                    color = if (isFullActive) Color.White.copy(alpha = 0.9f)
-                                    else Color(0xFF888888),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            if (useCustomRange) onUseCustomRangeChange(false)
                         }
 
-                        // ─── CUSTOM DURATION BUTTON ───
-                        val isCustomActive = useCustomRange
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(56.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(
-                                    if (isCustomActive) Color(0xFF7C3AED)
-                                    else Color(0xFF1A1A1A)
-                                )
-                                .pointerInput(useCustomRange, isExporting) {
-                                    if (!isExporting && !useCustomRange) {
-                                        detectTapGestures {
-                                            onUseCustomRangeChange(true)
-                                        }
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
+                        RangeButton(
+                            title = "✂  Custom Duration",
+                            subtitle = if (useCustomRange)
+                                "${formatDuration((endMs - startMs).coerceAtLeast(0L))} selected"
+                            else "Set specific range",
+                            active = useCustomRange,
+                            enabled = !isExporting,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
-                                Text(
-                                    "✂  Custom Duration",
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    if (isCustomActive) "${
-                                        formatDuration(
-                                            (endMs - startMs).coerceAtLeast(
-                                                0L
-                                            )
-                                        )
-                                    } selected"
-                                    else "Set specific range",
-                                    color = if (isCustomActive) Color.White.copy(alpha = 0.9f)
-                                    else Color(0xFF888888),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            if (!useCustomRange) onUseCustomRangeChange(true)
                         }
                     }
-                    // 🆕 Custom range fields — only when toggle is ON
+
                     if (useCustomRange) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -363,8 +351,7 @@ fun ExportDialog(
                             )
                         }
 
-                        // Duration display
-                        val exportDuration = (endMs - startMs).coerceAtLeast(0L)
+                        val exportDur = (endMs - startMs).coerceAtLeast(0L)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -374,7 +361,7 @@ fun ExportDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                "⏱️ Export Duration: ${formatDuration(exportDuration)}",
+                                "⏱️ Duration: ${formatDuration(exportDur)}",
                                 color = Color(0xFF60EFFF),
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
@@ -404,113 +391,316 @@ fun ExportDialog(
                         }
                     }
 
-                    // ═══ FORMAT ═══
-                    SectionLabel("Format")
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Chip(
-                            label = "MP4",
-                            isActive = currentFormat == "mp4",
-                            enabled = !isExporting,
-                            onClick = { onFormatChange("mp4") }
-                        )
-                        Chip(
-                            label = "MOV",
-                            isActive = currentFormat == "mov",
-                            enabled = !isExporting,
-                            onClick = { onFormatChange("mov") }
-                        )
-                    }
+                    when (exportMode) {
 
-                    // ═══ RESOLUTION ═══
-                    SectionLabel("Resolution")
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        ExportSettings.RESOLUTIONS.forEach { preset ->
-                            Chip(
-                                label = preset.label,
-                                isActive = currentResolution == preset.key,
-                                enabled = !isExporting,
-                                onClick = { onResolutionChange(preset.key) }
-                            )
-                        }
-                    }
+                        "video" -> {
+                            SectionLabel("Video Format")
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Chip(
+                                    label = "MP4",
+                                    isActive = videoFormat == "mp4",
+                                    enabled = !isExporting
+                                ) { videoFormat = "mp4" }
+                                Chip(
+                                    label = "MOV",
+                                    isActive = videoFormat == "mov",
+                                    enabled = !isExporting
+                                ) { videoFormat = "mov" }
+                            }
 
-                    // ═══ FPS ═══
-                    SectionLabel("Frame Rate")
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        ExportSettings.FPS_OPTIONS.forEach { fps ->
-                            Chip(
-                                label = "$fps fps",
-                                isActive = currentFps == fps,
-                                enabled = !isExporting,
-                                onClick = { onFpsChange(fps) }
-                            )
-                        }
-                    }
-
-                    // ═══ BITRATE ═══
-                    SectionLabel("Bitrate")
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Slider(
-                            value = currentBitrate.toFloat().coerceIn(1000f, 50000f),
-                            onValueChange = { onBitrateChange(it.toInt()) },
-                            valueRange = 1000f..50000f,
-                            enabled = !isExporting,
-                            modifier = Modifier.weight(1f),
-                            colors = SliderDefaults.colors(
-                                thumbColor = Color(0xFF7C3AED),
-                                activeTrackColor = Color(0xFF7C3AED),
-                                inactiveTrackColor = Color(0xFF303030)
-                            )
-                        )
-                        Text(
-                            "${currentBitrate / 1000} Mbps",
-                            color = Color.White,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.width(60.dp)
-                        )
-                    }
-
-                    val autoBit = ExportSettings.autoBitrate(currentResolution, currentFps)
-                    Box(
-                        modifier = Modifier
-                            .height(26.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF1A1A1A))
-                            .pointerInput(currentResolution, currentFps, isExporting) {
-                                if (!isExporting) {
-                                    detectTapGestures { onBitrateChange(autoBit) }
+                            SectionLabel("Resolution")
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                ExportSettings.RESOLUTIONS.forEach { preset ->
+                                    Chip(
+                                        label = preset.label,
+                                        isActive = resolution == preset.key,
+                                        enabled = !isExporting
+                                    ) {
+                                        resolution = preset.key
+                                        bitrateKbps = ExportSettings.autoBitrate(
+                                            resolution, fps
+                                        )
+                                    }
                                 }
                             }
-                            .padding(horizontal = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "⚡ Auto: ${autoBit / 1000} Mbps",
-                            color = Color(0xFF4F9DFF),
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+
+                            SectionLabel("Frame Rate")
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                ExportSettings.FPS_OPTIONS.forEach { f ->
+                                    Chip(
+                                        label = "$f fps",
+                                        isActive = fps == f,
+                                        enabled = !isExporting
+                                    ) {
+                                        fps = f
+                                        bitrateKbps = ExportSettings.autoBitrate(
+                                            resolution, fps
+                                        )
+                                    }
+                                }
+                            }
+
+                            SectionLabel("Bitrate")
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Slider(
+                                    value = bitrateKbps.toFloat()
+                                        .coerceIn(1000f, 50000f),
+                                    onValueChange = { bitrateKbps = it.toInt() },
+                                    valueRange = 1000f..50000f,
+                                    enabled = !isExporting,
+                                    modifier = Modifier.weight(1f),
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = Color(0xFF7C3AED),
+                                        activeTrackColor = Color(0xFF7C3AED),
+                                        inactiveTrackColor = Color(0xFF303030)
+                                    )
+                                )
+                                Text(
+                                    "${bitrateKbps / 1000} Mbps",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(start = 4.dp)
+                                )
+                            }
+
+                            val autoBit = ExportSettings.autoBitrate(resolution, fps)
+                            Box(
+                                modifier = Modifier
+                                    .height(26.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF1A1A1A))
+                                    .pointerInput(resolution, fps, isExporting) {
+                                        if (!isExporting) {
+                                            detectTapGestures {
+                                                bitrateKbps = autoBit
+                                            }
+                                        }
+                                    }
+                                    .padding(horizontal = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "⚡ Auto: ${autoBit / 1000} Mbps",
+                                    color = Color(0xFF4F9DFF),
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        "audio" -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF0F1A2A))
+                                    .padding(10.dp)
+                            ) {
+                                Text(
+                                    "🎵 All timeline audio will be mixed into one file. Gaps stay silent.",
+                                    color = Color(0xFF60EFFF),
+                                    fontSize = 10.sp,
+                                    lineHeight = 14.sp
+                                )
+                            }
+
+                            SectionLabel("Audio Format")
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Chip(
+                                    label = "MP3",
+                                    isActive = audioFormat == "mp3",
+                                    enabled = !isExporting
+                                ) { audioFormat = "mp3" }
+                                Chip(
+                                    label = "M4A (AAC)",
+                                    isActive = audioFormat == "m4a",
+                                    enabled = !isExporting
+                                ) { audioFormat = "m4a" }
+                            }
+
+                            SectionLabel("Audio Bitrate")
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Chip(
+                                    label = "128 kbps",
+                                    isActive = audioBitrateKbps == 128,
+                                    enabled = !isExporting
+                                ) { audioBitrateKbps = 128 }
+                                Chip(
+                                    label = "192 kbps",
+                                    isActive = audioBitrateKbps == 192,
+                                    enabled = !isExporting
+                                ) { audioBitrateKbps = 192 }
+                                Chip(
+                                    label = "256 kbps",
+                                    isActive = audioBitrateKbps == 256,
+                                    enabled = !isExporting
+                                ) { audioBitrateKbps = 256 }
+                                Chip(
+                                    label = "320 kbps",
+                                    isActive = audioBitrateKbps == 320,
+                                    enabled = !isExporting
+                                ) { audioBitrateKbps = 320 }
+                            }
+                        }
+
+                        "image" -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF0F1A2A))
+                                    .padding(10.dp)
+                            ) {
+                                Text(
+                                    "🖼️ Each frame is saved as a separate image: Pictures/MoodyEditor/<name>/",
+                                    color = Color(0xFF60EFFF),
+                                    fontSize = 10.sp,
+                                    lineHeight = 14.sp
+                                )
+                            }
+
+                            SectionLabel("Image Format")
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Chip(
+                                    label = "PNG",
+                                    isActive = imageFormat == "png",
+                                    enabled = !isExporting
+                                ) { imageFormat = "png" }
+                                Chip(
+                                    label = "JPEG",
+                                    isActive = imageFormat == "jpeg",
+                                    enabled = !isExporting
+                                ) { imageFormat = "jpeg" }
+                            }
+
+                            if (imageFormat == "jpeg") {
+                                SectionLabel("JPEG Quality")
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Chip(
+                                        label = "85% (Fast)",
+                                        isActive = jpegQuality == 85,
+                                        enabled = !isExporting
+                                    ) { jpegQuality = 85 }
+                                    Chip(
+                                        label = "90% (Balanced)",
+                                        isActive = jpegQuality == 90,
+                                        enabled = !isExporting
+                                    ) { jpegQuality = 90 }
+                                    Chip(
+                                        label = "95% (High)",
+                                        isActive = jpegQuality == 95,
+                                        enabled = !isExporting
+                                    ) { jpegQuality = 95 }
+                                    Chip(
+                                        label = "100% (Best)",
+                                        isActive = jpegQuality == 100,
+                                        enabled = !isExporting
+                                    ) { jpegQuality = 100 }
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color(0xFF1A1A1A))
+                                        .padding(8.dp)
+                                ) {
+                                    Text(
+                                        "ℹ️ PNG is lossless — no quality setting needed.",
+                                        color = Color(0xFFAAAAAA),
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+
+                            SectionLabel("Resolution")
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                ExportSettings.RESOLUTIONS.forEach { preset ->
+                                    Chip(
+                                        label = preset.label,
+                                        isActive = resolution == preset.key,
+                                        enabled = !isExporting
+                                    ) { resolution = preset.key }
+                                }
+                            }
+
+                            SectionLabel("Frame Rate (images/sec)")
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                ExportSettings.FPS_OPTIONS.forEach { f ->
+                                    Chip(
+                                        label = "$f fps",
+                                        isActive = fps == f,
+                                        enabled = !isExporting
+                                    ) { fps = f }
+                                }
+                            }
+
+                            val durMs = if (useCustomRange)
+                                (endMs - startMs).coerceAtLeast(0L)
+                            else timelineDurationMs
+                            val frameCount =
+                                ((durMs / 1000.0) * fps).toInt().coerceAtLeast(0)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF1A1A1A))
+                                    .padding(8.dp)
+                            ) {
+                                Text(
+                                    "📊 Estimate: ~$frameCount images (${formatDuration(durMs)} × $fps fps)",
+                                    color = Color(0xFFFFD166),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
 
-                    // ═══ SAVE LOCATION ═══
                     SectionLabel("Save Location")
                     Row(
                         modifier = Modifier
@@ -524,14 +714,19 @@ fun ExportDialog(
                         Text("📁", fontSize = 16.sp)
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = if (currentFolderUri == null) "Movies/MoodyEditor"
-                                else "Custom folder",
+                                text = when {
+                                    currentFolderUri != null -> "Custom folder"
+                                    exportMode == "audio" -> "Music/MoodyEditor"
+                                    exportMode == "image" -> "Pictures/MoodyEditor"
+                                    else -> "Movies/MoodyEditor"
+                                },
                                 color = Color.White,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = if (currentFolderUri == null) "Default location"
+                                text = if (currentFolderUri == null)
+                                    "Default location"
                                 else currentFolderUri.takeLast(36),
                                 color = Color(0xFF666666),
                                 fontSize = 8.sp,
@@ -581,7 +776,6 @@ fun ExportDialog(
                         }
                     }
 
-                    // ═══ EXPORTING PROGRESS ═══
                     if (isExporting) {
                         Column(
                             modifier = Modifier
@@ -596,7 +790,7 @@ fun ExportDialog(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Text(
-                                    "🎬 Exporting…",
+                                    "🎬 Exporting...",
                                     color = Color.White,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
@@ -635,7 +829,6 @@ fun ExportDialog(
                         }
                     }
 
-                    // ═══ ERROR / MESSAGE ═══
                     if (!isExporting && exportMessage.isNotBlank()) {
                         val msgColor = when {
                             exportMessage.startsWith("✅") -> Color(0xFF22C55E)
@@ -696,8 +889,10 @@ fun ExportDialog(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        if (messageCopied) "✅ Copied" else "📋 Copy",
-                                        color = if (messageCopied) Color.White else msgColor,
+                                        if (messageCopied) "✅ Copied"
+                                        else "📋 Copy",
+                                        color = if (messageCopied) Color.White
+                                        else msgColor,
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -721,7 +916,6 @@ fun ExportDialog(
                     }
                 }
 
-                // ═══ BOTTOM: Start / Cancel Button ═══
                 if (isExporting) {
                     Box(
                         modifier = Modifier
@@ -762,7 +956,7 @@ fun ExportDialog(
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(Color(0xFF7C3AED))
                                 .pointerInput(Unit) {
-                                    detectTapGestures { onStartExport() }
+                                    detectTapGestures { doExport() }
                                 },
                             contentAlignment = Alignment.Center
                         ) {
@@ -780,9 +974,6 @@ fun ExportDialog(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  HELPERS
-// ═══════════════════════════════════════════════════════════════
 @Composable
 private fun SectionLabel(text: String) {
     Text(
@@ -792,6 +983,115 @@ private fun SectionLabel(text: String) {
         fontWeight = FontWeight.Bold,
         modifier = Modifier.padding(start = 2.dp, bottom = 4.dp)
     )
+}
+
+@Composable
+private fun ModeCard(
+    icon: String,
+    label: String,
+    desc: String,
+    active: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .height(84.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                when {
+                    !enabled -> Color(0xFF151515)
+                    active -> Color(0xFF7C3AED)
+                    else -> Color(0xFF1A1A1A)
+                }
+            )
+            .then(
+                if (active && enabled) Modifier.border(
+                    1.5.dp,
+                    Color(0xFFA78BFA),
+                    RoundedCornerShape(10.dp)
+                ) else Modifier
+            )
+            .pointerInput(label, enabled) {
+                if (enabled) {
+                    detectTapGestures { onClick() }
+                }
+            }
+            .padding(8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(icon, fontSize = 22.sp)
+            Text(
+                label,
+                color = if (enabled) Color.White else Color(0xFF555555),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                desc,
+                color = if (active && enabled)
+                    Color.White.copy(alpha = 0.85f)
+                else Color(0xFF888888),
+                fontSize = 8.sp,
+                textAlign = TextAlign.Center,
+                lineHeight = 10.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun RangeButton(
+    title: String,
+    subtitle: String,
+    active: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .height(56.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                when {
+                    !enabled -> Color(0xFF151515)
+                    active -> Color(0xFF7C3AED)
+                    else -> Color(0xFF1A1A1A)
+                }
+            )
+            .pointerInput(title, enabled) {
+                if (enabled) {
+                    detectTapGestures { onClick() }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                title,
+                color = if (enabled) Color.White else Color(0xFF555555),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                subtitle,
+                color = if (active && enabled)
+                    Color.White.copy(alpha = 0.9f)
+                else Color(0xFF888888),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
 }
 
 @Composable
@@ -827,9 +1127,6 @@ private fun Chip(
     }
 }
 
-/**
- * Time input field with MM:SS format.
- */
 @Composable
 private fun TimeInputField(
     label: String,
@@ -865,10 +1162,10 @@ private fun TimeInputField(
             BasicTextField(
                 value = text,
                 onValueChange = { newText ->
-                    val filtered = newText.filter { it.isDigit() || it == ':' || it == '.' }
+                    val filtered = newText.filter {
+                        it.isDigit() || it == ':' || it == '.'
+                    }
                     text = filtered
-
-                    // 🆕 Live commit — focus blur ka wait mat karo
                     parseTimeStr(filtered)?.let { parsed ->
                         onChange(parsed.coerceIn(0L, maxMs))
                     }
@@ -941,4 +1238,17 @@ private fun formatDuration(ms: Long): String {
     val m = totalSec / 60
     val s = totalSec % 60
     return "%d:%02d".format(m, s)
+}
+
+private fun currentExt(
+    exportMode: String,
+    videoFormat: String,
+    audioFormat: String,
+    imageFormat: String
+): String {
+    return when (exportMode) {
+        "audio" -> if (audioFormat == "m4a") "m4a" else "mp3"
+        "image" -> if (imageFormat == "jpeg") "jpg" else "png"
+        else -> if (videoFormat == "mov") "mov" else "mp4"
+    }
 }

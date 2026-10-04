@@ -2,12 +2,16 @@ package com.moody.moodyvideoeditor.utils
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.PorterDuff
+import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.util.Log
@@ -15,16 +19,21 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
+import com.moody.moodyvideoeditor.data.ColorFilterValues
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.OverlayState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Canvas as ComposeCanvas
@@ -36,16 +45,26 @@ data class TextOverlaySequence(
     val startNumber: Int,
     val startSec: Double,
     val endSec: Double,
-    val trackIndex: Int = 0    // 🆕 layer order for composite sorting
+    val trackIndex: Int = 0,
+    val workingDirectory: File? = null,
+    val imageFormat: String = "png"
+)
+
+private data class OverlayRenderBuffer(
+    val bitmap: Bitmap,
+    val androidCanvas: Canvas,
+    val composeCanvas: ComposeCanvas,
+    val drawScope: CanvasDrawScope
 )
 
 object TextBitmapRenderer {
 
-    private const val REFERENCE_WIDTH_PX = 400f
-    private const val TAG = "TEXT_RENDER"
+    // ✅ SAME REFERENCE as TextScaler — do not change independently
+    private const val REFERENCE_WIDTH_PX = 720f
 
-    // 🆕 Small chunk = faster first feedback
-    private const val CHUNK_SIZE = 60
+    private const val TAG = "TEXT_RENDER"
+    private const val CHUNK_SIZE = 90
+    private const val MAX_PARALLEL_CHUNKS = 4
 
     suspend fun renderCombinedOverlays(
         context: Context,
@@ -56,96 +75,145 @@ object TextBitmapRenderer {
         H: Int,
         fps: Int,
         totalDurationMs: Long,
-        onProgress: (Float) -> Unit = {}
+        onProgress: (Float) -> Unit = {},
+        shouldCancel: () -> Boolean = { false },
+        imageFormat: String = "png",
+        jpegQuality: Int = 90
     ): List<TextOverlaySequence> = withContext(Dispatchers.Default) {
 
         if (textClips.isEmpty() && imageClips.isEmpty() && overlayClips.isEmpty()) {
             return@withContext emptyList()
         }
+        require(W > 0 && H > 0) { "Render dimensions must be positive" }
+        require(fps > 0) { "Frame rate must be positive" }
+        require(totalDurationMs > 0L) { "Render duration must be positive" }
 
-        val totalFrames = ((totalDurationMs * fps) / 1000L)
+        val totalFrames = (totalDurationMs.toDouble() * fps / 1000.0)
+            .toLong().coerceAtMost(Int.MAX_VALUE.toLong())
             .toInt().coerceAtLeast(1)
 
-        // Cleanup
-        try {
-            context.cacheDir.listFiles()?.forEach { f ->
-                if (f.name.startsWith("combined_") && f.name.endsWith(".png")) {
-                    f.delete()
-                }
-            }
-        } catch (_: Exception) {
+        val workingDirectory = File(
+            context.cacheDir,
+            "render_text_${UUID.randomUUID()}"
+        )
+        if (!workingDirectory.mkdirs()) {
+            throw java.io.IOException("Could not create text-render cache directory")
         }
 
-        val sortedTextClips = textClips.sortedWith(
+        val sortedLayerClips = (textClips + imageClips).sortedWith(
             compareBy({ it.trackIndex }, { it.timelineStartMs })
         )
         val sortedOverlayClips = overlayClips.sortedWith(
             compareBy({ it.trackIndex }, { it.timelineStartMs })
         )
-        // 🆕 Compute min track index for correct composite layering
         val renderTrackIndex = (
                 textClips.map { it.trackIndex } +
                         imageClips.map { it.trackIndex } +
                         overlayClips.map { it.trackIndex }
                 ).minOrNull() ?: 0
-        // 🆕 Pre-generate empty transparent PNG (reused for empty frames)
-        val emptyPngBytes: ByteArray = ByteArrayOutputStream().use { baos ->
-            val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
-            bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
-            bmp.recycle()
-            baos.toByteArray()
-        }
+        val imageBitmaps = mutableMapOf<String, Bitmap>()
 
-        val totalChunks = (totalFrames + CHUNK_SIZE - 1) / CHUNK_SIZE
-        val completedCounter = AtomicInteger(0)
-
-        Log.e(TAG, "Rendering $totalFrames frames in $totalChunks chunks")
-
-        // 🆕 Render all chunks in parallel (each chunk runs its frames sequentially)
-        val sequences = coroutineScope {
-            (0 until totalChunks).map { chunkIdx ->
-                async(Dispatchers.Default) {
-                    val seq = renderChunk(
-                        context = context,
-                        chunkIdx = chunkIdx,
-                        chunkSize = CHUNK_SIZE,
-                        totalFrames = totalFrames,
-                        fps = fps,
-                        W = W,
-                        H = H,
-                        textClips = sortedTextClips,
-                        overlayClips = sortedOverlayClips,
-                        emptyPngBytes = emptyPngBytes,
-                        renderTrackIndex = renderTrackIndex,   // 🆕 add this
-                        onFrameDone = {
-                            val done = completedCounter.incrementAndGet()
-                            onProgress(done.toFloat() / totalFrames.toFloat())
-                        }
-                    )
-                    seq
+        try {
+            imageClips.forEach { clip ->
+                imageBitmaps[clip.id] = withContext(Dispatchers.IO) {
+                    decodeImage(context, clip, W, H)
                 }
-            }.awaitAll()
-        }
+            }
 
-        Log.e(TAG, "Done: ${sequences.size} chunks, $totalFrames frames")
-        sequences.sortedBy { it.startSec }
+            val emptyPngBytes = ByteArrayOutputStream().use { baos ->
+                val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
+                try {
+                    if (imageFormat == "jpeg") {
+                        bmp.eraseColor(Color.BLACK)
+                        if (!bmp.compress(Bitmap.CompressFormat.JPEG, jpegQuality, baos)) {
+                            throw java.io.IOException("Could not encode empty text frame")
+                        }
+                    } else {
+                        if (!bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)) {
+                            throw java.io.IOException("Could not encode empty text frame")
+                        }
+                    }
+                    baos.toByteArray()
+                } finally {
+                    bmp.recycle()
+                }
+            }
+
+            val totalChunks = (totalFrames - 1) / CHUNK_SIZE + 1
+            val completedCounter = AtomicInteger(0)
+            val nextChunk = AtomicInteger(0)
+
+            Log.e(
+                TAG, "Rendering $totalFrames frames in $totalChunks chunks " +
+                        "(format=$imageFormat, quality=$jpegQuality, W=$W, H=$H)"
+            )
+
+            val sequences = coroutineScope {
+                val results = arrayOfNulls<TextOverlaySequence>(totalChunks)
+                List(minOf(MAX_PARALLEL_CHUNKS, totalChunks)) {
+                    async {
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val chunkIdx = nextChunk.getAndIncrement()
+                            if (chunkIdx >= totalChunks) break
+                            if (shouldCancel()) {
+                                throw CancellationException("Text rendering cancelled")
+                            }
+                            results[chunkIdx] = renderChunk(
+                                workingDirectory = workingDirectory,
+                                chunkIdx = chunkIdx,
+                                chunkSize = CHUNK_SIZE,
+                                totalFrames = totalFrames,
+                                fps = fps,
+                                W = W,
+                                H = H,
+                                layerClips = sortedLayerClips,
+                                overlayClips = sortedOverlayClips,
+                                imageBitmaps = imageBitmaps,
+                                emptyPngBytes = emptyPngBytes,
+                                renderTrackIndex = renderTrackIndex,
+                                shouldCancel = shouldCancel,
+                                imageFormat = imageFormat,
+                                jpegQuality = jpegQuality,
+                                onFrameDone = {
+                                    val done = completedCounter.incrementAndGet()
+                                    onProgress(done.toFloat() / totalFrames.toFloat())
+                                }
+                            )
+                        }
+                    }
+                }.awaitAll()
+                results.mapNotNull { it }
+            }
+
+            Log.e(TAG, "Done: ${sequences.size} chunks, $totalFrames frames")
+            sequences.sortedBy { it.startSec }
+        } catch (e: Throwable) {
+            workingDirectory.deleteRecursively()
+            throw e
+        } finally {
+            imageBitmaps.values.distinct().forEach { bitmap ->
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
+        }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  RENDER SINGLE CHUNK (sequential frames, cached bitmaps)
-    // ═══════════════════════════════════════════════════════════
-    private fun renderChunk(
-        context: Context,
+    private suspend fun renderChunk(
+        workingDirectory: File,
         chunkIdx: Int,
         chunkSize: Int,
         totalFrames: Int,
         fps: Int,
         W: Int,
         H: Int,
-        textClips: List<EditorClip>,
+        layerClips: List<EditorClip>,
         overlayClips: List<EditorClip>,
+        imageBitmaps: Map<String, Bitmap>,
         emptyPngBytes: ByteArray,
-        renderTrackIndex: Int,              // 🆕 add this
+        renderTrackIndex: Int,
+        shouldCancel: () -> Boolean,
+        imageFormat: String,
+        jpegQuality: Int,
         onFrameDone: () -> Unit
     ): TextOverlaySequence {
 
@@ -153,94 +221,131 @@ object TextBitmapRenderer {
         val chunkEnd = (chunkStart + chunkSize).coerceAtMost(totalFrames)
         val chunkFrames = chunkEnd - chunkStart
 
-        // 🆕 Reuse ONE bitmap for the whole chunk
         val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
+        val overlayBuffer = if (overlayClips.isNotEmpty()) {
+            val overlayBitmap = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
+            OverlayRenderBuffer(
+                bitmap = overlayBitmap,
+                androidCanvas = Canvas(overlayBitmap),
+                composeCanvas = ComposeCanvas(overlayBitmap.asImageBitmap()),
+                drawScope = CanvasDrawScope()
+            )
+        } else null
 
-        // Frame-reuse cache (for static content)
         var previousFile: File? = null
         var previousVisibleKey: Set<String> = emptySet()
 
-        for (i in 0 until chunkFrames) {
-            val globalFrame = chunkStart + i
-            val timelineMs = (globalFrame.toLong() * 1000L) / fps
+        val ext = if (imageFormat == "jpeg") "jpg" else "png"
 
-            val targetFile = File(
-                context.cacheDir,
-                "combined_${chunkIdx}_f%05d.png".format(i + 1)
-            )
+        try {
+            for (i in 0 until chunkFrames) {
+                currentCoroutineContext().ensureActive()
+                if (shouldCancel()) throw CancellationException("Text rendering cancelled")
+                val globalFrame = chunkStart + i
+                val timelineMs = (globalFrame.toLong() * 1000L) / fps
 
-            // ── Analyze visible content for this frame ──
-            val analysis = analyzeFrame(
-                timelineMs = timelineMs,
-                textClips = textClips,
-                overlayClips = overlayClips
-            )
+                val targetFile = File(
+                    workingDirectory,
+                    "combined_${chunkIdx}_f%05d.$ext".format(i + 1)
+                )
 
-            when {
-                // Case 1: Nothing visible → write cached empty PNG
-                !analysis.needsRender -> {
-                    FileOutputStream(targetFile).use { it.write(emptyPngBytes) }
-                }
+                val analysis = analyzeFrame(
+                    timelineMs = timelineMs,
+                    layerClips = layerClips,
+                    overlayClips = overlayClips
+                )
 
-                // Case 2: Same static content as previous frame → copy file
-                !analysis.anyAnimated &&
-                        analysis.visibleKey == previousVisibleKey &&
-                        previousFile != null -> {
-                    previousFile.copyTo(targetFile, overwrite = true)
-                }
+                when {
+                    !analysis.needsRender -> {
+                        FileOutputStream(targetFile).use { it.write(emptyPngBytes) }
+                    }
 
-                // Case 3: Render normally
-                else -> {
-                    canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+                    !analysis.anyAnimated &&
+                            analysis.visibleKey == previousVisibleKey &&
+                            previousFile != null -> {
+                        previousFile.copyTo(targetFile, overwrite = true)
+                    }
 
-                    // Draw overlays (behind text)
-                    overlayClips.forEach { clip ->
-                        if (timelineMs >= clip.timelineStartMs &&
-                            timelineMs < clip.timelineEndMs
-                        ) {
-                            val localSec = (timelineMs - clip.timelineStartMs) / 1000f
-                            val ov = extractOverlay(clip)
-                            if (ov != null && ov.isActive) {
-                                try {
-                                    drawOverlayOnCanvas(canvas, localSec, ov, W, H)
-                                } catch (_: Throwable) {
+                    else -> {
+                        if (imageFormat == "jpeg") {
+                            canvas.drawColor(Color.BLACK, PorterDuff.Mode.SRC)
+                        } else {
+                            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+                        }
+
+                        overlayClips.forEach { clip ->
+                            if (timelineMs >= clip.timelineStartMs &&
+                                timelineMs < clip.timelineEndMs
+                            ) {
+                                val localSec = (timelineMs - clip.timelineStartMs) / 1000f
+                                val ov = extractOverlay(clip)
+                                if (ov != null && ov.isActive) {
+                                    overlayBuffer?.let {
+                                        drawOverlayOnCanvas(
+                                            canvas, it, localSec, ov, W, H
+                                        )
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    // Draw text + stickers
-                    textClips.forEach { clip ->
-                        if (timelineMs >= clip.timelineStartMs &&
-                            timelineMs < clip.timelineEndMs
-                        ) {
-                            val localSec = (timelineMs - clip.timelineStartMs) / 1000f
-                            if (clip.isTextClip) {
-                                drawTextClipAtTime(canvas, clip, localSec, W, H)
-                            } else if (clip.isStickerClip) {
-                                drawStickerClipAtTime(canvas, clip, localSec, W, H)
+                        layerClips.forEach { clip ->
+                            if (timelineMs >= clip.timelineStartMs &&
+                                timelineMs < clip.timelineEndMs
+                            ) {
+                                val localSec = (timelineMs - clip.timelineStartMs) / 1000f
+                                if (clip.isVisualClip &&
+                                    clip.type.startsWith("image/")
+                                ) {
+                                    imageBitmaps[clip.id]?.let { image ->
+                                        drawImageClip(
+                                            canvas, clip, image, localSec, W, H
+                                        )
+                                    }
+                                } else if (clip.isTextClip) {
+                                    drawTextClipAtTime(
+                                        canvas, clip, localSec, W, H
+                                    )
+                                } else if (clip.isStickerClip) {
+                                    drawStickerClipAtTime(
+                                        canvas, clip, localSec, W, H
+                                    )
+                                }
+                            }
+                        }
+
+                        FileOutputStream(targetFile).use { fos ->
+                            val ok = if (imageFormat == "jpeg") {
+                                bmp.compress(
+                                    Bitmap.CompressFormat.JPEG,
+                                    jpegQuality.coerceIn(60, 100),
+                                    fos
+                                )
+                            } else {
+                                bmp.compress(Bitmap.CompressFormat.PNG, 90, fos)
+                            }
+                            if (!ok) {
+                                throw java.io.IOException("Could not encode text frame")
                             }
                         }
                     }
-
-                    FileOutputStream(targetFile).use { fos ->
-                        bmp.compress(Bitmap.CompressFormat.PNG, 85, fos)
-                    }
                 }
+
+                previousFile = targetFile
+                previousVisibleKey = analysis.visibleKey
+
+                onFrameDone()
             }
 
-            previousFile = targetFile
-            previousVisibleKey = analysis.visibleKey
-
-            onFrameDone()
+        } finally {
+            bmp.recycle()
+            overlayBuffer?.bitmap?.recycle()
         }
 
-        bmp.recycle()
-
         val pattern = File(
-            context.cacheDir,
-            "combined_${chunkIdx}_f%05d.png"
+            workingDirectory,
+            "combined_${chunkIdx}_f%05d.$ext"
         ).absolutePath
 
         val startSec = chunkStart.toDouble() / fps.toDouble()
@@ -253,13 +358,12 @@ object TextBitmapRenderer {
             startNumber = 1,
             startSec = startSec,
             endSec = endSec,
-            trackIndex = renderTrackIndex      // 🆕 add this
+            trackIndex = renderTrackIndex,
+            workingDirectory = workingDirectory,
+            imageFormat = imageFormat
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  FRAME ANALYSIS — determines if frame is empty/static/animated
-    // ═══════════════════════════════════════════════════════════
     private data class FrameAnalysis(
         val needsRender: Boolean,
         val anyAnimated: Boolean,
@@ -268,19 +372,25 @@ object TextBitmapRenderer {
 
     private fun analyzeFrame(
         timelineMs: Long,
-        textClips: List<EditorClip>,
+        layerClips: List<EditorClip>,
         overlayClips: List<EditorClip>
     ): FrameAnalysis {
         val visibleKey = mutableSetOf<String>()
         var anyAnimated = false
 
-        textClips.forEach { clip ->
-            if (timelineMs >= clip.timelineStartMs && timelineMs < clip.timelineEndMs) {
+        layerClips.forEach { clip ->
+            if (timelineMs >= clip.timelineStartMs &&
+                timelineMs < clip.timelineEndMs
+            ) {
                 visibleKey.add(clip.id)
-
                 val localSec = (timelineMs - clip.timelineStartMs) / 1000f
 
-                // Text animation
+                if (clip.isVisualClip && clip.type.startsWith("image/") &&
+                    clip.keyframes.isNotEmpty()
+                ) {
+                    anyAnimated = true
+                }
+
                 if (clip.isTextClip) {
                     val st = clip.textState
                     if (st != null) {
@@ -294,7 +404,6 @@ object TextBitmapRenderer {
                     if (clip.keyframes.isNotEmpty()) anyAnimated = true
                 }
 
-                // Sticker animation
                 if (clip.isStickerClip) {
                     val ss = clip.stickerState
                     if (ss != null) {
@@ -311,9 +420,10 @@ object TextBitmapRenderer {
         }
 
         overlayClips.forEach { clip ->
-            if (timelineMs >= clip.timelineStartMs && timelineMs < clip.timelineEndMs) {
+            if (timelineMs >= clip.timelineStartMs &&
+                timelineMs < clip.timelineEndMs
+            ) {
                 visibleKey.add(clip.id)
-                // Overlays are always animated (rain, snow, etc.)
                 anyAnimated = true
             }
         }
@@ -325,9 +435,112 @@ object TextBitmapRenderer {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  Existing helper functions (unchanged)
-    // ═══════════════════════════════════════════════════════════
+    private fun decodeImage(
+        context: Context,
+        clip: EditorClip,
+        targetW: Int,
+        targetH: Int
+    ): Bitmap {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(clip.uri)?.use {
+            BitmapFactory.decodeStream(it, null, bounds)
+        } ?: throw java.io.IOException("Could not read image: ${clip.name}")
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            throw java.io.IOException("Invalid image dimensions: ${clip.name}")
+        }
+
+        val maxDimension = maxOf(targetW, targetH) * 2
+        var sampleSize = 1
+        while (
+            bounds.outWidth / sampleSize > maxDimension ||
+            bounds.outHeight / sampleSize > maxDimension
+        ) {
+            sampleSize *= 2
+        }
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        return context.contentResolver.openInputStream(clip.uri)?.use {
+            BitmapFactory.decodeStream(it, null, options)
+        } ?: throw java.io.IOException("Could not decode image: ${clip.name}")
+    }
+
+    private fun drawImageClip(
+        canvas: Canvas,
+        clip: EditorClip,
+        bitmap: Bitmap,
+        localTimeSec: Float,
+        W: Int,
+        H: Int
+    ) {
+        val transform = TransformApplier.resolveLive(clip, localTimeSec)
+        val fitScale = minOf(W.toFloat() / bitmap.width, H.toFloat() / bitmap.height)
+        val imageW = bitmap.width * fitScale
+        val imageH = bitmap.height * fitScale
+        val destination = RectF(
+            (W - imageW) / 2f,
+            (H - imageH) / 2f,
+            (W + imageW) / 2f,
+            (H + imageH) / 2f
+        )
+
+        val filter = clip.filters
+        val colorValues = ColorFilterValues(
+            brightness = filter.brightness,
+            contrast = filter.contrast,
+            saturation = filter.saturation,
+            hue = filter.hue,
+            grayscale = filter.grayscale,
+            sepia = filter.sepia,
+            invert = filter.invert,
+            blur = filter.blur,
+            opacity = filter.opacity
+        )
+        val colorMatrix = ColorMatrix()
+        var hasColorChanges = false
+        if (!clip.adjustments.isDefault &&
+            ColorMatrixBuilder.hasRealTimeAdjustments(clip.adjustments)
+        ) {
+            colorMatrix.postConcat(ColorMatrixBuilder.build(clip.adjustments))
+            hasColorChanges = true
+        }
+        if (EffectsEngine.hasColorEffect(colorValues)) {
+            colorMatrix.postConcat(EffectsEngine.buildColorMatrix(colorValues))
+            hasColorChanges = true
+        }
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+            alpha = (EffectsEngine.opacityAlpha(colorValues) * 255f).toInt()
+                .coerceIn(0, 255)
+            if (hasColorChanges) colorFilter = ColorMatrixColorFilter(colorMatrix)
+        }
+
+        val cropSx = 1f /
+                (1f - transform.cropL - transform.cropR).coerceAtLeast(0.05f)
+        val cropSy = 1f /
+                (1f - transform.cropT - transform.cropB).coerceAtLeast(0.05f)
+        val cropTx = -(transform.cropL - transform.cropR) / 2f * W
+        val cropTy = -(transform.cropT - transform.cropB) / 2f * H
+        val pivotX = transform.anchorX / 100f * W
+        val pivotY = transform.anchorY / 100f * H
+        val positionX = (transform.x - 50f) / 100f * W
+        val positionY = (transform.y - 50f) / 100f * H
+
+        val saveCount = canvas.save()
+        try {
+            canvas.translate(pivotX + positionX + cropTx, pivotY + positionY + cropTy)
+            canvas.rotate(transform.rotation)
+            canvas.scale(
+                transform.scale / 100f * cropSx,
+                transform.scale / 100f * cropSy
+            )
+            canvas.translate(-pivotX, -pivotY)
+            canvas.drawBitmap(bitmap, null, destination, paint)
+        } finally {
+            canvas.restoreToCount(saveCount)
+        }
+    }
+
     private fun extractOverlay(clip: EditorClip): OverlayState? {
         if (clip.isOverlayClip) {
             val ov = clip.overlay
@@ -346,31 +559,22 @@ object TextBitmapRenderer {
 
     private fun drawOverlayOnCanvas(
         androidCanvas: Canvas,
+        buffer: OverlayRenderBuffer,
         timeSec: Float,
         overlay: OverlayState,
         W: Int,
         H: Int
     ) {
-        try {
-            val overlayBmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
-            val imageBitmap = overlayBmp.asImageBitmap()
-            val composeCanvas = ComposeCanvas(imageBitmap)
-
-            val drawScope = CanvasDrawScope()
-            drawScope.draw(
-                density = Density(1f, 1f),
-                layoutDirection = LayoutDirection.Ltr,
-                canvas = composeCanvas,
-                size = ComposeSize(W.toFloat(), H.toFloat())
-            ) {
-                OverlayEngine.draw(this, timeSec, overlay)
-            }
-
-            androidCanvas.drawBitmap(overlayBmp, 0f, 0f, null)
-            overlayBmp.recycle()
-        } catch (e: Throwable) {
-            Log.e("OVERLAY_DRAW", "Failed: ${overlay.type}", e)
+        buffer.androidCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        buffer.drawScope.draw(
+            density = Density(1f, 1f),
+            layoutDirection = LayoutDirection.Ltr,
+            canvas = buffer.composeCanvas,
+            size = ComposeSize(W.toFloat(), H.toFloat())
+        ) {
+            OverlayEngine.draw(this, timeSec, overlay)
         }
+        androidCanvas.drawBitmap(buffer.bitmap, 0f, 0f, null)
     }
 
     private fun androidFamilyFor(fontName: String): String {
@@ -452,7 +656,9 @@ object TextBitmapRenderer {
 
         val sampled = TransformApplier.resolveLive(clip, localTimeSec)
 
-        val baseSize = 48f * (W / REFERENCE_WIDTH_PX)
+        // ✅ Match preview: base 48 size scaled by canvas width / 720
+        val scale = W.toFloat() / REFERENCE_WIDTH_PX
+        val baseSize = 48f * scale
         val combinedScale = (sampled.scale / 100f) * frame.scaleX
         val fontSize = baseSize * combinedScale
 
@@ -463,14 +669,8 @@ object TextBitmapRenderer {
             color = Color.WHITE
         }
 
-        val stickerSizeDp = baseSize * (sampled.scale / 100f)
-        val halfWPct = (stickerSizeDp / 2f / W * 100f).coerceAtMost(50f)
-        val halfHPct = (stickerSizeDp / 2f / H * 100f).coerceAtMost(50f)
-        val clampedX = sampled.x.coerceIn(halfWPct, 100f - halfWPct)
-        val clampedY = sampled.y.coerceIn(halfHPct, 100f - halfHPct)
-
-        val cx = clampedX / 100f * W
-        val cy = clampedY / 100f * H
+        val cx = sampled.x / 100f * W
+        val cy = sampled.y / 100f * H
 
         val fm = paint.fontMetrics
         val baseline = cy - (fm.ascent + fm.descent) / 2f
@@ -505,9 +705,13 @@ object TextBitmapRenderer {
 
             if (content.isEmpty()) return
 
+            // ═══════════════════════════════════════════════════════
+            //  SCALE — matches PreviewCanvas: canvasW / 720
+            // ═══════════════════════════════════════════════════════
+            val scale = W.toFloat() / TextScaler.REFERENCE_WIDTH
+
             val baseFontSize = st.fontSize.coerceAtLeast(8)
-            val initialFontSize = (baseFontSize * (W.toFloat() / REFERENCE_WIDTH_PX))
-                .coerceAtLeast(10f)
+            val initialFontSize = (baseFontSize * scale).coerceAtLeast(8f)
 
             val typeface = try {
                 val style = when {
@@ -536,7 +740,7 @@ object TextBitmapRenderer {
                 initialFontSize
             }
 
-            val spacingPx = st.letterSpacing * (W.toFloat() / REFERENCE_WIDTH_PX)
+            val spacingPx = st.letterSpacing * scale
             val spacingEm = if (fontSize <= 0f) 0f
             else (spacingPx / fontSize).coerceIn(-0.3f, 0.3f)
 
@@ -552,15 +756,9 @@ object TextBitmapRenderer {
                 color = st.color.toInt()
             }
 
-            val textW = basePaint.measureText(content)
-            val textH = basePaint.fontMetrics.let { it.descent - it.ascent }
-            val halfWPct = (textW / 2f / W * 100f).coerceAtMost(50f)
-            val halfHPct = (textH / 2f / H * 100f).coerceAtMost(50f)
-            val clampedX = sampled.x.coerceIn(halfWPct, 100f - halfWPct)
-            val clampedY = sampled.y.coerceIn(halfHPct, 100f - halfHPct)
-
-            val cx = clampedX / 100f * W
-            val cy = clampedY / 100f * H
+            // ✅ SAME position formula as preview
+            val cx = sampled.x.coerceIn(0f, 100f) / 100f * W
+            val cy = sampled.y.coerceIn(0f, 100f) / 100f * H
 
             val fm = basePaint.fontMetrics
             val baseline = cy - (fm.ascent + fm.descent) / 2f
@@ -584,9 +782,10 @@ object TextBitmapRenderer {
                 return
             }
 
+            // ── GLOW
             if (st.glowEnabled && st.glowRadius > 0f) {
                 val glowColorInt = st.glowColor.toInt()
-                val glowR = st.glowRadius.coerceIn(4f, 60f)
+                val glowR = (st.glowRadius * scale).coerceIn(2f, 100f)
                 listOf(
                     glowR * 1.6f to 0.30f,
                     glowR * 1.0f to 0.50f,
@@ -600,7 +799,7 @@ object TextBitmapRenderer {
                         color = glowColorInt
                         alpha = (alphaInt * a).toInt().coerceIn(0, 255)
                         maskFilter = BlurMaskFilter(
-                            radius.coerceIn(2f, 80f),
+                            radius.coerceIn(2f, 100f),
                             BlurMaskFilter.Blur.NORMAL
                         )
                     }
@@ -608,6 +807,7 @@ object TextBitmapRenderer {
                 }
             }
 
+            // ── SHADOW
             if (st.shadowEnabled) {
                 val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     this.typeface = typeface
@@ -618,15 +818,16 @@ object TextBitmapRenderer {
                     color = st.color.toInt()
                     alpha = alphaInt
                     setShadowLayer(
-                        st.shadowBlur.coerceIn(0f, 50f),
-                        st.shadowOffsetX.coerceIn(-40f, 40f),
-                        st.shadowOffsetY.coerceIn(-40f, 40f),
+                        (st.shadowBlur * scale).coerceIn(0f, 100f),
+                        (st.shadowOffsetX * scale).coerceIn(-60f, 60f),
+                        (st.shadowOffsetY * scale).coerceIn(-60f, 60f),
                         st.shadowColor.toInt()
                     )
                 }
                 canvas.drawText(content, tx, ty, shadowPaint)
             }
 
+            // ── STROKE
             if (st.strokeEnabled && st.strokeWidth > 0f) {
                 val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     this.typeface = typeface
@@ -636,7 +837,7 @@ object TextBitmapRenderer {
                     shader = null
                     color = st.strokeColor.toInt()
                     style = Paint.Style.STROKE
-                    strokeWidth = (st.strokeWidth * 2f).coerceIn(2f, 50f)
+                    strokeWidth = (st.strokeWidth * scale * 2f).coerceIn(1f, 60f)
                     strokeJoin = Paint.Join.ROUND
                     strokeCap = Paint.Cap.ROUND
                     alpha = alphaInt
@@ -645,6 +846,7 @@ object TextBitmapRenderer {
                 canvas.drawText(content, tx, ty, strokePaint)
             }
 
+            // ── FILL
             val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 this.typeface = typeface
                 this.textSize = fontSize

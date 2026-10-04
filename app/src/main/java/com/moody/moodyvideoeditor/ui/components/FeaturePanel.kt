@@ -24,10 +24,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * Reusable container for all feature panels
- * Har panel isko wrap karega
- */
+// Reusable container for all feature panels
+// Har panel isko wrap karega
 @Composable
 fun FeaturePanel(
     title: String,

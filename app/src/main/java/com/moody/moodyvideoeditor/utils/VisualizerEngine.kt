@@ -52,9 +52,9 @@ object VisualizerEngine {
         val rms: Float, val beat: Float, val bars: FloatArray
     )
 
-    // ═══════════════════════════════════════════════════════════
+
     //  MAIN ENTRY
-    // ═══════════════════════════════════════════════════════════
+
     fun draw(
         scope: DrawScope,
         state: VisualizerState,
@@ -104,8 +104,16 @@ object VisualizerEngine {
             state = state, instanceKey = instanceKey
         )
 
+<<<<<<< HEAD
         when (state.preset) {
             // 🆕 PREMIUM
+=======
+
+        //  DISPATCH
+
+        when (state.preset) {
+            // 🆕 PHASE 1 — Premium
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             VisualizerPreset.AUDIO_SPHERE -> drawAudioSphere(ctx)
             VisualizerPreset.WAVEFORM_RING -> drawWaveformRing(ctx)
             VisualizerPreset.SYMMETRIC_WAVE -> drawSymmetricWave(ctx)
@@ -156,7 +164,11 @@ object VisualizerEngine {
             VisualizerPreset.GALAXY_VORTEX -> drawSpiral(ctx, 1)
             VisualizerPreset.CYBER_GRID -> drawGrid(ctx, 0)
 
+<<<<<<< HEAD
             // NEON
+=======
+            // NEON / CYBER
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             VisualizerPreset.NEON_GLOW_RING -> drawNeonRing(ctx)
             VisualizerPreset.RGB_GLITCH -> drawGlitch(ctx, 0)
             VisualizerPreset.VHS_NOISE -> drawGlitch(ctx, 1)
@@ -248,9 +260,9 @@ object VisualizerEngine {
         fun beatScale(): Float = 1f + feat.beat * state.beatPulse
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  FEATURES
-    // ═══════════════════════════════════════════════════════════
+
     private fun computeFeatures(
         instanceKey: String, beatPulse: Float, state: VisualizerState
     ): Features {
@@ -274,6 +286,7 @@ object VisualizerEngine {
                 startHz = state.startFrequencyHz,
                 endHz = state.endFrequencyHz
             )
+<<<<<<< HEAD
 
             val sens = state.overallSensitivity.coerceIn(0f, 3f)
             val quarter = (bands / 4).coerceAtLeast(1)
@@ -294,6 +307,21 @@ object VisualizerEngine {
             trebleTarget = (beatPulse * 0.35f * state.trebleSpikeBoost * boost)
                 .coerceIn(0f, 1f)
             rmsTarget = (beatPulse * 0.75f * boost).coerceIn(0f, 1f)
+=======
+            val quarter = (bands / 4).coerceAtLeast(1)
+            val half = (bands / 2).coerceAtLeast(1)
+            bassTarget = liveBands.take(quarter).average().toFloat().coerceIn(0f, 1f)
+            midTarget = liveBands.drop(quarter).take(half)
+                .average().toFloat().coerceIn(0f, 1f)
+            trebleTarget = liveBands.drop(quarter + half)
+                .average().toFloat().coerceIn(0f, 1f)
+            rmsTarget = liveBands.average().toFloat().coerceIn(0f, 1f)
+        } else {
+            bassTarget = (beatPulse * state.bassRingBoost).coerceIn(0f, 1f)
+            midTarget = (beatPulse * 0.55f * state.midBarBoost).coerceIn(0f, 1f)
+            trebleTarget = (beatPulse * 0.35f * state.trebleSpikeBoost).coerceIn(0f, 1f)
+            rmsTarget = (beatPulse * 0.75f).coerceIn(0f, 1f)
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             liveBands = null
         }
 
@@ -343,9 +371,15 @@ object VisualizerEngine {
         return Features(bass, mid, treble, rms, beat, bars)
     }
 
+<<<<<<< HEAD
     // ═══════════════════════════════════════════════════════════
     //  1. CIRCULAR BARS
     // ═══════════════════════════════════════════════════════════
+=======
+
+    //  1. CIRCULAR BARS
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     private fun drawCircularBars(c: DrawCtx, widthMul: Float, variant: Int) {
         val s = c.scope
         val bars = c.feat.bars
@@ -354,8 +388,12 @@ object VisualizerEngine {
 
         val r0 = c.baseR * (1f + c.feat.bass * 0.1f + c.feat.beat * 0.1f)
         val rMax = c.baseR * (0.45f + variant * 0.05f) * c.state.maxHeight
+<<<<<<< HEAD
         val barW = (2f * PI.toFloat() * c.baseR / count) * 0.6f * widthMul *
                 c.state.lineWidth
+=======
+        val barW = (2f * PI.toFloat() * c.baseR / count) * 0.6f * widthMul
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
 
         bars.forEachIndexed { i, v ->
             val angle = (i.toFloat() / count) * 2f * PI.toFloat() - PI.toFloat() / 2f
@@ -399,9 +437,15 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.85f)
     }
 
+<<<<<<< HEAD
     // ═══════════════════════════════════════════════════════════
     //  2. LINEAR BARS
     // ═══════════════════════════════════════════════════════════
+=======
+
+    //  2. LINEAR BARS
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     private fun drawLinearBars(c: DrawCtx, variant: Int) {
         val s = c.scope
         val bars = c.feat.bars
@@ -410,7 +454,11 @@ object VisualizerEngine {
 
         val totalW = c.baseR * 2f
         val startX = c.cx - c.baseR
+<<<<<<< HEAD
         val barW = totalW / count * 0.7f * c.state.lineWidth
+=======
+        val barW = totalW / count * 0.7f
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         val maxH = c.baseR * 0.9f * c.state.maxHeight
         val baseY = c.cy
 
@@ -500,9 +548,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  3. POLYGON BARS
-    // ═══════════════════════════════════════════════════════════
+
+    //  3. POLYGON BARS — FIXED
+
     private fun drawPolygonBars(c: DrawCtx, sides: Int) {
         val s = c.scope
         val bars = c.feat.bars
@@ -511,7 +559,11 @@ object VisualizerEngine {
 
         val r0 = c.baseR * (0.85f + c.feat.bass * 0.1f)
         val rMax = c.baseR * 0.5f * c.state.maxHeight
+<<<<<<< HEAD
         val barW = c.state.lineWidth * 1.5f
+=======
+        val barW = 4f
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
 
         bars.forEachIndexed { i, v ->
             val t = i.toFloat() / count
@@ -556,9 +608,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.6f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  4. WAVEFORM
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawWaveform(c: DrawCtx, variant: Int) {
         val s = c.scope
         val segments = 200
@@ -596,10 +648,14 @@ object VisualizerEngine {
             s.drawPath(
                 path = path,
                 color = c.color1a(0.25f),
+<<<<<<< HEAD
                 style = Stroke(
                     width = c.state.lineWidth * 2.4f,
                     cap = StrokeCap.Round
                 )
+=======
+                style = Stroke(width = c.state.lineWidth * 2.4f, cap = StrokeCap.Round)
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             )
         }
         s.drawPath(
@@ -613,9 +669,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.55f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  5. DOTS ON RING
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawDotsOnRing(c: DrawCtx, rings: Int) {
         val s = c.scope
         val barsSize = c.feat.bars.size
@@ -642,9 +698,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.55f)
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  6. PARTICLES
-    // ═══════════════════════════════════════════════════════════
+
+    //  6. PARTICLES — FIXED
+
     private fun drawParticles(c: DrawCtx, variant: Int) {
         val s = c.scope
         val count = (60 + variant * 10).coerceAtMost(160)
@@ -696,9 +752,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  7. FALLING PARTICLES
-    // ═══════════════════════════════════════════════════════════
+
+    //  7. FALLING PARTICLES — FIXED
+
     private fun drawFalling(c: DrawCtx, variant: Int) {
         val s = c.scope
         val count = when (variant) {
@@ -728,9 +784,9 @@ object VisualizerEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  8. CLOUDS
-    // ═══════════════════════════════════════════════════════════
+
+    //  8. CLOUDS — FIXED
+
     private fun drawClouds(c: DrawCtx, variant: Int) {
         val s = c.scope
         val count = 8 + variant * 2
@@ -768,9 +824,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.55f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  9. SPIRAL
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawSpiral(c: DrawCtx, variant: Int) {
         val s = c.scope
         val turns = 6 + variant
@@ -787,10 +843,14 @@ object VisualizerEngine {
             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
         if (c.state.glow) {
+<<<<<<< HEAD
             s.drawPath(
                 path, c.color1a(0.25f),
                 style = Stroke(width = c.state.lineWidth * 3f)
             )
+=======
+            s.drawPath(path, c.color1a(0.25f), style = Stroke(width = c.state.lineWidth * 3f))
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         }
         s.drawPath(
             path, c.sweep(),
@@ -810,9 +870,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.4f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  10. RINGS
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawRings(c: DrawCtx, count: Int, animated: Boolean) {
         val s = c.scope
         for (i in 0 until count) {
@@ -825,9 +885,13 @@ object VisualizerEngine {
                 brush = c.sweep(),
                 radius = r,
                 center = Offset(c.cx + offsetX, c.cy + offsetY),
+<<<<<<< HEAD
                 style = Stroke(
                     width = c.state.lineWidth + c.feat.beat * 2f
                 )
+=======
+                style = Stroke(width = c.state.lineWidth + c.feat.beat * 2f)
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             )
             if (c.state.glow) {
                 s.drawCircle(
@@ -841,9 +905,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.55f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  11. GLITCH
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawGlitch(c: DrawCtx, variant: Int) {
         val s = c.scope
         val W = c.W
@@ -924,9 +988,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.6f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  12. GRID
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawGrid(c: DrawCtx, variant: Int) {
         val s = c.scope
         val W = c.W
@@ -964,9 +1028,15 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.4f)
     }
 
+<<<<<<< HEAD
     // ═══════════════════════════════════════════════════════════
     //  13. GEOMETRIC
     // ═══════════════════════════════════════════════════════════
+=======
+
+    //  13. GEOMETRIC
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     private fun drawGeometric(c: DrawCtx, variant: Int) {
         val s = c.scope
         val barsSize = c.feat.bars.size
@@ -983,13 +1053,31 @@ object VisualizerEngine {
                         if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
                     }
                     path.close()
+<<<<<<< HEAD
                     s.drawPath(
                         path, c.sweep(),
                         style = Stroke(width = c.state.lineWidth)
+=======
+                    s.drawPath(path, c.sweep(), style = Stroke(width = 3f))
+                }
+            }
+
+            1 -> {
+                for (i in 0 until 5) {
+                    val t = ((c.elapsed * 0.5f + i * 0.2f) % 1f)
+                    val sz = c.baseR * (0.2f + t * 1.2f)
+                    val alpha = (1f - t).coerceIn(0f, 1f) * (0.6f + c.feat.beat * 0.4f)
+                    s.drawRect(
+                        color = c.color1a(alpha),
+                        topLeft = Offset(c.cx - sz, c.cy - sz),
+                        size = Size(sz * 2f, sz * 2f),
+                        style = Stroke(width = 2f)
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                     )
                 }
             }
 
+<<<<<<< HEAD
             1 -> {
                 for (i in 0 until 5) {
                     val t = ((c.elapsed * 0.5f + i * 0.2f) % 1f)
@@ -1005,6 +1093,8 @@ object VisualizerEngine {
                 }
             }
 
+=======
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             2 -> {
                 s.rotate(degrees = c.elapsed * 20f, pivot = Offset(c.cx, c.cy)) {
                     val r = c.baseR * 0.7f
@@ -1117,9 +1207,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  14. CINEMATIC
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawCinematic(c: DrawCtx, variant: Int) {
         val s = c.scope
         val W = c.W
@@ -1295,9 +1385,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.55f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  15. NEON RING
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawNeonRing(c: DrawCtx, hueShift: Boolean = false) {
         val s = c.scope
         val pulse = 1f + c.feat.bass * 0.35f + c.feat.beat * c.state.beatPulse
@@ -1333,18 +1423,22 @@ object VisualizerEngine {
             ),
             radius = r,
             center = Offset(c.cx, c.cy),
+<<<<<<< HEAD
             style = Stroke(
                 width = c.state.lineWidth * 3f,
                 cap = StrokeCap.Round
             )
+=======
+            style = Stroke(width = c.state.lineWidth * 3f, cap = StrokeCap.Round)
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         )
 
         drawCenterContent(c, r * c.state.imageScale)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  16. LED MATRIX
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawLedMatrix(c: DrawCtx) {
         val s = c.scope
         val barsSize = c.feat.bars.size
@@ -1373,9 +1467,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  17. LASER BEAM
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawLaserBeam(c: DrawCtx, variant: Int) {
         val s = c.scope
         val count = if (variant == 0) 8 else 20
@@ -1383,8 +1477,12 @@ object VisualizerEngine {
             val a = (i.toFloat() / count) * 2f * PI.toFloat() +
                     c.elapsed * (0.5f + variant * 0.2f)
             val len = c.baseR * (1.2f + c.feat.beat * 0.5f)
+<<<<<<< HEAD
             val width = if (variant == 1) c.state.lineWidth * 0.6f
             else c.state.lineWidth
+=======
+            val width = if (variant == 1) 1.5f else c.state.lineWidth
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             s.drawLine(
                 color = c.color1a(0.8f),
                 start = Offset(c.cx, c.cy),
@@ -1399,9 +1497,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  18. DISC
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawDisc(c: DrawCtx, variant: Int) {
         val s = c.scope
         val r = c.baseR * (1f + c.feat.beat * 0.1f)
@@ -1456,9 +1554,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.55f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  19. DNA STRAND
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawDnaStrand(c: DrawCtx) {
         val s = c.scope
         val barsSize = c.feat.bars.size
@@ -1494,9 +1592,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  20. KALEIDOSCOPE
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawKaleidoscope(c: DrawCtx, mirrored: Boolean = false) {
         val s = c.scope
         val barsSize = c.feat.bars.size
@@ -1529,9 +1627,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.4f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  21. SPLIT DIAGONAL
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawSplitDiagonal(c: DrawCtx) {
         val s = c.scope
         val offset = c.feat.beat * 20f
@@ -1550,9 +1648,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  22. CHECKERBOARD
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawCheckerboard(c: DrawCtx) {
         val s = c.scope
         val step = c.baseR * 0.15f
@@ -1576,9 +1674,9 @@ object VisualizerEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  23. RIBBON
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawRibbon(c: DrawCtx) {
         val s = c.scope
         val points = 100
@@ -1593,10 +1691,14 @@ object VisualizerEngine {
         if (c.state.glow) {
             s.drawPath(
                 path, c.color1a(0.3f),
+<<<<<<< HEAD
                 style = Stroke(
                     width = c.state.lineWidth * 4f,
                     cap = StrokeCap.Round
                 )
+=======
+                style = Stroke(width = c.state.lineWidth * 4f, cap = StrokeCap.Round)
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             )
         }
         s.drawPath(
@@ -1606,9 +1708,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  24. LIQUID
-    // ═══════════════════════════════════════════════════════════
+
     private fun drawLiquid(c: DrawCtx, variant: Int) {
         val s = c.scope
         val path = Path()
@@ -1643,9 +1745,20 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.55f)
     }
 
+
     // ═══════════════════════════════════════════════════════════
+<<<<<<< HEAD
     //  PREMIUM — AUDIO SPHERE
     // ═══════════════════════════════════════════════════════════
+=======
+    //  🆕 PHASE 1 — PREMIUM VISUALIZERS
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * AUDIO_SPHERE — Radial bars around center.
+     * "AUDIO" text REMOVED — uses drawCenterContent (user's image/text).
+     */
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     private fun drawAudioSphere(c: DrawCtx) {
         val s = c.scope
         val bars = c.feat.bars
@@ -1655,7 +1768,12 @@ object VisualizerEngine {
         val baseRadius = c.baseR * 0.7f
         val maxBarLen = c.baseR * 0.9f * c.state.maxHeight
 
+<<<<<<< HEAD
         if (c.glowBoost() > 0.05f) {
+=======
+        // Glow backdrop
+        if (c.state.glow) {
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             val glowR = baseRadius * (1.3f + c.feat.bass * 0.4f)
             s.drawCircle(
                 brush = Brush.radialGradient(
@@ -1671,6 +1789,10 @@ object VisualizerEngine {
             )
         }
 
+<<<<<<< HEAD
+=======
+        // Radial bars
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         val angleStep = (2f * PI.toFloat()) / count
         bars.take(count).forEachIndexed { i, v ->
             val angle = i * angleStep - PI.toFloat() / 2f
@@ -1715,10 +1837,15 @@ object VisualizerEngine {
             )
         }
 
+<<<<<<< HEAD
+=======
+        // Inner ring
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         s.drawCircle(
             color = c.color2a(0.8f),
             radius = baseRadius,
             center = Offset(c.cx, c.cy),
+<<<<<<< HEAD
             style = Stroke(width = c.state.lineWidth)
         )
 
@@ -1728,6 +1855,18 @@ object VisualizerEngine {
     // ═══════════════════════════════════════════════════════════
     //  PREMIUM — WAVEFORM RING
     // ═══════════════════════════════════════════════════════════
+=======
+            style = Stroke(width = 2f + c.feat.beat * 2f)
+        )
+
+        // 🆕 Center content — user's image/text (NOT "AUDIO" text)
+        drawCenterContent(c, baseRadius * c.state.imageScale)
+    }
+
+    /**
+     * WAVEFORM_RING — Circular waveform with strong glow.
+     */
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     private fun drawWaveformRing(c: DrawCtx) {
         val s = c.scope
         val bars = c.feat.bars
@@ -1742,7 +1881,11 @@ object VisualizerEngine {
             color = c.color2a(0.3f),
             radius = baseRadius,
             center = Offset(c.cx, c.cy),
+<<<<<<< HEAD
             style = Stroke(width = c.state.lineWidth * 0.6f)
+=======
+            style = Stroke(width = 1.5f)
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         )
 
         s.drawCircle(
@@ -1802,15 +1945,25 @@ object VisualizerEngine {
             color = c.color1a(0.6f),
             radius = baseRadius * (1f + c.feat.rms * 0.08f),
             center = Offset(c.cx, c.cy),
+<<<<<<< HEAD
             style = Stroke(width = c.state.lineWidth * 0.8f)
+=======
+            style = Stroke(width = 2f)
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         )
 
         drawCenterContent(c, innerRadius * c.state.imageScale * 0.9f)
     }
 
+<<<<<<< HEAD
     // ═══════════════════════════════════════════════════════════
     //  PREMIUM — SYMMETRIC WAVE
     // ═══════════════════════════════════════════════════════════
+=======
+    /**
+     * SYMMETRIC_WAVE — Left+right mirrored waveform.
+     */
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     private fun drawSymmetricWave(c: DrawCtx) {
         val s = c.scope
         val W = c.W
@@ -1821,12 +1974,20 @@ object VisualizerEngine {
 
         if (samples == 0) return
 
+<<<<<<< HEAD
+=======
+        // Left half
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         for (i in 0 until samples) {
             val t = i.toFloat() / samples
             val v = c.feat.bars[i]
             val h = v * maxHeight + 2f
             val x = c.cx - t * maxHalf
+<<<<<<< HEAD
             val barW = (maxHalf / samples) * 0.55f * c.state.lineWidth
+=======
+            val barW = (maxHalf / samples) * 0.55f
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
 
             if (c.state.glow) {
                 s.drawLine(
@@ -1846,12 +2007,20 @@ object VisualizerEngine {
             )
         }
 
+<<<<<<< HEAD
+=======
+        // Right half
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         for (i in 0 until samples) {
             val t = i.toFloat() / samples
             val v = c.feat.bars[i]
             val h = v * maxHeight + 2f
             val x = c.cx + t * maxHalf
+<<<<<<< HEAD
             val barW = (maxHalf / samples) * 0.55f * c.state.lineWidth
+=======
+            val barW = (maxHalf / samples) * 0.55f
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
 
             if (c.state.glow) {
                 s.drawLine(
@@ -1871,10 +2040,15 @@ object VisualizerEngine {
             )
         }
 
+<<<<<<< HEAD
+=======
+        // Center mirror line
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         s.drawLine(
             color = c.color1a(0.6f),
             start = Offset(c.cx - maxHalf, midY),
             end = Offset(c.cx + maxHalf, midY),
+<<<<<<< HEAD
             strokeWidth = c.state.lineWidth
         )
     }
@@ -1882,6 +2056,15 @@ object VisualizerEngine {
     // ═══════════════════════════════════════════════════════════
     //  CENTER CONTENT — TEXT/IMAGE (UNTOUCHED)
     // ═══════════════════════════════════════════════════════════
+=======
+            strokeWidth = 2f
+        )
+    }
+
+
+    //  CENTER CONTENT (image + text)
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     private fun drawCenterContent(c: DrawCtx, baseSize: Float) {
         if (!c.state.hasCenterContent) return
 
@@ -2098,9 +2281,13 @@ object VisualizerEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  PUBLIC API
+<<<<<<< HEAD
     // ═══════════════════════════════════════════════════════════
+=======
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     @Synchronized
     fun setCenterImage(uri: String?, bitmap: ImageBitmap?) {
         if (uri != cachedImageKey) {

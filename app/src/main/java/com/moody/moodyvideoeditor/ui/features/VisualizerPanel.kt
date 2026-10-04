@@ -78,9 +78,9 @@ fun VisualizerPanel(
 ) {
     var subView by remember { mutableStateOf("main") }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  TEXT EDITOR SUB-VIEW
-    // ═══════════════════════════════════════════════════════════
+
     if (subView == "text") {
         TextPanel(
             currentText = current.textState,
@@ -110,9 +110,9 @@ fun VisualizerPanel(
         return
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  MAIN VIEW
-    // ═══════════════════════════════════════════════════════════
+
     val context = LocalContext.current
 
     var refBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -122,6 +122,10 @@ fun VisualizerPanel(
         }
     }
 
+<<<<<<< HEAD
+=======
+    // Shared animation clock (0..10 sec loop)
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     val infiniteTransition = rememberInfiniteTransition(label = "vizClock")
     val clockSec by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -159,6 +163,10 @@ fun VisualizerPanel(
                 }
             }
 
+<<<<<<< HEAD
+=======
+            // BEAT STATUS
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             if (current.hasBeats) {
                 Box(
                     modifier = Modifier
@@ -183,9 +191,15 @@ fun VisualizerPanel(
                 }
             }
 
+<<<<<<< HEAD
             // ═══════════════════════════════════════════════════════
             //  PRESET PICKER
             // ═══════════════════════════════════════════════════════
+=======
+
+            //  PRESET PICKER
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             PresetPicker(
                 current = current,
                 refBitmap = refBitmap,
@@ -195,9 +209,13 @@ fun VisualizerPanel(
                 }
             )
 
+<<<<<<< HEAD
             // ═══════════════════════════════════════════════════════
             //  BEAT REACTION
             // ═══════════════════════════════════════════════════════
+=======
+            // BEAT REACTION
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             ValueSliderRow(
                 label = "Beat Reaction",
                 value = current.beatReaction,
@@ -207,9 +225,15 @@ fun VisualizerPanel(
                 onStateChanged(current.copy(beatReaction = it))
             }
 
+<<<<<<< HEAD
             // ═══════════════════════════════════════════════════════
             //  CIRCLE CONTENT
             // ═══════════════════════════════════════════════════════
+=======
+
+            //  CIRCLE CONTENT
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             Spacer(Modifier.height(4.dp))
             SectionLabel("Circle Content")
 
@@ -375,6 +399,7 @@ fun VisualizerPanel(
                     ToggleRow("Idle Rotation", current.imageIdleRotation) {
                         onStateChanged(current.copy(imageIdleRotation = it))
                     }
+<<<<<<< HEAD
                     ValueSliderRow(
                         "Img Size", current.imageScale, 0.2f..1f, "%.2f"
                     ) {
@@ -388,11 +413,21 @@ fun VisualizerPanel(
                     ValueSliderRow(
                         "Img Opacity", current.imageOpacity, 0f..1f, "%.2f"
                     ) {
+=======
+                    ValueSliderRow("Img Size", current.imageScale, 0.2f..1f, "%.2f") {
+                        onStateChanged(current.copy(imageScale = it))
+                    }
+                    ValueSliderRow("Img Pulse", current.imagePulseAmount, 0f..0.5f, "%.2f") {
+                        onStateChanged(current.copy(imagePulseAmount = it))
+                    }
+                    ValueSliderRow("Img Opacity", current.imageOpacity, 0f..1f, "%.2f") {
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                         onStateChanged(current.copy(imageOpacity = it))
                     }
                 }
             }
 
+<<<<<<< HEAD
             // ═══════════════════════════════════════════════════════
             //  AUDIO ANALYSIS
             // ═══════════════════════════════════════════════════════
@@ -400,6 +435,20 @@ fun VisualizerPanel(
             SectionLabel("Audio Analysis")
 
             ValueSliderRow("Start Hz", current.startFrequencyHz, 20f..2000f, "%.0f") { v ->
+=======
+
+            //  ADVANCED AUDIO SETTINGS
+
+            Spacer(Modifier.height(6.dp))
+            SectionLabel("Audio Analysis")
+
+            ValueSliderRow(
+                "Start Hz",
+                current.startFrequencyHz,
+                20f..2000f,
+                "%.0f"
+            ) { v ->
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                 onStateChanged(
                     current.copy(
                         startFrequencyHz = v.coerceAtMost(current.endFrequencyHz - 20f)
@@ -407,7 +456,16 @@ fun VisualizerPanel(
                 )
             }
 
+<<<<<<< HEAD
             ValueSliderRow("End Hz", current.endFrequencyHz, 20f..2000f, "%.0f") { v ->
+=======
+            ValueSliderRow(
+                "End Hz",
+                current.endFrequencyHz,
+                20f..2000f,
+                "%.0f"
+            ) { v ->
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                 onStateChanged(
                     current.copy(
                         endFrequencyHz = v.coerceAtLeast(current.startFrequencyHz + 20f)
@@ -415,11 +473,29 @@ fun VisualizerPanel(
                 )
             }
 
+<<<<<<< HEAD
             ValueSliderRow("Bands", current.bands.toFloat(), 1f..6400f, "%.0f") { v ->
                 onStateChanged(current.copy(bands = v.toInt().coerceIn(1, 6400)))
             }
 
             ValueSliderRow("Max Height", current.maxHeight, 0.1f..3.0f, "%.2f") { v ->
+=======
+            ValueSliderRow(
+                "Bands",
+                current.bands.toFloat(),
+                1f..6400f,
+                "%.0f"
+            ) { v ->
+                onStateChanged(current.copy(bands = v.toInt().coerceIn(1, 6400)))
+            }
+
+            ValueSliderRow(
+                "Max Height",
+                current.maxHeight,
+                0.1f..3.0f,
+                "%.2f"
+            ) { v ->
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                 onStateChanged(current.copy(maxHeight = v))
             }
 
@@ -445,6 +521,7 @@ fun VisualizerPanel(
                 )
             }
 
+<<<<<<< HEAD
             // ═══════════════════════════════════════════════════════
             //  BAND INFLUENCES
             // ═══════════════════════════════════════════════════════
@@ -515,6 +592,20 @@ fun VisualizerPanel(
             SectionLabel("Shape & Style")
 
             ValueSliderRow("Line Width", current.lineWidth, 0.5f..20f, "%.1f") { v ->
+=======
+
+            //  SHAPE / STYLE
+
+            Spacer(Modifier.height(6.dp))
+            SectionLabel("Shape & Style")
+
+            ValueSliderRow(
+                "Line Width",
+                current.lineWidth,
+                0.5f..20f,
+                "%.1f"
+            ) { v ->
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                 onStateChanged(current.copy(lineWidth = v))
             }
 
@@ -527,9 +618,15 @@ fun VisualizerPanel(
                 onStateChanged(current.copy(particleSize = v))
             }
 
+<<<<<<< HEAD
             // ═══════════════════════════════════════════════════════
             //  DISPLAY STYLE
             // ═══════════════════════════════════════════════════════
+=======
+
+            //  DISPLAY STYLE
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             Spacer(Modifier.height(6.dp))
             SectionLabel("Display Style")
 
@@ -554,9 +651,13 @@ fun VisualizerPanel(
                             )
                             .pointerInput(key) {
                                 detectTapGestures {
+<<<<<<< HEAD
                                     onStateChanged(
                                         current.copy(displayStyle = key)
                                     )
+=======
+                                    onStateChanged(current.copy(displayStyle = key))
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                                 }
                             },
                         contentAlignment = Alignment.Center
@@ -571,9 +672,15 @@ fun VisualizerPanel(
                 }
             }
 
+<<<<<<< HEAD
             // ═══════════════════════════════════════════════════════
             //  SIDE MODE
             // ═══════════════════════════════════════════════════════
+=======
+
+            //  SIDE MODE
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             Spacer(Modifier.height(6.dp))
             SectionLabel("Side Mode")
 
@@ -613,6 +720,7 @@ fun VisualizerPanel(
                 }
             }
 
+<<<<<<< HEAD
             // ═══════════════════════════════════════════════════════
             //  GLOW
             // ═══════════════════════════════════════════════════════
@@ -634,6 +742,11 @@ fun VisualizerPanel(
             // ═══════════════════════════════════════════════════════
             //  RING STYLE
             // ═══════════════════════════════════════════════════════
+=======
+
+            //  RING STYLE
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             Spacer(Modifier.height(6.dp))
             SectionLabel("Ring Style")
 
@@ -661,6 +774,13 @@ fun VisualizerPanel(
                 onStateChanged(current.copy(opacity = it))
             }
 
+<<<<<<< HEAD
+=======
+            ToggleRow("Glow", current.glow) {
+                onStateChanged(current.copy(glow = it))
+            }
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             Spacer(Modifier.height(8.dp))
 
             Box(
@@ -683,9 +803,14 @@ fun VisualizerPanel(
 }
 
 
+<<<<<<< HEAD
 // ═══════════════════════════════════════════════════════════════
 //  PRESET PICKER
 // ═══════════════════════════════════════════════════════════════
+=======
+//  PRESET PICKER
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
 @Composable
 private fun PresetPicker(
     current: VisualizerState,
@@ -698,6 +823,10 @@ private fun PresetPicker(
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
 
+<<<<<<< HEAD
+=======
+        // CATEGORY TABS
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -729,6 +858,10 @@ private fun PresetPicker(
             }
         }
 
+<<<<<<< HEAD
+=======
+        // PRESET CARDS ROW
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         Text(
             "Tap to preview · ${categoryPresets.size} presets",
             color = Color(0xFF888888),
@@ -757,9 +890,14 @@ private fun PresetPicker(
 }
 
 
+<<<<<<< HEAD
 // ═══════════════════════════════════════════════════════════════
 //  SINGLE PRESET CARD
 // ═══════════════════════════════════════════════════════════════
+=======
+//  SINGLE PRESET CARD
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
 @Composable
 private fun VisualizerPreviewCard(
     preset: VisualizerPreset,
@@ -770,16 +908,29 @@ private fun VisualizerPreviewCard(
 ) {
     val hasImage = refBitmap != null && !refBitmap.isRecycled
 
+<<<<<<< HEAD
+=======
+    // Reference image ko center mein dikhane ke liye — "showImage = true"
+    // aur preview state mein imageScale ko bada rakho taaki circle bhare
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     val previewState = remember(preset) {
         VisualizerState(
             preset = preset,
             color1 = 0xFFFFD166,
             color2 = 0xFF00E5FF,
+<<<<<<< HEAD
             size = 0.42f,
+=======
+            size = 0.42f,           // visualizer size
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             positionX = 0.5f,
             positionY = 0.5f,
             opacity = 1f,
             glow = true,
+<<<<<<< HEAD
+=======
+            // 🆕 Image center mein dikhao
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             showImage = true,
             imageScale = 0.55f,
             imageOpacity = 1f,
@@ -787,8 +938,15 @@ private fun VisualizerPreviewCard(
         )
     }
 
+<<<<<<< HEAD
     LaunchedEffect(refBitmap, preset.key) {
         if (refBitmap != null && !refBitmap.isRecycled) {
+=======
+    // 🆕 Reference image ko VisualizerEngine ke center content ke roop mein set karo
+    LaunchedEffect(refBitmap, preset.key) {
+        if (refBitmap != null && !refBitmap.isRecycled) {
+            // Image ko VisualizerEngine ke cache mein set karo
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             VisualizerEngine.setCenterImage(
                 "preview_${preset.key}",
                 refBitmap.asImageBitmap()
@@ -824,6 +982,11 @@ private fun VisualizerPreviewCard(
                 .clip(RoundedCornerShape(8.dp))
                 .background(Color(0xFF0F0F0F))
         ) {
+<<<<<<< HEAD
+=======
+            // 🆕 VisualizerEngine pe hi image draw hoga (center content ke roop mein)
+            // Isliye Box mein image alag se NAHI dikha rahe
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
             Canvas(modifier = Modifier.fillMaxSize()) {
                 try {
                     drawVisualizerPreview(
@@ -861,20 +1024,33 @@ private fun VisualizerPreviewCard(
 }
 
 
+<<<<<<< HEAD
 // ═══════════════════════════════════════════════════════════════
 //  PREVIEW DRAW
 // ═══════════════════════════════════════════════════════════════
+=======
+//  PREVIEW DRAW
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
 private fun DrawScope.drawVisualizerPreview(
     preset: VisualizerPreset,
     state: VisualizerState,
     clockSec: Float,
+<<<<<<< HEAD
     refBitmap: Bitmap?
+=======
+    refBitmap: Bitmap?      // 🆕
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
 ) {
     val previewState = state.copy(
         preset = preset,
         opacity = 1f
     )
 
+<<<<<<< HEAD
+=======
+    // 🆕 Reference image ko VisualizerEngine ke center content ke liye set karo
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
     if (refBitmap != null && !refBitmap.isRecycled) {
         try {
             VisualizerEngine.setCenterImage(
@@ -894,9 +1070,25 @@ private fun DrawScope.drawVisualizerPreview(
 }
 
 
+<<<<<<< HEAD
 // ═══════════════════════════════════════════════════════════════
 //  REUSABLE COMPONENTS
 // ═══════════════════════════════════════════════════════════════
+=======
+//  REUSABLE COMPONENTS
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text.uppercase(),
+        color = Color(0xFFFFD166),
+        fontSize = 9.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 2.dp)
+    )
+}
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
 @Composable
 private fun SectionLabel(text: String) {
     Text(
@@ -969,6 +1161,12 @@ private fun ToggleRow(
     }
 }
 
+<<<<<<< HEAD
+=======
+/**
+ * Slider + value box — user can drag OR type exact value.
+ */
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
 @Composable
 private fun ValueSliderRow(
     label: String,
@@ -1012,6 +1210,10 @@ private fun ValueSliderRow(
             )
         )
 
+<<<<<<< HEAD
+=======
+        // 🆕 Value box — type exact value
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
         Box(
             modifier = Modifier
                 .width(64.dp)
@@ -1049,12 +1251,16 @@ private fun ValueSliderRow(
                         isFocused = focusState.isFocused
                         if (!focusState.isFocused) {
                             textValue.toFloatOrNull()?.let { v ->
+<<<<<<< HEAD
                                 onChange(
                                     v.coerceIn(
                                         range.start,
                                         range.endInclusive
                                     )
                                 )
+=======
+                                onChange(v.coerceIn(range.start, range.endInclusive))
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
                             }
                         }
                     }
@@ -1064,9 +1270,14 @@ private fun ValueSliderRow(
 }
 
 
+<<<<<<< HEAD
 // ═══════════════════════════════════════════════════════════════
 //  REFERENCE IMAGE LOADER
 // ═══════════════════════════════════════════════════════════════
+=======
+//  REFERENCE IMAGE LOADER
+
+>>>>>>> 5681a8706659a5f06557a27780f8683a58525bbd
 private fun loadRefImage(context: android.content.Context): Bitmap? {
     return try {
         val opts = BitmapFactory.Options().apply { inScaled = false }

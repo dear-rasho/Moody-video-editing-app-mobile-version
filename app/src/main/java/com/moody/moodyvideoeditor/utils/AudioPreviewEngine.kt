@@ -7,12 +7,9 @@ import android.os.Looper
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
 
-/**
- * Real-time preview of audio FX.
- *
- * Applies to BOTH ExoPlayers (video + audio) so preview works regardless
- * of which player is currently active.
- */
+// Real-time preview of audio FX.
+// Applies to BOTH ExoPlayers (video + audio) so preview works regardless
+// of which player is currently active.
 object AudioPreviewEngine {
 
     private val equalizers = mutableListOf<Equalizer>()
@@ -40,7 +37,7 @@ object AudioPreviewEngine {
         val t = (intensity / 100f).coerceIn(0f, 2f)
         currentFx = fx
 
-        // ═══ 1. PITCH SHIFT — both players ═══
+        // 1. PITCH SHIFT — both players
         val pitch = when (fx) {
             "deep" -> 1f - 0.15f * t
             "monster" -> 1f - 0.30f * t
@@ -59,7 +56,7 @@ object AudioPreviewEngine {
         } catch (_: Throwable) {
         }
 
-        // ═══ 2. EQ / REVERB — both session IDs ═══
+        // 2. EQ / REVERB — both session IDs
         applyEqWithRetry(exoPlayer, audioExoPlayer, fx, t, attempt = 0)
     }
 

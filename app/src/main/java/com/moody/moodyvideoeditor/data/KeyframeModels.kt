@@ -1,9 +1,7 @@
 package com.moody.moodyvideoeditor.data
 
-/**
- * Mirrors js/workspace/keyframeStore.js
- * Keyframe = { time (sec), value, ease }
- */
+// Mirrors js/workspace/keyframeStore.js
+// Keyframe = { time (sec), value, ease }
 data class Keyframe(
     val time: Float,             // seconds since clip start
     val value: Float,
@@ -14,11 +12,9 @@ data class Keyframe(
     }
 }
 
-/**
- * Per-clip keyframe map.
- * Key = property name ("x", "y", "scale", "rotation", "anchorX", "anchorY", ...)
- * Value = sorted list of keyframes
- */
+// Per-clip keyframe map.
+// Key = property name ("x", "y", "scale", "rotation", "anchorX", "anchorY", ...)
+// Value = sorted list of keyframes
 typealias KeyframeMap = Map<String, List<Keyframe>>
 
 object KeyframeLibrary {

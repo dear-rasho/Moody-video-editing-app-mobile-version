@@ -30,9 +30,9 @@ object TransitionRenderer {
         val p = progress.coerceIn(0f, 1f)
         when (val k = transitionKey.lowercase()) {
 
-            // ═══════════════════════════════════════════════════════
+
             //  FADES
-            // ═══════════════════════════════════════════════════════
+
             "fade", "dissolve", "blur",
             "softglaze", "dreamybloom", "glowdissolve",
             "watercolorbleed", "oilpainting", "datamoshing" -> {
@@ -63,9 +63,9 @@ object TransitionRenderer {
                 SimpleImage(imageBitmap, alpha = 1f - p)
             }
 
-            // ═══════════════════════════════════════════════════════
+
             //  SLIDE FAMILY
-            // ═══════════════════════════════════════════════════════
+
             "slideleft", "pushleft", "panleft", "wipeleft",
             "whip pan", "wippan", "velocityshake", "smoothleft",
             "vectorShift".lowercase(), "vector shift", "vectorshift" -> {
@@ -109,9 +109,9 @@ object TransitionRenderer {
                 )
             }
 
-            // ═══════════════════════════════════════════════════════
+
             //  ZOOM FAMILY
-            // ═══════════════════════════════════════════════════════
+
             "zoomin", "zoominx", "zoomimpact", "snapback",
             "gaussianzoom", "pullinshake" -> {
                 SimpleImage(
@@ -140,9 +140,9 @@ object TransitionRenderer {
                 )
             }
 
-            // ═══════════════════════════════════════════════════════
+
             //  WIPE / SHAPES
-            // ═══════════════════════════════════════════════════════
+
             "circleopen", "circleclose", "circleMask".lowercase(),
             "circlemask", "starburst", "halopulse", "inksplash",
             "spiralwipe", "hearts" -> {
@@ -224,9 +224,9 @@ object TransitionRenderer {
                 )
             }
 
-            // ═══════════════════════════════════════════════════════
+
             //  SPIN / ROTATE
-            // ═══════════════════════════════════════════════════════
+
             "spincw", "spinccw", "swirl",
             "spinIn".lowercase(), "spinin",
             "spinOut".lowercase(), "spinout",
@@ -245,9 +245,9 @@ object TransitionRenderer {
                 )
             }
 
-            // ═══════════════════════════════════════════════════════
+
             //  GLITCH / DISTORTION
-            // ═══════════════════════════════════════════════════════
+
             "glitch", "rgbsplit", "glitchshake", "vcrDistortion".lowercase(),
             "vcrdistortion", "glitchblur", "glitchpaint",
             "hblur", "anaglyphslide", "bitcrushed", "prismblur",
@@ -274,9 +274,9 @@ object TransitionRenderer {
                 )
             }
 
-            // ═══════════════════════════════════════════════════════
+
             //  ARTISTIC / SPECIAL
-            // ═══════════════════════════════════════════════════════
+
             "glassthatter", "smokescreen", "smokedissolve",
             "comicflip", "papertear" -> {
                 SimpleImage(
@@ -288,9 +288,9 @@ object TransitionRenderer {
                 )
             }
 
-            // ═══════════════════════════════════════════════════════
+
             //  DEFAULT — fade out
-            // ═══════════════════════════════════════════════════════
+
             else -> {
                 SimpleImage(imageBitmap, alpha = 1f - p)
             }
@@ -324,9 +324,9 @@ object TransitionRenderer {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
+
     //  INCOMING CLIP TRANSFORM
-    // ═══════════════════════════════════════════════════════════
+
     fun getIncomingTransform(
         key: String,
         p: Float,

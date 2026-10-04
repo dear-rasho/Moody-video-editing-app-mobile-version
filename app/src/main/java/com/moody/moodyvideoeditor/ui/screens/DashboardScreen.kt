@@ -85,7 +85,7 @@ fun DashboardScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        // ─── HEADER ───
+        // HEADER
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -137,7 +137,7 @@ fun DashboardScreen(
             }
         }
 
-        // ─── RECENT PROJECTS ───
+        // RECENT PROJECTS
         SectionTitle("Recent Projects")
         RecentProjects(
             projects = projects,
@@ -148,11 +148,11 @@ fun DashboardScreen(
             }
         )
 
-        // ─── TEMPLATES ───
+        // TEMPLATES
         SectionTitle("Templates")
         TemplatesShelf()
 
-        // ─── CODE BASE EDITING ───
+        // CODE BASE EDITING
         SectionTitle("Code Base Editing")
         CodeBaseShelf(
             onOpen = { title ->
@@ -160,7 +160,7 @@ fun DashboardScreen(
             }
         )
 
-        // ─── HELP CARD ───
+        // HELP CARD
         SectionTitle("Help")
         HelpCard(onOpenHelp)
     }

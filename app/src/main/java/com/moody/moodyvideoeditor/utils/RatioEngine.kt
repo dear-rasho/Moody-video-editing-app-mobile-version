@@ -2,9 +2,7 @@ package com.moody.moodyvideoeditor.utils
 
 import com.moody.moodyvideoeditor.data.RatioState
 
-/**
- * Mirrors js/workspace/ratioControl.js
- */
+// Mirrors js/workspace/ratioControl.js
 object RatioEngine {
 
     fun applyRatio(state: RatioState, availW: Float, availH: Float): Pair<Float, Float> {
@@ -18,7 +16,7 @@ object RatioEngine {
         }
     }
 
-    /** FFmpeg crop filter to enforce ratio in export */
+    // FFmpeg crop filter to enforce ratio in export
     fun buildFfmpegFilter(state: RatioState): String {
         val ar = state.aspect
         return "crop=ih*$ar:ih"

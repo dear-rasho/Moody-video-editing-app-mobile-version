@@ -3,19 +3,13 @@ package com.moody.moodyvideoeditor.utils
 import com.moody.moodyvideoeditor.data.EditorClip
 import java.util.UUID
 
-/**
- * Mirrors js/features/duplicate.js — updated for playhead-based duplication
- * with stack placement when overlap exists.
- *
- * 🆕 Now duplicates BOTH video + linked audio partner.
- */
+// Mirrors js/features/duplicate.js — updated for playhead-based duplication
+// with stack placement when overlap exists.
+// 🆕 Now duplicates BOTH video + linked audio partner.
 object DuplicateEngine {
 
-    /**
-     * 🆕 Duplicate clip at playhead position WITH its linked partner.
-     *
-     * Returns: list of new clips (primary + optional linked partner).
-     */
+    // 🆕 Duplicate clip at playhead position WITH its linked partner.
+    // Returns: list of new clips (primary + optional linked partner).
     fun duplicateAt(
         source: EditorClip,
         allClips: List<EditorClip>,
@@ -26,12 +20,12 @@ object DuplicateEngine {
 
         val result = mutableListOf<EditorClip>()
 
-        // ─── Find linked partner (video ↔ audio) ───
+        // Find linked partner (video ↔ audio)
         val linkedPartner = source.linkedId?.let { lid ->
             allClips.firstOrNull { it.linkedId == lid && it.id != source.id }
         }
 
-        // ─── Place PRIMARY copy ───
+        // Place PRIMARY copy
         val primaryTrack = findFreeTrackForDuplicate(
             allClips = allClips,
             sourceTrack = source.trackIndex,
@@ -49,7 +43,7 @@ object DuplicateEngine {
         )
         result.add(primaryCopy)
 
-        // ─── Place LINKED PARTNER copy (if exists) ───
+        // Place LINKED PARTNER copy (if exists)
         if (linkedPartner != null) {
             val linkedTrack = findFreeTrackForDuplicate(
                 allClips = allClips,
@@ -93,9 +87,7 @@ object DuplicateEngine {
         return maxTrack + 1
     }
 
-    /**
-     * Legacy method — kept for compatibility.
-     */
+    // Legacy method — kept for compatibility.
     fun duplicateAfter(clip: EditorClip, allClips: List<EditorClip>): EditorClip {
         val sameTrack = allClips.filter {
             it.trackIndex == clip.trackIndex && it.isAudio == clip.isAudio
