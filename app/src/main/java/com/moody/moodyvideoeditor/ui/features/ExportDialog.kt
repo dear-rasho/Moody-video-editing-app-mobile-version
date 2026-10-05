@@ -49,6 +49,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.moody.moodyvideoeditor.data.RatioLibrary
 import com.moody.moodyvideoeditor.utils.ExportSettings
 
 data class ExportConfig(
@@ -66,7 +67,9 @@ data class ExportConfig(
     val imageFormat: String,
     val jpegQuality: Int,
     val customFolderUri: String?,
-    val aspectRatio: String
+    val aspectRatio: String,
+    val outputWidth: Int,
+    val outputHeight: Int
 )
 
 @Composable
@@ -105,6 +108,9 @@ fun ExportDialog(
     var resolution by remember { mutableStateOf("720p") }
     var fps by remember { mutableStateOf(30) }
     var bitrateKbps by remember { mutableStateOf(8000) }
+    var exportAspectRatio by remember(aspectRatio) {
+        mutableStateOf(RatioLibrary.find(aspectRatio).key)
+    }
 
     var messageCopied by remember { mutableStateOf(false) }
 
@@ -116,6 +122,10 @@ fun ExportDialog(
     }
 
     fun doExport() {
+        val (outputWidth, outputHeight) = ExportSettings.targetDimensions(
+            resolution,
+            exportAspectRatio
+        )
         val config = ExportConfig(
             mode = exportMode,
             fileName = fileName.ifBlank {
@@ -133,7 +143,9 @@ fun ExportDialog(
             imageFormat = imageFormat,
             jpegQuality = jpegQuality,
             customFolderUri = currentFolderUri,
-            aspectRatio = aspectRatio
+            aspectRatio = exportAspectRatio,
+            outputWidth = outputWidth,
+            outputHeight = outputHeight
         )
         onStartExport(config)
     }
@@ -389,6 +401,36 @@ fun ExportDialog(
                                 )
                             }
                         }
+                    }
+
+                    if (exportMode != "audio") {
+                        val outputDimensions = ExportSettings.targetDimensions(
+                            resolution,
+                            exportAspectRatio
+                        )
+                        SectionLabel("Export Aspect Ratio")
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RatioLibrary.OPTIONS.forEach { ratio ->
+                                Chip(
+                                    label = ratio.key,
+                                    isActive = exportAspectRatio == ratio.key,
+                                    enabled = !isExporting
+                                ) {
+                                    exportAspectRatio = ratio.key
+                                }
+                            }
+                        }
+                        Text(
+                            text = "Output: ${outputDimensions.first}×${outputDimensions.second}",
+                            color = Color(0xFF888888),
+                            fontSize = 10.sp
+                        )
                     }
 
                     when (exportMode) {

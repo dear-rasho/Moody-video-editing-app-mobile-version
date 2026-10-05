@@ -48,6 +48,8 @@ class ExportService : Service() {
         const val EXTRA_IMAGE_FORMAT = "image_format"
         const val EXTRA_JPEG_QUALITY = "jpeg_quality"
         const val EXTRA_ASPECT_RATIO = "aspect_ratio"
+        const val EXTRA_OUTPUT_WIDTH = "output_width"
+        const val EXTRA_OUTPUT_HEIGHT = "output_height"
         const val EXTRA_FOLDER_URI = "folder_uri"
         const val EXTRA_START_MS = "start_ms"
         const val EXTRA_END_MS = "end_ms"
@@ -70,6 +72,8 @@ class ExportService : Service() {
                 putExtra(EXTRA_IMAGE_FORMAT, config.imageFormat)
                 putExtra(EXTRA_JPEG_QUALITY, config.jpegQuality)
                 putExtra(EXTRA_ASPECT_RATIO, config.aspectRatio)
+                putExtra(EXTRA_OUTPUT_WIDTH, config.outputWidth)
+                putExtra(EXTRA_OUTPUT_HEIGHT, config.outputHeight)
                 putExtra(EXTRA_FOLDER_URI, config.folderUri)
                 putExtra(EXTRA_START_MS, config.startMs)
                 putExtra(EXTRA_END_MS, config.endMs)
@@ -129,6 +133,8 @@ class ExportService : Service() {
         val imageFormat = intent.getStringExtra(EXTRA_IMAGE_FORMAT) ?: "png"
         val jpegQuality = intent.getIntExtra(EXTRA_JPEG_QUALITY, 90)
         val aspectRatio = intent.getStringExtra(EXTRA_ASPECT_RATIO) ?: "16:9"
+        val outputWidth = intent.getIntExtra(EXTRA_OUTPUT_WIDTH, 0)
+        val outputHeight = intent.getIntExtra(EXTRA_OUTPUT_HEIGHT, 0)
         val folderUri = intent.getStringExtra(EXTRA_FOLDER_URI)
         val startMs = intent.getLongExtra(EXTRA_START_MS, 0L)
         val endMs = intent.getLongExtra(EXTRA_END_MS, 0L)
@@ -167,6 +173,8 @@ class ExportService : Service() {
                     imageFormat = imageFormat,
                     jpegQuality = jpegQuality,
                     aspectRatio = aspectRatio,
+                    outputWidth = outputWidth,
+                    outputHeight = outputHeight,
                     folderUri = folderUri,
                     startMs = startMs,
                     endMs = endMs
@@ -192,11 +200,17 @@ class ExportService : Service() {
         imageFormat: String,
         jpegQuality: Int,
         aspectRatio: String,
+        outputWidth: Int,
+        outputHeight: Int,
         folderUri: String?,
         startMs: Long,
         endMs: Long
     ) {
-        Log.e(TAG, "Starting export: mode=$mode, clips=${clips.size}")
+        Log.i(
+            TAG,
+            "Starting export: mode=$mode, ratio=$aspectRatio, " +
+                    "output=${outputWidth}x$outputHeight, clips=${clips.size}"
+        )
 
         val exporter = VideoExporter(
             context = applicationContext,
@@ -236,6 +250,8 @@ class ExportService : Service() {
             fileName = fileName,
             adjustments = AdjustmentData(),
             aspectRatio = aspectRatio,
+            outputWidth = outputWidth,
+            outputHeight = outputHeight,
             resolution = resolution,
             fps = fps,
             bitrateKbps = bitrateKbps,
@@ -512,6 +528,8 @@ data class ExportServiceConfig(
     val imageFormat: String,
     val jpegQuality: Int,
     val aspectRatio: String,
+    val outputWidth: Int,
+    val outputHeight: Int,
     val folderUri: String?,
     val startMs: Long,
     val endMs: Long,

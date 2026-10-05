@@ -52,7 +52,9 @@ class VideoExporter(
         audioFormat: String = "mp3",
         audioBitrateKbps: Int = 192,
         imageFormat: String = "jpeg",
-        jpegQuality: Int = 90
+        jpegQuality: Int = 90,
+        outputWidth: Int = 0,
+        outputHeight: Int = 0
     ) {
         isCancelled = false
         ffmpeg = null
@@ -60,7 +62,12 @@ class VideoExporter(
 
         Log.e("EXPORT", "=== START ===")
         Log.e("EXPORT", "clips=${clips.size}, mode=$exportMode, format=$format")
-        Log.e("EXPORT", "resolution=$resolution, fps=$fps, bitrate=$bitrateKbps")
+        Log.e(
+            "EXPORT",
+            "resolution=$resolution, ratio=$aspectRatio, " +
+                    "requestedOutput=${outputWidth}x$outputHeight, " +
+                    "fps=$fps, bitrate=$bitrateKbps"
+        )
         Log.e("EXPORT", "custom folder=$customFolderUri")
         Log.e("EXPORT", "range: $customStartMs - $customEndMs")
 
@@ -72,6 +79,21 @@ class VideoExporter(
             onError("FPS and bitrate must be greater than zero")
             return
         }
+        if ((outputWidth > 0) != (outputHeight > 0)) {
+            onError("Both output dimensions must be provided together")
+            return
+        }
+
+        val (targetW, targetH) = if (outputWidth > 0 && outputHeight > 0) {
+            outputWidth to outputHeight
+        } else {
+            ExportSettings.targetDimensions(resolution, aspectRatio)
+        }
+        if (targetW % 2 != 0 || targetH % 2 != 0) {
+            onError("Output dimensions must be even numbers")
+            return
+        }
+        Log.i("EXPORT", "Final output frame: ${targetW}x$targetH")
 
         val totalTimeline = clips.maxOfOrNull { it.timelineEndMs } ?: 5000L
         if (totalTimeline <= 0L) {
@@ -108,8 +130,8 @@ class VideoExporter(
                 exportImages(
                     allClips = clips,
                     fileName = fileName,
-                    aspectRatio = aspectRatio,
-                    resolution = resolution,
+                    targetW = targetW,
+                    targetH = targetH,
                     fps = fps,
                     imageFormat = imageFormat,
                     jpegQuality = jpegQuality,
@@ -127,36 +149,13 @@ class VideoExporter(
                     it.uri.toString().isNotBlank() &&
                     it.uri != Uri.EMPTY
         }
-        val baseTrackIndex = allVisual.minOfOrNull { it.trackIndex } ?: 0
-        val baseVisualClips = allVisual.filter { it.trackIndex == baseTrackIndex }
-        val higherTrackVisualClips = allVisual.filter { it.trackIndex > baseTrackIndex }
 
-        val higherTrackImageClips = higherTrackVisualClips.filter {
-            it.type.startsWith("image/")
-        }
-
-        val higherTrackVideoClips = higherTrackVisualClips.filter {
-            !it.type.startsWith("image/")
-        }
-        if (higherTrackVideoClips.isNotEmpty()) {
-            Log.w(
-                "EXPORT",
-                "${higherTrackVideoClips.size} higher-track video clips skipped"
-            )
-        }
-
-        val overlayImageClips = trimClipsToRange(
-            baseVisualClips.filter {
-                it.type.startsWith("image/") && it.trackIndex > 0
-            } + higherTrackImageClips,
-            rangeStart, rangeEnd
-        )
         val trimmedVisualClips = trimClipsToRange(
-            baseVisualClips.filter {
-                !(it.type.startsWith("image/") && it.trackIndex > 0)
-            },
-            rangeStart, rangeEnd
+            allVisual,
+            rangeStart,
+            rangeEnd
         )
+        val overlayImageClips = emptyList<EditorClip>()
 
         val audioOnlyClips = trimClipsToRange(
             clips.filter {
@@ -189,9 +188,7 @@ class VideoExporter(
 
         val exportDurationMs = rangeEnd - rangeStart
 
-        val (targetW, targetH) = ExportSettings.targetDimensions(
-            resolution, aspectRatio
-        )
+        Log.i("EXPORT", "Output aspect ratio=$aspectRatio, size=${targetW}x${targetH}")
 
         Log.e(
             "EXPORT",
@@ -322,8 +319,8 @@ class VideoExporter(
                         rangeStart = rangeStart,
                         rangeEnd = rangeEnd,
                         fileName = fileName,
-                        aspectRatio = aspectRatio,
-                        resolution = resolution,
+                        targetW = targetW,
+                        targetH = targetH,
                         fps = fps,
                         bitrateKbps = bitrateKbps,
                         customFolderUri = customFolderUri,
@@ -408,8 +405,8 @@ class VideoExporter(
     private suspend fun exportImages(
         allClips: List<EditorClip>,
         fileName: String,
-        aspectRatio: String,
-        resolution: String,
+        targetW: Int,
+        targetH: Int,
         fps: Int,
         imageFormat: String,
         jpegQuality: Int,
@@ -418,10 +415,6 @@ class VideoExporter(
         rangeEnd: Long,
         durationMs: Long
     ) {
-        val (targetW, targetH) = ExportSettings.targetDimensions(
-            resolution, aspectRatio
-        )
-
         val baseFolder = File(context.cacheDir, "MoodyExports")
         if (!baseFolder.exists()) baseFolder.mkdirs()
         val outputDir = File(baseFolder, fileName)
@@ -486,12 +479,9 @@ class VideoExporter(
 
     fun cancel() {
         isCancelled = true
-        ffmpeg?.cancel()
-        sessionId?.let {
-            try {
-                FFmpegKit.cancel(it)
-            } catch (_: Exception) {
-            }
+        try {
+            ffmpeg?.cancel()
+        } catch (_: Throwable) {
         }
     }
 
@@ -561,15 +551,14 @@ class VideoExporter(
         rangeStart: Long,
         rangeEnd: Long,
         fileName: String,
-        aspectRatio: String,
-        resolution: String,
+        targetW: Int,
+        targetH: Int,
         fps: Int,
         bitrateKbps: Int,
         customFolderUri: String?,
         imageFormat: String,
         jpegQuality: Int
     ) {
-        val (targetW, targetH) = ExportSettings.targetDimensions(resolution, aspectRatio)
         val durationMs = (rangeEnd - rangeStart).coerceAtLeast(500L)
 
         onProgress(0.01f)

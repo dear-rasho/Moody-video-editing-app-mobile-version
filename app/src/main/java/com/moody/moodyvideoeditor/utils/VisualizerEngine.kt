@@ -52,8 +52,9 @@ object VisualizerEngine {
         val rms: Float, val beat: Float, val bars: FloatArray
     )
 
-
+    // ═══════════════════════════════════════════════════════════
     //  MAIN ENTRY
+    // ═══════════════════════════════════════════════════════════
 
     fun draw(
         scope: DrawScope,
@@ -104,11 +105,12 @@ object VisualizerEngine {
             state = state, instanceKey = instanceKey
         )
 
-
+        // ═══════════════════════════════════════════════════════════
         //  DISPATCH
+        // ═══════════════════════════════════════════════════════════
 
         when (state.preset) {
-            // 🆕 PHASE 1 — Premium
+            // PHASE 1 — Premium
             VisualizerPreset.AUDIO_SPHERE -> drawAudioSphere(ctx)
             VisualizerPreset.WAVEFORM_RING -> drawWaveformRing(ctx)
             VisualizerPreset.SYMMETRIC_WAVE -> drawSymmetricWave(ctx)
@@ -243,8 +245,9 @@ object VisualizerEngine {
         )
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  FEATURES
+    // ═══════════════════════════════════════════════════════════
 
     private fun computeFeatures(
         instanceKey: String, beatPulse: Float, state: VisualizerState
@@ -328,8 +331,9 @@ object VisualizerEngine {
         return Features(bass, mid, treble, rms, beat, bars)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  1. CIRCULAR BARS
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawCircularBars(c: DrawCtx, widthMul: Float, variant: Int) {
         val s = c.scope
@@ -383,8 +387,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.85f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  2. LINEAR BARS
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawLinearBars(c: DrawCtx, variant: Int) {
         val s = c.scope
@@ -484,8 +489,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-
-    //  3. POLYGON BARS — FIXED
+    // ═══════════════════════════════════════════════════════════
+    //  3. POLYGON BARS
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawPolygonBars(c: DrawCtx, sides: Int) {
         val s = c.scope
@@ -540,8 +546,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.6f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  4. WAVEFORM
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawWaveform(c: DrawCtx, variant: Int) {
         val s = c.scope
@@ -594,8 +601,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.55f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  5. DOTS ON RING
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawDotsOnRing(c: DrawCtx, rings: Int) {
         val s = c.scope
@@ -623,8 +631,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.55f)
     }
 
-
-    //  6. PARTICLES — FIXED
+    // ═══════════════════════════════════════════════════════════
+    //  6. PARTICLES
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawParticles(c: DrawCtx, variant: Int) {
         val s = c.scope
@@ -678,8 +687,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-
-    //  7. FALLING PARTICLES — FIXED
+    // ═══════════════════════════════════════════════════════════
+    //  7. FALLING PARTICLES
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawFalling(c: DrawCtx, variant: Int) {
         val s = c.scope
@@ -710,8 +720,9 @@ object VisualizerEngine {
         }
     }
 
-
-    //  8. CLOUDS — FIXED
+    // ═══════════════════════════════════════════════════════════
+    //  8. CLOUDS
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawClouds(c: DrawCtx, variant: Int) {
         val s = c.scope
@@ -750,8 +761,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.55f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  9. SPIRAL
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawSpiral(c: DrawCtx, variant: Int) {
         val s = c.scope
@@ -788,8 +800,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.4f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  10. RINGS
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawRings(c: DrawCtx, count: Int, animated: Boolean) {
         val s = c.scope
@@ -816,8 +829,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.55f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  11. GLITCH
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawGlitch(c: DrawCtx, variant: Int) {
         val s = c.scope
@@ -900,8 +914,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.6f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  12. GRID
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawGrid(c: DrawCtx, variant: Int) {
         val s = c.scope
@@ -940,8 +955,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.4f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  13. GEOMETRIC
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawGeometric(c: DrawCtx, variant: Int) {
         val s = c.scope
@@ -1078,8 +1094,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  14. CINEMATIC
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawCinematic(c: DrawCtx, variant: Int) {
         val s = c.scope
@@ -1256,8 +1273,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.55f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  15. NEON RING
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawNeonRing(c: DrawCtx, hueShift: Boolean = false) {
         val s = c.scope
@@ -1295,8 +1313,9 @@ object VisualizerEngine {
         drawCenterContent(c, r * c.state.imageScale)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  16. LED MATRIX
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawLedMatrix(c: DrawCtx) {
         val s = c.scope
@@ -1326,8 +1345,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  17. LASER BEAM
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawLaserBeam(c: DrawCtx, variant: Int) {
         val s = c.scope
@@ -1351,8 +1371,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  18. DISC
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawDisc(c: DrawCtx, variant: Int) {
         val s = c.scope
@@ -1407,8 +1428,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.55f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  19. DNA STRAND
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawDnaStrand(c: DrawCtx) {
         val s = c.scope
@@ -1445,8 +1467,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  20. KALEIDOSCOPE
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawKaleidoscope(c: DrawCtx, mirrored: Boolean = false) {
         val s = c.scope
@@ -1480,8 +1503,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.4f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  21. SPLIT DIAGONAL
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawSplitDiagonal(c: DrawCtx) {
         val s = c.scope
@@ -1501,8 +1525,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  22. CHECKERBOARD
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawCheckerboard(c: DrawCtx) {
         val s = c.scope
@@ -1526,8 +1551,9 @@ object VisualizerEngine {
         }
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  23. RIBBON
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawRibbon(c: DrawCtx) {
         val s = c.scope
@@ -1553,8 +1579,9 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.5f)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  24. LIQUID
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawLiquid(c: DrawCtx, variant: Int) {
         val s = c.scope
@@ -1586,15 +1613,11 @@ object VisualizerEngine {
         drawCenterContent(c, c.baseR * c.state.imageScale * 0.55f)
     }
 
-
+    // [PART 2 CONTINUES - paste next message at end of this file]
     // ═══════════════════════════════════════════════════════════
-    //  🆕 PHASE 1 — PREMIUM VISUALIZERS
+    //  PHASE 1 PREMIUM — AUDIO_SPHERE / WAVEFORM_RING / SYMMETRIC_WAVE
     // ═══════════════════════════════════════════════════════════
 
-    /**
-     * AUDIO_SPHERE — Radial bars around center.
-     * "AUDIO" text REMOVED — uses drawCenterContent (user's image/text).
-     */
     private fun drawAudioSphere(c: DrawCtx) {
         val s = c.scope
         val bars = c.feat.bars
@@ -1604,7 +1627,6 @@ object VisualizerEngine {
         val baseRadius = c.baseR * 0.7f
         val maxBarLen = c.baseR * 0.9f * c.state.maxHeight
 
-        // Glow backdrop
         if (c.state.glow) {
             val glowR = baseRadius * (1.3f + c.feat.bass * 0.4f)
             s.drawCircle(
@@ -1621,7 +1643,6 @@ object VisualizerEngine {
             )
         }
 
-        // Radial bars
         val angleStep = (2f * PI.toFloat()) / count
         bars.take(count).forEachIndexed { i, v ->
             val angle = i * angleStep - PI.toFloat() / 2f
@@ -1666,7 +1687,6 @@ object VisualizerEngine {
             )
         }
 
-        // Inner ring
         s.drawCircle(
             color = c.color2a(0.8f),
             radius = baseRadius,
@@ -1674,13 +1694,9 @@ object VisualizerEngine {
             style = Stroke(width = 2f + c.feat.beat * 2f)
         )
 
-        // 🆕 Center content — user's image/text (NOT "AUDIO" text)
         drawCenterContent(c, baseRadius * c.state.imageScale)
     }
 
-    /**
-     * WAVEFORM_RING — Circular waveform with strong glow.
-     */
     private fun drawWaveformRing(c: DrawCtx) {
         val s = c.scope
         val bars = c.feat.bars
@@ -1761,9 +1777,6 @@ object VisualizerEngine {
         drawCenterContent(c, innerRadius * c.state.imageScale * 0.9f)
     }
 
-    /**
-     * SYMMETRIC_WAVE — Left+right mirrored waveform.
-     */
     private fun drawSymmetricWave(c: DrawCtx) {
         val s = c.scope
         val W = c.W
@@ -1835,8 +1848,9 @@ object VisualizerEngine {
         )
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  CENTER CONTENT (image + text)
+    // ═══════════════════════════════════════════════════════════
 
     private fun drawCenterContent(c: DrawCtx, baseSize: Float) {
         if (!c.state.hasCenterContent) return
@@ -2049,8 +2063,9 @@ object VisualizerEngine {
         }
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  PUBLIC API
+    // ═══════════════════════════════════════════════════════════
 
     @Synchronized
     fun setCenterImage(uri: String?, bitmap: ImageBitmap?) {
@@ -2072,3 +2087,4 @@ object VisualizerEngine {
         return x - floor(x)
     }
 }
+

@@ -78,8 +78,9 @@ fun VisualizerPanel(
 ) {
     var subView by remember { mutableStateOf("main") }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  TEXT EDITOR SUB-VIEW
+    // ═══════════════════════════════════════════════════════════
 
     if (subView == "text") {
         TextPanel(
@@ -110,8 +111,9 @@ fun VisualizerPanel(
         return
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  MAIN VIEW
+    // ═══════════════════════════════════════════════════════════
 
     val context = LocalContext.current
 
@@ -122,7 +124,6 @@ fun VisualizerPanel(
         }
     }
 
-    // Shared animation clock (0..10 sec loop)
     val infiniteTransition = rememberInfiniteTransition(label = "vizClock")
     val clockSec by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -160,7 +161,6 @@ fun VisualizerPanel(
                 }
             }
 
-            // BEAT STATUS
             if (current.hasBeats) {
                 Box(
                     modifier = Modifier
@@ -185,8 +185,9 @@ fun VisualizerPanel(
                 }
             }
 
-
+            // ═══════════════════════════════════════════════════════════
             //  PRESET PICKER
+            // ═══════════════════════════════════════════════════════════
 
             PresetPicker(
                 current = current,
@@ -197,7 +198,6 @@ fun VisualizerPanel(
                 }
             )
 
-            // BEAT REACTION
             ValueSliderRow(
                 label = "Beat Reaction",
                 value = current.beatReaction,
@@ -207,8 +207,9 @@ fun VisualizerPanel(
                 onStateChanged(current.copy(beatReaction = it))
             }
 
-
+            // ═══════════════════════════════════════════════════════════
             //  CIRCLE CONTENT
+            // ═══════════════════════════════════════════════════════════
 
             Spacer(Modifier.height(4.dp))
             SectionLabel("Circle Content")
@@ -387,8 +388,9 @@ fun VisualizerPanel(
                 }
             }
 
-
+            // ═══════════════════════════════════════════════════════════
             //  ADVANCED AUDIO SETTINGS
+            // ═══════════════════════════════════════════════════════════
 
             Spacer(Modifier.height(6.dp))
             SectionLabel("Audio Analysis")
@@ -459,8 +461,9 @@ fun VisualizerPanel(
                 )
             }
 
-
+            // ═══════════════════════════════════════════════════════════
             //  SHAPE / STYLE
+            // ═══════════════════════════════════════════════════════════
 
             Spacer(Modifier.height(6.dp))
             SectionLabel("Shape & Style")
@@ -483,8 +486,9 @@ fun VisualizerPanel(
                 onStateChanged(current.copy(particleSize = v))
             }
 
-
+            // ═══════════════════════════════════════════════════════════
             //  DISPLAY STYLE
+            // ═══════════════════════════════════════════════════════════
 
             Spacer(Modifier.height(6.dp))
             SectionLabel("Display Style")
@@ -525,8 +529,9 @@ fun VisualizerPanel(
                 }
             }
 
-
+            // ═══════════════════════════════════════════════════════════
             //  SIDE MODE
+            // ═══════════════════════════════════════════════════════════
 
             Spacer(Modifier.height(6.dp))
             SectionLabel("Side Mode")
@@ -567,8 +572,9 @@ fun VisualizerPanel(
                 }
             }
 
-
+            // ═══════════════════════════════════════════════════════════
             //  RING STYLE
+            // ═══════════════════════════════════════════════════════════
 
             Spacer(Modifier.height(6.dp))
             SectionLabel("Ring Style")
@@ -623,7 +629,9 @@ fun VisualizerPanel(
 }
 
 
+// ═══════════════════════════════════════════════════════════════
 //  PRESET PICKER
+// ═══════════════════════════════════════════════════════════════
 
 @Composable
 private fun PresetPicker(
@@ -637,7 +645,6 @@ private fun PresetPicker(
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
 
-        // CATEGORY TABS
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -669,7 +676,6 @@ private fun PresetPicker(
             }
         }
 
-        // PRESET CARDS ROW
         Text(
             "Tap to preview · ${categoryPresets.size} presets",
             color = Color(0xFF888888),
@@ -698,7 +704,9 @@ private fun PresetPicker(
 }
 
 
+// ═══════════════════════════════════════════════════════════════
 //  SINGLE PRESET CARD
+// ═══════════════════════════════════════════════════════════════
 
 @Composable
 private fun VisualizerPreviewCard(
@@ -710,19 +718,16 @@ private fun VisualizerPreviewCard(
 ) {
     val hasImage = refBitmap != null && !refBitmap.isRecycled
 
-    // Reference image ko center mein dikhane ke liye — "showImage = true"
-    // aur preview state mein imageScale ko bada rakho taaki circle bhare
     val previewState = remember(preset) {
         VisualizerState(
             preset = preset,
             color1 = 0xFFFFD166,
             color2 = 0xFF00E5FF,
-            size = 0.42f,           // visualizer size
+            size = 0.42f,
             positionX = 0.5f,
             positionY = 0.5f,
             opacity = 1f,
             glow = true,
-            // 🆕 Image center mein dikhao
             showImage = true,
             imageScale = 0.55f,
             imageOpacity = 1f,
@@ -730,10 +735,8 @@ private fun VisualizerPreviewCard(
         )
     }
 
-    // 🆕 Reference image ko VisualizerEngine ke center content ke roop mein set karo
     LaunchedEffect(refBitmap, preset.key) {
         if (refBitmap != null && !refBitmap.isRecycled) {
-            // Image ko VisualizerEngine ke cache mein set karo
             VisualizerEngine.setCenterImage(
                 "preview_${preset.key}",
                 refBitmap.asImageBitmap()
@@ -767,8 +770,6 @@ private fun VisualizerPreviewCard(
                 .clip(RoundedCornerShape(8.dp))
                 .background(Color(0xFF0F0F0F))
         ) {
-            // 🆕 VisualizerEngine pe hi image draw hoga (center content ke roop mein)
-            // Isliye Box mein image alag se NAHI dikha rahe
             Canvas(modifier = Modifier.fillMaxSize()) {
                 try {
                     drawVisualizerPreview(
@@ -806,20 +807,21 @@ private fun VisualizerPreviewCard(
 }
 
 
+// ═══════════════════════════════════════════════════════════════
 //  PREVIEW DRAW
+// ═══════════════════════════════════════════════════════════════
 
 private fun DrawScope.drawVisualizerPreview(
     preset: VisualizerPreset,
     state: VisualizerState,
     clockSec: Float,
-    refBitmap: Bitmap?      // 🆕
+    refBitmap: Bitmap?
 ) {
     val previewState = state.copy(
         preset = preset,
         opacity = 1f
     )
 
-    // 🆕 Reference image ko VisualizerEngine ke center content ke liye set karo
     if (refBitmap != null && !refBitmap.isRecycled) {
         try {
             VisualizerEngine.setCenterImage(
@@ -839,7 +841,9 @@ private fun DrawScope.drawVisualizerPreview(
 }
 
 
+// ═══════════════════════════════════════════════════════════════
 //  REUSABLE COMPONENTS
+// ═══════════════════════════════════════════════════════════════
 
 @Composable
 private fun SectionLabel(text: String) {
@@ -911,9 +915,6 @@ private fun ToggleRow(
     }
 }
 
-/**
- * Slider + value box — user can drag OR type exact value.
- */
 @Composable
 private fun ValueSliderRow(
     label: String,
@@ -957,7 +958,6 @@ private fun ValueSliderRow(
             )
         )
 
-        // 🆕 Value box — type exact value
         Box(
             modifier = Modifier
                 .width(64.dp)
@@ -1005,7 +1005,9 @@ private fun ValueSliderRow(
 }
 
 
+// ═══════════════════════════════════════════════════════════════
 //  REFERENCE IMAGE LOADER
+// ═══════════════════════════════════════════════════════════════
 
 private fun loadRefImage(context: android.content.Context): Bitmap? {
     return try {

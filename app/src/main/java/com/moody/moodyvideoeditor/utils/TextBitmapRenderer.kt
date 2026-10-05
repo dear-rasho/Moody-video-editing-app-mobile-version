@@ -717,7 +717,7 @@ object TextBitmapRenderer {
                 color = st.color.toInt()
             }
 
-            val clampedX = sampled.x.coerceIn(0f, 100f)
+            val clampedX = sampled.x.coerceIn(-50f, 150f)
             val clampedY = sampled.y.coerceIn(0f, 100f)
 
             val cx = clampedX / 100f * W

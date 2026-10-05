@@ -129,7 +129,7 @@ object AudioVisualizerBridge {
         }
     }
 
-    //  BEAT DETECTION — Energy-based with adaptive threshold
+    // ─── BEAT DETECTION — Energy-based with adaptive threshold
 
     private fun detectBeat(fft: FloatArray): Float {
         if (fft.isEmpty()) return 0f

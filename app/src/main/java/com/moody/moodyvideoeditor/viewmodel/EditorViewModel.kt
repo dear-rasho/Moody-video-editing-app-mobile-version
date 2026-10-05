@@ -81,6 +81,8 @@ class EditorViewModel : ViewModel() {
                 imageFormat = config.imageFormat,
                 jpegQuality = config.jpegQuality,
                 aspectRatio = config.aspectRatio,
+                outputWidth = config.outputWidth,
+                outputHeight = config.outputHeight,
                 folderUri = config.folderUri,
                 startMs = config.startMs,
                 endMs = config.endMs,
@@ -1285,9 +1287,11 @@ class EditorViewModel : ViewModel() {
         for (i in list.indices) {
             if (list[i].id in s.multiSelectedIds) {
                 val (cx, cy) = getClipPos(list[i])
+                val minX = if (list[i].isTextClip) -50f else 0f
+                val maxX = if (list[i].isTextClip) 150f else 100f
                 list[i] = setClipPos(
                     list[i],
-                    (cx + dx).coerceIn(0f, 100f),
+                    (cx + dx).coerceIn(minX, maxX),
                     (cy + dy).coerceIn(0f, 100f)
                 )
             }
@@ -3439,6 +3443,8 @@ data class ExportUiStateBundle(
     val imageFormat: String,
     val jpegQuality: Int,
     val aspectRatio: String,
+    val outputWidth: Int,
+    val outputHeight: Int,
     val folderUri: String?,
     val startMs: Long,
     val endMs: Long,

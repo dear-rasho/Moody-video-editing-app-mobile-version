@@ -125,11 +125,13 @@ fun EditorScreen(
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
 
-    // Observe export state from service via ViewModel
+    // Observe export state from service
     val exportState by viewModel.exportState.collectAsState()
 
+    // ═══════════════════════════════════════════════════════════
+    //  PROJECT LOAD + AUTO-SAVE
+    // ═══════════════════════════════════════════════════════════
 
-    // Project load and auto-save
     LaunchedEffect(projectId) {
         if (projectId.isNotBlank() && viewModel.getProjectId() != projectId) {
             viewModel.loadProject(context, projectId)
@@ -155,8 +157,10 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  PANEL STATE
+    // ═══════════════════════════════════════════════════════════
 
-    // Panel state
     var activePanel by remember {
         mutableStateOf<String?>(if (startInCodeMode) "code" else null)
     }
@@ -165,7 +169,6 @@ fun EditorScreen(
 
     var filterEditLayerId by remember { mutableStateOf<String?>(null) }
     var effectEditLayerId by remember { mutableStateOf<String?>(null) }
-
 
     // Brush state
     var isDrawingMode by remember { mutableStateOf(false) }
@@ -178,17 +181,14 @@ fun EditorScreen(
         mutableStateOf(com.moody.moodyvideoeditor.data.BrushGradient())
     }
 
-
     // Import state
     var pendingUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var pendingVizImageUri by remember { mutableStateOf<String?>(null) }
-
 
     // Visualizer detection state
     var isDetectingBeats by remember { mutableStateOf(false) }
     var beatDetectionProgress by remember { mutableFloatStateOf(0f) }
     var beatDetectionError by remember { mutableStateOf<String?>(null) }
-
 
     // Export dialog state
     var exportStartMs by remember { mutableLongStateOf(0L) }
@@ -196,17 +196,17 @@ fun EditorScreen(
     var useCustomRange by remember { mutableStateOf(false) }
     var showCancelConfirm by remember { mutableStateOf(false) }
 
-
     // Prompt state
     var promptFeedback by remember { mutableStateOf("") }
     var promptFeedbackType by remember { mutableStateOf("none") }
 
-
     // Playback state
     var isPlaybackActive by remember { mutableStateOf(false) }
 
+    // ═══════════════════════════════════════════════════════════
+    //  EXOPLAYERS
+    // ═══════════════════════════════════════════════════════════
 
-    // Two ExoPlayers
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
     }
@@ -222,14 +222,12 @@ fun EditorScreen(
         }
     }
 
-
     // Visualizer cache cleanup
     DisposableEffect(Unit) {
         onDispose {
             VisualizerEngine.clearCache()
         }
     }
-
 
     // Audio FX preview release on panel change
     LaunchedEffect(activePanel) {
@@ -245,8 +243,10 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  PREVIEW CLEAR ON TRACK HIDE
+    // ═══════════════════════════════════════════════════════════
 
-    // Preview clear on track hide
     LaunchedEffect(state.hiddenVisualTracks, filterEditLayerId, effectEditLayerId) {
         val editFilter = filterEditLayerId?.let { id ->
             state.clips.firstOrNull { it.id == id }
@@ -267,8 +267,10 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  MUTE STATE HELPERS
+    // ═══════════════════════════════════════════════════════════
 
-    // Mute state helpers
     val activeClipTrackMuted = remember(state.selectedClip, state.mutedAudioTracks) {
         val sel = state.selectedClip
         sel != null && sel.isAudio && state.mutedAudioTracks.contains(sel.trackIndex)
@@ -294,8 +296,10 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  VIDEO PLAYBACK SYNC
+    // ═══════════════════════════════════════════════════════════
 
-    // Video playback sync
     LaunchedEffect(state.currentPosMs, state.clips, state.hiddenVisualTracks) {
         val playheadMs = state.currentPosMs
         val activeClip = state.clips
@@ -360,8 +364,10 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  AUDIO PLAYBACK SYNC
+    // ═══════════════════════════════════════════════════════════
 
-    // Audio playback sync
     LaunchedEffect(state.currentPosMs, state.clips, state.mutedAudioTracks) {
         val playheadMs = state.currentPosMs
         val activeAudio = state.clips
@@ -433,8 +439,10 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  PLAYHEAD TICKER
+    // ═══════════════════════════════════════════════════════════
 
-    // Playhead ticker
     LaunchedEffect(isPlaybackActive) {
         if (!isPlaybackActive) {
             try {
@@ -463,8 +471,10 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  MEDIA PICKER
+    // ═══════════════════════════════════════════════════════════
 
-    // Media picker
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
@@ -494,7 +504,6 @@ fun EditorScreen(
         Log.e("FOLDER_PICK", "Saved URI: $uri")
     }
 
-    // Visualizer image picker
     val vizImagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -514,7 +523,6 @@ fun EditorScreen(
         val name = VideoUtils.getFileName(context, uri).lowercase()
         Log.e("VIZ_IMAGE", "Picked: $name ($uri)")
 
-        // Always copy to cache for stability
         val cacheUri = try {
             val cacheFile = java.io.File(
                 context.cacheDir,
@@ -533,8 +541,10 @@ fun EditorScreen(
         Log.e("VIZ_IMAGE", "Final URI: $cacheUri")
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  MULTI-IMPORT PROCESSING
+    // ═══════════════════════════════════════════════════════════
 
-    // Multi-import processing
     LaunchedEffect(pendingUris) {
         val uris = pendingUris
         if (uris.isEmpty()) return@LaunchedEffect
@@ -601,8 +611,10 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  PROMPT RUNNER
+    // ═══════════════════════════════════════════════════════════
 
-    // Prompt runner
     fun runPrompt(input: String) {
         try {
             val parsed = PromptEngine.parse(input)
@@ -631,8 +643,10 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  VISUALIZER CREATION WITH BEAT DETECTION
+    // ═══════════════════════════════════════════════════════════
 
-    // Visualizer creation with beat detection
     fun launchVisualizerCreation() {
         isDetectingBeats = true
         beatDetectionProgress = 0f
@@ -656,15 +670,17 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  MAIN LAYOUT
+    // ═══════════════════════════════════════════════════════════
 
-    // Main layout
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF121212))
     ) {
 
-        // Top bar with title and export button below
+        // ─── TOP BAR ───
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -723,7 +739,7 @@ fun EditorScreen(
             }
         }
 
-        // Preview
+        // ─── PREVIEW ───
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -802,7 +818,7 @@ fun EditorScreen(
             )
         }
 
-        // Control bar
+        // ─── CONTROL BAR ───
         ControlBar(
             onMediaClick = {
                 picker.launch(
@@ -822,7 +838,7 @@ fun EditorScreen(
             onRatioClick = { activePanel = "ratio" }
         )
 
-        // Timeline
+        // ─── TIMELINE ───
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -862,6 +878,7 @@ fun EditorScreen(
                     viewportContentWidthDp = 320f,
                     onZoomChange = { viewModel.setTimelineZoom(it) }
                 )
+
                 Timeline(
                     state = state,
                     onClipTapped = { clip ->
@@ -891,8 +908,6 @@ fun EditorScreen(
                         if (exoPlayer.isPlaying) exoPlayer.pause()
                         if (audioExoPlayer.isPlaying) audioExoPlayer.pause()
                         viewModel.setCurrentPos(t)
-                        // FIX: don't clear selection on seek
-                        // (user might be scrubbing with a clip selected)
                         val sel = state.selectedClip
                         if (sel != null && sel.isVisualClip) {
                             val localMs = (t - sel.timelineStartMs)
@@ -923,12 +938,15 @@ fun EditorScreen(
                     },
                     onTransitionDurationChange = { clipId, ms ->
                         viewModel.setTransitionDuration(clipId, ms)
+                    },
+                    onTimelineZoomChange = { zoom ->
+                        viewModel.setTimelineZoom(zoom)
                     }
                 )
             }
         }
 
-        // Playback controls
+        // ─── PLAYBACK CONTROLS ───
         PlaybackControls(
             isPlaying = isPlaybackActive,
             isMuted = state.isMuted,
@@ -986,8 +1004,7 @@ fun EditorScreen(
             onKeyframe = { viewModel.toggleKeyframeAll() }
         )
 
-
-        // Feature panel or shelf
+        // ─── FEATURE PANEL OR SHELF ───
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1005,6 +1022,7 @@ fun EditorScreen(
                     scrollState = featureScrollState
                 )
 
+                // [PART 2 CONTINUES - panel dispatch continues here]
                 "code" -> PromptPanel(
                     feedback = promptFeedback,
                     feedbackType = promptFeedbackType,
@@ -1479,7 +1497,6 @@ fun EditorScreen(
                                         )
                                     }
 
-                                    // BACK button
                                     Box(
                                         modifier = Modifier
                                             .height(36.dp)
@@ -1530,7 +1547,6 @@ fun EditorScreen(
                                     Row(
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        // BACK button
                                         Box(
                                             modifier = Modifier
                                                 .height(36.dp)
@@ -1553,7 +1569,6 @@ fun EditorScreen(
                                             )
                                         }
 
-                                        // Retry button
                                         Box(
                                             modifier = Modifier
                                                 .height(36.dp)
@@ -1590,7 +1605,6 @@ fun EditorScreen(
 
                             if (!selectedIsAudio) {
                                 if (anyVisualizerInTimeline) {
-                                    // Visualizer exists but not selected
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1618,7 +1632,6 @@ fun EditorScreen(
                                                 textAlign = TextAlign.Center
                                             )
 
-                                            // BACK button
                                             Box(
                                                 modifier = Modifier
                                                     .height(40.dp)
@@ -1642,7 +1655,6 @@ fun EditorScreen(
                                         }
                                     }
                                 } else {
-                                    // No visualizer, no audio
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1669,7 +1681,6 @@ fun EditorScreen(
                                                 textAlign = TextAlign.Center
                                             )
 
-                                            // BACK + OK buttons
                                             Row(
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                                             ) {
@@ -1719,7 +1730,6 @@ fun EditorScreen(
                                     }
                                 }
                             } else {
-                                // Audio selected — create visualizer
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1749,7 +1759,6 @@ fun EditorScreen(
                                         Row(
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            // BACK button
                                             Box(
                                                 modifier = Modifier
                                                     .height(44.dp)
@@ -1771,7 +1780,6 @@ fun EditorScreen(
                                                 )
                                             }
 
-                                            // CREATE button
                                             Box(
                                                 modifier = Modifier
                                                     .height(44.dp)
@@ -1902,8 +1910,10 @@ fun EditorScreen(
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  EXPORT CONFIG DIALOG
+    // ═══════════════════════════════════════════════════════════
 
-    // Export config dialog
     if (activePanel == "export") {
         ExportDialog(
             isExporting = exportState.isExporting,
@@ -1921,7 +1931,6 @@ fun EditorScreen(
             onChooseFolder = { folderPicker.launch(null) },
             onResetFolder = { viewModel.setExportFolderUri(null) },
             onStartExport = { config ->
-                // Build bundle and hand to ViewModel
                 val clipsForExport = state.clips.filter {
                     !state.hiddenVisualTracks.contains(it.trackIndex)
                 }
@@ -1941,6 +1950,8 @@ fun EditorScreen(
                     imageFormat = config.imageFormat,
                     jpegQuality = config.jpegQuality,
                     aspectRatio = config.aspectRatio,
+                    outputWidth = config.outputWidth,
+                    outputHeight = config.outputHeight,
                     folderUri = config.customFolderUri,
                     startMs = startMs,
                     endMs = endMs,
@@ -1965,8 +1976,10 @@ fun EditorScreen(
         )
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  EXPORT OVERLAY (fullscreen)
+    // ═══════════════════════════════════════════════════════════
 
-    // CapCut-style full screen export overlay
     if (exportState.isExporting ||
         exportState.isCompleted ||
         exportState.isCancelled ||
@@ -1983,8 +1996,10 @@ fun EditorScreen(
         )
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  CANCEL CONFIRMATION DIALOG
+    // ═══════════════════════════════════════════════════════════
 
-    // Cancel confirmation dialog
     if (showCancelConfirm) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showCancelConfirm = false },

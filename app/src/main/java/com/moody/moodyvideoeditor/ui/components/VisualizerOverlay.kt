@@ -41,7 +41,9 @@ fun VisualizerOverlay(
     val context = LocalContext.current
 
 
+    // ═══════════════════════════════════════════════════════════
     //  FIND LINKED AUDIO CLIP
+    // ═══════════════════════════════════════════════════════════
 
     val linkedAudio = remember(state.linkedAudioClipId, allClips) {
         state.linkedAudioClipId?.let { id ->
@@ -50,7 +52,9 @@ fun VisualizerOverlay(
     }
 
 
+    // ═══════════════════════════════════════════════════════════
     //  LOAD CENTER IMAGE — robust
+    // ═══════════════════════════════════════════════════════════
 
     LaunchedEffect(state.imageUri, state.showImage) {
         val uri = state.imageUri
@@ -79,7 +83,9 @@ fun VisualizerOverlay(
     }
 
 
+    // ═══════════════════════════════════════════════════════════
     //  ELAPSED TIME — for idle motion (rotation, waves)
+    // ═══════════════════════════════════════════════════════════
 
     var elapsedSec by remember { mutableFloatStateOf(0f) }
 
@@ -96,9 +102,11 @@ fun VisualizerOverlay(
     }
 
 
+    // ═══════════════════════════════════════════════════════════
     //  COMPUTE relativeMs FROM PLAYHEAD
     //  Maps timeline position → audio source position
     //  SAME formula used in export → perfect sync
+    // ═══════════════════════════════════════════════════════════
 
     val relativeMs = remember(currentPosMs, linkedAudio) {
         val audio = linkedAudio ?: return@remember 0L
@@ -108,7 +116,9 @@ fun VisualizerOverlay(
     }
 
 
+    // ═══════════════════════════════════════════════════════════
     //  DRAW — passes relativeMs (not rawFft) to engine
+    // ═══════════════════════════════════════════════════════════
 
     Canvas(modifier = modifier) {
         VisualizerEngine.draw(

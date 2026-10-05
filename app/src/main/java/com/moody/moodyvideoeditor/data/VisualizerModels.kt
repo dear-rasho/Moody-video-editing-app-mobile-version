@@ -7,13 +7,17 @@ enum class VisualizerPreset(
     val category: String
 ) {
 
+    // ═══════════════════════════════════════════════════════════
     //  0️⃣ NEW — Premium (Phase 1 additions)
+    // ═══════════════════════════════════════════════════════════
 
     AUDIO_SPHERE("audioSphere", "Audio Sphere", "🔊", "spectrum"),
     WAVEFORM_RING("waveformRing", "Waveform Ring", "🌊", "spectrum"),
     SYMMETRIC_WAVE("symmetricWave", "Symmetric Wave", "⚡", "spectrum"),
 
+    // ═══════════════════════════════════════════════════════════
     //  1️⃣ SPECTRUM (20)
+    // ═══════════════════════════════════════════════════════════
 
     CIRCULAR_SPECTRUM("circularSpectrum", "Circular Spectrum", "🔵", "spectrum"),
     LINEAR_WAVEFORM("linearWaveform", "Linear Waveform", "〰️", "spectrum"),
@@ -37,7 +41,9 @@ enum class VisualizerPreset(
     STAR_BURST("starBurst", "Star Burst", "⭐", "spectrum"),
 
 
+    // ═══════════════════════════════════════════════════════════
     //  2️⃣ PARTICLES (20)
+    // ═══════════════════════════════════════════════════════════
 
     BASS_PARTICLES("bassParticles", "Bass Particles", "💥", "particles"),
     FLOATING_DUST("floatingDust", "Floating Dust", "🌫️", "particles"),
@@ -61,7 +67,9 @@ enum class VisualizerPreset(
     CYBER_GRID("cyberGrid", "Cyber Grid", "🕸️", "particles"),
 
 
+    // ═══════════════════════════════════════════════════════════
     //  3️⃣ NEON / CYBER (20)
+    // ═══════════════════════════════════════════════════════════
 
     NEON_GLOW_RING("neonGlowRing", "Neon Glow Ring", "💫", "neon"),
     RGB_GLITCH("rgbGlitch", "RGB Glitch", "🌈", "neon"),
@@ -85,7 +93,9 @@ enum class VisualizerPreset(
     GLITCH_TWITCH("glitchTwitch", "Glitch Twitch", "📳", "neon"),
 
 
+    // ═══════════════════════════════════════════════════════════
     //  4️⃣ GEOMETRIC (20)
+    // ═══════════════════════════════════════════════════════════
 
     MINIMAL_DOTS("minimalDots", "Minimal Dots", "⚫", "geometric"),
     ROTATING_POLY("rotatingPoly", "Rotating Poly", "🔶", "geometric"),
@@ -109,7 +119,9 @@ enum class VisualizerPreset(
     VECTOR_RIBBON("vectorRibbon", "Vector Ribbon", "🎗️", "geometric"),
 
 
+    // ═══════════════════════════════════════════════════════════
     //  5️⃣ CINEMATIC (20)
+    // ═══════════════════════════════════════════════════════════
 
     LENS_FLARE("lensFlare", "Lens Flare", "🔆", "cinematic"),
     CAMERA_SHUTTER("cameraShutter", "Camera Shutter", "📷", "cinematic"),

@@ -1824,8 +1824,7 @@ private fun InteractiveTextOverlay(
     val textWidthDp = with(density) { finalMeasure.size.width.toDp().value }
     val textHeightDp = with(density) { finalMeasure.size.height.toDp().value }
 
-    // Simple clamp — matches export
-    val clampedX = sampled.x.coerceIn(0f, 100f)
+    val clampedX = sampled.x.coerceIn(-50f, 150f)
     val clampedY = sampled.y.coerceIn(0f, 100f)
 
     val family = FontLibrary.familyFor(textState.fontFamily)
@@ -1964,11 +1963,10 @@ private fun InteractiveTextOverlay(
                                     c2.consume()
                                 }
 
-                                // ✅ FIX: pan in dp (not px)
-                                val rawX = baseX + accumPanX / canvasW * 100f
-                                val rawY = baseY + accumPanY / canvasH * 100f
+                                val rawX = baseX + accumPanX / canvasWpx * 100f
+                                val rawY = baseY + accumPanY / canvasHpx * 100f
 
-                                val cx = rawX.coerceIn(0f, 100f)
+                                val cx = rawX.coerceIn(-50f, 150f)
                                 val cy = rawY.coerceIn(0f, 100f)
                                 val newScale = (baseScale * accumZoom)
                                     .coerceIn(10f, 500f)
@@ -2229,10 +2227,8 @@ private fun InteractiveStickerOverlay(
                                     c1.consume()
                                     c2.consume()
                                 }
-
-                                // ✅ FIX: pan in dp (not px)
-                                val rawX = baseX + accumPanX / canvasW * 100f
-                                val rawY = baseY + accumPanY / canvasH * 100f
+                                val rawX = baseX + accumPanX / canvasWpx * 100f
+                                val rawY = baseY + accumPanY / canvasHpx * 100f
 
                                 val cx = rawX.coerceIn(0f, 100f)
                                 val cy = rawY.coerceIn(0f, 100f)

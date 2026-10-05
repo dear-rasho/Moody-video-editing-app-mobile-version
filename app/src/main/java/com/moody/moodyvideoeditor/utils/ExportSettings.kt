@@ -1,5 +1,7 @@
 package com.moody.moodyvideoeditor.utils
 
+import com.moody.moodyvideoeditor.data.RatioLibrary
+
 object ExportSettings {
 
     // ═══════════════════════════════════════════════════════════
@@ -98,16 +100,16 @@ object ExportSettings {
         aspectRatio: String
     ): Pair<Int, Int> {
         val preset = findResolution(resolution)
-        val ratio = RatioHelper.ratioValue(aspectRatio)
+        val ratio = RatioLibrary.find(aspectRatio)
 
-        return if (ratio >= 1f) {
-            val w = preset.width
-            val h = (w / ratio).toInt()
-            makeEven(w) to makeEven(h)
+        return if (ratio.w >= ratio.h) {
+            val width = preset.width
+            val height = width * ratio.h / ratio.w
+            makeEven(width) to makeEven(height)
         } else {
-            val h = preset.width
-            val w = (h * ratio).toInt()
-            makeEven(w) to makeEven(h)
+            val height = preset.width
+            val width = height * ratio.w / ratio.h
+            makeEven(width) to makeEven(height)
         }
     }
 
