@@ -1,5 +1,11 @@
 package com.moody.moodyvideoeditor.utils
 
+import android.graphics.BlurMaskFilter
+import android.graphics.Paint
+import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -301,44 +307,55 @@ object BrushEngine {
     }
 
     private fun drawGlow(scope: DrawScope, stroke: BrushStroke, w: Float, h: Float) {
-        if (stroke.gradient.enabled) {
-            listOf(2.5f to 0.1f, 1.8f to 0.2f, 1.2f to 0.4f).forEach { (mul, a) ->
-                drawGradientStroke(
-                    scope, stroke, w, h,
-                    cap = StrokeCap.Round, join = StrokeJoin.Round,
-                    alphaMul = a, widthMul = mul
-                )
-            }
-            drawGradientStroke(
-                scope, stroke, w, h,
-                cap = StrokeCap.Round, join = StrokeJoin.Round,
-                alphaMul = 0.85f, widthMul = 0.6f
-            )
-        } else {
-            val path = buildPath(stroke, w, h)
-            val c = Color(stroke.color)
-            val a = stroke.opacity
+        val glowPasses = listOf(
+            Triple(2.4f, 0.22f, true),
+            Triple(1.4f, 0.36f, true),
+            Triple(0.8f, 0.52f, true),
+            Triple(0.55f, 0.95f, false)
+        )
+        val points = stroke.points
+        val path = buildPath(stroke, w, h).asAndroidPath()
 
-            listOf(2.5f to 0.1f, 1.8f to 0.2f, 1.2f to 0.4f).forEach { (mul, alpha) ->
-                scope.drawPath(
-                    path = path,
-                    color = c.copy(alpha = a * alpha),
-                    style = Stroke(
-                        width = stroke.width * mul,
-                        cap = StrokeCap.Round,
-                        join = StrokeJoin.Round
-                    )
-                )
+        scope.drawIntoCanvas { composeCanvas ->
+            val canvas = composeCanvas.nativeCanvas
+            glowPasses.forEach { (blurWidth, alpha, blurred) ->
+                val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeCap = Paint.Cap.ROUND
+                    strokeJoin = Paint.Join.ROUND
+                    strokeWidth = (stroke.width * blurWidth).coerceAtLeast(1f)
+                    if (blurred) {
+                        maskFilter = BlurMaskFilter(
+                            (stroke.width * blurWidth).coerceAtLeast(1f),
+                            BlurMaskFilter.Blur.NORMAL
+                        )
+                    }
+                }
+
+                if (stroke.gradient.enabled && points.size > 1) {
+                    val segmentCount = points.size - 1
+                    for (i in 0 until segmentCount) {
+                        val color = sampleColorAt(stroke, (i + 0.5f) / segmentCount)
+                        paint.color = color.copy(
+                            alpha = color.alpha * stroke.opacity * alpha
+                        ).toArgb()
+                        val from = points[i]
+                        val to = points[i + 1]
+                        canvas.drawLine(
+                            from.x * w,
+                            from.y * h,
+                            to.x * w,
+                            to.y * h,
+                            paint
+                        )
+                    }
+                } else {
+                    paint.color = Color(stroke.color)
+                        .copy(alpha = Color(stroke.color).alpha * stroke.opacity * alpha)
+                        .toArgb()
+                    canvas.drawPath(path, paint)
+                }
             }
-            scope.drawPath(
-                path = path,
-                color = c.copy(alpha = a * 0.85f),
-                style = Stroke(
-                    width = stroke.width * 0.6f,
-                    cap = StrokeCap.Round,
-                    join = StrokeJoin.Round
-                )
-            )
         }
     }
 

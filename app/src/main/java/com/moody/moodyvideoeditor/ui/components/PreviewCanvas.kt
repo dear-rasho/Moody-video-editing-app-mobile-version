@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -38,10 +39,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -484,6 +487,15 @@ fun PreviewCanvas(
                                         alpha = opacityAlpha * transT.alpha
                                         this.clip = true
                                     }
+                                    .then(
+                                        if (clip.id == selectedClipId) {
+                                            Modifier.border(
+                                                1.5.dp,
+                                                Color(0xFF60EFFF),
+                                                RoundedCornerShape(4.dp)
+                                            )
+                                        } else Modifier
+                                    )
                             ) {
                                 AndroidView(
                                     factory = { ctx ->
@@ -521,6 +533,24 @@ fun PreviewCanvas(
                                     },
                                     modifier = Modifier.fillMaxSize()
                                 )
+                                if (clip.id == selectedClipId) {
+                                    LayerTransformHandles(
+                                        clipId = clip.id,
+                                        scale = videoTransform2.scale,
+                                        rotation = videoTransform2.rotation,
+                                        onGestureStart = onGroupGestureStart,
+                                        onGestureEnd = onGroupGestureEnd,
+                                        onTransformChanged = { scale, rotation ->
+                                            onGroupGesture(
+                                                clip.id,
+                                                videoTransform2.x,
+                                                videoTransform2.y,
+                                                scale,
+                                                rotation
+                                            )
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -619,7 +649,7 @@ fun PreviewCanvas(
                                     )
                                     .pointerInput(clip.id, isSelected, isMulti) {
                                         awaitEachGesture {
-                                            awaitFirstDown(requireUnconsumed = false)
+                                            awaitFirstDown(requireUnconsumed = true)
                                             onGroupGestureStart()
 
                                             val baseX = imgTransform.x
@@ -731,6 +761,24 @@ fun PreviewCanvas(
                                     colorFilter = imgColorFilter,
                                     modifier = Modifier.fillMaxSize()
                                 )
+                                if (isSelected) {
+                                    LayerTransformHandles(
+                                        clipId = clip.id,
+                                        scale = imgTransform.scale,
+                                        rotation = imgTransform.rotation,
+                                        onGestureStart = onGroupGestureStart,
+                                        onGestureEnd = onGroupGestureEnd,
+                                        onTransformChanged = { scale, rotation ->
+                                            onGroupGesture(
+                                                clip.id,
+                                                imgTransform.x,
+                                                imgTransform.y,
+                                                scale,
+                                                rotation
+                                            )
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -777,7 +825,7 @@ fun PreviewCanvas(
                                     )
                                     .pointerInput(clip.id, isSel, isMulti, canvasW, canvasH) {
                                         awaitEachGesture {
-                                            awaitFirstDown(requireUnconsumed = false)
+                                            awaitFirstDown(requireUnconsumed = true)
                                             onGroupGestureStart()
 
                                             val baseX = vs.positionX * 100f
@@ -860,7 +908,24 @@ fun PreviewCanvas(
                                             if (!isMulti) onClipSelected(clip.id)
                                         }
                                     }
-                            )
+                            ) {
+                                if (isSel) {
+                                    LayerTransformHandles(
+                                        clipId = clip.id,
+                                        scale = (vs.size / 0.32f) * 100f,
+                                        rotation = vs.rotation,
+                                        onGestureStart = onGroupGestureStart,
+                                        onGestureEnd = onGroupGestureEnd,
+                                        onTransformChanged = { scale, rotation ->
+                                            onVisualizerTransformChanged(
+                                                clip.id,
+                                                scale,
+                                                rotation
+                                            )
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                     // BRUSH
@@ -918,7 +983,7 @@ fun PreviewCanvas(
                                     )
                                     .pointerInput(clip.id, isSelected, isMulti) {
                                         awaitEachGesture {
-                                            awaitFirstDown(requireUnconsumed = false)
+                                            awaitFirstDown(requireUnconsumed = true)
                                             onGroupGestureStart()
 
                                             val baseX = brushTransform.x
@@ -1015,6 +1080,22 @@ fun PreviewCanvas(
                                                     .coerceAtLeast(0L)
                                         )
                                     }
+                                }
+                                if (isSelected) {
+                                    LayerTransformHandles(
+                                        clipId = clip.id,
+                                        scale = brushTransform.scale,
+                                        rotation = brushTransform.rotation,
+                                        onGestureStart = onGroupGestureStart,
+                                        onGestureEnd = onGroupGestureEnd,
+                                        onTransformChanged = { scale, rotation ->
+                                            onBrushTransformChanged(
+                                                clip.id,
+                                                scale,
+                                                rotation
+                                            )
+                                        }
+                                    )
                                 }
                             }
                         }
@@ -1910,7 +1991,7 @@ private fun InteractiveTextOverlay(
                 .padding(8.dp)
                 .pointerInput(clip.id, isSelected, isMulti, canvasW, canvasH) {
                     awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
+                        awaitFirstDown(requireUnconsumed = true)
                         isDragging = true
                         onGroupGestureStart()
 
@@ -1998,7 +2079,7 @@ private fun InteractiveTextOverlay(
                         else -> Paint.Align.CENTER
                     }
                     val typeface = TextRenderContract.androidTypefaceFor(
-                        family,
+                        textState.fontFamily,
                         weight == FontWeight.Bold,
                         fontSty == androidx.compose.ui.text.font.FontStyle.Italic
                     )
@@ -2063,6 +2144,17 @@ private fun InteractiveTextOverlay(
                             lineHeight = finalLineHeightSp
                         )
                     )
+
+                    if (isSelected) {
+                        LayerTransformHandles(
+                            clipId = clip.id,
+                            scale = sampled.scale,
+                            rotation = sampled.rotation,
+                            onGestureStart = onGroupGestureStart,
+                            onGestureEnd = onGroupGestureEnd,
+                            onTransformChanged = onTransformChanged
+                        )
+                    }
                 }
 
                 Text(
@@ -2177,7 +2269,7 @@ private fun InteractiveStickerOverlay(
                 .padding(6.dp)
                 .pointerInput(clip.id, isSelected, isMulti, canvasW, canvasH) {
                     awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
+                        awaitFirstDown(requireUnconsumed = true)
                         onGroupGestureStart()
 
                         val baseX = clampedX
@@ -2256,6 +2348,123 @@ private fun InteractiveStickerOverlay(
                 text = stickerState.emoji,
                 fontSize = effStickerSizeSp
             )
+            if (isSelected) {
+                LayerTransformHandles(
+                    clipId = clip.id,
+                    scale = sampled.scale,
+                    rotation = sampled.rotation,
+                    onGestureStart = onGroupGestureStart,
+                    onGestureEnd = onGroupGestureEnd,
+                    onTransformChanged = onTransformChanged
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun BoxScope.LayerTransformHandles(
+    clipId: String,
+    scale: Float,
+    rotation: Float,
+    onGestureStart: () -> Unit,
+    onGestureEnd: () -> Unit,
+    onTransformChanged: (Float, Float) -> Unit
+) {
+    TransformHandle(
+        modifier = Modifier
+            .align(Alignment.TopCenter),
+        clipId = clipId,
+        scale = scale,
+        rotation = rotation,
+        isScaleHandle = false,
+        onGestureStart = onGestureStart,
+        onGestureEnd = onGestureEnd,
+        onTransformChanged = onTransformChanged
+    )
+    TransformHandle(
+        modifier = Modifier
+            .align(Alignment.BottomEnd),
+        clipId = clipId,
+        scale = scale,
+        rotation = rotation,
+        isScaleHandle = true,
+        onGestureStart = onGestureStart,
+        onGestureEnd = onGestureEnd,
+        onTransformChanged = onTransformChanged
+    )
+}
+
+@Composable
+private fun TransformHandle(
+    modifier: Modifier,
+    clipId: String,
+    scale: Float,
+    rotation: Float,
+    isScaleHandle: Boolean,
+    onGestureStart: () -> Unit,
+    onGestureEnd: () -> Unit,
+    onTransformChanged: (Float, Float) -> Unit
+) {
+    val currentScale = rememberUpdatedState(scale)
+    val currentRotation = rememberUpdatedState(rotation)
+    val currentOnTransformChanged = rememberUpdatedState(onTransformChanged)
+    val currentOnGestureStart = rememberUpdatedState(onGestureStart)
+    val currentOnGestureEnd = rememberUpdatedState(onGestureEnd)
+
+    Box(
+        modifier = modifier
+            .size(26.dp)
+            .clip(CircleShape)
+            .background(Color(0xFF171A22))
+            .border(1.dp, Color(0xFF60EFFF), CircleShape)
+            .pointerInput(clipId, isScaleHandle) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    currentOnGestureStart.value()
+
+                    val startScale = currentScale.value
+                    val startRotation = currentRotation.value
+                    var accumulatedDrag = 0f
+                    var dragging = true
+                    while (dragging) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull()
+                        if (change == null || !change.pressed) {
+                            dragging = false
+                        } else {
+                            val delta = change.position - change.previousPosition
+                            accumulatedDrag += if (isScaleHandle) {
+                                delta.x + delta.y
+                            } else {
+                                delta.x - delta.y
+                            }
+                            change.consume()
+                            if (isScaleHandle) {
+                                currentOnTransformChanged.value(
+                                    (startScale + accumulatedDrag * 0.5f)
+                                        .coerceIn(10f, 500f),
+                                    startRotation
+                                )
+                            } else {
+                                currentOnTransformChanged.value(
+                                    startScale,
+                                    startRotation + accumulatedDrag
+                                )
+                            }
+                        }
+                    }
+                    currentOnGestureEnd.value()
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = if (isScaleHandle) "⤢" else "↻",
+            color = Color.White,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }

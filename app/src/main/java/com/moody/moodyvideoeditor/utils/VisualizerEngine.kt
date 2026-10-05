@@ -41,11 +41,8 @@ object VisualizerEngine {
     private val smoothBeat = ConcurrentHashMap<String, Float>()
     private val imageRotation = ConcurrentHashMap<String, Float>()
 
-    @Volatile
-    private var cachedImage: ImageBitmap? = null
-
-    @Volatile
-    private var cachedImageKey: String? = null
+    private data class CenterImage(val uri: String?, val bitmap: ImageBitmap?)
+    private val centerImages = ConcurrentHashMap<String, CenterImage>()
 
     data class Features(
         val bass: Float, val mid: Float, val treble: Float,
@@ -102,7 +99,9 @@ object VisualizerEngine {
             scope = scope, W = W, H = H,
             cx = cx, cy = cy, baseR = baseR,
             feat = feat, elapsed = elapsedSec,
-            state = state, instanceKey = instanceKey
+            state = state,
+            instanceKey = instanceKey,
+            centerImage = centerImages[instanceKey]?.bitmap
         )
 
         // ═══════════════════════════════════════════════════════════
@@ -233,7 +232,8 @@ object VisualizerEngine {
         val scope: DrawScope, val W: Float, val H: Float,
         val cx: Float, val cy: Float, val baseR: Float,
         val feat: Features, val elapsed: Float,
-        val state: VisualizerState, val instanceKey: String
+        val state: VisualizerState, val instanceKey: String,
+        val centerImage: ImageBitmap?
     ) {
         fun color1() = Color(state.color1).copy(alpha = state.opacity)
         fun color2() = Color(state.color2).copy(alpha = state.opacity)
@@ -1876,7 +1876,7 @@ object VisualizerEngine {
 
         c.scope.clipPath(circlePath) {
             val hasText = c.state.showText && c.state.textContent.isNotBlank()
-            val hasImg = c.state.showImage && cachedImage != null
+            val hasImg = c.state.showImage && c.centerImage != null
 
             val drawImageFirst = !c.state.textOnTopOfImage || !hasText
 
@@ -1900,7 +1900,7 @@ object VisualizerEngine {
     private fun DrawScope.drawImageLayer(
         c: DrawCtx, size: Float, left: Float, top: Float, rotationDeg: Float
     ) {
-        val img = cachedImage ?: return
+        val img = c.centerImage ?: return
         rotate(degrees = rotationDeg, pivot = Offset(c.cx, c.cy)) {
             drawImage(
                 image = img,
@@ -2068,18 +2068,24 @@ object VisualizerEngine {
     // ═══════════════════════════════════════════════════════════
 
     @Synchronized
-    fun setCenterImage(uri: String?, bitmap: ImageBitmap?) {
-        if (uri != cachedImageKey) {
-            cachedImage = bitmap
-            cachedImageKey = uri
-        }
+    fun setCenterImage(
+        uri: String?,
+        bitmap: ImageBitmap?,
+        instanceKey: String = "default"
+    ) {
+        centerImages[instanceKey] = CenterImage(uri, bitmap)
+    }
+
+    @Synchronized
+    fun clearCenterImage(instanceKey: String) {
+        centerImages.remove(instanceKey)
     }
 
     @Synchronized
     fun clearCache() {
         smoothBass.clear(); smoothMid.clear(); smoothTreble.clear()
         smoothRms.clear(); smoothBeat.clear(); imageRotation.clear()
-        cachedImage = null; cachedImageKey = null
+        centerImages.clear()
     }
 
     private fun hash(n: Double): Double {
@@ -2087,4 +2093,3 @@ object VisualizerEngine {
         return x - floor(x)
     }
 }
-

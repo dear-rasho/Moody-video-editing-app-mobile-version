@@ -25,7 +25,8 @@ object ProjectRepository {
             val json = JSONArray(indexFile.readText())
             (0 until json.length()).mapNotNull { i ->
                 jsonObjectToMeta(json.optJSONObject(i) ?: return@mapNotNull null)
-            }.sortedByDescending { it.updatedAt }
+            }.filter { it.clipCount > 0 }
+                .sortedByDescending { it.updatedAt }
         } catch (e: Exception) {
             e.printStackTrace()
             emptyList()
@@ -33,6 +34,8 @@ object ProjectRepository {
     }
 
     fun saveProject(context: Context, meta: ProjectMeta, state: EditorState) {
+        if (state.clips.isEmpty()) return
+
         try {
             // Save state
             val stateFile = File(getProjectsDir(context), "${meta.id}.json")

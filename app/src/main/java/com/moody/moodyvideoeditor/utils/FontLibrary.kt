@@ -1,5 +1,6 @@
 package com.moody.moodyvideoeditor.utils
 
+import android.graphics.Typeface
 import androidx.compose.ui.text.font.FontFamily
 
 // Mirrors js/codebase/fontLibrary.js
@@ -126,42 +127,61 @@ object FontLibrary {
         return raw
     }
 
-    // Mirrors JS loadGoogleFont() — no-op here. Custom .ttf files
-    // need to be added to res/font/ for real custom fonts.
-    fun loadFont(fontName: String) {
-        // Silent — Android loads from res/font automatically.
-    }
+    fun loadFont(fontName: String) = Unit
 
-    // Maps any font name to a Compose FontFamily.
-    // Uses generic Android families as fallback based on name keywords.
-    fun familyFor(fontName: String): FontFamily {
-        val n = fontName.lowercase()
-        return when {
-            n.contains("mono") || n.contains("courier") || n.contains("consol")
-                    || n.contains("menlo") || n.contains("monaco")
-                    || n.contains("code") -> FontFamily.Monospace
+    fun familyFor(fontName: String): FontFamily =
+        FontFamily(typefaceFor(fontName))
 
-            n.contains("script") || n.contains("brush") || n.contains("hand")
-                    || n.contains("comic") || n.contains("cursive")
-                    || n.contains("dancing") || n.contains("pacific")
-                    || n.contains("vibes") || n.contains("amita")
-                    || n.contains("chopin") || n.contains("musiclife")
-                    || n.contains("caveat") || n.contains("allura")
-                    || n.contains("satisfy") || n.contains("kaushan")
-                    || n.contains("parisienne") || n.contains("sacramento")
-                    || n.contains("tangerine") || n.contains("indie")
-                    || n.contains("patrick") || n.contains("kalam") -> FontFamily.Cursive
+    fun typefaceFor(
+        fontName: String,
+        bold: Boolean = false,
+        italic: Boolean = false
+    ): Typeface {
+        val name = fontName.trim().ifEmpty { "Arial" }
+        val normalized = name.lowercase()
+        val directTypeface = Typeface.create(name, Typeface.NORMAL)
+        val isDirectFamilyAvailable = normalized.startsWith("sans-serif") ||
+                normalized in setOf("serif", "monospace", "cursive") ||
+                directTypeface != Typeface.DEFAULT
+        val family = if (isDirectFamilyAvailable) {
+            name
+        } else when {
+            normalized.contains("mono") || normalized.contains("courier")
+                    || normalized.contains("consol") || normalized.contains("menlo")
+                    || normalized.contains("monaco") || normalized.contains("code") ->
+                "monospace"
 
-            n.contains("serif") || n.contains("times") || n.contains("georgia")
-                    || n.contains("garamond") || n.contains("baskerville")
-                    || n.contains("playfair") || n.contains("cinzel")
-                    || n.contains("bodoni") || n.contains("cormorant")
-                    || n.contains("merriweather") || n.contains("lora")
-                    || n.contains("crimson") || n.contains("prata")
-                    || n.contains("cardo") || n.contains("spectral")
-                    || n.contains("abril") -> FontFamily.Serif
+            normalized.contains("script") || normalized.contains("brush")
+                    || normalized.contains("hand") || normalized.contains("comic")
+                    || normalized.contains("cursive") || normalized.contains("dancing")
+                    || normalized.contains("pacific") || normalized.contains("vibes")
+                    || normalized.contains("amita") || normalized.contains("chopin")
+                    || normalized.contains("musiclife") || normalized.contains("caveat")
+                    || normalized.contains("allura") || normalized.contains("satisfy")
+                    || normalized.contains("kaushan") || normalized.contains("parisienne")
+                    || normalized.contains("sacramento") || normalized.contains("tangerine")
+                    || normalized.contains("indie") || normalized.contains("patrick")
+                    || normalized.contains("kalam") -> "cursive"
 
-            else -> FontFamily.SansSerif
+            normalized.contains("serif") || normalized.contains("times")
+                    || normalized.contains("georgia") || normalized.contains("garamond")
+                    || normalized.contains("baskerville") || normalized.contains("playfair")
+                    || normalized.contains("cinzel") || normalized.contains("bodoni")
+                    || normalized.contains("cormorant") || normalized.contains("merriweather")
+                    || normalized.contains("lora") || normalized.contains("crimson")
+                    || normalized.contains("prata") || normalized.contains("cardo")
+                    || normalized.contains("spectral") || normalized.contains("abril")
+                    || normalized.contains("palatino") || normalized.contains("book")
+                    || normalized.contains("didot") -> "serif"
+
+            else -> "sans-serif"
         }
+        val style = when {
+            bold && italic -> Typeface.BOLD_ITALIC
+            bold -> Typeface.BOLD
+            italic -> Typeface.ITALIC
+            else -> Typeface.NORMAL
+        }
+        return Typeface.create(family, style)
     }
 }

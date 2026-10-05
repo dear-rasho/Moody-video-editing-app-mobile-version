@@ -543,39 +543,6 @@ object TextBitmapRenderer {
         androidCanvas.drawBitmap(buffer.bitmap, 0f, 0f, null)
     }
 
-    private fun androidFamilyFor(fontName: String): String {
-        val n = fontName.lowercase().trim()
-        return when {
-            n.contains("mono") || n.contains("courier") || n.contains("consol") ||
-                    n.contains("menlo") || n.contains("monaco") || n.contains("code") ->
-                "monospace"
-
-            n.contains("script") || n.contains("brush") || n.contains("hand") ||
-                    n.contains("comic") || n.contains("cursive") ||
-                    n.contains("dancing") || n.contains("pacific") ||
-                    n.contains("vibes") || n.contains("amita") ||
-                    n.contains("chopin") || n.contains("musiclife") ||
-                    n.contains("caveat") || n.contains("allura") ||
-                    n.contains("satisfy") || n.contains("kaushan") ||
-                    n.contains("parisienne") || n.contains("sacramento") ||
-                    n.contains("tangerine") || n.contains("indie") ||
-                    n.contains("patrick") || n.contains("kalam") ->
-                "cursive"
-
-            n.contains("serif") || n.contains("times") || n.contains("georgia") ||
-                    n.contains("garamond") || n.contains("baskerville") ||
-                    n.contains("playfair") || n.contains("cinzel") ||
-                    n.contains("bodoni") || n.contains("cormorant") ||
-                    n.contains("merriweather") || n.contains("lora") ||
-                    n.contains("crimson") || n.contains("prata") ||
-                    n.contains("cardo") || n.contains("spectral") ||
-                    n.contains("abril") ->
-                "serif"
-
-            else -> "sans-serif"
-        }
-    }
-
     private fun drawTextClipAtTime(
         canvas: Canvas,
         clip: EditorClip,
@@ -675,15 +642,11 @@ object TextBitmapRenderer {
             val initialFontSize = (baseFontSize * scale).coerceAtLeast(8f)
 
             val typeface = try {
-                val style = when {
-                    st.fontWeight == "bold" && st.fontStyle == "italic" ->
-                        Typeface.BOLD_ITALIC
-
-                    st.fontWeight == "bold" -> Typeface.BOLD
-                    st.fontStyle == "italic" -> Typeface.ITALIC
-                    else -> Typeface.NORMAL
-                }
-                Typeface.create(androidFamilyFor(st.fontFamily), style)
+                FontLibrary.typefaceFor(
+                    st.fontFamily,
+                    bold = st.fontWeight == "bold",
+                    italic = st.fontStyle == "italic"
+                )
             } catch (_: Throwable) {
                 Typeface.DEFAULT
             }
@@ -748,20 +711,16 @@ object TextBitmapRenderer {
             if (st.glowEnabled && st.glowRadius > 0f) {
                 val glowColorInt = st.glowColor.toInt()
                 val glowR = (st.glowRadius * scale).coerceIn(2f, 100f)
-                listOf(
-                    glowR * 1.6f to 0.30f,
-                    glowR * 1.0f to 0.50f,
-                    glowR * 0.55f to 0.70f
-                ).forEach { (radius, a) ->
+                TextRenderContract.glowLayers().forEach { layer ->
                     val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         this.typeface = typeface
-                        this.textSize = fontSize
+                        this.textSize = fontSize * layer.fontScale
                         textAlign = basePaint.textAlign
                         letterSpacing = basePaint.letterSpacing
                         color = glowColorInt
-                        alpha = (alphaInt * a).toInt().coerceIn(0, 255)
+                        alpha = (alphaInt * layer.alpha).toInt().coerceIn(0, 255)
                         maskFilter = BlurMaskFilter(
-                            radius.coerceIn(2f, 100f),
+                            (glowR * layer.blurScale).coerceIn(2f, 100f),
                             BlurMaskFilter.Blur.NORMAL
                         )
                     }

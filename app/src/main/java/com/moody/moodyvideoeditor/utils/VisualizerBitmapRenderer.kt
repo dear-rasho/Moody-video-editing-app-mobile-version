@@ -183,6 +183,9 @@ object VisualizerBitmapRenderer {
             workingDirectory.deleteRecursively()
             throw e
         } finally {
+            sortedViz.forEach { clip ->
+                VisualizerEngine.clearCenterImage("export_${clip.id}")
+            }
             vizBitmaps.values.filterNotNull().distinct().forEach { bitmap ->
                 if (!bitmap.isRecycled) bitmap.recycle()
             }

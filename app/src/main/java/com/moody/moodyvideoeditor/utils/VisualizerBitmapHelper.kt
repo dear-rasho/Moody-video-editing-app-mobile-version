@@ -32,7 +32,8 @@ object VisualizerBitmapHelper {
         // Set center image (cached by URI)
         VisualizerEngine.setCenterImage(
             state.imageUri,
-            imageBitmap?.asImageBitmap()
+            imageBitmap?.asImageBitmap(),
+            instanceKey
         )
 
         val drawScope = CanvasDrawScope()

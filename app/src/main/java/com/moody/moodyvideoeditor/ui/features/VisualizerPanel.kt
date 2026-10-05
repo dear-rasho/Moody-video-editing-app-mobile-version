@@ -739,7 +739,8 @@ private fun VisualizerPreviewCard(
         if (refBitmap != null && !refBitmap.isRecycled) {
             VisualizerEngine.setCenterImage(
                 "preview_${preset.key}",
-                refBitmap.asImageBitmap()
+                refBitmap.asImageBitmap(),
+                "preview_${preset.key}"
             )
         }
     }
@@ -826,7 +827,8 @@ private fun DrawScope.drawVisualizerPreview(
         try {
             VisualizerEngine.setCenterImage(
                 "preview_${preset.key}",
-                refBitmap.asImageBitmap()
+                refBitmap.asImageBitmap(),
+                "preview_${preset.key}"
             )
         } catch (_: Throwable) {
         }
