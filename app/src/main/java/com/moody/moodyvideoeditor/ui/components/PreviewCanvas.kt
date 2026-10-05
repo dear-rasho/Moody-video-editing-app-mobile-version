@@ -90,6 +90,7 @@ import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.utils.BrushEngine
 import com.moody.moodyvideoeditor.utils.ColorMatrixBuilder
+import com.moody.moodyvideoeditor.utils.ColorWheelEngine
 import com.moody.moodyvideoeditor.utils.EffectsEngine
 import com.moody.moodyvideoeditor.utils.FontLibrary
 import com.moody.moodyvideoeditor.utils.MaskEngine
@@ -115,7 +116,8 @@ import kotlin.math.sqrt
 private fun buildClipMatrix(
     clip: EditorClip,
     globalMatrix: android.graphics.ColorMatrix,
-    applyGlobal: Boolean
+    applyGlobal: Boolean,
+    colorWheelMatrix: android.graphics.ColorMatrix? = null
 ): android.graphics.ColorMatrix? {
     val cm = android.graphics.ColorMatrix()
 
@@ -124,6 +126,7 @@ private fun buildClipMatrix(
     ) {
         cm.postConcat(ColorMatrixBuilder.build(clip.adjustments))
     }
+    ColorWheelEngine.buildColorMatrix(clip.colorWheel)?.let(cm::postConcat)
 
     val ownFilter = ColorFilterValues(
         brightness = clip.filters.brightness,
@@ -141,13 +144,32 @@ private fun buildClipMatrix(
     }
 
     if (applyGlobal) cm.postConcat(globalMatrix)
+    colorWheelMatrix?.let(cm::postConcat)
 
     val hasChange =
         !clip.adjustments.isDefault ||
                 clip.filters.hasAnyChange ||
-                applyGlobal
+                clip.colorWheel.hasAnyChange ||
+                applyGlobal ||
+                colorWheelMatrix != null
 
     return if (hasChange) cm else null
+}
+
+private fun colorWheelMatrixForClip(
+    clip: EditorClip,
+    activeWheels: List<EditorClip>
+): android.graphics.ColorMatrix? {
+    val applicableWheels = activeWheels.filter {
+        it.trackIndex > clip.trackIndex && it.colorWheel.hasAnyChange
+    }
+    if (applicableWheels.isEmpty()) return null
+
+    val result = android.graphics.ColorMatrix()
+    applicableWheels.forEach { wheel ->
+        ColorWheelEngine.buildColorMatrix(wheel.colorWheel)?.let(result::postConcat)
+    }
+    return result
 }
 
 private fun fittedBoundsFractions(
@@ -308,6 +330,13 @@ fun PreviewCanvas(
         }
         .maxByOrNull { it.trackIndex }
         ?.adjustments
+    val activeColorWheels = clips.filter {
+        it.isAdjustmentClip &&
+                it.colorWheel.hasAnyChange &&
+                currentPosMs >= it.timelineStartMs &&
+                currentPosMs < it.timelineEndMs &&
+                !hiddenVisualTracks.contains(it.trackIndex)
+    }.sortedBy { it.trackIndex }
 
     val activeEffects = EffectsEngine.getEffectsAbove(clips, currentPosMs, videoTrackIdx)
     val timeSec = currentPosMs / 1000f
@@ -464,6 +493,9 @@ fun PreviewCanvas(
                             canvasH,
                             videoAspect
                         )
+                        val videoWheelMatrix = remember(clip.id, activeColorWheels) {
+                            colorWheelMatrixForClip(clip, activeColorWheels)
+                        }
                         MaskedClipContent(mask = clip.mask) {
                             Box(
                                 modifier = Modifier
@@ -548,7 +580,10 @@ fun PreviewCanvas(
                                         val sv = view.videoSurfaceView
                                         if (sv is TextureView) {
                                             val videoCm = buildClipMatrix(
-                                                clip, combinedMatrix, applyMatrix
+                                                clip,
+                                                combinedMatrix,
+                                                applyMatrix,
+                                                videoWheelMatrix
                                             )
                                             if (videoCm != null) {
                                                 val paint = Paint().apply {
@@ -755,22 +790,13 @@ fun PreviewCanvas(
                                                         .coerceIn(10f, 500f)
                                                     val newRot = baseRot + accumRot
 
-                                                    if (isMulti) {
-                                                        onGroupGesture(
-                                                            clip.id,
-                                                            newX,
-                                                            newY,
-                                                            newScale,
-                                                            newRot
-                                                        )
-                                                    } else {
-                                                        onBrushPositionChanged(clip.id, newX, newY)
-                                                        onBrushTransformChanged(
-                                                            clip.id,
-                                                            newScale,
-                                                            newRot
-                                                        )
-                                                    }
+                                                    onGroupGesture(
+                                                        clip.id,
+                                                        newX,
+                                                        newY,
+                                                        newScale,
+                                                        newRot
+                                                    )
                                                 }
                                             }
                                             onGroupGestureEnd()
@@ -807,9 +833,15 @@ fun PreviewCanvas(
                                 )
                                 val imgColorFilter = remember(
                                     clip.filters, clip.adjustments,
-                                    combinedMatrix, applyMatrix
+                                    combinedMatrix, applyMatrix, activeColorWheels,
+                                    clip.id
                                 ) {
-                                    val cm = buildClipMatrix(clip, combinedMatrix, applyMatrix)
+                                    val cm = buildClipMatrix(
+                                        clip,
+                                        combinedMatrix,
+                                        applyMatrix,
+                                        colorWheelMatrixForClip(clip, activeColorWheels)
+                                    )
                                     if (cm == null) null
                                     else androidx.compose.ui.graphics.ColorFilter.colorMatrix(
                                         androidx.compose.ui.graphics.ColorMatrix(cm.array)

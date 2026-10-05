@@ -134,7 +134,12 @@ fun EditorScreen(
 
     LaunchedEffect(projectId) {
         if (projectId.isNotBlank() && viewModel.getProjectId() != projectId) {
-            viewModel.loadProject(context, projectId)
+            if (!viewModel.loadProject(context, projectId)) {
+                viewModel.setProjectMeta(
+                    projectId,
+                    if (startInCodeMode) "Code Project" else "New Project"
+                )
+            }
         }
     }
 
@@ -164,6 +169,7 @@ fun EditorScreen(
     var activePanel by remember {
         mutableStateOf<String?>(if (startInCodeMode) "code" else null)
     }
+    var openTextEditor by remember { mutableStateOf(false) }
 
     val featureScrollState = androidx.compose.foundation.rememberScrollState()
 
@@ -795,6 +801,7 @@ fun EditorScreen(
                 onEditLayer = { clipId ->
                     state.clips.firstOrNull { it.id == clipId }?.let { clip ->
                         viewModel.selectClip(clip)
+                        openTextEditor = clip.isTextClip
                         activePanel = when {
                             clip.isTextClip -> "text"
                             clip.isVisualizerClip -> "visualizer"
@@ -1033,6 +1040,7 @@ fun EditorScreen(
                     onFeatureSelected = { key ->
                         if (key == "filters") filterEditLayerId = null
                         if (key == "effects") effectEditLayerId = null
+                        if (key == "wheel") viewModel.prepareColorWheelLayer()
                         activePanel = key
                     },
                     scrollState = featureScrollState
@@ -1082,6 +1090,7 @@ fun EditorScreen(
                     currentText = viewModel.getSelectedTextState(),
                     hasTextClipSelected = selected?.isTextClip == true ||
                             state.multiSelectedIds.isNotEmpty(),
+                    startInEdit = openTextEditor,
                     onTextChanged = { viewModel.updateSelectedText(it) },
                     onDraftTextChanged = { content ->
                         viewModel.updateSelectedText(
@@ -1098,7 +1107,10 @@ fun EditorScreen(
                         )
                         activePanel = null
                     },
-                    onClose = { activePanel = null }
+                    onClose = {
+                        activePanel = null
+                        openTextEditor = false
+                    }
                 )
 
                 "animations" -> AnimationsPanel(
@@ -1201,10 +1213,11 @@ fun EditorScreen(
 
                 "wheel" -> ColorWheelPanel(
                     state = selected?.colorWheel ?: ColorWheelState(),
-                    hasClipSelected = selected?.isVisualClip == true ||
-                            state.multiSelectedIds.isNotEmpty(),
-                    onStateChanged = { viewModel.updateColorWheel(it) },
-                    onRemove = { viewModel.resetColorWheel() },
+                    hasClipSelected = true,
+                    onStateChanged = { newState ->
+                        selected?.let { viewModel.updateColorWheelLayer(it.id, newState) }
+                    },
+                    onRemove = { viewModel.removeSelectedColorWheelLayer() },
                     onClose = { activePanel = null }
                 )
 
@@ -1924,7 +1937,10 @@ fun EditorScreen(
                 }
 
                 else -> FeatureShelf(
-                    onFeatureSelected = { activePanel = it },
+                    onFeatureSelected = {
+                        if (it == "wheel") viewModel.prepareColorWheelLayer()
+                        activePanel = it
+                    },
                     scrollState = featureScrollState
                 )
             }

@@ -33,8 +33,8 @@ object ProjectRepository {
         }
     }
 
-    fun saveProject(context: Context, meta: ProjectMeta, state: EditorState) {
-        if (state.clips.isEmpty()) return
+    fun saveProject(context: Context, meta: ProjectMeta, state: EditorState): Boolean {
+        if (state.clips.isEmpty()) return false
 
         try {
             // Save state
@@ -46,8 +46,10 @@ object ProjectRepository {
             index.removeAll { it.id == meta.id }
             index.add(0, meta)
             writeIndex(context, index)
+            return true
         } catch (e: Exception) {
             e.printStackTrace()
+            return false
         }
     }
 

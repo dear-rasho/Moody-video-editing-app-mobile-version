@@ -46,6 +46,7 @@ import com.moody.moodyvideoeditor.utils.FontLibrary
 fun TextPanel(
     currentText: TextState,
     hasTextClipSelected: Boolean,
+    startInEdit: Boolean = false,
     onTextChanged: (TextState) -> Unit,
     onDraftTextChanged: (String) -> Unit = {},
     onCreateNew: () -> Unit,
@@ -53,7 +54,9 @@ fun TextPanel(
     onApplyTemplate: (String) -> Unit = {},   // 🆕
     onClose: () -> Unit
 ) {
-    var subView by remember { mutableStateOf("options") }
+    var subView by remember(startInEdit) {
+        mutableStateOf(if (startInEdit) "addText" else "options")
+    }
     var draftClipCreated by remember(hasTextClipSelected) {
         mutableStateOf(hasTextClipSelected)
     }

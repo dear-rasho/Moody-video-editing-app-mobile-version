@@ -57,8 +57,8 @@ fun ColorWheelPanel(
         if (!hasClipSelected) {
             EmptyState(
                 icon = "👆",
-                title = "No clip selected",
-                text = "Pehle timeline pe ek clip select karo."
+                title = "Color wheel unavailable",
+                text = "Add a color-wheel layer to grade the clips below it."
             )
             return@FeaturePanel
         }

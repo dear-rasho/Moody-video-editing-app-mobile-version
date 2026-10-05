@@ -7,6 +7,7 @@ import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegSession
 import com.arthenica.ffmpegkit.ReturnCode
 import com.moody.moodyvideoeditor.data.ColorFilterValues
+import com.moody.moodyvideoeditor.data.ColorWheelState
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.MotionConfig
 import com.moody.moodyvideoeditor.data.TransitionLibrary
@@ -15,6 +16,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.security.MessageDigest
+import java.util.Locale
 
 class FFmpegExecutor(
     private val context: Context,
@@ -1900,6 +1903,28 @@ class FFmpegExecutor(
             val adjFilter = FFmpegFilters.build(adj)
             if (adjFilter.isNotBlank()) filters.add(adjFilter)
         }
+        if (clip.colorWheel.hasAnyChange) {
+            filters.add(buildColorWheelFilter(clip.colorWheel))
+        }
+
+        val colorWheelLayers = allClips.filter { wheel ->
+            wheel.isAdjustmentClip &&
+                    wheel.trackIndex > clip.trackIndex &&
+                    wheel.colorWheel.hasAnyChange &&
+                    wheel.timelineEndMs > clip.timelineStartMs &&
+                    wheel.timelineStartMs < clip.timelineEndMs
+        }.sortedBy { it.trackIndex }
+        colorWheelLayers.forEach { wheel ->
+            val startSec = (
+                    (wheel.timelineStartMs - clip.timelineStartMs)
+                        .coerceAtLeast(0L) / 1000.0
+                    ) / clip.speed.coerceAtLeast(0.01f)
+            val endSec = (
+                    (wheel.timelineEndMs - clip.timelineStartMs)
+                        .coerceAtLeast(0L) / 1000.0
+                    ) / clip.speed.coerceAtLeast(0.01f)
+            filters.add(buildColorWheelFilter(wheel.colorWheel, startSec, endSec))
+        }
 
         val chroma = clip.chroma
         if (chroma != null && chroma.isActive) {
@@ -1911,6 +1936,59 @@ class FFmpegExecutor(
         }
 
         return filters
+    }
+
+    @Synchronized
+    private fun ensureColorWheelLut(state: ColorWheelState): File {
+        val key = MessageDigest.getInstance("SHA-256")
+            .digest(state.toString().toByteArray(Charsets.UTF_8))
+            .take(12)
+            .joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
+        val file = File(context.cacheDir, "color-wheel-$key.cube")
+        if (file.exists() && file.length() > 0L) return file
+
+        val gridSize = 17
+        val contents = buildString {
+            appendLine("TITLE \"Moody Color Wheel\"")
+            appendLine("LUT_3D_SIZE $gridSize")
+            appendLine("DOMAIN_MIN 0.0 0.0 0.0")
+            appendLine("DOMAIN_MAX 1.0 1.0 1.0")
+            for (blueIndex in 0 until gridSize) {
+                for (greenIndex in 0 until gridSize) {
+                    for (redIndex in 0 until gridSize) {
+                        val red = redIndex * 255f / (gridSize - 1)
+                        val green = greenIndex * 255f / (gridSize - 1)
+                        val blue = blueIndex * 255f / (gridSize - 1)
+                        val output = ColorWheelEngine.applyPixel(red, green, blue, state)
+                        append("%.6f %.6f %.6f\n".format(
+                            Locale.US,
+                            output.first / 255f,
+                            output.second / 255f,
+                            output.third / 255f
+                        ))
+                    }
+                }
+            }
+        }
+        file.writeText(contents)
+        return file
+    }
+
+    private fun buildColorWheelFilter(
+        state: ColorWheelState,
+        startSec: Double? = null,
+        endSec: Double? = null
+    ): String {
+        val lutPath = ensureColorWheelLut(state).absolutePath
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+        val enable = if (startSec != null && endSec != null) {
+            ":enable='between(t,${"%.4f".format(Locale.US, startSec)}," +
+                    "${"%.4f".format(Locale.US, endSec)})'"
+        } else {
+            ""
+        }
+        return "lut3d=file='$lutPath':interp=tetrahedral$enable"
     }
 
     // ═══════════════════════════════════════════════════════════

@@ -144,6 +144,7 @@ class EditorViewModel : ViewModel() {
     fun saveCurrentProject(context: Context): Boolean {
         val id = currentProjectId ?: return false
         val s = _state.value
+        if (s.clips.isEmpty()) return false
         val now = System.currentTimeMillis()
 
         val meta = com.moody.moodyvideoeditor.data.ProjectMeta(
@@ -163,9 +164,8 @@ class EditorViewModel : ViewModel() {
             meta.copy(createdAt = existing.createdAt)
         } else meta
 
-        com.moody.moodyvideoeditor.data.ProjectRepository
+        return com.moody.moodyvideoeditor.data.ProjectRepository
             .saveProject(context, finalMeta, s)
-        return true
     }
 
     fun loadProject(context: Context, projectId: String): Boolean {
@@ -338,10 +338,13 @@ class EditorViewModel : ViewModel() {
                 updateSelectedPositionBulk(anchorId, newX, newY)
                 updateSelectedTransformBulk(anchorId, newScale, newRotation)
             } else {
-                updateClipDirect(anchorId) {
-                    setClipRotation(
-                        setClipScale(setClipPos(it, newX, newY), newScale),
-                        newRotation
+                val clip = s.clips.firstOrNull { it.id == anchorId } ?: return
+                val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+                    s.currentPosMs, clip.timelineStartMs, clip.durationMs
+                )
+                updateClipDirect(anchorId) { current ->
+                    setClipTransformWithAutoKeyframes(
+                        current, newX, newY, newScale, newRotation, currentTimeSec
                     )
                 }
             }
@@ -388,9 +391,12 @@ class EditorViewModel : ViewModel() {
             val newClipScale = (snap.scale * deltaScale).coerceIn(10f, 500f)
             val newClipRot = snap.rotation + deltaRot
 
-            list[i] = setClipRotation(
-                setClipScale(setClipPos(list[i], finalX, finalY), newClipScale),
-                newClipRot
+            val clip = list[i]
+            val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+                _state.value.currentPosMs, clip.timelineStartMs, clip.durationMs
+            )
+            list[i] = setClipTransformWithAutoKeyframes(
+                clip, finalX, finalY, newClipScale, newClipRot, currentTimeSec
             )
         }
         _state.update { it.copy(clips = list) }
@@ -1254,6 +1260,28 @@ class EditorViewModel : ViewModel() {
             clip.copy(visualizer = clip.visualizer.copy(rotation = rotation))
 
         else -> clip.copy(rotation = rotation)
+    }
+
+    private fun setClipTransformWithAutoKeyframes(
+        clip: EditorClip,
+        x: Float,
+        y: Float,
+        scale: Float,
+        rotation: Float,
+        timeSec: Float
+    ): EditorClip {
+        var updated = setClipRotation(setClipScale(setClipPos(clip, x, y), scale), rotation)
+        if (!KeyframeStore.hasAnyKeyframes(clip.keyframes)) return updated
+
+        var keyframes = clip.keyframes
+        keyframes = KeyframeStore.autoKeyframeIfActive(keyframes, "x", timeSec, x)
+        keyframes = KeyframeStore.autoKeyframeIfActive(keyframes, "y", timeSec, y)
+        keyframes = KeyframeStore.autoKeyframeIfActive(keyframes, "scale", timeSec, scale)
+        keyframes = KeyframeStore.autoKeyframeIfActive(
+            keyframes, "rotation", timeSec, rotation
+        )
+        updated = updated.copy(keyframes = keyframes)
+        return updated
     }
 
     fun updateSelectedPositionBulk(anchorId: String, newX: Float, newY: Float) {
@@ -2443,6 +2471,64 @@ class EditorViewModel : ViewModel() {
         )
         pushHistory()
         addClipOnNewLayer(clip, (baseClip?.trackIndex ?: 0) + 1)
+        updateHistoryFlags()
+    }
+
+    fun prepareColorWheelLayer(): EditorClip {
+        val state = _state.value
+        val selectedWheel = state.selectedClip?.takeIf {
+            it.isAdjustmentClip &&
+                    it.effectState?.kind == EffectState.KIND_COLOR_WHEEL
+        }
+        if (selectedWheel != null) return selectedWheel
+
+        val clip = EditorClip(
+            uri = Uri.EMPTY,
+            name = "🌈 Color Wheels",
+            type = "adjustment/plain",
+            effectState = EffectState(kind = EffectState.KIND_COLOR_WHEEL),
+            sourceStartMs = 0L,
+            sourceEndMs = 3_000L,
+            timelineStartMs = state.currentPosMs,
+            trackIndex = maxOf(
+                state.visualLayerCount,
+                (state.clips.filterNot { it.isAudio }.maxOfOrNull { it.trackIndex } ?: -1) + 1
+            ),
+            sourceTotalMs = Long.MAX_VALUE
+        )
+        pushHistory()
+        val clips = state.clips + clip
+        _state.update {
+            it.copy(
+                clips = clips,
+                visualLayerCount = maxOf(it.visualLayerCount, clip.trackIndex + 1),
+                selectedClipId = clip.id,
+                selectedTrackIndex = clip.trackIndex,
+                selectedIsAudio = false
+            )
+        }
+        updateHistoryFlags()
+        return clip
+    }
+
+    fun updateColorWheelLayer(clipId: String, newState: ColorWheelState) {
+        updateClipDirect(clipId) { clip ->
+            if (clip.isAdjustmentClip) clip.copy(colorWheel = newState) else clip
+        }
+    }
+
+    fun removeSelectedColorWheelLayer() {
+        val selected = _state.value.selectedClip ?: return
+        if (!selected.isAdjustmentClip ||
+            selected.effectState?.kind != EffectState.KIND_COLOR_WHEEL
+        ) return
+        pushHistory()
+        _state.update {
+            it.copy(
+                clips = it.clips.filterNot { clip -> clip.id == selected.id },
+                selectedClipId = null
+            )
+        }
         updateHistoryFlags()
     }
 

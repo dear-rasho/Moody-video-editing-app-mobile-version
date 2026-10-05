@@ -111,6 +111,30 @@ class TimelineKeyframeMappingTest {
     }
 
     @Test
+    fun autoKeyframeTransformChangesAreVisibleAtPlayhead() {
+        var keyframes = mapOf(
+            "scale" to listOf(Keyframe(time = 0f, value = 100f, ease = "linear")),
+            "rotation" to listOf(Keyframe(time = 0f, value = 0f, ease = "linear"))
+        )
+        keyframes = KeyframeStore.autoKeyframeIfActive(
+            keyframes, "scale", 2f, 180f
+        )
+        keyframes = KeyframeStore.autoKeyframeIfActive(
+            keyframes, "rotation", 2f, 45f
+        )
+
+        val liveTransform = KeyframeStore.sampleScaleRotation(
+            map = keyframes,
+            timeSec = 2f,
+            baseScale = 100f,
+            baseRotation = 0f
+        )
+
+        assertEquals(180f, liveTransform.scale, 0.001f)
+        assertEquals(45f, liveTransform.rotation, 0.001f)
+    }
+
+    @Test
     fun scaleAndRotationInterpolateBetweenKeyframes() {
         val values = KeyframeStore.sampleScaleRotation(
             map = mapOf(

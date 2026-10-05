@@ -1,5 +1,6 @@
 package com.moody.moodyvideoeditor.utils
 
+import android.graphics.ColorMatrix
 import com.moody.moodyvideoeditor.data.ColorWheelState
 import kotlin.math.abs
 import kotlin.math.cos
@@ -80,13 +81,15 @@ object ColorWheelEngine {
         var g = gIn
         var b = bIn
 
-        // 1) HDR White boost
+        // 1) HDR White adjustment, weighted toward highlights rather than a full-frame wash.
         val hdr = state.hdrWhite / 100f
-        if (hdr > 1f) {
-            val boost = (hdr - 1f) * 127f
-            r = min(255f, r + boost)
-            g = min(255f, g + boost)
-            b = min(255f, b + boost)
+        if (hdr != 1f) {
+            val inputLum = (0.299f * r + 0.587f * g + 0.114f * b) / 255f
+            val whiteWeight = ((inputLum - 0.55f) / 0.45f).coerceIn(0f, 1f)
+            val whiteShift = (hdr - 1f) * 127f * whiteWeight
+            r = (r + whiteShift).coerceIn(0f, 255f)
+            g = (g + whiteShift).coerceIn(0f, 255f)
+            b = (b + whiteShift).coerceIn(0f, 255f)
         }
 
         // 2) Tone weight contribution
@@ -151,6 +154,39 @@ object ColorWheelEngine {
 
     // Whether the wheel should be applied at all.
     fun isActive(state: ColorWheelState): Boolean = state.hasAnyChange
+
+    fun buildColorMatrix(state: ColorWheelState): ColorMatrix? {
+        if (!isActive(state)) return null
+
+        val black = applyPixel(0f, 0f, 0f, state)
+        val red = applyPixel(255f, 0f, 0f, state)
+        val green = applyPixel(0f, 255f, 0f, state)
+        val blue = applyPixel(0f, 0f, 255f, state)
+
+        fun coefficient(value: Float, origin: Float): Float =
+            (value - origin) / 255f
+
+        return ColorMatrix(
+            floatArrayOf(
+                coefficient(red.first, black.first),
+                coefficient(green.first, black.first),
+                coefficient(blue.first, black.first),
+                0f,
+                black.first,
+                coefficient(red.second, black.second),
+                coefficient(green.second, black.second),
+                coefficient(blue.second, black.second),
+                0f,
+                black.second,
+                coefficient(red.third, black.third),
+                coefficient(green.third, black.third),
+                coefficient(blue.third, black.third),
+                0f,
+                black.third,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+    }
 
 
     //  PUCK POSITION — for the wheel UI
