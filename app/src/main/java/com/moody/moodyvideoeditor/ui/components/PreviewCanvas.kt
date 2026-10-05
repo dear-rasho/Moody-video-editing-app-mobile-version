@@ -1765,7 +1765,7 @@ private fun InteractiveTextOverlay(
     // ─── FONT SIZE — matches export: canvasWpx / 720 ────────────
     val effFontSize = TextScaler.fontSize(
         baseSize = textState.fontSize,
-        canvasWidthPx = canvasWpx
+        canvasWidthDp = canvasW   // ← ✅ correct
     )
     val effLetterSpacing = TextScaler.letterSpacing(
         base = textState.letterSpacing,

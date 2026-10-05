@@ -721,11 +721,20 @@ class FFmpegExecutor(
     ): List<String> {
         val filters = mutableListOf<String>()
 
-        // Scale video to fill the target canvas exactly
-        // This matches the preview where video is scaled to canvas size
-        filters.add("scale=$targetW:$targetH")
+        // ✅ Step 1: Scale to fit INSIDE target (aspect preserved)
+        //    force_original_aspect_ratio=decrease → letterbox
+        //    force_original_aspect_ratio=increase → crop (like cover)
+        filters.add(
+            "scale=$targetW:$targetH:" +
+                    "force_original_aspect_ratio=decrease"
+        )
 
-        // Apply user scale (zoom around center)
+        // ✅ Step 2: Center on canvas with black bars
+        filters.add(
+            "pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=black"
+        )
+
+        // Step 3: User scale (zoom in/out)
         val userScale = clip.scale.coerceIn(0.1f, 5f)
         if (kotlin.math.abs(userScale - 1.0f) > 0.01f) {
             val scaleStr = String.format(java.util.Locale.US, "%.4f", userScale)
@@ -733,7 +742,7 @@ class FFmpegExecutor(
             filters.add("crop=$targetW:$targetH")
         }
 
-        // Apply rotation
+        // Step 4: Rotation
         if (kotlin.math.abs(clip.rotation) > 0.1f) {
             val rad = String.format(
                 java.util.Locale.US, "%.4f",
@@ -742,7 +751,7 @@ class FFmpegExecutor(
             filters.add("rotate=$rad:c=black:ow=rotw($rad):oh=roth($rad)")
         }
 
-        // Apply user offset (position shift)
+        // Step 5: User offset (pan)
         val offsetXpx = (clip.offsetX * targetW).toInt()
         val offsetYpx = (clip.offsetY * targetH).toInt()
 
