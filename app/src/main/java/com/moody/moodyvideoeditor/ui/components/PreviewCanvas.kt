@@ -20,6 +20,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -102,7 +103,9 @@ import com.moody.moodyvideoeditor.utils.TransitionRenderer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -147,6 +150,25 @@ private fun buildClipMatrix(
     return if (hasChange) cm else null
 }
 
+private fun fittedBoundsFractions(
+    containerWidth: Float,
+    containerHeight: Float,
+    contentAspectRatio: Float
+): Pair<Float, Float> {
+    if (containerWidth <= 0f || containerHeight <= 0f ||
+        !contentAspectRatio.isFinite() || contentAspectRatio <= 0f
+    ) {
+        return 1f to 1f
+    }
+
+    val containerAspectRatio = containerWidth / containerHeight
+    return if (contentAspectRatio >= containerAspectRatio) {
+        1f to (containerAspectRatio / contentAspectRatio)
+    } else {
+        (contentAspectRatio / containerAspectRatio) to 1f
+    }
+}
+
 
 //  MAIN PREVIEW CANVAS
 
@@ -180,6 +202,8 @@ fun PreviewCanvas(
     onMaskPointDelete: (Int) -> Unit = {},
     onClosePath: () -> Unit = {},
     onClipSelected: (String) -> Unit = {},
+    onDeleteLayer: (String) -> Unit = {},
+    onEditLayer: (String) -> Unit = {},
     onGroupGestureStart: () -> Unit = {},
     onGroupGestureEnd: () -> Unit = {},
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit =
@@ -421,6 +445,25 @@ fun PreviewCanvas(
                             ((currentPosMs - clip.timelineStartMs) / 1000f)
                                 .coerceAtLeast(0f)
                         )
+                        val videoSize = exoPlayer.videoSize
+                        val rawVideoAspect = if (videoSize.width > 0 && videoSize.height > 0) {
+                            videoSize.width * videoSize.pixelWidthHeightRatio /
+                                    videoSize.height
+                        } else {
+                            canvasW / canvasH
+                        }
+                        val videoAspect = if (
+                            videoSize.unappliedRotationDegrees % 180 != 0
+                        ) {
+                            1f / rawVideoAspect
+                        } else {
+                            rawVideoAspect
+                        }
+                        val videoBounds = fittedBoundsFractions(
+                            canvasW,
+                            canvasH,
+                            videoAspect
+                        )
                         MaskedClipContent(mask = clip.mask) {
                             Box(
                                 modifier = Modifier
@@ -487,15 +530,6 @@ fun PreviewCanvas(
                                         alpha = opacityAlpha * transT.alpha
                                         this.clip = true
                                     }
-                                    .then(
-                                        if (clip.id == selectedClipId) {
-                                            Modifier.border(
-                                                1.5.dp,
-                                                Color(0xFF60EFFF),
-                                                RoundedCornerShape(4.dp)
-                                            )
-                                        } else Modifier
-                                    )
                             ) {
                                 AndroidView(
                                     factory = { ctx ->
@@ -538,6 +572,17 @@ fun PreviewCanvas(
                                         clipId = clip.id,
                                         scale = videoTransform2.scale,
                                         rotation = videoTransform2.rotation,
+                                        widthFraction = videoBounds.first,
+                                        heightFraction = videoBounds.second,
+                                        positionX = videoTransform2.x,
+                                        positionY = videoTransform2.y,
+                                        onPositionChanged = { x, y ->
+                                            onGroupGesture(
+                                                clip.id, x, y,
+                                                videoTransform2.scale,
+                                                videoTransform2.rotation
+                                            )
+                                        },
                                         onGestureStart = onGroupGestureStart,
                                         onGestureEnd = onGroupGestureEnd,
                                         onTransformChanged = { scale, rotation ->
@@ -548,7 +593,9 @@ fun PreviewCanvas(
                                                 scale,
                                                 rotation
                                             )
-                                        }
+                                        },
+                                        onDelete = { onDeleteLayer(clip.id) },
+                                        onEdit = { onEditLayer(clip.id) }
                                     )
                                 }
                             }
@@ -639,9 +686,9 @@ fun PreviewCanvas(
                                         this.clip = true
                                     }
                                     .then(
-                                        if (isSelected || isMulti) {
+                                        if (isMulti) {
                                             Modifier.border(
-                                                width = if (isSelected) 1.5.dp else 1.dp,
+                                                width = 1.dp,
                                                 color = borderColor,
                                                 shape = RoundedCornerShape(4.dp)
                                             )
@@ -744,6 +791,20 @@ fun PreviewCanvas(
                                         .build()
                                 }
                                 val imgPainter = rememberAsyncImagePainter(imageRequest)
+                                val imageIntrinsicSize = imgPainter.intrinsicSize
+                                val imageAspect = if (
+                                    imageIntrinsicSize.width > 0f &&
+                                    imageIntrinsicSize.height > 0f
+                                ) {
+                                    imageIntrinsicSize.width / imageIntrinsicSize.height
+                                } else {
+                                    canvasW / canvasH
+                                }
+                                val imageBounds = fittedBoundsFractions(
+                                    canvasW,
+                                    canvasH,
+                                    imageAspect
+                                )
                                 val imgColorFilter = remember(
                                     clip.filters, clip.adjustments,
                                     combinedMatrix, applyMatrix
@@ -766,6 +827,17 @@ fun PreviewCanvas(
                                         clipId = clip.id,
                                         scale = imgTransform.scale,
                                         rotation = imgTransform.rotation,
+                                        widthFraction = imageBounds.first,
+                                        heightFraction = imageBounds.second,
+                                        positionX = imgTransform.x,
+                                        positionY = imgTransform.y,
+                                        onPositionChanged = { x, y ->
+                                            onGroupGesture(
+                                                clip.id, x, y,
+                                                imgTransform.scale,
+                                                imgTransform.rotation
+                                            )
+                                        },
                                         onGestureStart = onGroupGestureStart,
                                         onGestureEnd = onGroupGestureEnd,
                                         onTransformChanged = { scale, rotation ->
@@ -776,7 +848,9 @@ fun PreviewCanvas(
                                                 scale,
                                                 rotation
                                             )
-                                        }
+                                        },
+                                        onDelete = { onDeleteLayer(clip.id) },
+                                        onEdit = { onEditLayer(clip.id) }
                                     )
                                 }
                             }
@@ -914,6 +988,11 @@ fun PreviewCanvas(
                                         clipId = clip.id,
                                         scale = (vs.size / 0.32f) * 100f,
                                         rotation = vs.rotation,
+                                        positionX = vs.positionX * 100f,
+                                        positionY = vs.positionY * 100f,
+                                        onPositionChanged = { x, y ->
+                                            onVisualizerPositionChanged(clip.id, x, y)
+                                        },
                                         onGestureStart = onGroupGestureStart,
                                         onGestureEnd = onGroupGestureEnd,
                                         onTransformChanged = { scale, rotation ->
@@ -922,7 +1001,9 @@ fun PreviewCanvas(
                                                 scale,
                                                 rotation
                                             )
-                                        }
+                                        },
+                                        onDelete = { onDeleteLayer(clip.id) },
+                                        onEdit = { onEditLayer(clip.id) }
                                     )
                                 }
                             }
@@ -1086,6 +1167,11 @@ fun PreviewCanvas(
                                         clipId = clip.id,
                                         scale = brushTransform.scale,
                                         rotation = brushTransform.rotation,
+                                        positionX = brushTransform.x,
+                                        positionY = brushTransform.y,
+                                        onPositionChanged = { x, y ->
+                                            onBrushPositionChanged(clip.id, x, y)
+                                        },
                                         onGestureStart = onGroupGestureStart,
                                         onGestureEnd = onGroupGestureEnd,
                                         onTransformChanged = { scale, rotation ->
@@ -1094,7 +1180,9 @@ fun PreviewCanvas(
                                                 scale,
                                                 rotation
                                             )
-                                        }
+                                        },
+                                        onDelete = { onDeleteLayer(clip.id) },
+                                        onEdit = { onEditLayer(clip.id) }
                                     )
                                 }
                             }
@@ -1121,7 +1209,9 @@ fun PreviewCanvas(
                             },
                             onTransformChanged = { s, r ->
                                 onTextTransformChanged(clip.id, s, r)
-                            }
+                            },
+                            onDeleteLayer = { onDeleteLayer(clip.id) },
+                            onEditLayer = { onEditLayer(clip.id) }
                         )
                     }
 
@@ -1145,7 +1235,9 @@ fun PreviewCanvas(
                             },
                             onTransformChanged = { s, r ->
                                 onStickerTransformChanged(clip.id, s, r)
-                            }
+                            },
+                            onDeleteLayer = { onDeleteLayer(clip.id) },
+                            onEditLayer = { onEditLayer(clip.id) }
                         )
                     }
                 }
@@ -1807,7 +1899,9 @@ private fun InteractiveTextOverlay(
     onGroupGestureEnd: () -> Unit,
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit,
     onPositionChanged: (Float, Float) -> Unit,
-    onTransformChanged: (Float, Float) -> Unit
+    onTransformChanged: (Float, Float) -> Unit,
+    onDeleteLayer: () -> Unit,
+    onEditLayer: () -> Unit
 ) {
     if (textState.content.isBlank()) return
 
@@ -1857,6 +1951,12 @@ private fun InteractiveTextOverlay(
         maxWidthPct = textState.maxWidth,
         canvasWidthPx = canvasWpx
     )
+    val family = FontLibrary.familyFor(textState.fontFamily)
+    val weight = if (textState.fontWeight == "bold") FontWeight.Bold
+    else FontWeight.Normal
+    val fontSty = if (textState.fontStyle == "italic")
+        androidx.compose.ui.text.font.FontStyle.Italic
+    else androidx.compose.ui.text.font.FontStyle.Normal
 
     val userStrokeDp = textState.strokeWidth.coerceAtLeast(0f)
     val strokeWidthPx = (userStrokeDp * 2f * (canvasWpx / 720f))
@@ -1864,12 +1964,24 @@ private fun InteractiveTextOverlay(
 
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
 
-    val naturalMeasure = remember(displayContent, effFontSize, effLetterSpacing) {
+    val naturalMeasure = remember(
+        displayContent,
+        effFontSize,
+        effLetterSpacing,
+        effLineHeight,
+        family,
+        weight,
+        fontSty
+    ) {
         measurer.measure(
             text = displayContent,
             style = androidx.compose.ui.text.TextStyle(
                 fontSize = (effFontSize / density.density).sp,
-                letterSpacing = (effLetterSpacing / density.density).sp
+                letterSpacing = (effLetterSpacing / density.density).sp,
+                lineHeight = (effLineHeight / density.density).sp,
+                fontFamily = family,
+                fontWeight = weight,
+                fontStyle = fontSty
             ),
             constraints = androidx.compose.ui.unit.Constraints(maxWidth = Int.MAX_VALUE),
             maxLines = 1,
@@ -1888,14 +2000,23 @@ private fun InteractiveTextOverlay(
     val finalLineHeightSp = (effLineHeight / density.density).sp
 
     val finalMeasure = remember(
-        displayContent, finalFontSizeSp, finalLetterSpacingSp, finalLineHeightSp
+        displayContent,
+        finalFontSizeSp,
+        finalLetterSpacingSp,
+        finalLineHeightSp,
+        family,
+        weight,
+        fontSty
     ) {
         measurer.measure(
             text = displayContent,
             style = androidx.compose.ui.text.TextStyle(
                 fontSize = finalFontSizeSp,
                 letterSpacing = finalLetterSpacingSp,
-                lineHeight = finalLineHeightSp
+                lineHeight = finalLineHeightSp,
+                fontFamily = family,
+                fontWeight = weight,
+                fontStyle = fontSty
             ),
             constraints = androidx.compose.ui.unit.Constraints(maxWidth = Int.MAX_VALUE),
             softWrap = false
@@ -1908,7 +2029,6 @@ private fun InteractiveTextOverlay(
     val clampedX = sampled.x.coerceIn(-50f, 150f)
     val clampedY = sampled.y.coerceIn(0f, 100f)
 
-    val family = FontLibrary.familyFor(textState.fontFamily)
     val solidColor = Color(textState.color)
 
     val gradient: Brush? = if (textState.gradientEnabled) {
@@ -1943,12 +2063,6 @@ private fun InteractiveTextOverlay(
         else -> androidx.compose.ui.text.style.TextAlign.Center
     }
 
-    val weight = if (textState.fontWeight == "bold") FontWeight.Bold
-    else FontWeight.Normal
-    val fontSty = if (textState.fontStyle == "italic")
-        androidx.compose.ui.text.font.FontStyle.Italic
-    else androidx.compose.ui.text.font.FontStyle.Normal
-
     val borderColor = when {
         isSelected -> Color(0xFF60EFFF)
         isMulti -> Color(0xFFFFD166)
@@ -1979,6 +2093,8 @@ private fun InteractiveTextOverlay(
                     alpha = (textState.opacity / 100f) * frame.alpha
                     transformOrigin = TransformOrigin.Center
                 }
+                .width((textWidthDp + 16f).coerceAtLeast(26f).dp)
+                .height((textHeightDp + 16f).coerceAtLeast(26f).dp)
                 .then(
                     if (isSelected || isMulti) {
                         Modifier.border(
@@ -1988,7 +2104,6 @@ private fun InteractiveTextOverlay(
                         )
                     } else Modifier
                 )
-                .padding(8.dp)
                 .pointerInput(clip.id, isSelected, isMulti, canvasW, canvasH) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = true)
@@ -2145,16 +2260,6 @@ private fun InteractiveTextOverlay(
                         )
                     )
 
-                    if (isSelected) {
-                        LayerTransformHandles(
-                            clipId = clip.id,
-                            scale = sampled.scale,
-                            rotation = sampled.rotation,
-                            onGestureStart = onGroupGestureStart,
-                            onGestureEnd = onGroupGestureEnd,
-                            onTransformChanged = onTransformChanged
-                        )
-                    }
                 }
 
                 Text(
@@ -2175,6 +2280,21 @@ private fun InteractiveTextOverlay(
                         lineHeight = finalLineHeightSp
                     )
                 )
+                if (isSelected) {
+                    LayerTransformHandles(
+                        clipId = clip.id,
+                        scale = sampled.scale,
+                        rotation = sampled.rotation,
+                        positionX = sampled.x,
+                        positionY = sampled.y,
+                        onPositionChanged = onPositionChanged,
+                        onGestureStart = onGroupGestureStart,
+                        onGestureEnd = onGroupGestureEnd,
+                        onTransformChanged = onTransformChanged,
+                        onDelete = onDeleteLayer,
+                        onEdit = onEditLayer
+                    )
+                }
             }
         }
     }
@@ -2198,7 +2318,9 @@ private fun InteractiveStickerOverlay(
     onGroupGestureEnd: () -> Unit,
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit,
     onPositionChanged: (Float, Float) -> Unit,
-    onTransformChanged: (Float, Float) -> Unit
+    onTransformChanged: (Float, Float) -> Unit,
+    onDeleteLayer: () -> Unit,
+    onEditLayer: () -> Unit
 ) {
     if (stickerState.emoji.isBlank()) return
 
@@ -2353,9 +2475,14 @@ private fun InteractiveStickerOverlay(
                     clipId = clip.id,
                     scale = sampled.scale,
                     rotation = sampled.rotation,
+                    positionX = sampled.x,
+                    positionY = sampled.y,
+                    onPositionChanged = onPositionChanged,
                     onGestureStart = onGroupGestureStart,
                     onGestureEnd = onGroupGestureEnd,
-                    onTransformChanged = onTransformChanged
+                    onTransformChanged = onTransformChanged,
+                    onDelete = onDeleteLayer,
+                    onEdit = onEditLayer
                 )
             }
         }
@@ -2367,104 +2494,245 @@ private fun BoxScope.LayerTransformHandles(
     clipId: String,
     scale: Float,
     rotation: Float,
+    widthFraction: Float = 1f,
+    heightFraction: Float = 1f,
+    positionX: Float,
+    positionY: Float,
+    onPositionChanged: (Float, Float) -> Unit,
     onGestureStart: () -> Unit,
     onGestureEnd: () -> Unit,
-    onTransformChanged: (Float, Float) -> Unit
+    onTransformChanged: (Float, Float) -> Unit,
+    onDelete: () -> Unit,
+    onEdit: () -> Unit
 ) {
-    TransformHandle(
+    BoxWithConstraints(
         modifier = Modifier
-            .align(Alignment.TopCenter),
-        clipId = clipId,
-        scale = scale,
-        rotation = rotation,
-        isScaleHandle = false,
-        onGestureStart = onGestureStart,
-        onGestureEnd = onGestureEnd,
-        onTransformChanged = onTransformChanged
-    )
-    TransformHandle(
-        modifier = Modifier
-            .align(Alignment.BottomEnd),
-        clipId = clipId,
-        scale = scale,
-        rotation = rotation,
-        isScaleHandle = true,
-        onGestureStart = onGestureStart,
-        onGestureEnd = onGestureEnd,
-        onTransformChanged = onTransformChanged
-    )
+            .align(Alignment.Center)
+            .fillMaxWidth(widthFraction.coerceIn(0.01f, 1f))
+            .fillMaxHeight(heightFraction.coerceIn(0.01f, 1f))
+            .border(1.5.dp, Color(0xFF60EFFF), RoundedCornerShape(4.dp))
+    ) {
+        val density = LocalDensity.current
+        val boundsWidthPx = with(density) { maxWidth.toPx() }
+        val boundsHeightPx = with(density) { maxHeight.toPx() }
+        val handleSizePx = with(density) { 22.dp.toPx() }
+
+        TransformHandle(
+            modifier = Modifier.align(Alignment.TopStart).offset(x = (-11).dp, y = (-11).dp),
+            clipId = clipId,
+            corner = TransformHandleCorner.Delete,
+            boundsWidthPx = boundsWidthPx,
+            boundsHeightPx = boundsHeightPx,
+            handleSizePx = handleSizePx,
+            scale = scale,
+            rotation = rotation,
+            positionX = positionX,
+            positionY = positionY,
+            onPositionChanged = onPositionChanged,
+            onGestureStart = onGestureStart,
+            onGestureEnd = onGestureEnd,
+            onTransformChanged = onTransformChanged,
+            onDelete = onDelete,
+            onEdit = onEdit
+        )
+        TransformHandle(
+            modifier = Modifier.align(Alignment.TopEnd).offset(x = 11.dp, y = (-11).dp),
+            clipId = clipId,
+            corner = TransformHandleCorner.Edit,
+            boundsWidthPx = boundsWidthPx,
+            boundsHeightPx = boundsHeightPx,
+            handleSizePx = handleSizePx,
+            scale = scale,
+            rotation = rotation,
+            positionX = positionX,
+            positionY = positionY,
+            onPositionChanged = onPositionChanged,
+            onGestureStart = onGestureStart,
+            onGestureEnd = onGestureEnd,
+            onTransformChanged = onTransformChanged,
+            onDelete = onDelete,
+            onEdit = onEdit
+        )
+        TransformHandle(
+            modifier = Modifier.align(Alignment.BottomStart).offset(x = (-11).dp, y = 11.dp),
+            clipId = clipId,
+            corner = TransformHandleCorner.Rotate,
+            boundsWidthPx = boundsWidthPx,
+            boundsHeightPx = boundsHeightPx,
+            handleSizePx = handleSizePx,
+            scale = scale,
+            rotation = rotation,
+            positionX = positionX,
+            positionY = positionY,
+            onPositionChanged = onPositionChanged,
+            onGestureStart = onGestureStart,
+            onGestureEnd = onGestureEnd,
+            onTransformChanged = onTransformChanged,
+            onDelete = onDelete,
+            onEdit = onEdit
+        )
+        TransformHandle(
+            modifier = Modifier.align(Alignment.BottomEnd).offset(x = 11.dp, y = 11.dp),
+            clipId = clipId,
+            corner = TransformHandleCorner.Scale,
+            boundsWidthPx = boundsWidthPx,
+            boundsHeightPx = boundsHeightPx,
+            handleSizePx = handleSizePx,
+            scale = scale,
+            rotation = rotation,
+            positionX = positionX,
+            positionY = positionY,
+            onPositionChanged = onPositionChanged,
+            onGestureStart = onGestureStart,
+            onGestureEnd = onGestureEnd,
+            onTransformChanged = onTransformChanged,
+            onDelete = onDelete,
+            onEdit = onEdit
+        )
+    }
+}
+
+private enum class TransformHandleCorner {
+    Delete,
+    Edit,
+    Rotate,
+    Scale
 }
 
 @Composable
 private fun TransformHandle(
     modifier: Modifier,
     clipId: String,
+    corner: TransformHandleCorner,
+    boundsWidthPx: Float,
+    boundsHeightPx: Float,
+    handleSizePx: Float,
     scale: Float,
     rotation: Float,
-    isScaleHandle: Boolean,
+    positionX: Float,
+    positionY: Float,
+    onPositionChanged: (Float, Float) -> Unit,
     onGestureStart: () -> Unit,
     onGestureEnd: () -> Unit,
-    onTransformChanged: (Float, Float) -> Unit
+    onTransformChanged: (Float, Float) -> Unit,
+    onDelete: () -> Unit,
+    onEdit: () -> Unit
 ) {
     val currentScale = rememberUpdatedState(scale)
     val currentRotation = rememberUpdatedState(rotation)
+    val currentPositionX = rememberUpdatedState(positionX)
+    val currentPositionY = rememberUpdatedState(positionY)
+    val currentOnPositionChanged = rememberUpdatedState(onPositionChanged)
     val currentOnTransformChanged = rememberUpdatedState(onTransformChanged)
     val currentOnGestureStart = rememberUpdatedState(onGestureStart)
     val currentOnGestureEnd = rememberUpdatedState(onGestureEnd)
+    val currentOnDelete = rememberUpdatedState(onDelete)
+    val currentOnEdit = rememberUpdatedState(onEdit)
 
     Box(
         modifier = modifier
-            .size(26.dp)
+            .size(22.dp)
             .clip(CircleShape)
-            .background(Color(0xFF171A22))
+            .background(
+                when (corner) {
+                    TransformHandleCorner.Delete -> Color(0xFFE5484D)
+                    TransformHandleCorner.Edit -> Color(0xFF7C3AED)
+                    TransformHandleCorner.Rotate,
+                    TransformHandleCorner.Scale -> Color(0xFF171A22)
+                }
+            )
             .border(1.dp, Color(0xFF60EFFF), CircleShape)
-            .pointerInput(clipId, isScaleHandle) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-                    currentOnGestureStart.value()
+            .pointerInput(clipId, corner, boundsWidthPx, boundsHeightPx) {
+                when (corner) {
+                    TransformHandleCorner.Delete -> detectTapGestures {
+                        currentOnDelete.value()
+                    }
 
-                    val startScale = currentScale.value
-                    val startRotation = currentRotation.value
-                    var accumulatedDrag = 0f
-                    var dragging = true
-                    while (dragging) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull()
-                        if (change == null || !change.pressed) {
-                            dragging = false
+                    TransformHandleCorner.Edit -> detectTapGestures {
+                        currentOnEdit.value()
+                    }
+
+                    TransformHandleCorner.Rotate,
+                    TransformHandleCorner.Scale -> awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        currentOnGestureStart.value()
+
+                        val handleCenterOffsetX = if (
+                            corner == TransformHandleCorner.Scale
+                        ) {
+                            boundsWidthPx - handleSizePx / 2f
                         } else {
+                            -handleSizePx / 2f
+                        }
+                        val startX = handleCenterOffsetX + down.position.x -
+                                boundsWidthPx / 2f
+                        val startY = boundsHeightPx - handleSizePx + down.position.y -
+                                boundsHeightPx / 2f
+                        val startDistance = hypot(startX.toDouble(), startY.toDouble())
+                            .toFloat().coerceAtLeast(1f)
+                        val startAngle = atan2(startY, startX)
+                        val startScale = currentScale.value
+                        val startRotation = currentRotation.value
+                        var dragX = 0f
+                        var dragY = 0f
+
+                        do {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull()
+                            if (change == null || !change.pressed) break
                             val delta = change.position - change.previousPosition
-                            accumulatedDrag += if (isScaleHandle) {
-                                delta.x + delta.y
-                            } else {
-                                delta.x - delta.y
-                            }
+                            dragX += delta.x
+                            dragY += delta.y
                             change.consume()
-                            if (isScaleHandle) {
+
+                            val currentX = startX + dragX
+                            val currentY = startY + dragY
+                            val currentDistance = hypot(
+                                currentX.toDouble(),
+                                currentY.toDouble()
+                            ).toFloat()
+                            val currentAngle = atan2(currentY, currentX)
+                            val angleDelta = normalizeAngle(currentAngle - startAngle)
+                            if (corner == TransformHandleCorner.Scale) {
                                 currentOnTransformChanged.value(
-                                    (startScale + accumulatedDrag * 0.5f)
+                                    (startScale * currentDistance / startDistance)
                                         .coerceIn(10f, 500f),
                                     startRotation
                                 )
                             } else {
                                 currentOnTransformChanged.value(
                                     startScale,
-                                    startRotation + accumulatedDrag
+                                    startRotation +
+                                            Math.toDegrees(angleDelta.toDouble()).toFloat()
                                 )
                             }
                         }
+                        while (true)
+                        currentOnGestureEnd.value()
                     }
-                    currentOnGestureEnd.value()
                 }
             },
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = if (isScaleHandle) "⤢" else "↻",
+            text = when (corner) {
+                TransformHandleCorner.Delete -> "×"
+                TransformHandleCorner.Edit -> "T"
+                TransformHandleCorner.Rotate -> "⟳"
+                TransformHandleCorner.Scale -> "⤢"
+            },
             color = Color.White,
-            fontSize = 14.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Bold
         )
     }
+}
+
+private fun normalizeAngle(radians: Float): Float {
+    val twoPi = (Math.PI * 2.0).toFloat()
+    var normalized = radians
+    while (normalized > Math.PI) normalized -= twoPi
+    while (normalized < -Math.PI) normalized += twoPi
+    return normalized
 }

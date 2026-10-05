@@ -786,6 +786,22 @@ fun EditorScreen(
                     val clip = state.clips.firstOrNull { it.id == clipId }
                     if (clip != null) viewModel.selectClip(clip)
                 },
+                onDeleteLayer = { clipId ->
+                    state.clips.firstOrNull { it.id == clipId }?.let { clip ->
+                        viewModel.selectClip(clip)
+                        viewModel.deleteCurrentClip()
+                    }
+                },
+                onEditLayer = { clipId ->
+                    state.clips.firstOrNull { it.id == clipId }?.let { clip ->
+                        viewModel.selectClip(clip)
+                        activePanel = when {
+                            clip.isTextClip -> "text"
+                            clip.isVisualizerClip -> "visualizer"
+                            else -> "transform"
+                        }
+                    }
+                },
                 onGroupGestureStart = { viewModel.beginGroupGesture() },
                 onGroupGestureEnd = { viewModel.endGroupGesture() },
                 onGroupGesture = { clipId: String, x: Float, y: Float, scale: Float, rot: Float ->
@@ -1067,6 +1083,11 @@ fun EditorScreen(
                     hasTextClipSelected = selected?.isTextClip == true ||
                             state.multiSelectedIds.isNotEmpty(),
                     onTextChanged = { viewModel.updateSelectedText(it) },
+                    onDraftTextChanged = { content ->
+                        viewModel.updateSelectedText(
+                            viewModel.getSelectedTextState().copy(content = content)
+                        )
+                    },
                     onCreateNew = { viewModel.createTextClip() },
                     onRemove = { viewModel.removeSelectedText() },
                     onApplyTemplate = { templateId ->

@@ -17,6 +17,31 @@ object KeyframeStore {
     private const val TOLERANCE = 0.05f
     private const val STRICT_TOLERANCE = 0.02f
 
+    data class ScaleRotation(
+        val scale: Float,
+        val rotation: Float
+    )
+
+    fun clipLocalTimeSeconds(
+        playheadMs: Long,
+        clipStartMs: Long,
+        clipDurationMs: Long
+    ): Float {
+        if (clipDurationMs <= 0L) return 0f
+        val localMs = (playheadMs - clipStartMs).coerceIn(0L, clipDurationMs)
+        return localMs / 1000f
+    }
+
+    fun keyframeXInClip(
+        keyframeTimeSec: Float,
+        clipDurationMs: Long,
+        clipWidthPx: Float
+    ): Float {
+        if (clipDurationMs <= 0L || clipWidthPx <= 0f) return 0f
+        val timeMs = (keyframeTimeSec.coerceAtLeast(0f) * 1000f)
+            .coerceAtMost(clipDurationMs.toFloat())
+        return timeMs / clipDurationMs.toFloat() * clipWidthPx
+    }
 
     //  READ
 
@@ -164,6 +189,16 @@ object KeyframeStore {
         }
         return last.value
     }
+
+    fun sampleScaleRotation(
+        map: KeyframeMap,
+        timeSec: Float,
+        baseScale: Float,
+        baseRotation: Float
+    ): ScaleRotation = ScaleRotation(
+        scale = sample(map, "scale", timeSec, baseScale),
+        rotation = sample(map, "rotation", timeSec, baseRotation)
+    )
 
     fun sampleAll(
         map: KeyframeMap,

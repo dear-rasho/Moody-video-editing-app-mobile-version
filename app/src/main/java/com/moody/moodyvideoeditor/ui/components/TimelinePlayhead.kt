@@ -28,6 +28,24 @@ object TimelinePlayheadController {
         return frac * contentWidthPx
     }
 
+    fun contentXForTime(timeMs: Long, totalMs: Long, contentWidthPx: Float): Float =
+        playheadContentPx(timeMs, totalMs, contentWidthPx)
+
+    fun clipLocalXForTime(
+        clipStartMs: Long,
+        clipLocalTimeMs: Long,
+        totalMs: Long,
+        contentWidthPx: Float
+    ): Float {
+        val clipStartX = contentXForTime(clipStartMs, totalMs, contentWidthPx)
+        val keyframeX = contentXForTime(
+            clipStartMs + clipLocalTimeMs,
+            totalMs,
+            contentWidthPx
+        )
+        return keyframeX - clipStartX
+    }
+
     fun playheadScreenX(
         currentPosMs: Long, totalMs: Long,
         contentWidthPx: Float, labelWidthPx: Float, hScrollValue: Int
@@ -40,6 +58,17 @@ object TimelinePlayheadController {
         val clampedX = clickX.coerceAtLeast(0f)
         val frac = (clampedX / contentWidthPx).coerceIn(0f, 1f)
         return (frac * totalMs).toLong().coerceIn(0L, totalMs)
+    }
+
+    fun seekTimeFromScreenX(
+        screenX: Float,
+        contentWidthPx: Float,
+        totalMs: Long,
+        labelWidthPx: Float,
+        hScrollValue: Int
+    ): Long {
+        val contentX = screenX - labelWidthPx + hScrollValue.toFloat()
+        return seekTimeFromClick(contentX, contentWidthPx, totalMs)
     }
 
     fun autoScrollTarget(

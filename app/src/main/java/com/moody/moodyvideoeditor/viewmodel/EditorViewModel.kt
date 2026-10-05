@@ -1262,8 +1262,9 @@ class EditorViewModel : ViewModel() {
         val isMulti = s.multiSelectedIds.size > 1 && anchorId in s.multiSelectedIds
 
         if (!isMulti) {
-            val currentTimeSec = ((s.currentPosMs - anchor.timelineStartMs)
-                .toFloat() / 1000f).coerceAtLeast(0f)
+            val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+                s.currentPosMs, anchor.timelineStartMs, anchor.durationMs
+            )
             val hasAnyKf = KeyframeStore.hasAnyKeyframes(anchor.keyframes)
 
             updateClipDirect(anchorId) { c ->
@@ -1305,8 +1306,9 @@ class EditorViewModel : ViewModel() {
         val isMulti = s.multiSelectedIds.size > 1 && anchorId in s.multiSelectedIds
 
         if (!isMulti) {
-            val currentTimeSec = ((s.currentPosMs - anchor.timelineStartMs)
-                .toFloat() / 1000f).coerceAtLeast(0f)
+            val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+                s.currentPosMs, anchor.timelineStartMs, anchor.durationMs
+            )
             val hasAnyKf = KeyframeStore.hasAnyKeyframes(anchor.keyframes)
 
             updateClipDirect(anchorId) { c ->
@@ -1741,8 +1743,9 @@ class EditorViewModel : ViewModel() {
         val s = _state.value
         val clip = s.clips.firstOrNull { it.id == clipId } ?: return
         if (!clip.isTextClip) return
-        val currentTimeSec = ((s.currentPosMs - clip.timelineStartMs).toFloat() / 1000f)
-            .coerceAtLeast(0f)
+        val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+            s.currentPosMs, clip.timelineStartMs, clip.durationMs
+        )
         val hasAnyKf = KeyframeStore.hasAnyKeyframes(clip.keyframes)
         updateClipDirect(clipId) { c ->
             val st = c.textState ?: return@updateClipDirect c
@@ -1759,8 +1762,9 @@ class EditorViewModel : ViewModel() {
         val s = _state.value
         val clip = s.clips.firstOrNull { it.id == clipId } ?: return
         if (!clip.isTextClip) return
-        val currentTimeSec = ((s.currentPosMs - clip.timelineStartMs).toFloat() / 1000f)
-            .coerceAtLeast(0f)
+        val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+            s.currentPosMs, clip.timelineStartMs, clip.durationMs
+        )
         val hasAnyKf = KeyframeStore.hasAnyKeyframes(clip.keyframes)
         updateClipDirect(clipId) { c ->
             val st = c.textState ?: return@updateClipDirect c
@@ -1850,8 +1854,9 @@ class EditorViewModel : ViewModel() {
         val s = _state.value
         val clip = s.clips.firstOrNull { it.id == clipId } ?: return
         if (!clip.isStickerClip) return
-        val currentTimeSec = ((s.currentPosMs - clip.timelineStartMs).toFloat() / 1000f)
-            .coerceAtLeast(0f)
+        val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+            s.currentPosMs, clip.timelineStartMs, clip.durationMs
+        )
         val hasAnyKf = KeyframeStore.hasAnyKeyframes(clip.keyframes)
         updateClipDirect(clipId) { c ->
             val ss = c.stickerState ?: return@updateClipDirect c
@@ -1868,8 +1873,9 @@ class EditorViewModel : ViewModel() {
         val s = _state.value
         val clip = s.clips.firstOrNull { it.id == clipId } ?: return
         if (!clip.isStickerClip) return
-        val currentTimeSec = ((s.currentPosMs - clip.timelineStartMs).toFloat() / 1000f)
-            .coerceAtLeast(0f)
+        val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+            s.currentPosMs, clip.timelineStartMs, clip.durationMs
+        )
         val hasAnyKf = KeyframeStore.hasAnyKeyframes(clip.keyframes)
         updateClipDirect(clipId) { c ->
             val ss = c.stickerState ?: return@updateClipDirect c
@@ -2761,8 +2767,9 @@ class EditorViewModel : ViewModel() {
 
     fun changeTransformProperty(prop: String, value: Float) {
         val sel = _state.value.selectedClip ?: return
-        val currentTimeSec = ((_state.value.currentPosMs - sel.timelineStartMs)
-            .toFloat() / 1000f).coerceAtLeast(0f)
+        val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+            _state.value.currentPosMs, sel.timelineStartMs, sel.durationMs
+        )
 
         val s = _state.value
         val isMulti = s.multiSelectedIds.size > 1 && sel.id in s.multiSelectedIds
@@ -2865,8 +2872,9 @@ class EditorViewModel : ViewModel() {
 
     fun toggleKeyframeAtPlayhead(prop: String) {
         val sel = _state.value.selectedClip ?: return
-        val currentTimeSec = ((_state.value.currentPosMs - sel.timelineStartMs)
-            .toFloat() / 1000f).coerceAtLeast(0f)
+        val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+            _state.value.currentPosMs, sel.timelineStartMs, sel.durationMs
+        )
         val existing = KeyframeStore.hasKeyframeAt(sel.keyframes, prop, currentTimeSec)
 
         val updated = if (existing) {
@@ -2901,8 +2909,9 @@ class EditorViewModel : ViewModel() {
 
     fun toggleKeyframeAll() {
         val sel = _state.value.selectedClip ?: return
-        val currentTimeSec = ((_state.value.currentPosMs - sel.timelineStartMs)
-            .toFloat() / 1000f).coerceAtLeast(0f)
+        val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+            _state.value.currentPosMs, sel.timelineStartMs, sel.durationMs
+        )
         val hasAny = KeyframeStore.hasAnyKeyframeAt(sel.keyframes, currentTimeSec)
 
         val updated = if (hasAny) {
@@ -2932,15 +2941,17 @@ class EditorViewModel : ViewModel() {
 
     fun hasKeyframeAtPlayhead(): Boolean {
         val sel = _state.value.selectedClip ?: return false
-        val currentTimeSec = ((_state.value.currentPosMs - sel.timelineStartMs)
-            .toFloat() / 1000f).coerceAtLeast(0f)
+        val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+            _state.value.currentPosMs, sel.timelineStartMs, sel.durationMs
+        )
         return KeyframeStore.hasAnyKeyframeAt(sel.keyframes, currentTimeSec)
     }
 
     fun setEaseAtPlayhead(ease: String) {
         val sel = _state.value.selectedClip ?: return
-        val currentTimeSec = ((_state.value.currentPosMs - sel.timelineStartMs)
-            .toFloat() / 1000f).coerceAtLeast(0f)
+        val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+            _state.value.currentPosMs, sel.timelineStartMs, sel.durationMs
+        )
         val updated = sel.copy(
             keyframes = KeyframeStore.setAllEasesAtTime(
                 sel.keyframes, currentTimeSec, ease

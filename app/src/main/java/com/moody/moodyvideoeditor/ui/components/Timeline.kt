@@ -1649,9 +1649,7 @@ private fun ClipCard(
 
         KeyframeMarkerOverlay(
             clip = clip,
-            clipStartPx = startPx,
             clipWidthPx = clipWidthPx,
-            totalMs = totalMs,
             currentPosMs = currentPosMs,
             onSeekToKeyframe = { tSec ->
                 val timeMs = clip.timelineStartMs + (tSec * 1000f).toLong()

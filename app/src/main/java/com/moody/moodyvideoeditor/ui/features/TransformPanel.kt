@@ -354,8 +354,8 @@ private fun PropRow(
                 "◆",
                 color = when {
                     hasKfAtTime -> Color(0xFF4F9DFF)
-                    hasAnyKf -> Color(0xFF4F9DFF).copy(alpha = 0.55f)
-                    else -> Color(0xFF555555)
+                    hasAnyKf -> Color.White
+                    else -> Color.White.copy(alpha = 0.65f)
                 },
                 fontSize = 12.sp, fontWeight = FontWeight.Bold
             )

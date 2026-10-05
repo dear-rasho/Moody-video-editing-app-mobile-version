@@ -47,12 +47,16 @@ fun TextPanel(
     currentText: TextState,
     hasTextClipSelected: Boolean,
     onTextChanged: (TextState) -> Unit,
+    onDraftTextChanged: (String) -> Unit = {},
     onCreateNew: () -> Unit,
     onRemove: () -> Unit,
     onApplyTemplate: (String) -> Unit = {},   // 🆕
     onClose: () -> Unit
 ) {
     var subView by remember { mutableStateOf("options") }
+    var draftClipCreated by remember(hasTextClipSelected) {
+        mutableStateOf(hasTextClipSelected)
+    }
 
     FeaturePanel(title = "📝 Text", onClose = onClose) {
         when (subView) {
@@ -67,6 +71,13 @@ fun TextPanel(
             "addText" -> AddTextSub(
                 initial = currentText.content,
                 hasTextClip = hasTextClipSelected,
+                onDraftChanged = { content ->
+                    if (!draftClipCreated) {
+                        onCreateNew()
+                        draftClipCreated = true
+                    }
+                    onDraftTextChanged(content)
+                },
                 onApply = { content ->
                     val newState = currentText.copy(content = content)
                     if (hasTextClipSelected) onTextChanged(newState)
@@ -270,6 +281,7 @@ private fun OptionsShelf(hasText: Boolean, onSelect: (String) -> Unit) {
 private fun AddTextSub(
     initial: String,
     hasTextClip: Boolean,
+    onDraftChanged: (String) -> Unit,
     onApply: (String) -> Unit,
     onBack: () -> Unit
 ) {
@@ -279,7 +291,10 @@ private fun AddTextSub(
         BackHeader(title = if (hasTextClip) "Edit Text" else "New Text", onBack = onBack)
         OutlinedTextField(
             value = text,
-            onValueChange = { text = it },
+            onValueChange = {
+                text = it
+                onDraftChanged(it)
+            },
             placeholder = {
                 Text("Enter text…", color = Color(0xFF666666), fontSize = 12.sp)
             },
