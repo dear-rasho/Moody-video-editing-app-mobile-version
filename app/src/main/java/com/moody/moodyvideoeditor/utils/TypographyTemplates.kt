@@ -2,6 +2,7 @@ package com.moody.moodyvideoeditor.utils
 
 import com.moody.moodyvideoeditor.data.TextSegment
 import com.moody.moodyvideoeditor.data.TextState
+import com.moody.moodyvideoeditor.data.templates.HomeTemplateCatalog
 
 // Blueprint for a complete typography template.
 // Layout coordinates are RELATIVE (0-100%) — scales to any ratio.
@@ -534,7 +535,7 @@ object TypographyTemplates {
                 )
             )
         )
-    )
+    ) + HomeTemplateCatalog.all.map { it.blueprint }
 
 
     //  HELPERS

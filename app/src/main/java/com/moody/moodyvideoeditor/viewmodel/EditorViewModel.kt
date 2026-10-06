@@ -3201,9 +3201,9 @@ class EditorViewModel : ViewModel() {
         val list = _state.value.clips.toMutableList()
         for (i in list.indices) {
             val clip = list[i]
-            if (clip.isAudio) continue
+            if (!clip.isVisualClip) continue
             val hasLeft = list.any { other ->
-                other.id != clip.id && !other.isAudio &&
+                other.id != clip.id && other.isVisualClip &&
                         other.trackIndex == clip.trackIndex &&
                         abs(other.timelineEndMs - clip.timelineStartMs) < 100L
             }
@@ -3224,8 +3224,13 @@ class EditorViewModel : ViewModel() {
         val list = _state.value.clips.toMutableList()
         for (i in list.indices) {
             val clip = list[i]
-            if (clip.isAudio) continue
-            if (abs(clip.timelineStartMs - targetMs) < 200L) {
+            if (!clip.isVisualClip) continue
+            val hasLeft = list.any { other ->
+                other.id != clip.id && other.isVisualClip &&
+                        other.trackIndex == clip.trackIndex &&
+                        abs(other.timelineEndMs - clip.timelineStartMs) < 100L
+            }
+            if (hasLeft && abs(clip.timelineStartMs - targetMs) < 200L) {
                 list[i] = list[i].copy(
                     transition = TransitionState(key = key, durationMs = durMs)
                 )

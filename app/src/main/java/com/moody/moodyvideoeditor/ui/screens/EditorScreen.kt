@@ -120,6 +120,7 @@ fun EditorScreen(
     projectId: String = "",
     onBack: () -> Unit,
     startInCodeMode: Boolean = false,
+    initialTemplateId: String? = null,
     viewModel: EditorViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -132,7 +133,7 @@ fun EditorScreen(
     //  PROJECT LOAD + AUTO-SAVE
     // ═══════════════════════════════════════════════════════════
 
-    LaunchedEffect(projectId) {
+    LaunchedEffect(projectId, initialTemplateId) {
         if (projectId.isNotBlank() && viewModel.getProjectId() != projectId) {
             if (!viewModel.loadProject(context, projectId)) {
                 viewModel.setProjectMeta(
@@ -140,6 +141,9 @@ fun EditorScreen(
                     if (startInCodeMode) "Code Project" else "New Project"
                 )
             }
+        }
+        if (!initialTemplateId.isNullOrBlank() && state.clips.isEmpty()) {
+            viewModel.applyTemplate(templateId = initialTemplateId, startMs = 0L)
         }
     }
 
@@ -1235,31 +1239,27 @@ fun EditorScreen(
                 )
 
                 "transitions" -> {
-                    val target = selected?.let { sel ->
+                    val selectedVisual = selected?.takeIf { it.isVisualClip }
+                    val target = selectedVisual?.let { sel ->
                         val hasLeft = state.clips.any { other ->
-                            other.id != sel.id &&
-                                    other.isAudio == sel.isAudio &&
+                            other.id != sel.id && other.isVisualClip &&
                                     other.trackIndex == sel.trackIndex &&
                                     abs(other.timelineEndMs - sel.timelineStartMs) < 100L
                         }
                         if (hasLeft) sel
-                        else {
-                            state.clips.filter { other ->
-                                other.id != sel.id &&
-                                        other.isAudio == sel.isAudio &&
-                                        other.trackIndex == sel.trackIndex &&
-                                        abs(
-                                            other.timelineStartMs - sel.timelineEndMs
-                                        ) < 100L
-                            }.minByOrNull { it.timelineStartMs }
-                        }
+                        else state.clips.filter { other ->
+                            other.id != sel.id && other.isVisualClip &&
+                                    other.trackIndex == sel.trackIndex &&
+                                    abs(other.timelineStartMs - sel.timelineEndMs) < 100L
+                        }.minByOrNull { it.timelineStartMs }
                     }
 
                     TransitionsPanel(
                         current = target?.transition ?: TransitionState(),
                         hasPairAvailable = target != null,
                         hintText = when {
-                            selected == null -> "Pehle timeline pe ek clip select karo."
+                            selectedVisual == null ->
+                                "Pehle timeline pe ek video ya image clip select karo."
                             target == null -> "Is clip ke saath koi adjacent clip chahiye."
                             else -> "Transition lagao"
                         },

@@ -37,6 +37,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.ProjectMeta
 import com.moody.moodyvideoeditor.data.ProjectRepository
+import com.moody.moodyvideoeditor.data.EditorState
+import com.moody.moodyvideoeditor.data.templates.HomeTemplatePreset
 import com.moody.moodyvideoeditor.ui.home.CodeBaseShelf
 import com.moody.moodyvideoeditor.ui.home.RecentProjects
 import com.moody.moodyvideoeditor.ui.home.TemplatesShelf
@@ -47,7 +49,8 @@ fun DashboardScreen(
     onNewProject: (String) -> Unit,
     onOpenProject: (String) -> Unit,
     onCodeEditor: (String) -> Unit,
-    onOpenHelp: () -> Unit = {}
+    onOpenHelp: () -> Unit = {},
+    onTemplateProject: (String, String) -> Unit
 ) {
     val context = LocalContext.current
     var projects by remember { mutableStateOf(ProjectRepository.listProjects(context)) }
@@ -75,6 +78,22 @@ fun DashboardScreen(
             com.moody.moodyvideoeditor.data.EditorState()
         )
         if (isCodeMode) onCodeEditor(id) else onNewProject(id)
+    }
+
+    fun createTemplateProject(template: HomeTemplatePreset) {
+        val id = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+        val meta = ProjectMeta(
+            id = id,
+            name = template.title,
+            createdAt = now,
+            updatedAt = now,
+            thumbnailPath = null,
+            clipCount = 0,
+            durationMs = 0L
+        )
+        ProjectRepository.saveProject(context, meta, EditorState())
+        onTemplateProject(id, template.id)
     }
 
     Column(
@@ -150,7 +169,7 @@ fun DashboardScreen(
 
         // TEMPLATES
         SectionTitle("Templates")
-        TemplatesShelf()
+        TemplatesShelf(onTemplateSelected = ::createTemplateProject)
 
         // CODE BASE EDITING
         SectionTitle("Code Base Editing")

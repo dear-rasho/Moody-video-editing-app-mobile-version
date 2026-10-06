@@ -15,7 +15,6 @@ import com.moody.moodyvideoeditor.data.ColorWheelState
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.MotionConfig
-import com.moody.moodyvideoeditor.data.TransitionLibrary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -47,7 +46,8 @@ class FFmpegExecutor(
     private fun buildFastVideoArgs(
         bitrateKbps: Int,
         targetW: Int,
-        targetH: Int
+        targetH: Int,
+        encoderThreads: Int = 0
     ): List<String> {
         return listOf(
             "-c:v", "libx264",
@@ -57,7 +57,7 @@ class FFmpegExecutor(
             "-s:v", "${targetW}x${targetH}",
             "-aspect", "$targetW:$targetH",
             "-pix_fmt", "yuv420p",
-            "-threads", "0"
+            "-threads", encoderThreads.toString()
         )
     }
 
@@ -611,10 +611,9 @@ class FFmpegExecutor(
                         vf.add("setpts=PTS-STARTPTS")
                     } else {
                         vf.add(
-                            "trim=start=${clip.sourceStartMs / 1000.0}:" +
-                                    "duration=${
-                                        (clip.sourceEndMs - clip.sourceStartMs) / 1000.0
-                                    }"
+                            "trim=duration=${
+                                (clip.sourceEndMs - clip.sourceStartMs) / 1000.0
+                            }"
                         )
                         vf.add("setpts=PTS-STARTPTS")
                     }
@@ -1573,13 +1572,11 @@ class FFmpegExecutor(
             kotlin.math.abs(it.speed - 1.0f) < 0.01f
         }
         val hasAnyTransition = sortedClips.drop(1).any {
-            it.transition?.isActive == true &&
-                    TransitionLibrary.find(it.transition!!.key)
-                        ?.ffmpegXfade?.isNotBlank() == true
+            it.transition?.isActive == true
         }
         val allAdjacent = sortedClips.zipWithNext().all { (a, b) ->
             val gap = b.timelineStartMs - a.timelineEndMs
-            kotlin.math.abs(gap) < 500L
+            kotlin.math.abs(gap) < 100L
         }
 
         val useXfade = sortedClips.size >= 2 &&
@@ -1649,6 +1646,7 @@ class FFmpegExecutor(
                     }
                     args.add("-t"); args.add(srcDurSec.toString())
                 }
+                args.add("-threads"); args.add("1")
                 args.add("-i"); args.add(localFiles[idx].absolutePath)
             }
 
@@ -1682,10 +1680,9 @@ class FFmpegExecutor(
                     vf.add("setpts=PTS-STARTPTS")
                 } else {
                     vf.add(
-                        "trim=start=${clip.sourceStartMs / 1000.0}:" +
-                                "duration=${
-                                    (clip.sourceEndMs - clip.sourceStartMs) / 1000.0
-                                }"
+                        "trim=duration=${
+                            (clip.sourceEndMs - clip.sourceStartMs) / 1000.0
+                        }"
                     )
                     vf.add("setpts=PTS-STARTPTS")
                 }
@@ -1697,39 +1694,38 @@ class FFmpegExecutor(
                 vf.addAll(buildPerClipFilterChain(clip, allClips))
                 vf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
                 vf.add("fps=$fps")
+                vf.add("settb=AVTB")
+                vf.add("setpts=PTS-STARTPTS")
                 vf.add("format=yuv420p")
+                vf.add("setsar=1")
 
                 filterParts.add("[$idx:v]${vf.joinToString(",")}[nv$idx]")
             }
 
+            val transitionSteps = TransitionExportPlan.create(
+                clipDurationsMs = clips.map { it.durationMs },
+                transitions = clips.map { it.transition },
+                fps = fps
+            )
             var currentLabel = "nv0"
-            var cumulativeOffsetSec = clips[0].durationMs / 1000.0
 
             for (i in 1 until clips.size) {
-                val trans = clips[i].transition
-                val isActive = trans?.isActive == true
-                val preset = if (isActive) TransitionLibrary.find(trans!!.key) else null
-                val xfadeName = preset?.ffmpegXfade?.takeIf { it.isNotBlank() } ?: "fade"
-                val transDurSec = if (isActive)
-                    (trans!!.durationMs / 1000.0).coerceIn(0.2, 3.0)
-                else 0.05
-
-                val offsetSec = (cumulativeOffsetSec - transDurSec).coerceAtLeast(0.05)
+                val step = transitionSteps[i - 1]
+                val transDurSec = step.durationMs / 1000.0
+                val offsetSec = step.offsetMs / 1000.0
 
                 val outLabel = "xfd$i"
                 filterParts.add(
                     "[$currentLabel][nv$i]xfade=" +
-                            "transition=$xfadeName:" +
+                            "transition=${step.ffmpegTransition}:" +
                             "duration=$transDurSec:" +
                             "offset=$offsetSec" +
                             "[$outLabel]"
                 )
 
                 currentLabel = outLabel
-                cumulativeOffsetSec += (clips[i].durationMs / 1000.0) - transDurSec
             }
 
-            val audioLabels = mutableListOf<String>()
             clips.forEachIndexed { idx, clip ->
                 val hasAudio = clipHasAudio(clip)
                 val srcIdx = if (hasAudio) idx else (silentIdx[idx] ?: idx)
@@ -1738,7 +1734,7 @@ class FFmpegExecutor(
 
                 val af = mutableListOf<String>()
                 if (hasAudio) {
-                    af.add("atrim=start=${clip.sourceStartMs / 1000.0}:duration=$durSec")
+                    af.add("atrim=start=0:duration=$durSec")
                     af.add("asetpts=PTS-STARTPTS")
                 } else {
                     af.add("atrim=start=0:duration=$durSec")
@@ -1747,14 +1743,19 @@ class FFmpegExecutor(
                 af.add("aresample=44100")
 
                 filterParts.add("[$srcIdx:a]${af.joinToString(",")}[$label]")
-                audioLabels.add("[$label]")
             }
 
-            filterParts.add(
-                "${audioLabels.joinToString("")}concat=n=${clips.size}:v=0:a=1[basea]"
-            )
-
-            var finalAudioLabel = "basea"
+            var currentAudioLabel = "ca0"
+            for (i in 1 until clips.size) {
+                val step = transitionSteps[i - 1]
+                val outLabel = "across$i"
+                filterParts.add(
+                    "[$currentAudioLabel][ca$i]acrossfade=" +
+                            "d=${step.durationMs / 1000.0}:c1=tri:c2=tri[$outLabel]"
+                )
+                currentAudioLabel = outLabel
+            }
+            var finalAudioLabel = currentAudioLabel
 
             if (audioLocalFiles.isNotEmpty()) {
                 val mixed = buildAudioOnlyMix(
@@ -1778,13 +1779,22 @@ class FFmpegExecutor(
 
             val totalDurSec = (totalDurationMs / 1000.0).coerceAtLeast(0.1)
 
+            args.add("-filter_complex_threads")
+            args.add("1")
             args.add("-filter_complex")
             args.add(filterParts.joinToString(";"))
             args.add("-map"); args.add("[$finalVideoLabel]")
             args.add("-map"); args.add("[$finalAudioLabel]")
             args.add("-t"); args.add(totalDurSec.toString())
 
-            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH))
+            args.addAll(
+                buildFastVideoArgs(
+                    bitrateKbps = bitrateKbps,
+                    targetW = targetW,
+                    targetH = targetH,
+                    encoderThreads = 1
+                )
+            )
             args.add("-r"); args.add(fps.toString())
             args.add("-c:a"); args.add("aac")
             args.add("-b:a"); args.add("128k")

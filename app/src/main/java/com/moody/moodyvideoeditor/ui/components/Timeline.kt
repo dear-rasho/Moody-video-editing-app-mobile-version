@@ -1181,10 +1181,9 @@ private fun TrackContent(
 
         clips.forEach { clip ->
             val trans = clip.transition
-            if (trans != null && trans.isActive) {
+            if (clip.isVisualClip && trans != null && trans.isActive) {
                 val hasAdjacentBefore = allClips.any { other ->
-                    other.id != clip.id &&
-                            other.isAudio == clip.isAudio &&
+                    other.id != clip.id && other.isVisualClip &&
                             abs(other.timelineEndMs - clip.timelineStartMs) < 50L
                 }
                 if (hasAdjacentBefore) {

@@ -16,6 +16,8 @@ object AppRoutes {
     const val HELP = "help"
 
     fun editorWithProject(projectId: String): String = "editor/$projectId"
+    fun editorWithTemplate(projectId: String, templateId: String): String =
+        "editor/$projectId?templateId=$templateId"
     fun codeModeWithProject(projectId: String): String = "code_mode/$projectId"
 }
 
@@ -38,18 +40,32 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
                 },
                 onOpenHelp = {
                     navController.navigate(AppRoutes.HELP)
+                },
+                onTemplateProject = { projectId, templateId ->
+                    navController.navigate(
+                        AppRoutes.editorWithTemplate(projectId, templateId)
+                    )
                 }
             )
         }
 
         composable(
-            route = "editor/{projectId}",
-            arguments = listOf(navArgument("projectId") { type = NavType.StringType })
+            route = "editor/{projectId}?templateId={templateId}",
+            arguments = listOf(
+                navArgument("projectId") { type = NavType.StringType },
+                navArgument("templateId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            )
         ) { backStackEntry ->
             val projectId = backStackEntry.arguments?.getString("projectId").orEmpty()
+            val templateId = backStackEntry.arguments?.getString("templateId")
             EditorScreen(
                 projectId = projectId,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                initialTemplateId = templateId
             )
         }
 
