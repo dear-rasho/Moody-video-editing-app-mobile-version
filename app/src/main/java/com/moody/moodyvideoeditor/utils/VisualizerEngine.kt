@@ -1915,6 +1915,7 @@ object VisualizerEngine {
         val ts = c.state.textState
         val content = ts.content.ifBlank { c.state.textContent }
         if (content.isBlank()) return
+        val lines = content.split('\n')
 
         val circleDiameter = circleRadius * 2f
         val fontScale = (circleDiameter / 400f).coerceIn(0.1f, 3f)
@@ -1967,15 +1968,29 @@ object VisualizerEngine {
 
             val maxTextWidth = circleDiameter * (ts.maxWidth / 100f)
                 .coerceIn(0.3f, 1f) * 0.88f
-            val naturalWidth = basePaint.measureText(content)
+            val naturalWidth = lines.maxOfOrNull(basePaint::measureText) ?: 0f
             val fitFontSize = if (naturalWidth > maxTextWidth && naturalWidth > 0f)
                 baseFontSize * (maxTextWidth / naturalWidth)
             else baseFontSize
             basePaint.textSize = fitFontSize
 
             val fm = basePaint.fontMetrics
-            val baseline = c.cy - (fm.ascent + fm.descent) / 2f
+            val lineHeightMultiplier = ts.lineHeight.takeIf { it.isFinite() }
+                ?.coerceIn(0.1f, 200f) ?: 1.2f
+            val lineSpacing = (fm.descent - fm.ascent) * lineHeightMultiplier
+            val firstBaseline = c.cy - lineSpacing * (lines.size - 1) / 2f -
+                    (fm.ascent + fm.descent) / 2f
             val textX = c.cx
+            fun drawTextLines(paint: AndroidPaint) {
+                lines.forEachIndexed { index, line ->
+                    nativeCanvas.drawText(
+                        line,
+                        textX,
+                        firstBaseline + lineSpacing * index,
+                        paint
+                    )
+                }
+            }
 
             if (ts.glowEnabled && ts.glowRadius > 0f) {
                 val glowColor = ts.glowColor.toInt()
@@ -1997,7 +2012,7 @@ object VisualizerEngine {
                             BlurMaskFilter.Blur.NORMAL
                         )
                     }
-                    nativeCanvas.drawText(content, textX, baseline, gp)
+                    drawTextLines(gp)
                 }
             }
 
@@ -2016,7 +2031,7 @@ object VisualizerEngine {
                         ts.shadowColor.toInt()
                     )
                 }
-                nativeCanvas.drawText(content, textX, baseline, sp)
+                drawTextLines(sp)
             }
 
             if (ts.strokeEnabled && ts.strokeWidth > 0f) {
@@ -2033,7 +2048,7 @@ object VisualizerEngine {
                     strokeCap = AndroidPaint.Cap.ROUND
                     alpha = alphaInt
                 }
-                nativeCanvas.drawText(content, textX, baseline, sp)
+                drawTextLines(sp)
             }
 
             val fillPaint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
@@ -2059,7 +2074,7 @@ object VisualizerEngine {
                 fillPaint.color = ts.color.toInt()
             }
 
-            nativeCanvas.drawText(content, textX, baseline, fillPaint)
+            drawTextLines(fillPaint)
         }
     }
 

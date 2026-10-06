@@ -403,7 +403,7 @@ fun VisualizerPanel(
             ) { v ->
                 onStateChanged(
                     current.copy(
-                        startFrequencyHz = v.coerceAtMost(current.endFrequencyHz - 20f)
+                        startFrequencyHz = v
                     )
                 )
             }
@@ -416,7 +416,7 @@ fun VisualizerPanel(
             ) { v ->
                 onStateChanged(
                     current.copy(
-                        endFrequencyHz = v.coerceAtLeast(current.startFrequencyHz + 20f)
+                        endFrequencyHz = v
                     )
                 )
             }
@@ -427,7 +427,7 @@ fun VisualizerPanel(
                 1f..6400f,
                 "%.0f"
             ) { v ->
-                onStateChanged(current.copy(bands = v.toInt().coerceIn(1, 6400)))
+                onStateChanged(current.copy(bands = v.toInt()))
             }
 
             ValueSliderRow(
@@ -446,7 +446,7 @@ fun VisualizerPanel(
                 "%.0f"
             ) { v ->
                 onStateChanged(
-                    current.copy(audioWindowMs = v.toInt().coerceIn(20, 2000))
+                    current.copy(audioWindowMs = v.toInt())
                 )
             }
 
@@ -457,7 +457,7 @@ fun VisualizerPanel(
                 "%.0f"
             ) { v ->
                 onStateChanged(
-                    current.copy(audioOffsetMs = v.toInt().coerceIn(-500, 500))
+                    current.copy(audioOffsetMs = v.toInt())
                 )
             }
 
@@ -925,14 +925,11 @@ private fun ValueSliderRow(
     format: String,
     onChange: (Float) -> Unit
 ) {
-    var textValue by remember(value) {
-        mutableStateOf(String.format(format, value))
-    }
+    var textValue by remember { mutableStateOf(String.format(format, value)) }
     var isFocused by remember { mutableStateOf(false) }
 
-    if (!isFocused) {
-        val newStr = String.format(format, value)
-        if (textValue != newStr) textValue = newStr
+    LaunchedEffect(value, isFocused) {
+        if (!isFocused) textValue = String.format(format, value)
     }
 
     Row(
@@ -976,8 +973,8 @@ private fun ValueSliderRow(
                         it.isDigit() || it == '-' || it == '.' || it == '+'
                     }
                     textValue = filtered
-                    filtered.toFloatOrNull()?.let { v ->
-                        onChange(v.coerceIn(range.start, range.endInclusive))
+                    filtered.toFloatOrNull()?.takeIf { it.isFinite() }?.let { v ->
+                    onChange(v)
                     }
                 },
                 singleLine = true,
@@ -996,8 +993,8 @@ private fun ValueSliderRow(
                     .onFocusChanged { focusState ->
                         isFocused = focusState.isFocused
                         if (!focusState.isFocused) {
-                            textValue.toFloatOrNull()?.let { v ->
-                                onChange(v.coerceIn(range.start, range.endInclusive))
+                            textValue.toFloatOrNull()?.takeIf { it.isFinite() }?.let { v ->
+                                onChange(v)
                             }
                         }
                     }

@@ -199,17 +199,17 @@ fun TransformPanel(
             ) {
                 SectionLabel("Position")
                 PropRow(
-                    "X", "x", base.x, 1f, -200f, 200f, keyframeMap, currentTimeSec,
+                    "X", "x", base.x, 1f, keyframeMap, currentTimeSec,
                     onChanged = { onPropertyChanged("x", it) },
                     onToggleKf = { onToggleKeyframe("x") })
                 PropRow(
-                    "Y", "y", base.y, 1f, -200f, 200f, keyframeMap, currentTimeSec,
+                    "Y", "y", base.y, 1f, keyframeMap, currentTimeSec,
                     onChanged = { onPropertyChanged("y", it) },
                     onToggleKf = { onToggleKeyframe("y") })
 
                 SectionLabel("Scale")
                 PropRow(
-                    "Scale %", "scale", base.scale, 1f, 10f, 500f, keyframeMap, currentTimeSec,
+                    "Scale %", "scale", base.scale, 1f, keyframeMap, currentTimeSec,
                     onChanged = { onPropertyChanged("scale", it) },
                     onToggleKf = { onToggleKeyframe("scale") })
 
@@ -219,8 +219,6 @@ fun TransformPanel(
                     "rotation",
                     base.rotation,
                     1f,
-                    -360f,
-                    360f,
                     keyframeMap,
                     currentTimeSec,
                     onChanged = { onPropertyChanged("rotation", it) },
@@ -228,11 +226,11 @@ fun TransformPanel(
 
                 SectionLabel("Anchor")
                 PropRow(
-                    "Anchor X", "anchorX", base.anchorX, 1f, 0f, 100f, keyframeMap, currentTimeSec,
+                    "Anchor X", "anchorX", base.anchorX, 1f, keyframeMap, currentTimeSec,
                     onChanged = { onPropertyChanged("anchorX", it) },
                     onToggleKf = { onToggleKeyframe("anchorX") })
                 PropRow(
-                    "Anchor Y", "anchorY", base.anchorY, 1f, 0f, 100f, keyframeMap, currentTimeSec,
+                    "Anchor Y", "anchorY", base.anchorY, 1f, keyframeMap, currentTimeSec,
                     onChanged = { onPropertyChanged("anchorY", it) },
                     onToggleKf = { onToggleKeyframe("anchorY") })
             }
@@ -309,8 +307,6 @@ private fun PropRow(
     propKey: String,
     value: Float,
     step: Float,
-    minVal: Float,
-    maxVal: Float,
     keyframeMap: Map<String, List<Keyframe>>,
     currentTimeSec: Float,
     onChanged: (Float) -> Unit,
@@ -373,7 +369,7 @@ private fun PropRow(
                 .background(Color(0xFF2A1414))
                 .pointerInput(propKey) {
                     detectTapGestures {
-                        val nv = (value - step).coerceIn(minVal, maxVal)
+                        val nv = value - step
                         inputText = formatNum(nv)
                         onChanged(nv)
                     }
@@ -408,16 +404,15 @@ private fun PropRow(
                 ),
                 cursorBrush = SolidColor(Color(0xFF4F9DFF)),
                 keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Number,
+                    keyboardType = KeyboardType.Text,
                     imeAction = ImeAction.Done
                 ),
                 keyboardActions = KeyboardActions(
                     onDone = {
                         val parsed = pendingText.toFloatOrNull()
-                        if (parsed != null) {
-                            val clamped = parsed.coerceIn(minVal, maxVal)
-                            inputText = formatNum(clamped)
-                            onChanged(clamped)
+                        if (parsed != null && parsed.isFinite()) {
+                            inputText = formatNum(parsed)
+                            onChanged(parsed)
                         }
                         pendingText = ""
                     }
@@ -428,10 +423,9 @@ private fun PropRow(
                         hasFocus = focusState.isFocused
                         if (!focusState.isFocused && pendingText.isNotEmpty()) {
                             val parsed = pendingText.toFloatOrNull()
-                            if (parsed != null) {
-                                val clamped = parsed.coerceIn(minVal, maxVal)
-                                inputText = formatNum(clamped)
-                                onChanged(clamped)
+                            if (parsed != null && parsed.isFinite()) {
+                                inputText = formatNum(parsed)
+                                onChanged(parsed)
                             }
                             pendingText = ""
                         }
@@ -446,7 +440,7 @@ private fun PropRow(
                 .background(Color(0xFF0F2A1A))
                 .pointerInput(propKey) {
                     detectTapGestures {
-                        val nv = (value + step).coerceIn(minVal, maxVal)
+                        val nv = value + step
                         inputText = formatNum(nv)
                         onChanged(nv)
                     }

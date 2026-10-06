@@ -16,12 +16,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -31,8 +34,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -129,10 +135,12 @@ fun TextPanel(
             "lineHeight" -> SliderSub(
                 title = "Line Height",
                 value = currentText.lineHeight,
-                range = 0.8f..3.0f,
+                range = 0.8f..200f,
                 suffix = "x",
                 decimals = 2,
-                onChange = { onTextChanged(currentText.copy(lineHeight = it)) },
+                onChange = {
+                    onTextChanged(currentText.copy(lineHeight = it.coerceIn(0.1f, 200f)))
+                },
                 onBack = { subView = "options" }
             )
 
@@ -737,6 +745,18 @@ private fun SliderSub(
     onChange: (Float) -> Unit,
     onBack: () -> Unit
 ) {
+    val formattedValue = if (decimals > 0) {
+        String.format("%.${decimals}f", value)
+    } else {
+        value.toInt().toString()
+    }
+    var textValue by remember { mutableStateOf(formattedValue) }
+    var isFocused by remember { mutableStateOf(false) }
+
+    LaunchedEffect(formattedValue, isFocused) {
+        if (!isFocused) textValue = formattedValue
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         BackHeader(title, onBack)
 
@@ -756,15 +776,54 @@ private fun SliderSub(
                     inactiveTrackColor = Color(0xFF303030)
                 )
             )
-            Text(
-                text = if (decimals > 0) String.format("%.${decimals}f%s", value, suffix)
-                else "${value.toInt()}$suffix",
-                color = Color.White,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.width(60.dp),
-                textAlign = TextAlign.End
-            )
+            Row(
+                modifier = Modifier
+                    .width(100.dp)
+                    .height(38.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFF181818))
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End
+            ) {
+                BasicTextField(
+                    value = textValue,
+                    onValueChange = { input ->
+                        val filtered = input.filter {
+                            it.isDigit() || it == '-' || it == '.' || it == '+'
+                        }
+                        textValue = filtered
+                        filtered.toFloatOrNull()?.takeIf { it.isFinite() }?.let(onChange)
+                    },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.End
+                    ),
+                    cursorBrush = SolidColor(Color(0xFFFFD166)),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Decimal
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .onFocusChanged { focusState ->
+                            isFocused = focusState.isFocused
+                            if (!focusState.isFocused) {
+                                textValue.toFloatOrNull()
+                                    ?.takeIf { it.isFinite() }
+                                    ?.let(onChange)
+                            }
+                        }
+                )
+                Text(
+                    suffix,
+                    color = Color(0xFF888888),
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(start = 4.dp)
+                )
+            }
         }
 
         Text(
@@ -843,6 +902,13 @@ private fun SliderRow(
     range: ClosedFloatingPointRange<Float>,
     onChange: (Float) -> Unit
 ) {
+    var textValue by remember { mutableStateOf(String.format("%.1f", value)) }
+    var isFocused by remember { mutableStateOf(false) }
+
+    LaunchedEffect(value, isFocused) {
+        if (!isFocused) textValue = String.format("%.1f", value)
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -866,13 +932,47 @@ private fun SliderRow(
                 inactiveTrackColor = Color(0xFF303030)
             )
         )
-        Text(
-            String.format("%.1f", value),
-            color = Color.White,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(44.dp)
-        )
+        Box(
+            modifier = Modifier
+                .width(68.dp)
+                .height(32.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color(0xFF181818))
+                .padding(horizontal = 5.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            BasicTextField(
+                value = textValue,
+                onValueChange = { input ->
+                    val filtered = input.filter {
+                        it.isDigit() || it == '-' || it == '.' || it == '+'
+                    }
+                    textValue = filtered
+                    filtered.toFloatOrNull()?.takeIf { it.isFinite() }?.let(onChange)
+                },
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                ),
+                cursorBrush = SolidColor(Color(0xFFFFD166)),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Decimal
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { focusState ->
+                        isFocused = focusState.isFocused
+                        if (!focusState.isFocused) {
+                            textValue.toFloatOrNull()
+                                ?.takeIf { it.isFinite() }
+                                ?.let(onChange)
+                        }
+                    }
+            )
+        }
     }
 }
 

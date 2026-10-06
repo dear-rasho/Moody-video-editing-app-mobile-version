@@ -798,24 +798,13 @@ fun EditorScreen(
                         viewModel.deleteCurrentClip()
                     }
                 },
-                onEditLayer = { clipId ->
-                    state.clips.firstOrNull { it.id == clipId }?.let { clip ->
-                        viewModel.selectClip(clip)
-                        openTextEditor = clip.isTextClip
-                        activePanel = when {
-                            clip.isTextClip -> "text"
-                            clip.isVisualizerClip -> "visualizer"
-                            else -> "transform"
-                        }
-                    }
-                },
                 onGroupGestureStart = { viewModel.beginGroupGesture() },
                 onGroupGestureEnd = { viewModel.endGroupGesture() },
                 onGroupGesture = { clipId: String, x: Float, y: Float, scale: Float, rot: Float ->
                     viewModel.applyGroupTransform(clipId, x, y, scale, rot)
                 },
                 onTextPositionChanged = { clipId: String, x: Float, y: Float ->
-                    viewModel.updateSelectedPositionBulk(clipId, x, y)
+                    viewModel.updateTextPositionDirect(clipId, x, y)
                 },
                 onTextTransformChanged = { clipId: String, s: Float, r: Float ->
                     viewModel.updateSelectedTransformBulk(clipId, s, r)

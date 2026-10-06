@@ -56,11 +56,11 @@ fun VisualizerOverlay(
     //  LOAD CENTER IMAGE — robust
     // ═══════════════════════════════════════════════════════════
 
-    LaunchedEffect(state.imageUri, state.showImage) {
+    LaunchedEffect(visualizerClip.id, state.imageUri, state.showImage) {
         val uri = state.imageUri
 
         if (uri.isNullOrBlank() || !state.showImage) {
-            VisualizerEngine.setCenterImage(null, null)
+            VisualizerEngine.clearCenterImage(visualizerClip.id)
             return@LaunchedEffect
         }
 
@@ -70,16 +70,20 @@ fun VisualizerOverlay(
             }
 
             if (bmp != null) {
-                VisualizerEngine.setCenterImage(uri, bmp)
+                VisualizerEngine.setCenterImage(uri, bmp, visualizerClip.id)
                 Log.e("VIZ_OVERLAY", "✅ Image loaded: $uri")
             } else {
                 Log.e("VIZ_OVERLAY", "❌ Image load returned null: $uri")
-                VisualizerEngine.setCenterImage(null, null)
+                VisualizerEngine.clearCenterImage(visualizerClip.id)
             }
         } catch (e: Throwable) {
             Log.e("VIZ_OVERLAY", "❌ Image load failed: ${e.message}", e)
-            VisualizerEngine.setCenterImage(null, null)
+            VisualizerEngine.clearCenterImage(visualizerClip.id)
         }
+    }
+
+    androidx.compose.runtime.DisposableEffect(visualizerClip.id) {
+        onDispose { VisualizerEngine.clearCenterImage(visualizerClip.id) }
     }
 
 

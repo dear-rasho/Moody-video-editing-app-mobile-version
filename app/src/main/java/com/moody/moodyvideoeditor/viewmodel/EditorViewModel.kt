@@ -351,7 +351,7 @@ class EditorViewModel : ViewModel() {
             return
         }
 
-        val deltaScale = if (anchorBase.scale < 0.001f) 1f
+        val deltaScale = if (kotlin.math.abs(anchorBase.scale) < 0.001f) 1f
         else (newScale / anchorBase.scale)
         val deltaRot = newRotation - anchorBase.rotation
 
@@ -388,7 +388,7 @@ class EditorViewModel : ViewModel() {
             val scaledY = rotY * deltaScale
             val finalX = cx + scaledX + tx
             val finalY = cy + scaledY + ty
-            val newClipScale = (snap.scale * deltaScale).coerceIn(10f, 500f)
+            val newClipScale = snap.scale * deltaScale
             val newClipRot = snap.rotation + deltaRot
 
             val clip = list[i]
@@ -1202,7 +1202,7 @@ class EditorViewModel : ViewModel() {
         clip.isTextClip && clip.textState != null -> clip.textState.scale
         clip.isStickerClip && clip.stickerState != null -> clip.stickerState.scale
         clip.isVisualizerClip && clip.visualizer != null ->
-            (clip.visualizer.size / 0.32f * 100f).coerceIn(10f, 500f)
+            clip.visualizer.size / 0.32f * 100f
 
         else -> clip.scale * 100f
     }
@@ -1224,8 +1224,8 @@ class EditorViewModel : ViewModel() {
         clip.isVisualizerClip && clip.visualizer != null ->
             clip.copy(
                 visualizer = clip.visualizer.copy(
-                    positionX = (x / 100f).coerceIn(0f, 1f),
-                    positionY = (y / 100f).coerceIn(0f, 1f)
+                    positionX = x / 100f,
+                    positionY = y / 100f
                 )
             )
 
@@ -1242,7 +1242,7 @@ class EditorViewModel : ViewModel() {
         clip.isVisualizerClip && clip.visualizer != null ->
             clip.copy(
                 visualizer = clip.visualizer.copy(
-                    size = (scale / 100f * 0.32f).coerceIn(0.05f, 1.5f)
+                    size = scale / 100f * 0.32f
                 )
             )
 
@@ -1316,12 +1316,10 @@ class EditorViewModel : ViewModel() {
         for (i in list.indices) {
             if (list[i].id in s.multiSelectedIds) {
                 val (cx, cy) = getClipPos(list[i])
-                val minX = if (list[i].isTextClip) -50f else 0f
-                val maxX = if (list[i].isTextClip) 150f else 100f
                 list[i] = setClipPos(
                     list[i],
-                    (cx + dx).coerceIn(minX, maxX),
-                    (cy + dy).coerceIn(0f, 100f)
+                    cx + dx,
+                    cy + dy
                 )
             }
         }
@@ -1358,7 +1356,11 @@ class EditorViewModel : ViewModel() {
 
         val anchorScale = getClipScale(anchor)
         val anchorRot = getClipRotation(anchor)
-        val scaleFactor = if (anchorScale > 0.001f) newScale / anchorScale else 1f
+        val scaleFactor = if (kotlin.math.abs(anchorScale) > 0.001f) {
+            newScale / anchorScale
+        } else {
+            1f
+        }
         val rotDelta = newRotation - anchorRot
 
         val list = s.clips.toMutableList()
@@ -1366,7 +1368,7 @@ class EditorViewModel : ViewModel() {
             if (list[i].id in s.multiSelectedIds) {
                 val cs = getClipScale(list[i])
                 val cr = getClipRotation(list[i])
-                val newS = (cs * scaleFactor).coerceIn(10f, 500f)
+                val newS = cs * scaleFactor
                 val newR = cr + rotDelta
                 list[i] = setClipRotation(setClipScale(list[i], newS), newR)
             }
@@ -2892,7 +2894,7 @@ class EditorViewModel : ViewModel() {
             else if (sel.isVisualizerClip && sel.visualizer != null)
                 sel.copy(
                     visualizer = sel.visualizer.copy(
-                        positionX = (value / 100f).coerceIn(0f, 1f)
+                        positionX = value / 100f
                     )
                 )
             else sel.copy(offsetX = (value - 50f) / 100f)
@@ -2904,7 +2906,7 @@ class EditorViewModel : ViewModel() {
             else if (sel.isVisualizerClip && sel.visualizer != null)
                 sel.copy(
                     visualizer = sel.visualizer.copy(
-                        positionY = (value / 100f).coerceIn(0f, 1f)
+                        positionY = value / 100f
                     )
                 )
             else sel.copy(offsetY = (value - 50f) / 100f)
@@ -2916,7 +2918,7 @@ class EditorViewModel : ViewModel() {
             else if (sel.isVisualizerClip && sel.visualizer != null)
                 sel.copy(
                     visualizer = sel.visualizer.copy(
-                        size = (value / 100f * 0.32f).coerceIn(0.05f, 1.5f)
+                        size = value / 100f * 0.32f
                     )
                 )
             else sel.copy(scale = value / 100f)

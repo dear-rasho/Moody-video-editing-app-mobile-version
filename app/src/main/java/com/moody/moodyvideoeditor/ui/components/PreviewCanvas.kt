@@ -217,15 +217,16 @@ fun PreviewCanvas(
     activeBrushOpacity: Float = 1f,
     onBrushStrokeComplete: (BrushStroke) -> Unit = {},
     isMaskPenMode: Boolean = false,
+    isMaskHandMode: Boolean = false,
     onMaskPointAdd: (Float, Float) -> Unit = { _, _ -> },
     onMaskAnchorMove: (Int, Float, Float) -> Unit = { _, _, _ -> },
     onMaskHandleMove: (Int, Boolean, Float, Float) -> Unit = { _, _, _, _ -> },
     onMaskPointToggle: (Int) -> Unit = {},
     onMaskPointDelete: (Int) -> Unit = {},
+    onMaskMove: (Float, Float) -> Unit = { _, _ -> },
     onClosePath: () -> Unit = {},
     onClipSelected: (String) -> Unit = {},
     onDeleteLayer: (String) -> Unit = {},
-    onEditLayer: (String) -> Unit = {},
     onGroupGestureStart: () -> Unit = {},
     onGroupGestureEnd: () -> Unit = {},
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit =
@@ -496,7 +497,7 @@ fun PreviewCanvas(
                         val videoWheelMatrix = remember(clip.id, activeColorWheels) {
                             colorWheelMatrixForClip(clip, activeColorWheels)
                         }
-                        MaskedClipContent(mask = clip.mask) {
+                        MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -630,7 +631,6 @@ fun PreviewCanvas(
                                             )
                                         },
                                         onDelete = { onDeleteLayer(clip.id) },
-                                        onEdit = { onEditLayer(clip.id) }
                                     )
                                 }
                             }
@@ -653,7 +653,7 @@ fun PreviewCanvas(
                             else -> Color.Transparent
                         }
 
-                        MaskedClipContent(mask = clip.mask) {
+                        MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
                             Box(
                                 modifier = Modifier
                                     .matchParentSize()
@@ -771,7 +771,8 @@ fun PreviewCanvas(
                                                         if (hasMulti && lastDist > 1f) {
                                                             accumZoom *= dist / lastDist
                                                             accumRot += Math.toDegrees(
-                                                                (angle - lastAngle).toDouble()
+                                                                normalizeAngle(angle - lastAngle)
+                                                                    .toDouble()
                                                             ).toFloat()
                                                         }
                                                         lastDist = dist
@@ -882,7 +883,6 @@ fun PreviewCanvas(
                                             )
                                         },
                                         onDelete = { onDeleteLayer(clip.id) },
-                                        onEdit = { onEditLayer(clip.id) }
                                     )
                                 }
                             }
@@ -902,16 +902,19 @@ fun PreviewCanvas(
                         val isMulti = clip.id in multiSelectedIds
 
                         Box(modifier = Modifier.fillMaxSize()) {
-                            // Visualizer rendered on full canvas
-                            VisualizerOverlay(
-                                state = vs,
-                                visualizerClip = clip,
-                                allClips = clips,
-                                currentPosMs = currentPosMs,
-                                isPlaying = isPlaying,
-                                enabled = true,
-                                modifier = Modifier.fillMaxSize()
-                            )
+                            MaskedClipContent(
+                                mask = maskAtClipTime(clip, currentPosMs)
+                            ) {
+                                VisualizerOverlay(
+                                    state = vs,
+                                    visualizerClip = clip,
+                                    allClips = clips,
+                                    currentPosMs = currentPosMs,
+                                    isPlaying = isPlaying,
+                                    enabled = true,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
 
                             // Interactive gesture box matching visualizer bounds
                             Box(
@@ -971,7 +974,8 @@ fun PreviewCanvas(
                                                         if (hasMulti && lastDist > 1f) {
                                                             accumZoom *= dist / lastDist
                                                             accumRot += Math.toDegrees(
-                                                                (angle - lastAngle).toDouble()
+                                                                normalizeAngle(angle - lastAngle)
+                                                                    .toDouble()
                                                             ).toFloat()
                                                         }
                                                         lastDist = dist
@@ -1035,7 +1039,6 @@ fun PreviewCanvas(
                                             )
                                         },
                                         onDelete = { onDeleteLayer(clip.id) },
-                                        onEdit = { onEditLayer(clip.id) }
                                     )
                                 }
                             }
@@ -1058,7 +1061,7 @@ fun PreviewCanvas(
                             else -> Color.Transparent
                         }
 
-                        MaskedClipContent(mask = clip.mask) {
+                        MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
                             Box(
                                 modifier = Modifier
                                     .matchParentSize()
@@ -1135,7 +1138,8 @@ fun PreviewCanvas(
                                                         if (hasMulti && lastDist > 1f) {
                                                             accumZoom *= dist / lastDist
                                                             accumRot += Math.toDegrees(
-                                                                (angle - lastAngle).toDouble()
+                                                                normalizeAngle(angle - lastAngle)
+                                                                    .toDouble()
                                                             ).toFloat()
                                                         }
                                                         lastDist = dist
@@ -1214,7 +1218,6 @@ fun PreviewCanvas(
                                             )
                                         },
                                         onDelete = { onDeleteLayer(clip.id) },
-                                        onEdit = { onEditLayer(clip.id) }
                                     )
                                 }
                             }
@@ -1224,53 +1227,55 @@ fun PreviewCanvas(
                     // TEXT
                     clip.isTextClip -> {
                         val st = clip.textState ?: return@forEach
-                        InteractiveTextOverlay(
-                            clip = clip,
-                            textState = st,
-                            canvasW = canvasW,
-                            canvasH = canvasH,
-                            currentPosMs = currentPosMs,
-                            isSelected = clip.id == selectedClipId,
-                            isMulti = clip.id in multiSelectedIds,
-                            onSelect = { onClipSelected(clip.id) },
-                            onGroupGestureStart = onGroupGestureStart,
-                            onGroupGestureEnd = onGroupGestureEnd,
-                            onGroupGesture = onGroupGesture,
-                            onPositionChanged = { x, y ->
-                                onTextPositionChanged(clip.id, x, y)
-                            },
-                            onTransformChanged = { s, r ->
-                                onTextTransformChanged(clip.id, s, r)
-                            },
-                            onDeleteLayer = { onDeleteLayer(clip.id) },
-                            onEditLayer = { onEditLayer(clip.id) }
-                        )
+                        MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
+                            InteractiveTextOverlay(
+                                clip = clip,
+                                textState = st,
+                                canvasW = canvasW,
+                                canvasH = canvasH,
+                                currentPosMs = currentPosMs,
+                                isSelected = clip.id == selectedClipId,
+                                isMulti = clip.id in multiSelectedIds,
+                                onSelect = { onClipSelected(clip.id) },
+                                onGroupGestureStart = onGroupGestureStart,
+                                onGroupGestureEnd = onGroupGestureEnd,
+                                onGroupGesture = onGroupGesture,
+                                onPositionChanged = { x, y ->
+                                    onTextPositionChanged(clip.id, x, y)
+                                },
+                                onTransformChanged = { s, r ->
+                                    onTextTransformChanged(clip.id, s, r)
+                                },
+                                onDeleteLayer = { onDeleteLayer(clip.id) },
+                            )
+                        }
                     }
 
                     // STICKER
                     clip.isStickerClip -> {
                         val ss = clip.stickerState ?: return@forEach
-                        InteractiveStickerOverlay(
-                            clip = clip,
-                            stickerState = ss,
-                            canvasW = canvasW,
-                            canvasH = canvasH,
-                            currentPosMs = currentPosMs,
-                            isSelected = clip.id == selectedClipId,
-                            isMulti = clip.id in multiSelectedIds,
-                            onSelect = { onClipSelected(clip.id) },
-                            onGroupGestureStart = onGroupGestureStart,
-                            onGroupGestureEnd = onGroupGestureEnd,
-                            onGroupGesture = onGroupGesture,
-                            onPositionChanged = { x, y ->
-                                onStickerPositionChanged(clip.id, x, y)
-                            },
-                            onTransformChanged = { s, r ->
-                                onStickerTransformChanged(clip.id, s, r)
-                            },
-                            onDeleteLayer = { onDeleteLayer(clip.id) },
-                            onEditLayer = { onEditLayer(clip.id) }
-                        )
+                        MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
+                            InteractiveStickerOverlay(
+                                clip = clip,
+                                stickerState = ss,
+                                canvasW = canvasW,
+                                canvasH = canvasH,
+                                currentPosMs = currentPosMs,
+                                isSelected = clip.id == selectedClipId,
+                                isMulti = clip.id in multiSelectedIds,
+                                onSelect = { onClipSelected(clip.id) },
+                                onGroupGestureStart = onGroupGestureStart,
+                                onGroupGestureEnd = onGroupGestureEnd,
+                                onGroupGesture = onGroupGesture,
+                                onPositionChanged = { x, y ->
+                                    onStickerPositionChanged(clip.id, x, y)
+                                },
+                                onTransformChanged = { s, r ->
+                                    onStickerTransformChanged(clip.id, s, r)
+                                },
+                                onDeleteLayer = { onDeleteLayer(clip.id) },
+                            )
+                        }
                     }
                 }
             }
@@ -1933,7 +1938,6 @@ private fun InteractiveTextOverlay(
     onPositionChanged: (Float, Float) -> Unit,
     onTransformChanged: (Float, Float) -> Unit,
     onDeleteLayer: () -> Unit,
-    onEditLayer: () -> Unit
 ) {
     if (textState.content.isBlank()) return
 
@@ -2058,9 +2062,6 @@ private fun InteractiveTextOverlay(
     val textWidthDp = with(density) { finalMeasure.size.width.toDp().value }
     val textHeightDp = with(density) { finalMeasure.size.height.toDp().value }
 
-    val clampedX = sampled.x.coerceIn(-50f, 150f)
-    val clampedY = sampled.y.coerceIn(0f, 100f)
-
     val solidColor = Color(textState.color)
 
     val gradient: Brush? = if (textState.gradientEnabled) {
@@ -2115,8 +2116,8 @@ private fun InteractiveTextOverlay(
                 .graphicsLayer {
                     // ✅ FIX: use canvasW / canvasH (DP), NOT canvasWpx/canvasHpx
                     // translationX/Y are interpreted as DP by Compose.
-                    val posTx = (clampedX - 50f) / 100f * canvasW
-                    val posTy = (clampedY - 50f) / 100f * canvasH
+                    val posTx = (sampled.x - 50f) / 100f * canvasW
+                    val posTy = (sampled.y - 50f) / 100f * canvasH
                     translationX = posTx + frame.translateX
                     translationY = posTy + frame.translateY
                     scaleX = (sampled.scale / 100f) * frame.scaleX
@@ -2136,14 +2137,14 @@ private fun InteractiveTextOverlay(
                         )
                     } else Modifier
                 )
-                .pointerInput(clip.id, isSelected, isMulti, canvasW, canvasH) {
+                .pointerInput(clip.id, canvasW, canvasH) {
                     awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = true)
+                        awaitFirstDown(requireUnconsumed = false)
                         isDragging = true
                         onGroupGestureStart()
 
-                        val baseX = clampedX
-                        val baseY = clampedY
+                        val baseX = sampled.x
+                        val baseY = sampled.y
                         val baseScale = sampled.scale
                         val baseRot = sampled.rotation
 
@@ -2168,8 +2169,19 @@ private fun InteractiveTextOverlay(
                                 if (pressed.size == 1) {
                                     val ch = pressed.first()
                                     val pan = ch.position - ch.previousPosition
-                                    accumPanX += pan.x
-                                    accumPanY += pan.y
+                                    val rotation = Math.toRadians(
+                                        (sampled.rotation + frame.rotationZ).toDouble()
+                                    )
+                                    val scaleX = (sampled.scale / 100f) * frame.scaleX
+                                    val scaleY = (sampled.scale / 100f) * frame.scaleY
+                                    accumPanX += (
+                                            pan.x * scaleX * cos(rotation) -
+                                                    pan.y * scaleY * sin(rotation)
+                                            ).toFloat()
+                                    accumPanY += (
+                                            pan.x * scaleX * sin(rotation) +
+                                                    pan.y * scaleY * cos(rotation)
+                                            ).toFloat()
                                     ch.consume()
                                 } else if (pressed.size >= 2) {
                                     val c1 = pressed[0]
@@ -2181,7 +2193,7 @@ private fun InteractiveTextOverlay(
                                     if (hasMultiGesture && lastDist > 1f) {
                                         accumZoom *= dist / lastDist
                                         accumRot += Math.toDegrees(
-                                            (angle - lastAngle).toDouble()
+                                            normalizeAngle(angle - lastAngle).toDouble()
                                         ).toFloat()
                                     }
                                     lastDist = dist
@@ -2194,16 +2206,14 @@ private fun InteractiveTextOverlay(
                                 val rawX = baseX + accumPanX / canvasWpx * 100f
                                 val rawY = baseY + accumPanY / canvasHpx * 100f
 
-                                val cx = rawX.coerceIn(-50f, 150f)
-                                val cy = rawY.coerceIn(0f, 100f)
                                 val newScale = (baseScale * accumZoom)
                                     .coerceIn(10f, 500f)
                                 val newRot = baseRot + accumRot
 
                                 if (isMulti) {
-                                    onGroupGesture(clip.id, cx, cy, newScale, newRot)
+                                    onGroupGesture(clip.id, rawX, rawY, newScale, newRot)
                                 } else {
-                                    onPositionChanged(cx, cy)
+                                    onPositionChanged(rawX, rawY)
                                     onTransformChanged(newScale, newRot)
                                 }
                             }
@@ -2324,7 +2334,6 @@ private fun InteractiveTextOverlay(
                         onGestureEnd = onGroupGestureEnd,
                         onTransformChanged = onTransformChanged,
                         onDelete = onDeleteLayer,
-                        onEdit = onEditLayer
                     )
                 }
             }
@@ -2352,7 +2361,6 @@ private fun InteractiveStickerOverlay(
     onPositionChanged: (Float, Float) -> Unit,
     onTransformChanged: (Float, Float) -> Unit,
     onDeleteLayer: () -> Unit,
-    onEditLayer: () -> Unit
 ) {
     if (stickerState.emoji.isBlank()) return
 
@@ -2464,7 +2472,7 @@ private fun InteractiveStickerOverlay(
                                     if (hasMultiGesture && lastDist > 1f) {
                                         accumZoom *= dist / lastDist
                                         accumRot += Math.toDegrees(
-                                            (angle - lastAngle).toDouble()
+                                            normalizeAngle(angle - lastAngle).toDouble()
                                         ).toFloat()
                                     }
                                     lastDist = dist
@@ -2514,7 +2522,6 @@ private fun InteractiveStickerOverlay(
                     onGestureEnd = onGroupGestureEnd,
                     onTransformChanged = onTransformChanged,
                     onDelete = onDeleteLayer,
-                    onEdit = onEditLayer
                 )
             }
         }
@@ -2534,8 +2541,7 @@ private fun BoxScope.LayerTransformHandles(
     onGestureStart: () -> Unit,
     onGestureEnd: () -> Unit,
     onTransformChanged: (Float, Float) -> Unit,
-    onDelete: () -> Unit,
-    onEdit: () -> Unit
+    onDelete: () -> Unit
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -2564,26 +2570,7 @@ private fun BoxScope.LayerTransformHandles(
             onGestureStart = onGestureStart,
             onGestureEnd = onGestureEnd,
             onTransformChanged = onTransformChanged,
-            onDelete = onDelete,
-            onEdit = onEdit
-        )
-        TransformHandle(
-            modifier = Modifier.align(Alignment.TopEnd).offset(x = 11.dp, y = (-11).dp),
-            clipId = clipId,
-            corner = TransformHandleCorner.Edit,
-            boundsWidthPx = boundsWidthPx,
-            boundsHeightPx = boundsHeightPx,
-            handleSizePx = handleSizePx,
-            scale = scale,
-            rotation = rotation,
-            positionX = positionX,
-            positionY = positionY,
-            onPositionChanged = onPositionChanged,
-            onGestureStart = onGestureStart,
-            onGestureEnd = onGestureEnd,
-            onTransformChanged = onTransformChanged,
-            onDelete = onDelete,
-            onEdit = onEdit
+            onDelete = onDelete
         )
         TransformHandle(
             modifier = Modifier.align(Alignment.BottomStart).offset(x = (-11).dp, y = 11.dp),
@@ -2600,8 +2587,7 @@ private fun BoxScope.LayerTransformHandles(
             onGestureStart = onGestureStart,
             onGestureEnd = onGestureEnd,
             onTransformChanged = onTransformChanged,
-            onDelete = onDelete,
-            onEdit = onEdit
+            onDelete = onDelete
         )
         TransformHandle(
             modifier = Modifier.align(Alignment.BottomEnd).offset(x = 11.dp, y = 11.dp),
@@ -2618,15 +2604,13 @@ private fun BoxScope.LayerTransformHandles(
             onGestureStart = onGestureStart,
             onGestureEnd = onGestureEnd,
             onTransformChanged = onTransformChanged,
-            onDelete = onDelete,
-            onEdit = onEdit
+            onDelete = onDelete
         )
     }
 }
 
 private enum class TransformHandleCorner {
     Delete,
-    Edit,
     Rotate,
     Scale
 }
@@ -2647,8 +2631,7 @@ private fun TransformHandle(
     onGestureStart: () -> Unit,
     onGestureEnd: () -> Unit,
     onTransformChanged: (Float, Float) -> Unit,
-    onDelete: () -> Unit,
-    onEdit: () -> Unit
+    onDelete: () -> Unit
 ) {
     val currentScale = rememberUpdatedState(scale)
     val currentRotation = rememberUpdatedState(rotation)
@@ -2659,7 +2642,6 @@ private fun TransformHandle(
     val currentOnGestureStart = rememberUpdatedState(onGestureStart)
     val currentOnGestureEnd = rememberUpdatedState(onGestureEnd)
     val currentOnDelete = rememberUpdatedState(onDelete)
-    val currentOnEdit = rememberUpdatedState(onEdit)
 
     Box(
         modifier = modifier
@@ -2668,7 +2650,6 @@ private fun TransformHandle(
             .background(
                 when (corner) {
                     TransformHandleCorner.Delete -> Color(0xFFE5484D)
-                    TransformHandleCorner.Edit -> Color(0xFF7C3AED)
                     TransformHandleCorner.Rotate,
                     TransformHandleCorner.Scale -> Color(0xFF171A22)
                 }
@@ -2678,10 +2659,6 @@ private fun TransformHandle(
                 when (corner) {
                     TransformHandleCorner.Delete -> detectTapGestures {
                         currentOnDelete.value()
-                    }
-
-                    TransformHandleCorner.Edit -> detectTapGestures {
-                        currentOnEdit.value()
                     }
 
                     TransformHandleCorner.Rotate,
@@ -2706,6 +2683,8 @@ private fun TransformHandle(
                         val startAngle = atan2(startY, startX)
                         val startScale = currentScale.value
                         val startRotation = currentRotation.value
+                        var previousAngle = startAngle
+                        var accumulatedRotation = 0f
                         var dragX = 0f
                         var dragY = 0f
 
@@ -2725,7 +2704,10 @@ private fun TransformHandle(
                                 currentY.toDouble()
                             ).toFloat()
                             val currentAngle = atan2(currentY, currentX)
-                            val angleDelta = normalizeAngle(currentAngle - startAngle)
+                            accumulatedRotation += normalizeAngle(
+                                currentAngle - previousAngle
+                            )
+                            previousAngle = currentAngle
                             if (corner == TransformHandleCorner.Scale) {
                                 currentOnTransformChanged.value(
                                     (startScale * currentDistance / startDistance)
@@ -2736,7 +2718,9 @@ private fun TransformHandle(
                                 currentOnTransformChanged.value(
                                     startScale,
                                     startRotation +
-                                            Math.toDegrees(angleDelta.toDouble()).toFloat()
+                                            Math.toDegrees(
+                                                accumulatedRotation.toDouble()
+                                            ).toFloat()
                                 )
                             }
                         }
@@ -2750,7 +2734,6 @@ private fun TransformHandle(
         Text(
             text = when (corner) {
                 TransformHandleCorner.Delete -> "×"
-                TransformHandleCorner.Edit -> "T"
                 TransformHandleCorner.Rotate -> "⟳"
                 TransformHandleCorner.Scale -> "⤢"
             },

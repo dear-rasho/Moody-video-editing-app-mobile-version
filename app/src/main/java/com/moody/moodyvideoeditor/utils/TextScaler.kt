@@ -78,8 +78,11 @@ object TextScaler {
     // ═══════════════════════════════════════════════════════════
     //  LINE HEIGHT
     // ═══════════════════════════════════════════════════════════
-    fun lineHeight(fontSizeDp: Float, multiplier: Float): Float =
-        fontSizeDp * multiplier.coerceIn(0.8f, 3f)
+    fun lineHeight(fontSizeDp: Float, multiplier: Float): Float {
+        val safeMultiplier = multiplier.takeIf { it.isFinite() }
+            ?.coerceIn(0.1f, 200f) ?: 1.2f
+        return fontSizeDp * safeMultiplier
+    }
 
     // ═══════════════════════════════════════════════════════════
     //  POSITION CLAMP — simple, matches export
