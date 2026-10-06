@@ -179,6 +179,7 @@ fun EditorScreen(
     // Brush state
     var isDrawingMode by remember { mutableStateOf(false) }
     var isMaskPenMode by remember { mutableStateOf(false) }
+    var isMaskHandMode by remember { mutableStateOf(false) }
     var brushType by remember { mutableStateOf(BrushType.PEN) }
     var brushColor by remember { mutableStateOf(0xFFFF0000L) }
     var brushWidth by remember { mutableFloatStateOf(20f) }
@@ -772,6 +773,9 @@ fun EditorScreen(
                 activeBrushWidth = brushWidth,
                 activeBrushOpacity = brushOpacity,
                 isMaskPenMode = isMaskPenMode,
+                isMaskHandMode = isMaskHandMode,
+                onMaskGestureStart = { viewModel.beginGroupGesture() },
+                onMaskGestureEnd = { viewModel.endGroupGesture() },
                 onBrushStrokeComplete = { stroke ->
                     val targetBrush = state.selectedClip?.takeIf { it.isBrushClip }
                         ?: state.clips.lastOrNull { it.isBrushClip }
@@ -787,6 +791,7 @@ fun EditorScreen(
                 },
                 onMaskPointToggle = { index -> viewModel.toggleMaskPointSmooth(index) },
                 onMaskPointDelete = { index -> viewModel.deleteMaskPoint(index) },
+                onMaskMove = { dx, dy -> viewModel.moveMaskBy(dx, dy) },
                 onClosePath = { viewModel.setMaskClosed(true) },
                 onClipSelected = { clipId ->
                     val clip = state.clips.firstOrNull { it.id == clipId }
@@ -1286,11 +1291,19 @@ fun EditorScreen(
                     hasClipSelected = selected != null,
                     hasKeyframeAtPlayhead = viewModel.hasMaskKeyframeAtPlayhead(),
                     isPenMode = isMaskPenMode,
+                    isHandMode = isMaskHandMode,
                     onStateChanged = { viewModel.updateMask(it) },
                     onTypeSelected = { viewModel.setMaskType(it) },
                     onAddKeyframe = { viewModel.addMaskKeyframe() },
                     onClearKeyframes = { viewModel.clearMaskKeyframes() },
-                    onPenToolToggle = { isMaskPenMode = !isMaskPenMode },
+                    onPenToolToggle = {
+                        isMaskPenMode = !isMaskPenMode
+                        if (isMaskPenMode) isMaskHandMode = false
+                    },
+                    onHandToolToggle = {
+                        isMaskHandMode = !isMaskHandMode
+                        if (isMaskHandMode) isMaskPenMode = false
+                    },
                     onUndoPoint = { viewModel.removeLastMaskPoint() },
                     onClearPoints = { viewModel.clearMaskPoints() },
                     onClosedToggle = {
@@ -1301,6 +1314,7 @@ fun EditorScreen(
                     onClose = {
                         activePanel = null
                         isMaskPenMode = false
+                        isMaskHandMode = false
                     }
                 )
 

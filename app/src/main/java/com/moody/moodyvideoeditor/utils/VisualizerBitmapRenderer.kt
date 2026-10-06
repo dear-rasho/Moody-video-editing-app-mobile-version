@@ -272,15 +272,23 @@ object VisualizerBitmapRenderer {
                                     (timelineOffset * speed).toLong()
                             val elapsedSec = timelineMsLocal / 1000f
 
-                            VisualizerBitmapHelper.drawVisualizerFrame(
+                            MaskEngine.drawMaskedLayer(
                                 canvas = canvas,
-                                state = state,
-                                relativeMs = relativeMs,
-                                elapsedSec = elapsedSec,
-                                W = W, H = H,
-                                imageBitmap = imageBmp,
-                                instanceKey = "export_${vc.id}"
-                            )
+                                state = vc.mask,
+                                timeSec = timelineOffset / 1000f,
+                                viewWidth = W.toFloat(),
+                                viewHeight = H.toFloat()
+                            ) {
+                                VisualizerBitmapHelper.drawVisualizerFrame(
+                                    canvas = canvas,
+                                    state = state,
+                                    relativeMs = relativeMs,
+                                    elapsedSec = elapsedSec,
+                                    W = W, H = H,
+                                    imageBitmap = imageBmp,
+                                    instanceKey = "export_${vc.id}"
+                                )
+                            }
                         }
 
                         FileOutputStream(targetFile).use { fos ->

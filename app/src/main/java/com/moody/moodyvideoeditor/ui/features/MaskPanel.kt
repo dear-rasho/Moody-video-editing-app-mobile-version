@@ -53,11 +53,13 @@ fun MaskPanel(
     hasClipSelected: Boolean,
     hasKeyframeAtPlayhead: Boolean,
     isPenMode: Boolean,
+    isHandMode: Boolean,
     onStateChanged: (MaskState) -> Unit,
     onTypeSelected: (MaskType) -> Unit,
     onAddKeyframe: () -> Unit,
     onClearKeyframes: () -> Unit,
     onPenToolToggle: () -> Unit,
+    onHandToolToggle: () -> Unit,
     onUndoPoint: () -> Unit,
     onClearPoints: () -> Unit,
     onClosedToggle: () -> Unit,
@@ -310,6 +312,33 @@ fun MaskPanel(
                 }
 
                 MaskType.NONE -> {}
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(32.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (isHandMode) Color(0xFF22C55E) else Color(0xFF181818))
+                        .pointerInput(isHandMode) {
+                            detectTapGestures { onHandToolToggle() }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        if (isHandMode) "✋ Move Mask ON" else "✋ Move Mask",
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                if (current.type != MaskType.CUSTOM) {
+                    Spacer(Modifier.weight(1f))
+                }
             }
 
             TextInputRow(

@@ -218,6 +218,8 @@ fun PreviewCanvas(
     onBrushStrokeComplete: (BrushStroke) -> Unit = {},
     isMaskPenMode: Boolean = false,
     isMaskHandMode: Boolean = false,
+    onMaskGestureStart: () -> Unit = {},
+    onMaskGestureEnd: () -> Unit = {},
     onMaskPointAdd: (Float, Float) -> Unit = { _, _ -> },
     onMaskAnchorMove: (Int, Float, Float) -> Unit = { _, _, _ -> },
     onMaskHandleMove: (Int, Boolean, Float, Float) -> Unit = { _, _, _, _ -> },
@@ -1320,18 +1322,22 @@ fun PreviewCanvas(
             }
 
             // MASK PEN
-            if (isMaskPenMode && selectedClip != null) {
+            if ((isMaskPenMode || isMaskHandMode) && selectedClip != null) {
                 MaskPenOverlay(
                     maskState = maskToRender
                         ?: MaskState(type = MaskType.CUSTOM),
                     canvasW = canvasW,
                     canvasH = canvasH,
+                    isHandMode = isMaskHandMode,
+                    onGestureStart = onMaskGestureStart,
+                    onGestureEnd = onMaskGestureEnd,
                     onTapAddPoint = onMaskPointAdd,
                     onAnchorMove = onMaskAnchorMove,
                     onHandleMove = onMaskHandleMove,
                     onTogglePoint = onMaskPointToggle,
                     onDeletePoint = onMaskPointDelete,
-                    onClosePath = onClosePath
+                    onClosePath = onClosePath,
+                    onMaskMove = onMaskMove
                 )
             }
 
@@ -1409,6 +1415,11 @@ fun PreviewCanvas(
 
 //  MASKED CLIP CONTENT WRAPPER
 
+private fun maskAtClipTime(clip: EditorClip, currentPosMs: Long): MaskState {
+    val localTimeSec = ((currentPosMs - clip.timelineStartMs).coerceAtLeast(0L)) / 1000f
+    return MaskEngine.sampleAt(clip.mask, localTimeSec)
+}
+
 @Composable
 private fun MaskedClipContent(
     mask: MaskState,
@@ -1445,21 +1456,31 @@ private fun DrawScope.drawMaskBlend(mask: MaskState, w: Float, h: Float) {
         val featherPx = kotlin.math.abs(mask.feather / 100f * 1.5f)
         val alphaInt = (mask.opacity / 100f * 255).toInt().coerceIn(0, 255)
 
-        val paint = Paint().apply {
-            isAntiAlias = true
-            style = Paint.Style.FILL
-            color = android.graphics.Color.WHITE
-            alpha = alphaInt
-            xfermode = PorterDuffXfermode(
-                if (mask.isInverted) PorterDuff.Mode.DST_OUT
-                else PorterDuff.Mode.DST_IN
-            )
-            if (featherPx > 0.5f) {
+        if (featherPx > 0.5f) {
+            val paint = Paint().apply {
+                isAntiAlias = true
+                style = Paint.Style.FILL
+                color = android.graphics.Color.WHITE
+                alpha = alphaInt
+                xfermode = PorterDuffXfermode(
+                    if (mask.isInverted) PorterDuff.Mode.DST_OUT
+                    else PorterDuff.Mode.DST_IN
+                )
                 maskFilter = BlurMaskFilter(featherPx, BlurMaskFilter.Blur.NORMAL)
             }
+            nativeCanvas.drawPath(path.asAndroidPath(), paint)
+            paint.reset()
+        } else {
+            drawPath(
+                path = path,
+                color = Color.White.copy(alpha = alphaInt / 255f),
+                blendMode = if (mask.isInverted) {
+                    androidx.compose.ui.graphics.BlendMode.DstOut
+                } else {
+                    androidx.compose.ui.graphics.BlendMode.DstIn
+                }
+            )
         }
-        nativeCanvas.drawPath(path.asAndroidPath(), paint)
-        paint.reset()
     }
 }
 
@@ -1586,7 +1607,8 @@ private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
                             c2.first, c2.second,
                             end.first, end.second
                         )
-                    } else close()
+                    }
+                    close()
                 }
             }
 
@@ -1601,12 +1623,16 @@ private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
 @Composable
 private fun MaskPenOverlay(
     maskState: MaskState, canvasW: Float, canvasH: Float,
+    isHandMode: Boolean,
+    onGestureStart: () -> Unit,
+    onGestureEnd: () -> Unit,
     onTapAddPoint: (Float, Float) -> Unit,
     onAnchorMove: (Int, Float, Float) -> Unit,
     onHandleMove: (Int, Boolean, Float, Float) -> Unit,
     onTogglePoint: (Int) -> Unit,
     onDeletePoint: (Int) -> Unit,
-    onClosePath: () -> Unit
+    onClosePath: () -> Unit,
+    onMaskMove: (Float, Float) -> Unit
 ) {
     val density = LocalDensity.current
     val pts = maskState.customPoints
@@ -1624,13 +1650,38 @@ private fun MaskPenOverlay(
         modifier = Modifier
             .fillMaxSize()
             .onSizeChanged { viewSizePx = it }
-            .pointerInput(pts.size, maskState.type, isClosed) {
+            .pointerInput(pts.size, maskState.type, isClosed, isHandMode) {
                 awaitEachGesture {
                     val viewW = viewSizePx.width.toFloat()
                     val viewH = viewSizePx.height.toFloat()
                     if (viewW <= 0f || viewH <= 0f) return@awaitEachGesture
 
                     val down = awaitFirstDown(requireUnconsumed = false)
+
+                    if (isHandMode) {
+                        down.consume()
+                        onGestureStart()
+                        var previous = down.position
+                        var dragging = true
+                        while (dragging) {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.filter { it.pressed }
+                            if (pressed.isEmpty()) {
+                                dragging = false
+                            } else {
+                                pressed.forEach { change ->
+                                    val delta = change.position - previous
+                                    if (delta.x != 0f || delta.y != 0f) {
+                                        onMaskMove(delta.x / viewW, delta.y / viewH)
+                                    }
+                                    previous = change.position
+                                    change.consume()
+                                }
+                            }
+                        }
+                        onGestureEnd()
+                        return@awaitEachGesture
+                    }
 
                     if (!isClosed && pts.size >= 3) {
                         val first = pts[0]

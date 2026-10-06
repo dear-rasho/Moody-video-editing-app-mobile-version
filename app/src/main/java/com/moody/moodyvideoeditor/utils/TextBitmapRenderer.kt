@@ -258,6 +258,7 @@ object TextBitmapRenderer {
                 val analysis = analyzeFrame(
                     timelineMs = timelineMs,
                     textClips = layerClips,
+                    imageClips = imageClips,
                     overlayClips = overlayClips
                 )
 
@@ -287,9 +288,14 @@ object TextBitmapRenderer {
                                 val ov = extractOverlay(clip)
                                 if (ov != null && ov.isActive) {
                                     overlayBuffer?.let {
-                                        drawOverlayOnCanvas(
-                                            canvas, it, localSec, ov, W, H
-                                        )
+                                        MaskEngine.drawMaskedLayer(
+                                            canvas, clip.mask, localSec,
+                                            W.toFloat(), H.toFloat()
+                                        ) {
+                                            drawOverlayOnCanvas(
+                                                canvas, it, localSec, ov, W, H
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -301,9 +307,19 @@ object TextBitmapRenderer {
                             ) {
                                 val localSec = (timelineMs - clip.timelineStartMs) / 1000f
                                 if (clip.isTextClip) {
-                                    drawTextClipAtTime(canvas, clip, localSec, W, H)
+                                    MaskEngine.drawMaskedLayer(
+                                        canvas, clip.mask, localSec,
+                                        W.toFloat(), H.toFloat()
+                                    ) {
+                                        drawTextClipAtTime(canvas, clip, localSec, W, H)
+                                    }
                                 } else if (clip.isStickerClip) {
-                                    drawStickerClipAtTime(canvas, clip, localSec, W, H)
+                                    MaskEngine.drawMaskedLayer(
+                                        canvas, clip.mask, localSec,
+                                        W.toFloat(), H.toFloat()
+                                    ) {
+                                        drawStickerClipAtTime(canvas, clip, localSec, W, H)
+                                    }
                                 }
                             }
                         }
@@ -314,7 +330,12 @@ object TextBitmapRenderer {
                             ) {
                                 val localSec = (timelineMs - clip.timelineStartMs) / 1000f
                                 imageBitmaps[clip.id]?.let { image ->
-                                    drawImageClip(canvas, clip, image, localSec, W, H)
+                                    MaskEngine.drawMaskedLayer(
+                                        canvas, clip.mask, localSec,
+                                        W.toFloat(), H.toFloat()
+                                    ) {
+                                        drawImageClip(canvas, clip, image, localSec, W, H)
+                                    }
                                 }
                             }
                         }
@@ -375,6 +396,7 @@ object TextBitmapRenderer {
     private fun analyzeFrame(
         timelineMs: Long,
         textClips: List<EditorClip>,
+        imageClips: List<EditorClip>,
         overlayClips: List<EditorClip>
     ): FrameAnalysis {
         val visibleKey = mutableSetOf<String>()
@@ -409,6 +431,16 @@ object TextBitmapRenderer {
                         }
                     }
                     if (clip.keyframes.isNotEmpty()) anyAnimated = true
+                }
+                if (clip.mask.keyframes.isNotEmpty()) anyAnimated = true
+            }
+        }
+
+        imageClips.forEach { clip ->
+            if (timelineMs >= clip.timelineStartMs && timelineMs < clip.timelineEndMs) {
+                visibleKey.add(clip.id)
+                if (clip.keyframes.isNotEmpty() || clip.mask.keyframes.isNotEmpty()) {
+                    anyAnimated = true
                 }
             }
         }

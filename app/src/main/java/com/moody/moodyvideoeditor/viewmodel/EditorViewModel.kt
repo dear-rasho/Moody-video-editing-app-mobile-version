@@ -2008,7 +2008,42 @@ class EditorViewModel : ViewModel() {
 
     fun updateMask(newMask: MaskState) {
         val sel = _state.value.selectedClip ?: return
-        updateClipDirect(sel.id) { it.copy(mask = newMask) }
+        val timeMs = (_state.value.currentPosMs - sel.timelineStartMs)
+            .coerceIn(0L, sel.durationMs)
+        val updatedMask = if (sel.mask.keyframes.isNotEmpty()) {
+            MaskEngine.addKeyframe(
+                newMask,
+                maskKeyframeAt(newMask, timeMs)
+            )
+        } else {
+            newMask
+        }
+        updateClipDirect(sel.id) { it.copy(mask = updatedMask) }
+    }
+
+    private fun currentMaskAtPlayhead(clip: EditorClip): MaskState {
+        val timeMs = (_state.value.currentPosMs - clip.timelineStartMs)
+            .coerceIn(0L, clip.durationMs)
+        return MaskEngine.sampleAt(clip.mask, timeMs / 1000f)
+    }
+
+    fun moveMaskBy(deltaX: Float, deltaY: Float) {
+        if (!deltaX.isFinite() || !deltaY.isFinite()) return
+        val state = _state.value
+        val clip = state.selectedClip ?: return
+        val sampled = currentMaskAtPlayhead(clip)
+        val moved = sampled.copy(
+            centerX = sampled.centerX + deltaX,
+            centerY = sampled.centerY + deltaY,
+            positionY = sampled.positionY + deltaY,
+            customPoints = sampled.customPoints.map { point ->
+                point.copy(
+                    x = point.x + deltaX,
+                    y = point.y + deltaY
+                )
+            }
+        )
+        updateMask(moved)
     }
 
     fun setMaskType(type: MaskType) {
@@ -2024,21 +2059,31 @@ class EditorViewModel : ViewModel() {
 
     fun addMaskKeyframe() {
         val sel = _state.value.selectedClip ?: return
-        val m = sel.mask
+        val m = currentMaskAtPlayhead(sel)
         if (!m.isActive) return
         val timeMs = _state.value.currentPosMs - sel.timelineStartMs
         if (timeMs < 0) return
-        val kf = MaskKeyframe(
-            timeMs = timeMs, centerX = m.centerX, centerY = m.centerY,
-            radius = m.radius, width = m.width, height = m.height,
-            rotation = m.rotation, cornerRadius = m.cornerRadius,
-            scale = m.scale, positionY = m.positionY, feather = m.feather,
-            expansion = m.expansion, opacity = m.opacity,
-            customPoints = m.customPoints
-        )
+        val kf = maskKeyframeAt(m, timeMs)
         val newMask = MaskEngine.addKeyframe(m, kf)
         updateClipDirect(sel.id) { it.copy(mask = newMask) }
     }
+
+    private fun maskKeyframeAt(mask: MaskState, timeMs: Long) = MaskKeyframe(
+        timeMs = timeMs,
+        centerX = mask.centerX,
+        centerY = mask.centerY,
+        radius = mask.radius,
+        width = mask.width,
+        height = mask.height,
+        rotation = mask.rotation,
+        cornerRadius = mask.cornerRadius,
+        scale = mask.scale,
+        positionY = mask.positionY,
+        feather = mask.feather,
+        expansion = mask.expansion,
+        opacity = mask.opacity,
+        customPoints = mask.customPoints
+    )
 
     fun clearMaskKeyframes() {
         val sel = _state.value.selectedClip ?: return
@@ -2054,34 +2099,30 @@ class EditorViewModel : ViewModel() {
 
     fun addMaskPoint(x: Float, y: Float) {
         val sel = _state.value.selectedClip ?: return
-        val m = sel.mask
+        val m = currentMaskAtPlayhead(sel)
         val baseMask = if (m.type != MaskType.CUSTOM) MaskState(type = MaskType.CUSTOM)
         else m
         val newPoint = MaskPoint(x = x.coerceIn(0f, 1f), y = y.coerceIn(0f, 1f))
-        updateClipDirect(sel.id) {
-            it.copy(
-                mask = baseMask.copy(
-                    type = MaskType.CUSTOM,
-                    customPoints = baseMask.customPoints + newPoint
-                )
+        updateMask(
+            baseMask.copy(
+                type = MaskType.CUSTOM,
+                customPoints = baseMask.customPoints + newPoint
             )
-        }
+        )
     }
 
     fun moveMaskAnchor(index: Int, x: Float, y: Float) {
         val sel = _state.value.selectedClip ?: return
-        val m = sel.mask
+        val m = currentMaskAtPlayhead(sel)
         if (index !in m.customPoints.indices) return
         val old = m.customPoints[index]
         val updated = old.copy(x = x.coerceIn(0f, 1f), y = y.coerceIn(0f, 1f))
-        updateClipDirect(sel.id) {
-            it.copy(mask = MaskEngine.updatePoint(m, index, updated))
-        }
+        updateMask(MaskEngine.updatePoint(m, index, updated))
     }
 
     fun moveMaskHandle(index: Int, isIn: Boolean, dx: Float, dy: Float) {
         val sel = _state.value.selectedClip ?: return
-        val m = sel.mask
+        val m = currentMaskAtPlayhead(sel)
         if (index !in m.customPoints.indices) return
         val old = m.customPoints[index]
         val updated = if (isIn) {
@@ -2095,14 +2136,12 @@ class EditorViewModel : ViewModel() {
                 handleInX = -dx, handleInY = -dy, hasHandles = true
             )
         }
-        updateClipDirect(sel.id) {
-            it.copy(mask = MaskEngine.updatePoint(m, index, updated))
-        }
+        updateMask(MaskEngine.updatePoint(m, index, updated))
     }
 
     fun toggleMaskPointSmooth(index: Int) {
         val sel = _state.value.selectedClip ?: return
-        val m = sel.mask
+        val m = currentMaskAtPlayhead(sel)
         if (index !in m.customPoints.indices) return
         val old = m.customPoints[index]
         val updated = if (old.hasHandles) {
@@ -2117,41 +2156,31 @@ class EditorViewModel : ViewModel() {
                 handleOutX = hx, handleOutY = hy, hasHandles = true
             )
         }
-        updateClipDirect(sel.id) {
-            it.copy(mask = MaskEngine.updatePoint(m, index, updated))
-        }
+        updateMask(MaskEngine.updatePoint(m, index, updated))
     }
 
     fun deleteMaskPoint(index: Int) {
         val sel = _state.value.selectedClip ?: return
-        val m = sel.mask
+        val m = currentMaskAtPlayhead(sel)
         if (index !in m.customPoints.indices) return
-        updateClipDirect(sel.id) {
-            it.copy(mask = MaskEngine.removePoint(m, index))
-        }
+        updateMask(MaskEngine.removePoint(m, index))
     }
 
     fun removeLastMaskPoint() {
         val sel = _state.value.selectedClip ?: return
-        val m = sel.mask
+        val m = currentMaskAtPlayhead(sel)
         if (m.customPoints.isEmpty()) return
-        updateClipDirect(sel.id) {
-            it.copy(mask = m.copy(customPoints = m.customPoints.dropLast(1)))
-        }
+        updateMask(m.copy(customPoints = m.customPoints.dropLast(1)))
     }
 
     fun clearMaskPoints() {
         val sel = _state.value.selectedClip ?: return
-        updateClipDirect(sel.id) {
-            it.copy(mask = it.mask.copy(customPoints = emptyList()))
-        }
+        updateMask(currentMaskAtPlayhead(sel).copy(customPoints = emptyList()))
     }
 
     fun setMaskClosed(closed: Boolean) {
         val sel = _state.value.selectedClip ?: return
-        updateClipDirect(sel.id) {
-            it.copy(mask = it.mask.copy(customClosed = closed))
-        }
+        updateMask(currentMaskAtPlayhead(sel).copy(customClosed = closed))
     }
 
     suspend fun createVisualizerClipWithBeats(context: Context): Boolean {

@@ -1,6 +1,9 @@
 package com.moody.moodyvideoeditor.utils
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.net.Uri
 import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
@@ -9,13 +12,16 @@ import com.arthenica.ffmpegkit.ReturnCode
 import com.moody.moodyvideoeditor.data.ColorFilterValues
 import com.moody.moodyvideoeditor.data.ColorWheelState
 import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.MotionConfig
 import com.moody.moodyvideoeditor.data.TransitionLibrary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.Locale
 
@@ -29,6 +35,7 @@ class FFmpegExecutor(
     private var isCancelled = false
     private var currentSession: FFmpegSession? = null
     private val audioCache = mutableMapOf<String, Boolean>()
+    private val maskSequenceDirectories = mutableListOf<File>()
 
     private var xfadeFallback: (() -> Unit)? = null
 
@@ -106,7 +113,11 @@ class FFmpegExecutor(
                 videoFiles to audioFiles
             }
 
-            if (clips.map { it.trackIndex }.distinct().size > 1) {
+            val maskSequences = renderMaskSequences(clips, targetW, targetH, fps)
+            if (
+                clips.map { it.trackIndex }.distinct().size > 1 ||
+                maskSequences.isNotEmpty()
+            ) {
                 exportLayeredTracks(
                     clips = clips,
                     allClips = allClips,
@@ -119,6 +130,7 @@ class FFmpegExecutor(
                     fps = fps,
                     bitrateKbps = bitrateKbps,
                     sequences = textSequences,
+                    maskSequences = maskSequences,
                     totalDurationMs = totalDurationMs
                 )
                 return
@@ -156,10 +168,108 @@ class FFmpegExecutor(
                 }
             }
         } catch (e: CancellationException) {
+            cleanupMaskSequences()
             throw e
         } catch (e: Exception) {
+            cleanupMaskSequences()
             Log.e("FFMPEG", "Export crash", e)
             onError("Export failed: ${e.message}")
+        }
+    }
+
+    private data class MaskFrameSequence(
+        val clipId: String,
+        val pattern: String,
+        val staticFile: File?,
+        val fps: Int,
+        val directory: File
+    )
+
+    private suspend fun renderMaskSequences(
+        clips: List<EditorClip>,
+        width: Int,
+        height: Int,
+        fps: Int
+    ): List<MaskFrameSequence> = withContext(Dispatchers.IO) {
+        val maskedClips = clips.filter { clip ->
+            val mask = clip.mask
+            mask.isActive && (
+                    mask.type != MaskType.CUSTOM ||
+                            (mask.customPoints.size >= 3 && mask.customClosed)
+                    )
+        }
+        if (maskedClips.isEmpty()) return@withContext emptyList()
+
+        val output = mutableListOf<MaskFrameSequence>()
+        try {
+            maskedClips.forEach { clip ->
+                currentCoroutineContext().ensureActive()
+                val directory = File(
+                    context.cacheDir,
+                    "mask_${clip.id}_${System.nanoTime()}"
+                )
+                if (!directory.mkdirs()) {
+                    throw java.io.IOException("Could not create mask render directory")
+                }
+                maskSequenceDirectories.add(directory)
+
+                val hasAnimation = clip.mask.keyframes.isNotEmpty()
+                val frameCount = if (hasAnimation) {
+                    ((clip.durationMs.toDouble() * fps) / 1000.0)
+                        .toLong().coerceAtMost(Int.MAX_VALUE.toLong())
+                        .toInt().coerceAtLeast(1)
+                } else 1
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                try {
+                    val canvas = Canvas(bitmap)
+                    repeat(frameCount) { frameIndex ->
+                        currentCoroutineContext().ensureActive()
+                        canvas.drawColor(Color.WHITE, android.graphics.PorterDuff.Mode.SRC)
+                        val timeSec = if (hasAnimation) frameIndex.toFloat() / fps else 0f
+                        MaskEngine.drawMask(
+                            canvas = canvas,
+                            state = MaskEngine.sampleAt(clip.mask, timeSec),
+                            viewWidth = width.toFloat(),
+                            viewHeight = height.toFloat()
+                        )
+                        val frameFile = File(
+                            directory,
+                            "mask_%05d.png".format(Locale.US, frameIndex + 1)
+                        )
+                        FileOutputStream(frameFile).use { stream ->
+                            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                                throw java.io.IOException("Could not encode mask frame")
+                            }
+                        }
+                    }
+                } finally {
+                    bitmap.recycle()
+                }
+
+                val staticFile = if (hasAnimation) null else File(directory, "mask_00001.png")
+                output += MaskFrameSequence(
+                    clipId = clip.id,
+                    pattern = File(directory, "mask_%05d.png").absolutePath,
+                    staticFile = staticFile,
+                    fps = fps,
+                    directory = directory
+                )
+            }
+            output
+        } catch (error: Throwable) {
+            cleanupMaskSequences()
+            throw error
+        }
+    }
+
+    private fun cleanupMaskSequences() {
+        synchronized(maskSequenceDirectories) {
+            maskSequenceDirectories.toList().forEach { directory ->
+                if (directory.exists() && !directory.deleteRecursively()) {
+                    Log.w("FFMPEG", "Could not remove mask sequence ${directory.name}")
+                }
+            }
+            maskSequenceDirectories.clear()
         }
     }
 
@@ -909,6 +1019,7 @@ class FFmpegExecutor(
         fps: Int,
         bitrateKbps: Int,
         sequences: List<TextOverlaySequence>,
+        maskSequences: List<MaskFrameSequence>,
         totalDurationMs: Long
     ) {
         try {
@@ -972,6 +1083,30 @@ class FFmpegExecutor(
 
             val sequenceStartIdx = silenceInputIdx + 1
             addSequenceInputs(args, sequences)
+            val maskInputIndices = mutableMapOf<String, Int>()
+            var nextMaskInputIdx = sequenceStartIdx + sequences.size
+            maskSequences.forEach { sequence ->
+                if (sequence.staticFile != null) {
+                    args.addAll(
+                        listOf(
+                            "-loop", "1",
+                            "-framerate", fps.toString(),
+                            "-t", durationSec.toString(),
+                            "-i", sequence.staticFile.absolutePath
+                        )
+                    )
+                } else {
+                    args.addAll(
+                        listOf(
+                            "-framerate", sequence.fps.toString(),
+                            "-start_number", "1",
+                            "-i", sequence.pattern
+                        )
+                    )
+                }
+                maskInputIndices[sequence.clipId] = nextMaskInputIdx
+                nextMaskInputIdx++
+            }
 
             val filterParts = mutableListOf<String>()
             filterParts.add(
@@ -1003,10 +1138,25 @@ class FFmpegExecutor(
                 filters.add("trim=duration=$clipDurationSec")
                 filters.add("setpts=PTS-STARTPTS+${startSec}/TB")
                 filters.add("format=rgba")
-                val layerLabel = "layer$index"
+                val unmaskedLayerLabel = "layer_unmasked$index"
                 filterParts.add(
-                    "[${index}:v]${filters.joinToString(",")}[$layerLabel]"
+                    "[${index}:v]${filters.joinToString(",")}[$unmaskedLayerLabel]"
                 )
+                val maskInputIdx = maskInputIndices[clip.id]
+                val layerLabel = if (maskInputIdx != null) {
+                    val maskPtsLabel = "mask_pts$index"
+                    val matteLabel = "matte$index"
+                    filterParts.add(
+                        "[$maskInputIdx:v]format=rgba,alphaextract," +
+                                "setpts=PTS-STARTPTS+${startSec}/TB[$maskPtsLabel]"
+                    )
+                    filterParts.add(
+                        "[$unmaskedLayerLabel][$maskPtsLabel]alphamerge[masked$index]"
+                    )
+                    "masked$index"
+                } else {
+                    unmaskedLayerLabel
+                }
 
                 val outputLabel = "canvas${index + 1}"
                 val x = (clip.offsetX * targetW).toInt()
@@ -2228,12 +2378,15 @@ class FFmpegExecutor(
                                     "SUCCESS: ${outputFile.absolutePath} " +
                                             "(${outputFile.length()} bytes)"
                                 )
+                                cleanupMaskSequences()
                                 onSuccess(outputFile)
                             } else {
+                                cleanupMaskSequences()
                                 onError("Output not created")
                             }
                         } else if (ReturnCode.isCancel(s.returnCode)) {
                             xfadeFallback = null
+                            cleanupMaskSequences()
                             onError("Export cancelled")
                         } else {
                             val output = s.allLogsAsString ?: ""
@@ -2254,6 +2407,7 @@ class FFmpegExecutor(
                                     onError("Export failed: ${e.message}")
                                 }
                             } else {
+                                cleanupMaskSequences()
                                 val lastLines = output.lines()
                                     .filter { it.isNotBlank() }
                                     .takeLast(20)
@@ -2263,6 +2417,7 @@ class FFmpegExecutor(
                         }
                     } catch (e: Throwable) {
                         Log.e("FFMPEG", "Callback error", e)
+                        cleanupMaskSequences()
                         onError("Callback error: ${e.message}")
                     }
                 },
@@ -2287,6 +2442,7 @@ class FFmpegExecutor(
             currentSession = session
         } catch (e: Throwable) {
             Log.e("FFMPEG", "Execute error", e)
+            cleanupMaskSequences()
             onError("Execute error: ${e.message}")
         }
     }

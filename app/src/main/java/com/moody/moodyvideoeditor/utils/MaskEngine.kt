@@ -201,9 +201,8 @@ object MaskEngine {
                 val c2 = rot(first.inX * w, first.inY * h)
                 val end = rot(first.x * w, first.y * h)
                 path.cubicTo(c1.first, c1.second, c2.first, c2.second, end.first, end.second)
-            } else {
-                path.close()
             }
+            path.close()
         }
 
         return path
@@ -220,8 +219,9 @@ object MaskEngine {
     ) {
         if (!state.isActive) return
 
-        // 🆕 Skip if custom mask is incomplete
-        if (state.type == MaskType.CUSTOM && state.customPoints.size < 3) return
+        if (state.type == MaskType.CUSTOM &&
+            (state.customPoints.size < 3 || !state.customClosed)
+        ) return
 
         val featherPx = state.feather / 100f * 80f
         val opacityInt = (state.opacity / 100f * 255f).toInt().coerceIn(0, 255)
@@ -269,6 +269,30 @@ object MaskEngine {
 
         maskPaint.xfermode = null
         maskPaint.maskFilter = null
+    }
+
+    fun drawMaskedLayer(
+        canvas: Canvas,
+        state: MaskState,
+        timeSec: Float,
+        viewWidth: Float,
+        viewHeight: Float,
+        drawContent: () -> Unit
+    ) {
+        if (!state.isActive) {
+            drawContent()
+            return
+        }
+        val saveCount = canvas.saveLayer(
+            RectF(0f, 0f, viewWidth, viewHeight),
+            null
+        )
+        try {
+            drawContent()
+            drawMask(canvas, sampleAt(state, timeSec), viewWidth, viewHeight)
+        } finally {
+            canvas.restoreToCount(saveCount)
+        }
     }
 
     private fun drawCircle(canvas: Canvas, state: MaskState, w: Float, h: Float, paint: Paint) {
