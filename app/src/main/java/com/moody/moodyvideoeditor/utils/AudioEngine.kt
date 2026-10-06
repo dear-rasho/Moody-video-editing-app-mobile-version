@@ -59,7 +59,8 @@ object AudioEngine {
 
     fun buildAudioFilter(fx: String, intensity: Float): String {
         if (fx == "none" || fx.isBlank()) return ""
-        val t = (intensity / 100f).coerceIn(0f, 2f)
+        val safeIntensity = intensity.takeIf { it.isFinite() } ?: 100f
+        val t = (safeIntensity / 100f).coerceIn(0f, 2f)
 
         return when (fx) {
             "studio" -> "dynaudnorm=f=200:g=${(15 * t).coerceIn(1f, 30f).toInt()}"
@@ -114,18 +115,27 @@ object AudioEngine {
 
             "robot" -> "afftfilt=real='hypot(re,im)*sin(0)':imag='hypot(re,im)*cos(0)':win_size=512:overlap=0.75"
 
-            "echo" -> "aecho=${0.8f * t}:${0.9f * t}:${
-                (1000 * t).toInt().coerceAtLeast(10)
-            }:${0.3f * t}"
+            "echo" -> buildEchoFilter(
+                0.8f * t,
+                0.9f * t,
+                (1000 * t).toInt().coerceAtLeast(10),
+                0.3f * t
+            )
 
-            "reverb" -> "aecho=${0.8f * t}:${0.88f * t}:60:${0.4f * t}"
-            "cave" -> "aecho=${0.8f * t}:${0.88f * t}:${
-                (500 * t).toInt().coerceAtLeast(10)
-            }:${0.5f * t}"
+            "reverb" -> buildEchoFilter(0.8f * t, 0.88f * t, 60, 0.4f * t)
+            "cave" -> buildEchoFilter(
+                0.8f * t,
+                0.88f * t,
+                (500 * t).toInt().coerceAtLeast(10),
+                0.5f * t
+            )
 
-            "stadium" -> "aecho=${0.8f * t}:${0.9f * t}:${
-                (2000 * t).toInt().coerceAtLeast(10)
-            }:${0.4f * t}"
+            "stadium" -> buildEchoFilter(
+                0.8f * t,
+                0.9f * t,
+                (2000 * t).toInt().coerceAtLeast(10),
+                0.4f * t
+            )
 
             "telephone" -> "highpass=f=300,lowpass=f=${
                 (3000 + 1000 * (1f - t)).toInt().coerceIn(1000, 8000)
@@ -152,9 +162,19 @@ object AudioEngine {
         }
     }
 
+    private fun buildEchoFilter(
+        inputGain: Float,
+        outputGain: Float,
+        delayMs: Int,
+        decay: Float
+    ): String = "aecho=${inputGain.coerceIn(0f, 1f)}:" +
+            "${outputGain.coerceIn(0f, 1f)}:${delayMs.coerceAtLeast(1)}:" +
+            "${decay.coerceIn(0f, 1f)}"
+
     fun previewVolumeMultiplier(fx: String, intensity: Float): Float {
         if (fx == "none") return 1f
-        val t = (intensity / 100f).coerceIn(0f, 2f)
+        val safeIntensity = intensity.takeIf { it.isFinite() } ?: 100f
+        val t = (safeIntensity / 100f).coerceIn(0f, 2f)
         return when (fx) {
             "whisper" -> 0.5f + 0.5f * t
             "radio" -> 1.0f + 0.5f * t
