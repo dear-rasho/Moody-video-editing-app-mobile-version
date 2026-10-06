@@ -124,20 +124,31 @@ object MaskEngine {
         val prev = pts[(index - 1 + n) % n]
         val next = pts[(index + 1) % n]
 
+        val signedArea = pts.indices.fold(0f) { area, pointIndex ->
+            val current = pts[pointIndex]
+            val following = pts[(pointIndex + 1) % n]
+            area + current.x * following.y - following.x * current.y
+        }
+        val normalDirection = if (signedArea >= 0f) -1f else 1f
         var tx = next.x - prev.x
         var ty = next.y - prev.y
         val len = sqrt(tx * tx + ty * ty).coerceAtLeast(0.0001f)
         tx /= len
         ty /= len
 
-        val nx = -ty
-        val ny = tx
+        val nx = -ty * normalDirection
+        val ny = tx * normalDirection
 
         return pt.copy(
             x = pt.x + nx * expansion,
             y = pt.y + ny * expansion
         )
     }
+
+    fun expandedPoints(pts: List<MaskPoint>, expansion: Float): List<MaskPoint> =
+        if (expansion == 0f || pts.size < 3) pts else pts.mapIndexed { index, _ ->
+            expandPoint(pts, index, expansion)
+        }
 
 
     //  BUILD PATH (cubic bezier)
@@ -154,9 +165,7 @@ object MaskEngine {
     ): Path? {
         if (pts.size < 2) return null
 
-        val expandedPts = if (expansion != 0f) {
-            pts.mapIndexed { i, _ -> expandPoint(pts, i, expansion) }
-        } else pts
+        val expandedPts = expandedPoints(pts, expansion)
 
         val path = Path()
         val cx = centerX * w
@@ -223,7 +232,7 @@ object MaskEngine {
             (state.customPoints.size < 3 || !state.customClosed)
         ) return
 
-        val featherPx = state.feather / 100f * 80f
+        val featherPx = state.feather / 100f * minOf(viewWidth, viewHeight) / 9f
         val opacityInt = (state.opacity / 100f * 255f).toInt().coerceIn(0, 255)
 
         val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -247,21 +256,52 @@ object MaskEngine {
             )
         }
 
-        val minDim = minOf(viewWidth, viewHeight)
+        val minDim = minOf(viewWidth, viewHeight).coerceAtLeast(1f)
         val expansionPx = state.expansion / 100f * minDim
+        val expansionNormalized = state.expansion / 100f
 
         when (state.type) {
-            MaskType.CIRCLE -> drawCircle(canvas, state, viewWidth, viewHeight, maskPaint)
-            MaskType.RECTANGLE -> drawRectangle(canvas, state, viewWidth, viewHeight, maskPaint)
-            MaskType.LINEAR -> drawLinear(canvas, state, viewWidth, viewHeight, maskPaint)
-            MaskType.HEART -> drawHeart(canvas, state, viewWidth, viewHeight, maskPaint)
+            MaskType.CIRCLE -> drawCircle(
+                canvas,
+                state.copy(radius = (state.radius + expansionPx / minDim).coerceAtLeast(0f)),
+                viewWidth,
+                viewHeight,
+                maskPaint
+            )
+
+            MaskType.RECTANGLE -> drawRectangle(
+                canvas,
+                state.copy(
+                    width = (state.width + expansionPx * 2f / viewWidth).coerceAtLeast(0f),
+                    height = (state.height + expansionPx * 2f / viewHeight).coerceAtLeast(0f)
+                ),
+                viewWidth,
+                viewHeight,
+                maskPaint
+            )
+
+            MaskType.LINEAR -> drawLinear(
+                canvas,
+                state.copy(positionY = state.positionY - expansionPx / viewHeight),
+                viewWidth,
+                viewHeight,
+                maskPaint
+            )
+
+            MaskType.HEART -> drawHeart(
+                canvas,
+                state.copy(scale = (state.scale + expansionPx / (minDim * 0.4f)).coerceAtLeast(0f)),
+                viewWidth,
+                viewHeight,
+                maskPaint
+            )
             MaskType.CUSTOM -> drawCustom(
                 canvas,
                 state,
                 viewWidth,
                 viewHeight,
                 maskPaint,
-                expansionPx
+                expansionNormalized
             )
 
             MaskType.NONE -> {}

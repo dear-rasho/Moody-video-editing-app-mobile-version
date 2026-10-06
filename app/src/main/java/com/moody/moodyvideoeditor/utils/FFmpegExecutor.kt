@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegSession
@@ -2094,10 +2095,16 @@ class FFmpegExecutor(
             .digest(state.toString().toByteArray(Charsets.UTF_8))
             .take(12)
             .joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
-        val file = File(context.cacheDir, "color-wheel-$key.cube")
+        val previewVersion = if (Build.VERSION.SDK_INT >= 33) "exact" else "matrix"
+        val file = File(context.cacheDir, "color-wheel-v33-$previewVersion-$key.cube")
         if (file.exists() && file.length() > 0L) return file
 
-        val gridSize = 17
+        val gridSize = 33
+        val fallbackMatrix = if (Build.VERSION.SDK_INT < 33) {
+            ColorWheelEngine.buildColorMatrix(state)?.array
+        } else {
+            null
+        }
         val contents = buildString {
             appendLine("TITLE \"Moody Color Wheel\"")
             appendLine("LUT_3D_SIZE $gridSize")
@@ -2109,7 +2116,11 @@ class FFmpegExecutor(
                         val red = redIndex * 255f / (gridSize - 1)
                         val green = greenIndex * 255f / (gridSize - 1)
                         val blue = blueIndex * 255f / (gridSize - 1)
-                        val output = ColorWheelEngine.applyPixel(red, green, blue, state)
+                        val output = if (Build.VERSION.SDK_INT >= 33) {
+                            ColorWheelEngine.applyPixel(red, green, blue, state)
+                        } else {
+                            applyColorWheelMatrix(red, green, blue, fallbackMatrix)
+                        }
                         append("%.6f %.6f %.6f\n".format(
                             Locale.US,
                             output.first / 255f,
@@ -2122,6 +2133,23 @@ class FFmpegExecutor(
         }
         file.writeText(contents)
         return file
+    }
+
+    private fun applyColorWheelMatrix(
+        red: Float,
+        green: Float,
+        blue: Float,
+        values: FloatArray?
+    ): Triple<Float, Float, Float> {
+        if (values == null) return Triple(red, green, blue)
+        return Triple(
+            (values[0] * red + values[1] * green + values[2] * blue + values[4])
+                .coerceIn(0f, 255f),
+            (values[5] * red + values[6] * green + values[7] * blue + values[9])
+                .coerceIn(0f, 255f),
+            (values[10] * red + values[11] * green + values[12] * blue + values[14])
+                .coerceIn(0f, 255f)
+        )
     }
 
     private fun buildColorWheelFilter(

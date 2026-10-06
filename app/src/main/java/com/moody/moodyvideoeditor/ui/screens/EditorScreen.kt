@@ -792,6 +792,7 @@ fun EditorScreen(
                 onMaskPointToggle = { index -> viewModel.toggleMaskPointSmooth(index) },
                 onMaskPointDelete = { index -> viewModel.deleteMaskPoint(index) },
                 onMaskMove = { dx, dy -> viewModel.moveMaskBy(dx, dy) },
+                onMaskStateChanged = { viewModel.updateMask(it) },
                 onClosePath = { viewModel.setMaskClosed(true) },
                 onClipSelected = { clipId ->
                     val clip = state.clips.firstOrNull { it.id == clipId }

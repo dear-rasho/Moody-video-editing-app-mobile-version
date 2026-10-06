@@ -344,7 +344,7 @@ fun MaskPanel(
             TextInputRow(
                 label = "Feather",
                 value = current.feather,
-                range = -500f..500f,
+                range = 0f..500f,
                 step = 1f
             ) {
                 onStateChanged(current.copy(feather = it))

@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.media.MediaMetadataRetriever
+import android.os.Build
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.TextureView
@@ -55,6 +56,7 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -91,6 +93,7 @@ import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.utils.BrushEngine
 import com.moody.moodyvideoeditor.utils.ColorMatrixBuilder
 import com.moody.moodyvideoeditor.utils.ColorWheelEngine
+import com.moody.moodyvideoeditor.utils.ColorWheelPreviewFilter
 import com.moody.moodyvideoeditor.utils.EffectsEngine
 import com.moody.moodyvideoeditor.utils.FontLibrary
 import com.moody.moodyvideoeditor.utils.MaskEngine
@@ -105,6 +108,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import kotlin.math.atan2
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.sin
@@ -117,7 +121,8 @@ private fun buildClipMatrix(
     clip: EditorClip,
     globalMatrix: android.graphics.ColorMatrix,
     applyGlobal: Boolean,
-    colorWheelMatrix: android.graphics.ColorMatrix? = null
+    colorWheelMatrix: android.graphics.ColorMatrix? = null,
+    useExactColorWheels: Boolean = false
 ): android.graphics.ColorMatrix? {
     val cm = android.graphics.ColorMatrix()
 
@@ -126,8 +131,6 @@ private fun buildClipMatrix(
     ) {
         cm.postConcat(ColorMatrixBuilder.build(clip.adjustments))
     }
-    ColorWheelEngine.buildColorMatrix(clip.colorWheel)?.let(cm::postConcat)
-
     val ownFilter = ColorFilterValues(
         brightness = clip.filters.brightness,
         contrast = clip.filters.contrast,
@@ -144,16 +147,29 @@ private fun buildClipMatrix(
     }
 
     if (applyGlobal) cm.postConcat(globalMatrix)
-    colorWheelMatrix?.let(cm::postConcat)
+    if (!useExactColorWheels) {
+        ColorWheelEngine.buildColorMatrix(clip.colorWheel)?.let(cm::postConcat)
+        colorWheelMatrix?.let(cm::postConcat)
+    }
 
     val hasChange =
         !clip.adjustments.isDefault ||
                 clip.filters.hasAnyChange ||
-                clip.colorWheel.hasAnyChange ||
+                (clip.colorWheel.hasAnyChange && !useExactColorWheels) ||
                 applyGlobal ||
-                colorWheelMatrix != null
+                (colorWheelMatrix != null && !useExactColorWheels)
 
     return if (hasChange) cm else null
+}
+
+private fun colorWheelStatesForClip(
+    clip: EditorClip,
+    activeWheels: List<EditorClip>
+) = buildList {
+    if (clip.colorWheel.hasAnyChange) add(clip.colorWheel)
+    activeWheels
+        .filter { it.trackIndex > clip.trackIndex && it.colorWheel.hasAnyChange }
+        .forEach { add(it.colorWheel) }
 }
 
 private fun colorWheelMatrixForClip(
@@ -226,6 +242,7 @@ fun PreviewCanvas(
     onMaskPointToggle: (Int) -> Unit = {},
     onMaskPointDelete: (Int) -> Unit = {},
     onMaskMove: (Float, Float) -> Unit = { _, _ -> },
+    onMaskStateChanged: (MaskState) -> Unit = {},
     onClosePath: () -> Unit = {},
     onClipSelected: (String) -> Unit = {},
     onDeleteLayer: (String) -> Unit = {},
@@ -318,7 +335,7 @@ fun PreviewCanvas(
     }
 
     val selectedClip = clips.firstOrNull { it.id == selectedClipId }
-    val maskToRender: MaskState? = if (isMaskPenMode && selectedClip != null) {
+    val maskToRender: MaskState? = if ((isMaskPenMode || isMaskHandMode) && selectedClip != null) {
         val timeSec = ((currentPosMs - selectedClip.timelineStartMs) / 1000f)
             .coerceAtLeast(0f)
         MaskEngine.sampleAt(selectedClip.mask, timeSec)
@@ -496,8 +513,25 @@ fun PreviewCanvas(
                             canvasH,
                             videoAspect
                         )
-                        val videoWheelMatrix = remember(clip.id, activeColorWheels) {
-                            colorWheelMatrixForClip(clip, activeColorWheels)
+                        val useExactColorWheels = Build.VERSION.SDK_INT >= 33
+                        val videoWheelStates = remember(clip.colorWheel, activeColorWheels) {
+                            colorWheelStatesForClip(clip, activeColorWheels)
+                        }
+                        val videoWheelEffect = remember(videoWheelStates) {
+                            if (useExactColorWheels) {
+                                ColorWheelPreviewFilter.createRenderEffect(videoWheelStates)
+                            } else {
+                                null
+                            }
+                        }
+                        val useExactVideoColorWheels =
+                            useExactColorWheels &&
+                                    (videoWheelStates.isEmpty() || videoWheelEffect != null)
+                        val videoWheelMatrix = remember(
+                            clip.id, activeColorWheels, useExactVideoColorWheels
+                        ) {
+                            if (useExactVideoColorWheels) null
+                            else colorWheelMatrixForClip(clip, activeColorWheels)
                         }
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
                             Box(
@@ -586,7 +620,8 @@ fun PreviewCanvas(
                                                 clip,
                                                 combinedMatrix,
                                                 applyMatrix,
-                                                videoWheelMatrix
+                                                videoWheelMatrix,
+                                                useExactVideoColorWheels
                                             )
                                             if (videoCm != null) {
                                                 val paint = Paint().apply {
@@ -599,6 +634,15 @@ fun PreviewCanvas(
                                             } else {
                                                 sv.setLayerType(
                                                     View.LAYER_TYPE_HARDWARE, null
+                                                )
+                                            }
+                                            if (Build.VERSION.SDK_INT >= 31) {
+                                                view.setRenderEffect(
+                                                    if (Build.VERSION.SDK_INT >= 33) {
+                                                        videoWheelEffect
+                                                    } else {
+                                                        null
+                                                    }
                                                 )
                                             }
                                         }
@@ -834,16 +878,38 @@ fun PreviewCanvas(
                                     canvasH,
                                     imageAspect
                                 )
+                                val useExactImageColorWheels = Build.VERSION.SDK_INT >= 33
+                                val imageWheelStates = remember(
+                                    clip.colorWheel,
+                                    activeColorWheels
+                                ) {
+                                    colorWheelStatesForClip(clip, activeColorWheels)
+                                }
+                                val imageWheelEffect = remember(imageWheelStates) {
+                                    if (useExactImageColorWheels) {
+                                        ColorWheelPreviewFilter.createRenderEffect(
+                                            imageWheelStates
+                                        )?.asComposeRenderEffect()
+                                    } else {
+                                        null
+                                    }
+                                }
+                                val useExactImageWheels =
+                                    useExactImageColorWheels &&
+                                            (imageWheelStates.isEmpty() ||
+                                                    imageWheelEffect != null)
                                 val imgColorFilter = remember(
                                     clip.filters, clip.adjustments,
-                                    combinedMatrix, applyMatrix, activeColorWheels,
-                                    clip.id
+                                    combinedMatrix, applyMatrix, activeColorWheels, clip.id,
+                                    useExactImageWheels
                                 ) {
                                     val cm = buildClipMatrix(
                                         clip,
                                         combinedMatrix,
                                         applyMatrix,
-                                        colorWheelMatrixForClip(clip, activeColorWheels)
+                                        if (useExactImageWheels) null
+                                        else colorWheelMatrixForClip(clip, activeColorWheels),
+                                        useExactImageWheels
                                     )
                                     if (cm == null) null
                                     else androidx.compose.ui.graphics.ColorFilter.colorMatrix(
@@ -855,7 +921,11 @@ fun PreviewCanvas(
                                     contentDescription = null,
                                     contentScale = ContentScale.Fit,
                                     colorFilter = imgColorFilter,
-                                    modifier = Modifier.fillMaxSize()
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .graphicsLayer {
+                                            renderEffect = imageWheelEffect
+                                        }
                                 )
                                 if (isSelected) {
                                     LayerTransformHandles(
@@ -1337,7 +1407,8 @@ fun PreviewCanvas(
                     onTogglePoint = onMaskPointToggle,
                     onDeletePoint = onMaskPointDelete,
                     onClosePath = onClosePath,
-                    onMaskMove = onMaskMove
+                    onMaskMove = onMaskMove,
+                    onMaskStateChanged = onMaskStateChanged
                 )
             }
 
@@ -1453,7 +1524,9 @@ private fun DrawScope.drawMaskBlend(mask: MaskState, w: Float, h: Float) {
     val path = buildMaskPathCompose(mask, w, h) ?: return
     drawIntoCanvas { canvas ->
         val nativeCanvas = canvas.nativeCanvas
-        val featherPx = kotlin.math.abs(mask.feather / 100f * 1.5f)
+        val featherPx = kotlin.math.abs(
+            mask.feather / 100f * minOf(w, h) / 9f
+        )
         val alphaInt = (mask.opacity / 100f * 255).toInt().coerceIn(0, 255)
 
         if (featherPx > 0.5f) {
@@ -1503,13 +1576,16 @@ private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
     return Path().apply {
         when (mask.type) {
             MaskType.CIRCLE -> {
-                val r = mask.radius * minOf(w, h)
+                val minDimension = minOf(w, h)
+                val r = (mask.radius * minDimension +
+                        mask.expansion / 100f * minDimension).coerceAtLeast(0f)
                 addOval(Rect(cx - r, cy - r, cx + r, cy + r))
             }
 
             MaskType.RECTANGLE -> {
-                val hw = mask.width * w / 2f
-                val hh = mask.height * h / 2f
+                val expansionPx = mask.expansion / 100f * minOf(w, h)
+                val hw = (mask.width * w / 2f + expansionPx).coerceAtLeast(0f)
+                val hh = (mask.height * h / 2f + expansionPx).coerceAtLeast(0f)
                 val c1 = rp(cx - hw, cy - hh)
                 val c2 = rp(cx + hw, cy - hh)
                 val c3 = rp(cx + hw, cy + hh)
@@ -1523,7 +1599,7 @@ private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
 
             MaskType.LINEAR -> {
                 val diag = sqrt(w * w + h * h) * 1.5f
-                val lineY = mask.positionY * h
+                val lineY = mask.positionY * h - mask.expansion / 100f * minOf(w, h)
                 val px = -sinR
                 val py = cosR
                 val p1x = cx - cosR * diag
@@ -1542,7 +1618,10 @@ private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
             }
 
             MaskType.HEART -> {
-                val s = mask.scale * minOf(w, h) * 0.4f
+                val s = (
+                        mask.scale * minOf(w, h) * 0.4f +
+                                mask.expansion / 100f * minOf(w, h)
+                        ).coerceAtLeast(0f)
                 fun rp2(px: Float, py: Float) =
                     (cx + px * cosR - py * sinR) to (cy + px * sinR + py * cosR)
 
@@ -1568,7 +1647,10 @@ private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
             }
 
             MaskType.CUSTOM -> {
-                val pts = mask.customPoints
+                val pts = MaskEngine.expandedPoints(
+                    mask.customPoints,
+                    mask.expansion / 100f
+                )
                 if (pts.size >= 3 && mask.customClosed) {
                     fun rp3(px: Float, py: Float): Pair<Float, Float> {
                         val dx = px - cx
@@ -1632,9 +1714,11 @@ private fun MaskPenOverlay(
     onTogglePoint: (Int) -> Unit,
     onDeletePoint: (Int) -> Unit,
     onClosePath: () -> Unit,
-    onMaskMove: (Float, Float) -> Unit
+    onMaskMove: (Float, Float) -> Unit,
+    onMaskStateChanged: (MaskState) -> Unit
 ) {
     val density = LocalDensity.current
+    val latestMaskState by rememberUpdatedState(maskState)
     val pts = maskState.customPoints
     val strokeColor = Color(maskState.strokeColor)
     val isClosed = maskState.customClosed
@@ -1659,24 +1743,82 @@ private fun MaskPenOverlay(
                     val down = awaitFirstDown(requireUnconsumed = false)
 
                     if (isHandMode) {
+                        val gestureMask = latestMaskState
                         down.consume()
                         onGestureStart()
-                        var previous = down.position
+                        var baseMask = gestureMask
+                        var basePoint = down.position
+                        var handle = maskHandleAt(
+                            gestureMask,
+                            down.position.x,
+                            down.position.y,
+                            viewW,
+                            viewH,
+                            hitRadiusPx
+                        )
+                        var latestMask = gestureMask
+                        var multiBaseMask: MaskState? = null
+                        var multiStartCentroid = Offset.Zero
+                        var multiStartDistance = 1f
+                        var multiStartAngle = 0f
+                        var wasMultiTouch = false
                         var dragging = true
                         while (dragging) {
                             val event = awaitPointerEvent()
                             val pressed = event.changes.filter { it.pressed }
                             if (pressed.isEmpty()) {
                                 dragging = false
-                            } else {
-                                pressed.forEach { change ->
-                                    val delta = change.position - previous
-                                    if (delta.x != 0f || delta.y != 0f) {
-                                        onMaskMove(delta.x / viewW, delta.y / viewH)
-                                    }
-                                    previous = change.position
-                                    change.consume()
+                            } else if (pressed.size >= 2) {
+                                val first = pressed[0].position
+                                val second = pressed[1].position
+                                val centroid = (first + second) / 2f
+                                val distance = hypot(
+                                    second.x - first.x,
+                                    second.y - first.y
+                                ).coerceAtLeast(1f)
+                                val angle = atan2(
+                                    second.y - first.y,
+                                    second.x - first.x
+                                )
+                                if (multiBaseMask == null) {
+                                    multiBaseMask = latestMask
+                                    multiStartCentroid = centroid
+                                    multiStartDistance = distance
+                                    multiStartAngle = angle
                                 }
+                                latestMask = transformMaskWithTwoFingers(
+                                    multiBaseMask!!,
+                                    multiStartCentroid,
+                                    centroid,
+                                    multiStartDistance,
+                                    distance,
+                                    multiStartAngle,
+                                    angle,
+                                    viewW,
+                                    viewH
+                                )
+                                onMaskStateChanged(latestMask)
+                                wasMultiTouch = true
+                                pressed.forEach { it.consume() }
+                            } else {
+                                val change = pressed.first()
+                                if (wasMultiTouch) {
+                                    baseMask = latestMask
+                                    basePoint = change.position
+                                    handle = MaskGestureHandle.MOVE
+                                    multiBaseMask = null
+                                    wasMultiTouch = false
+                                }
+                                latestMask = transformMaskWithOneFinger(
+                                    baseMask,
+                                    handle,
+                                    basePoint,
+                                    change.position,
+                                    viewW,
+                                    viewH
+                                )
+                                onMaskStateChanged(latestMask)
+                                change.consume()
                             }
                         }
                         onGestureEnd()
@@ -1811,73 +1953,269 @@ private fun MaskPenOverlay(
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
-            if (pts.isEmpty()) return@Canvas
+            if (!maskState.isActive) return@Canvas
 
-            val path = Path().apply { moveTo(pts[0].x * w, pts[0].y * h) }
-            for (i in 1 until pts.size) {
-                val prev = pts[i - 1]
-                val curr = pts[i]
-                if (prev.hasHandles || curr.hasHandles) {
-                    path.cubicTo(
-                        prev.outX * w, prev.outY * h,
-                        curr.inX * w, curr.inY * h,
-                        curr.x * w, curr.y * h
-                    )
-                } else {
-                    path.lineTo(curr.x * w, curr.y * h)
-                }
-            }
-            if (isClosed && pts.size >= 3) {
-                val last = pts.last()
-                val first = pts.first()
-                if (last.hasHandles || first.hasHandles) {
-                    path.cubicTo(
-                        last.outX * w, last.outY * h,
-                        first.inX * w, first.inY * h,
-                        first.x * w, first.y * h
-                    )
-                } else path.close()
+            val path = buildMaskPathCompose(maskState, w, h)
+            if (path != null) {
+                drawPath(path, strokeColor, style = Stroke(width = 3f))
             }
 
-            drawPath(path, strokeColor, style = Stroke(width = 3f))
+            if (maskState.type == MaskType.CUSTOM) {
+                pts.forEachIndexed { i, p ->
+                    val cx = p.x * w
+                    val cy = p.y * h
+                    val isSel = i == selectedPointIndex
+                    val isFirst = i == 0
 
-            pts.forEachIndexed { i, p ->
-                val cx = p.x * w
-                val cy = p.y * h
-                val isSel = i == selectedPointIndex
-                val isFirst = i == 0
+                    if (isFirst && !isClosed && pts.size >= 3) {
+                        drawCircle(
+                            Color(0xFF60EFFF).copy(alpha = 0.4f), 22f, Offset(cx, cy)
+                        )
+                        drawCircle(
+                            Color(0xFF60EFFF).copy(alpha = 0.8f), 16f, Offset(cx, cy),
+                            style = Stroke(width = 3f)
+                        )
+                    }
 
-                if (isFirst && !isClosed && pts.size >= 3) {
                     drawCircle(
-                        Color(0xFF60EFFF).copy(alpha = 0.4f), 22f, Offset(cx, cy)
+                        color = when {
+                            isFirst && !isClosed -> Color(0xFF60EFFF)
+                            isSel -> Color(0xFFFFD166)
+                            else -> strokeColor
+                        },
+                        radius = if (isSel || (isFirst && !isClosed)) 12f else 9f,
+                        center = Offset(cx, cy)
                     )
                     drawCircle(
-                        Color(0xFF60EFFF).copy(alpha = 0.8f), 16f, Offset(cx, cy),
-                        style = Stroke(width = 3f)
+                        Color.White,
+                        if (isSel || (isFirst && !isClosed)) 12f else 9f,
+                        Offset(cx, cy),
+                        style = Stroke(width = 2f)
                     )
+                    drawCircle(Color.Black, 3f, Offset(cx, cy))
                 }
+            }
 
-                drawCircle(
-                    color = when {
-                        isFirst && !isClosed -> Color(0xFF60EFFF)
-                        isSel -> Color(0xFFFFD166)
-                        else -> strokeColor
-                    },
-                    radius = if (isSel || (isFirst && !isClosed)) 12f else 9f,
-                    center = Offset(cx, cy)
-                )
-                drawCircle(
-                    Color.White,
-                    if (isSel || (isFirst && !isClosed)) 12f else 9f,
-                    Offset(cx, cy),
-                    style = Stroke(width = 2f)
-                )
-                drawCircle(Color.Black, 3f, Offset(cx, cy))
+            if (isHandMode) {
+                val (resize, rotate, feather) = maskHandlePositions(maskState, w, h)
+                val center = Offset(maskState.centerX * w, maskState.centerY * h)
+                drawLine(Color.White.copy(alpha = 0.75f), center, rotate, strokeWidth = 2f)
+                drawLine(Color(0xFF60EFFF), center, feather, strokeWidth = 2f)
+                drawCircle(Color(0xFFFFD166), 11f, resize)
+                drawCircle(Color.White, 11f, resize, style = Stroke(width = 2f))
+                drawCircle(Color(0xFF60EFFF), 10f, rotate)
+                drawCircle(Color.White, 10f, rotate, style = Stroke(width = 2f))
+                drawCircle(Color(0xFF22C55E), 10f, feather)
+                drawCircle(Color.White, 10f, feather, style = Stroke(width = 2f))
             }
         }
     }
 }
 
+private enum class MaskGestureHandle {
+    MOVE,
+    RESIZE,
+    ROTATE,
+    FEATHER
+}
+
+private fun maskHandlePositions(
+    mask: MaskState,
+    width: Float,
+    height: Float
+): Triple<Offset, Offset, Offset> {
+    val cx = mask.centerX * width
+    val cy = mask.centerY * height
+    val minDimension = minOf(width, height).coerceAtLeast(1f)
+    val radius = when (mask.type) {
+        MaskType.CIRCLE -> mask.radius * minDimension
+        MaskType.RECTANGLE -> hypot(mask.width * width / 2f, mask.height * height / 2f)
+        MaskType.HEART -> mask.scale * minDimension * 0.4f
+        MaskType.CUSTOM -> mask.customPoints.maxOfOrNull { point ->
+            hypot((point.x - mask.centerX) * width, (point.y - mask.centerY) * height)
+        } ?: minDimension * 0.2f
+        MaskType.LINEAR, MaskType.NONE -> minDimension * 0.22f
+    }.coerceAtLeast(24f)
+
+    val resizeLocal = when (mask.type) {
+        MaskType.CIRCLE -> Offset(radius, 0f)
+        MaskType.RECTANGLE -> Offset(mask.width * width / 2f, mask.height * height / 2f)
+        MaskType.HEART -> Offset(radius, 0f)
+        MaskType.CUSTOM -> {
+            val x = mask.customPoints.maxOfOrNull { it.x * width - cx } ?: radius
+            val y = mask.customPoints.maxOfOrNull { it.y * height - cy } ?: radius
+            Offset(x, y)
+        }
+        MaskType.LINEAR, MaskType.NONE -> Offset(radius * 0.65f, radius * 0.65f)
+    }
+    val resize = rotateMaskPoint(
+        Offset(cx + resizeLocal.x, cy + resizeLocal.y),
+        cx,
+        cy,
+        if (mask.type == MaskType.CIRCLE) 0f else mask.rotation
+    )
+    val rotate = rotateMaskPoint(
+        Offset(cx, cy - radius - 34f),
+        cx,
+        cy,
+        mask.rotation
+    )
+    val feather = Offset(cx + radius + 42f, cy)
+    return Triple(resize, rotate, feather)
+}
+
+private fun rotateMaskPoint(
+    point: Offset,
+    centerX: Float,
+    centerY: Float,
+    rotationDegrees: Float
+): Offset {
+    val radians = Math.toRadians(rotationDegrees.toDouble())
+    val cosR = cos(radians).toFloat()
+    val sinR = sin(radians).toFloat()
+    val dx = point.x - centerX
+    val dy = point.y - centerY
+    return Offset(
+        centerX + dx * cosR - dy * sinR,
+        centerY + dx * sinR + dy * cosR
+    )
+}
+
+private fun maskHandleAt(
+    mask: MaskState,
+    x: Float,
+    y: Float,
+    width: Float,
+    height: Float,
+    hitRadius: Float
+): MaskGestureHandle {
+    val point = Offset(x, y)
+    val (resize, rotate, feather) = maskHandlePositions(mask, width, height)
+    fun near(target: Offset) = hypot(point.x - target.x, point.y - target.y) <= hitRadius * 1.5f
+    return when {
+        near(feather) -> MaskGestureHandle.FEATHER
+        near(rotate) -> MaskGestureHandle.ROTATE
+        near(resize) -> MaskGestureHandle.RESIZE
+        else -> MaskGestureHandle.MOVE
+    }
+}
+
+private fun transformMaskWithOneFinger(
+    initial: MaskState,
+    handle: MaskGestureHandle,
+    start: Offset,
+    current: Offset,
+    width: Float,
+    height: Float
+): MaskState {
+    val minDimension = minOf(width, height).coerceAtLeast(1f)
+    val dx = (current.x - start.x) / width.coerceAtLeast(1f)
+    val dy = (current.y - start.y) / height.coerceAtLeast(1f)
+    val centerX = initial.centerX * width
+    val centerY = initial.centerY * height
+    return when (handle) {
+        MaskGestureHandle.MOVE -> initial.copy(
+            centerX = initial.centerX + dx,
+            centerY = initial.centerY + dy,
+            positionY = initial.positionY + dy,
+            customPoints = initial.customPoints.map {
+                it.copy(x = it.x + dx, y = it.y + dy)
+            }
+        )
+
+        MaskGestureHandle.ROTATE -> {
+            val startAngle = atan2(start.y - centerY, start.x - centerX)
+            val currentAngle = atan2(current.y - centerY, current.x - centerX)
+            val delta = Math.toDegrees((currentAngle - startAngle).toDouble()).toFloat()
+            initial.copy(rotation = initial.rotation + delta)
+        }
+
+        MaskGestureHandle.FEATHER -> {
+            val initialRadius = hypot(start.x - centerX, start.y - centerY)
+            val currentRadius = hypot(current.x - centerX, current.y - centerY)
+            initial.copy(
+                feather = (initial.feather +
+                        (currentRadius - initialRadius) / minDimension * 900f)
+                    .coerceIn(0f, 500f)
+            )
+        }
+
+        MaskGestureHandle.RESIZE -> {
+            val local = rotateMaskPoint(current, centerX, centerY, -initial.rotation)
+            when (initial.type) {
+                MaskType.CIRCLE -> initial.copy(
+                    radius = (hypot(local.x - centerX, local.y - centerY) / minDimension)
+                        .coerceIn(0.01f, 2f)
+                )
+
+                MaskType.RECTANGLE -> initial.copy(
+                    width = (abs(local.x - centerX) * 2f / width).coerceIn(0.01f, 3f),
+                    height = (abs(local.y - centerY) * 2f / height).coerceIn(0.01f, 3f)
+                )
+
+                MaskType.HEART -> initial.copy(
+                    scale = (hypot(local.x - centerX, local.y - centerY) /
+                            (minDimension * 0.4f)).coerceIn(0.05f, 5f)
+                )
+
+                MaskType.CUSTOM -> {
+                    val handleStart = maskHandlePositions(initial, width, height).first
+                    val oldRadius = hypot(handleStart.x - centerX, handleStart.y - centerY)
+                        .coerceAtLeast(1f)
+                    val newRadius = hypot(local.x - centerX, local.y - centerY)
+                    val factor = (newRadius / oldRadius).coerceIn(0.05f, 20f)
+                    initial.copy(
+                        customPoints = initial.customPoints.map { point ->
+                            point.copy(
+                                x = initial.centerX + (point.x - initial.centerX) * factor,
+                                y = initial.centerY + (point.y - initial.centerY) * factor
+                            )
+                        }
+                    )
+                }
+
+                MaskType.LINEAR, MaskType.NONE -> initial.copy(
+                    positionY = (current.y / height).coerceIn(-1f, 2f)
+                )
+            }
+        }
+    }
+}
+
+private fun transformMaskWithTwoFingers(
+    initial: MaskState,
+    startCentroid: Offset,
+    centroid: Offset,
+    startDistance: Float,
+    distance: Float,
+    startAngle: Float,
+    angle: Float,
+    width: Float,
+    height: Float
+): MaskState {
+    val dx = (centroid.x - startCentroid.x) / width.coerceAtLeast(1f)
+    val dy = (centroid.y - startCentroid.y) / height.coerceAtLeast(1f)
+    val scaleFactor = (distance / startDistance.coerceAtLeast(1f)).coerceIn(0.05f, 20f)
+    val angleDelta = Math.toDegrees((angle - startAngle).toDouble()).toFloat()
+    val centerX = initial.centerX + dx
+    val centerY = initial.centerY + dy
+    val rotatedPoints = initial.customPoints.map { point ->
+        val x = initial.centerX + (point.x - initial.centerX) * scaleFactor + dx
+        val y = initial.centerY + (point.y - initial.centerY) * scaleFactor + dy
+        point.copy(x = x, y = y)
+    }
+    return initial.copy(
+        centerX = centerX,
+        centerY = centerY,
+        positionY = initial.positionY + dy,
+        radius = (initial.radius * scaleFactor).coerceIn(0.01f, 2f),
+        width = (initial.width * scaleFactor).coerceIn(0.01f, 3f),
+        height = (initial.height * scaleFactor).coerceIn(0.01f, 3f),
+        scale = (initial.scale * scaleFactor).coerceIn(0.05f, 5f),
+        rotation = initial.rotation + angleDelta,
+        customPoints = rotatedPoints
+    )
+}
 
 //  BRUSH DRAW LAYER
 
