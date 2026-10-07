@@ -50,6 +50,10 @@ data class EditorClip(
 
     val brush: BrushState = BrushState(),
 
+    // 🆕 Color Matte — full style (solid / ramp / 4-color)
+    val matteStyle: ColorMatteStyle = ColorMatteStyle(),
+    // 🆕 Advanced Effects — stored on the clip itself (no separate layer)
+    val advancedEffects: List<com.moody.moodyvideoeditor.data.advanced.AdvancedEffectState> = emptyList(),
     val visualizer: VisualizerState? = null,
 
     val keyframes: Map<String, List<Keyframe>> = emptyMap()
@@ -70,6 +74,11 @@ data class EditorClip(
     val isChromaClip: Boolean get() = type == "chroma/plain"
     val isBrushClip: Boolean get() = type == "brush/plain"
     val isVisualizerClip: Boolean get() = type == "visualizer/plain"
+    val isColorMatteClip: Boolean get() = type == "matte/plain"
+
+
+    // Backward-compat accessor — returns solid color if legacy code refers
+    val matteColor: Long get() = matteStyle.solidColor
 
     // 🆕 Link anchor priority (higher = anchor)
     val linkAnchorPriority: Int
@@ -77,6 +86,7 @@ data class EditorClip(
             !isAudio && isVisualClip && trackIndex == 0 -> 100  // V1 video
             !isAudio && isVisualClip -> 90                       // higher video
             isAudio && !isAudioEffectClip -> 80                  // source audio
+            isColorMatteClip -> 70                               // 🆕 color matte
             isTextClip -> 60
             isStickerClip -> 55
             isVisualizerClip -> 50
@@ -170,7 +180,10 @@ data class EditorState(
     val previewFilters: FilterState? = null,
 
     // 🆕 Live preview effect (temporary, not committed)
-    val previewEffectState: EffectState? = null
+    val previewEffectState: EffectState? = null,
+
+    // 🆕 Live preview advanced effect (before Apply)
+    val previewAdvancedEffect: com.moody.moodyvideoeditor.data.advanced.AdvancedEffectState? = null
 ) {
     val totalDurationMs: Long
         get() = clips.maxOfOrNull { it.timelineEndMs } ?: 10000L

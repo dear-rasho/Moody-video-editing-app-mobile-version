@@ -1448,7 +1448,9 @@ private fun ClipCard(
                     }
 
                     // ─── PHASE 2: Lifted ───
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    if (com.moody.moodyvideoeditor.utils.SettingsConsumer.hapticFeedback) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    }
                     clipLifted = true
                     onDragStart()
 
@@ -1494,21 +1496,27 @@ private fun ClipCard(
                         }
                         targets.add(SnapTarget(currentPosMs, "Playhead"))
 
+                        val snapEnabled =
+                            com.moody.moodyvideoeditor.utils.SettingsConsumer.snapToGrid
+
                         var bestTarget: SnapTarget? = null
                         var bestDist = enterMs
                         var snapAtEnd = false
-                        targets.forEach { t ->
-                            val dStart = abs(t.timeMs - virtualStartMs)
-                            if (dStart < bestDist) {
-                                bestDist = dStart
-                                bestTarget = t
-                                snapAtEnd = false
-                            }
-                            val dEnd = abs(t.timeMs - virtualEndMs)
-                            if (dEnd < bestDist) {
-                                bestDist = dEnd
-                                bestTarget = t
-                                snapAtEnd = true
+
+                        if (snapEnabled) {
+                            targets.forEach { t ->
+                                val dStart = abs(t.timeMs - virtualStartMs)
+                                if (dStart < bestDist) {
+                                    bestDist = dStart
+                                    bestTarget = t
+                                    snapAtEnd = false
+                                }
+                                val dEnd = abs(t.timeMs - virtualEndMs)
+                                if (dEnd < bestDist) {
+                                    bestDist = dEnd
+                                    bestTarget = t
+                                    snapAtEnd = true
+                                }
                             }
                         }
 
@@ -2090,6 +2098,7 @@ private fun AudioWaveformBackground(
 // ═══════════════════════════════════════════════════════════════
 
 private fun clipColor(clip: EditorClip): Color = when {
+    clip.isColorMatteClip -> Color(clip.matteColor)     // 🆕
     clip.isVisualizerClip -> Color(0xFFFFD166)
     clip.isAudioFxClip -> Color(0xFFA855F7)
     clip.isSoundFxClip -> Color(0xFF3B82F6)

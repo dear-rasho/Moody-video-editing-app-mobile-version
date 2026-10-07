@@ -116,18 +116,24 @@ object AudioEngine {
             "robot" -> "afftfilt=real='hypot(re,im)*sin(0)':imag='hypot(re,im)*cos(0)':win_size=512:overlap=0.75"
 
             "echo" -> buildEchoFilter(
-                0.8f * t,
-                0.9f * t,
+                (0.8f * t).coerceIn(0f, 1f),
+                (0.9f * t).coerceIn(0f, 1f),
                 (1000 * t).toInt().coerceAtLeast(10),
-                0.3f * t
+                (0.3f * t).coerceIn(0f, 1f)
             )
 
-            "reverb" -> buildEchoFilter(0.8f * t, 0.88f * t, 60, 0.4f * t)
+            "reverb" -> buildEchoFilter(
+                (0.8f * t).coerceIn(0f, 1f),
+                (0.88f * t).coerceIn(0f, 1f),
+                60,
+                (0.4f * t).coerceIn(0f, 1f)
+            )
+
             "cave" -> buildEchoFilter(
-                0.8f * t,
-                0.88f * t,
+                (0.8f * t).coerceIn(0f, 1f),
+                (0.88f * t).coerceIn(0f, 1f),
                 (500 * t).toInt().coerceAtLeast(10),
-                0.5f * t
+                (0.5f * t).coerceIn(0f, 1f)
             )
 
             "stadium" -> buildEchoFilter(

@@ -1,6 +1,7 @@
 package com.moody.moodyvideoeditor
 
 import com.moody.moodyvideoeditor.utils.TextScaler
+import com.moody.moodyvideoeditor.utils.TextRenderContract
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -16,5 +17,11 @@ class TextScalerTest {
     fun lineHeightUsesSafeValuesForInvalidMultipliers() {
         assertEquals(2f, TextScaler.lineHeight(20f, 0f), 0.001f)
         assertEquals(24f, TextScaler.lineHeight(20f, Float.NaN), 0.001f)
+    }
+
+    @Test
+    fun sharedTextScaleUsesTheSameReferenceWidthWithoutPreviewCap() {
+        assertEquals(36f, TextRenderContract.scaledFontSize(36f, 720f), 0.001f)
+        assertEquals(1200f, TextRenderContract.scaledFontSize(400f, 2160f), 0.001f)
     }
 }

@@ -1,7 +1,9 @@
 package com.moody.moodyvideoeditor.utils
 
+import com.moody.moodyvideoeditor.data.BrushType
 import com.moody.moodyvideoeditor.data.ChromaState
 import com.moody.moodyvideoeditor.data.EffectLibrary
+import com.moody.moodyvideoeditor.data.FilterState
 import com.moody.moodyvideoeditor.data.RatioLibrary
 import com.moody.moodyvideoeditor.data.StickerState
 import com.moody.moodyvideoeditor.data.TextState
@@ -65,6 +67,7 @@ object PromptExecutor {
             }
         }
 
+
         // ═══════════════════════════════════════════════════════
         //  PRIORITY 1 — GLOBAL (Ratio, Tighten, Clear)
         // ═══════════════════════════════════════════════════════
@@ -82,11 +85,71 @@ object PromptExecutor {
                     applied.add("tighten track")
                 }
 
+                CmdType.GRAPH -> {
+                    val sel = selected
+                    if (sel == null) {
+                        errors.add("graph: select a clip first")
+                    } else {
+                        val kfs = sel.keyframes
+                        val totalKfs = kfs.values.sumOf { it.size }
+                        if (totalKfs == 0) {
+                            applied.add("graph: no keyframes on selected clip")
+                        } else {
+                            val clipDurSec = sel.durationMs / 1000f
+                            val sb = StringBuilder()
+                            sb.append("graph: $totalKfs keyframe(s) on \"${sel.name.take(16)}\"")
+                            sb.append(" (duration ${"%.2f".format(clipDurSec)}s)")
+                            kfs.forEach { (prop, list) ->
+                                if (list.isNotEmpty()) {
+                                    val times = list.joinToString(", ") {
+                                        "${"%.2f".format(it.time)}s"
+                                    }
+                                    sb.append("\n  • $prop: [${times}]")
+                                }
+                            }
+                            val hasAny = KeyframeStore.hasAnyKeyframeAt(
+                                kfs,
+                                currentTimeSecForPrompt(state, sel)
+                            )
+                            sb.append("\n  • At playhead: ${if (hasAny) "keyframe exists" else "no keyframe"}")
+                            applied.add(sb.toString())
+                        }
+                    }
+                }
+
                 CmdType.CLEAR_KEYFRAMES -> {
                     selected?.let {
                         viewModel.resetAllTransform()
                         applied.add("clear keyframes")
                     }
+                }
+                // 🆕 COLOR MATTE
+                CmdType.COLOR_MATTE -> {
+                    val colorLong = cmd.extra?.toLongOrNull()
+                        ?: 0xFF0066FFL   // default blue
+
+                    val opacity = cmd.value1 ?: 100f
+                    val durationMs = cmd.value2?.toLong()
+                        ?: 5000L
+
+                    // Naya signature: style param with SOLID mode
+                    val style = com.moody.moodyvideoeditor.data.ColorMatteStyle(
+                        mode = com.moody.moodyvideoeditor.data.ColorMatteMode.SOLID,
+                        solidColor = colorLong
+                    )
+
+                    viewModel.createColorMatte(
+                        color = colorLong,
+                        opacity = opacity,
+                        durationMs = durationMs,
+                        style = style
+                    )
+
+                    val hex = "#%06X".format(colorLong and 0xFFFFFF)
+                    applied.add(
+                        "color matte $hex opacity ${opacity.toInt()}% " +
+                                "duration ${durationMs / 1000}s"
+                    )
                 }
 
                 else -> {}
@@ -290,11 +353,35 @@ object PromptExecutor {
                         applied.add("${cmd.key} $value")
                     }
 
-                    CmdType.FILTER -> {
-                        val target = selected ?: continue
-                        val value = cmd.value1 ?: continue
-                        viewModel.updateFilters(target.filters.set(cmd.key, value))
-                        applied.add("${cmd.key} $value")
+                    CmdType.FILTER -> run filterBlock@{
+                        val target = selected
+                        if (target == null) {
+                            errors.add("filter: select a clip first")
+                            return@filterBlock
+                        }
+
+                        // 🆕 FILTER PRESET — "preset:badbunny" form
+                        if (cmd.key.startsWith("preset:")) {
+                            val presetKey = cmd.key.removePrefix("preset:")
+                            val preset = FilterState.findPreset(presetKey)
+                            if (preset == null) {
+                                errors.add("filter: preset '$presetKey' not found")
+                            } else {
+                                viewModel.updateFilters(preset.toFilterState())
+                                applied.add("filter preset: ${preset.label}")
+                            }
+                        } else {
+                            // Primitive filter — grayscale, sepia, invert, blur, hue
+                            val value = cmd.value1
+                            if (value == null) {
+                                errors.add("filter: ${cmd.key} needs a value")
+                                return@filterBlock
+                            }
+                            viewModel.updateFilters(
+                                target.filters.set(cmd.key, value)
+                            )
+                            applied.add("${cmd.key} $value")
+                        }
                     }
 
                     CmdType.EFFECT -> {
@@ -345,17 +432,45 @@ object PromptExecutor {
                         applied.add(label)
                     }
 
-                    CmdType.TRANSITION -> {
+                    CmdType.TRANSITION -> run transitionBlock@{
                         val dur = cmd.value1 ?: 0.5f
                         val preset = TransitionLibrary.find(cmd.key)
+                        if (preset == null) {
+                            errors.add("transition '${cmd.key}' not found")
+                            return@transitionBlock
+                        }
+
+                        val sel = selected
+                        if (sel == null) {
+                            errors.add("transition: select a clip first")
+                            return@transitionBlock
+                        }
+
+                        // Check if there's an adjacent visual clip at the join
+                        val hasAdjacent = state.clips.any { other ->
+                            other.id != sel.id && other.isVisualClip &&
+                                    other.trackIndex == sel.trackIndex &&
+                                    abs(
+                                        other.timelineEndMs - sel.timelineStartMs
+                                    ) < 100L
+                        }
+
                         viewModel.updateTransition(
                             TransitionState(
-                                key = preset?.key ?: cmd.key,
+                                key = preset.key,
                                 durationMs = (dur * 1000f).toLong()
                                     .coerceIn(200L, 3000L)
                             )
                         )
-                        applied.add("transition ${cmd.key} ${dur}s")
+
+                        if (hasAdjacent) {
+                            applied.add("transition ${preset.label} ${dur}s")
+                        } else {
+                            applied.add(
+                                "transition ${preset.label} ${dur}s " +
+                                        "(⚠️ no adjacent clip on this track)"
+                            )
+                        }
                     }
 
                     CmdType.ANIMATION -> {
@@ -467,34 +582,168 @@ object PromptExecutor {
                         applied.add("chroma $rest")
                     }
 
-                    CmdType.AUDIO_FX -> {
-                        viewModel.setAudioFx(cmd.key)
-                        applied.add("audio ${cmd.key}")
+                    CmdType.AUDIO_FX -> run audioBlock@{
+                        val sel = selected
+                        if (sel == null) {
+                            errors.add("audio: select a clip first")
+                            return@audioBlock
+                        }
+
+                        val isSound = cmd.stringValue == "sound"
+                        val fxKey = cmd.key.lowercase()
+                        val intensity = cmd.value1
+
+                        // ─── Handle "none" / "clear" → remove FX ───
+                        if (fxKey == "none" || fxKey == "clear" || fxKey == "off") {
+                            if (isSound) {
+                                viewModel.setClipSoundFx(sel.id, "none")
+                                viewModel.setClipSoundFxIntensity(sel.id, 100f)
+                                applied.add("sound fx: removed")
+                            } else {
+                                viewModel.setClipAudioFx(sel.id, "none")
+                                viewModel.setClipAudioFxIntensity(sel.id, 100f)
+                                applied.add("audio fx: removed")
+                            }
+                            return@audioBlock
+                        }
+
+                        // ─── Validate FX name ───
+                        val validKeys = if (isSound) {
+                            AudioEngine.SOUND_FX.map { it.key }
+                        } else {
+                            AudioEngine.AUDIO_FX.map { it.key }
+                        }
+
+                        if (fxKey !in validKeys) {
+                            errors.add(
+                                "${if (isSound) "sound" else "audio"}: unknown FX '$fxKey'"
+                            )
+                            return@audioBlock
+                        }
+
+                        // ─── Apply to selected clip ───
+                        val clampedIntensity = intensity?.coerceIn(0f, 200f)
+
+                        if (isSound) {
+                            viewModel.setClipSoundFx(sel.id, fxKey)
+                            if (clampedIntensity != null) {
+                                viewModel.setClipSoundFxIntensity(sel.id, clampedIntensity)
+                            }
+                            val label = AudioEngine.SOUND_FX
+                                .firstOrNull { it.key == fxKey }?.label ?: fxKey
+                            val suffix = clampedIntensity?.let { " @${it.toInt()}%" } ?: ""
+                            applied.add("sound ${label}${suffix}")
+                        } else {
+                            viewModel.setClipAudioFx(sel.id, fxKey)
+                            if (clampedIntensity != null) {
+                                viewModel.setClipAudioFxIntensity(sel.id, clampedIntensity)
+                            }
+                            val label = AudioEngine.AUDIO_FX
+                                .firstOrNull { it.key == fxKey }?.label ?: fxKey
+                            val suffix = clampedIntensity?.let { " @${it.toInt()}%" } ?: ""
+                            applied.add("audio ${label}${suffix}")
+                        }
                     }
 
                     CmdType.BRUSH_GRADIENT -> {
                         if (cmd.key == "off") {
+                            BrushConfigHolder.update {
+                                it.copy(gradient = it.gradient.copy(enabled = false))
+                            }
                             applied.add("brush gradient off")
                         } else {
                             val parts = cmd.stringValue?.split(",")
                                 ?: emptyList()
-                            if (parts.size == 2) {
-                                applied.add(
-                                    "brush gradient ${parts[0]} → ${parts[1]}"
-                                )
+                            if (parts.size >= 3) {
+                                try {
+                                    val color1 = 0xFF000000L or
+                                            parts[0].removePrefix("#").toLong(16)
+                                    val color2 = 0xFF000000L or
+                                            parts[1].removePrefix("#").toLong(16)
+                                    val hasMid = parts.size >= 4
+                                    val color3 = if (hasMid) {
+                                        0xFF000000L or
+                                                parts[2].removePrefix("#").toLong(16)
+                                    } else 0L
+                                    val mode = parts.last()
+
+                                    BrushConfigHolder.update { config ->
+                                        config.copy(
+                                            gradient = config.gradient.copy(
+                                                enabled = true,
+                                                color1 = color1,
+                                                color2 = color2,
+                                                color3 = color3,
+                                                hasMid = hasMid,
+                                                mode = mode
+                                            )
+                                        )
+                                    }
+                                    applied.add(
+                                        "brush gradient ${parts[0]} → ${parts[1]}" +
+                                                if (hasMid) " → ${parts[2]}" else ""
+                                    )
+                                } catch (e: Exception) {
+                                    errors.add("brush gradient: invalid colors")
+                                }
+                            } else {
+                                errors.add("brush gradient: need 2 colors")
                             }
                         }
                     }
 
                     CmdType.BRUSH_TYPE -> {
-                        applied.add("brush type: ${cmd.key}")
+                        val brushType = when (cmd.key.lowercase()) {
+                            "pen" -> BrushType.PEN
+                            "marker" -> BrushType.MARKER
+                            "chalk" -> BrushType.CHALK
+                            "neon" -> BrushType.NEON
+                            "glow" -> BrushType.GLOW
+                            "spray" -> BrushType.SPRAY
+                            else -> null
+                        }
+                        if (brushType == null) {
+                            errors.add("brush: unknown type '${cmd.key}'")
+                        } else {
+                            BrushConfigHolder.update { config ->
+                                var updated = config.copy(type = brushType)
+                                cmd.value1?.let { w ->
+                                    updated = updated.copy(
+                                        width = w.coerceIn(1f, 200f)
+                                    )
+                                }
+                                cmd.stringValue?.let { hex ->
+                                    try {
+                                        val colorLong =
+                                            0xFF000000L or hex.removePrefix("#")
+                                                .toLong(16)
+                                        updated = updated.copy(color = colorLong)
+                                    } catch (_: Exception) {
+                                    }
+                                }
+                                updated
+                            }
+                            applied.add("brush type: ${cmd.key}")
+                        }
                     }
 
                     CmdType.BRUSH_DRAW -> {
                         if (cmd.key == "on") {
-                            viewModel.createBrushClip()
+                            // Ensure a brush clip exists
+                            val hasBrush = viewModel.state.value.clips.any {
+                                it.isBrushClip
+                            }
+                            if (!hasBrush) {
+                                viewModel.createBrushClip()
+                            }
+                            BrushConfigHolder.update {
+                                it.copy(isDrawingMode = true)
+                            }
                             applied.add("brush draw enabled")
                         } else {
+                            BrushConfigHolder.update {
+                                it.copy(isDrawingMode = false)
+                            }
                             applied.add("brush draw disabled")
                         }
                     }
@@ -533,10 +782,102 @@ object PromptExecutor {
                         applied.add("wheel ${cmd.key}")
                     }
 
-                    CmdType.KEYFRAME -> {
-                        applied.add("keyframe ${cmd.key}")
-                    }
+                    CmdType.KEYFRAME -> run keyframeBlock@{
+                        val sel = selected
+                        if (sel == null) {
+                            errors.add("keyframe: select a clip first")
+                            return@keyframeBlock
+                        }
 
+                        val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+                            state.currentPosMs, sel.timelineStartMs, sel.durationMs
+                        )
+
+                        // ─── KEYFRAME ALL ───
+                        if (cmd.key == "all") {
+                            viewModel.toggleKeyframeAll()
+                            val hasAny =
+                                KeyframeStore.hasAnyKeyframeAt(sel.keyframes, currentTimeSec)
+                            if (hasAny) {
+                                applied.add("keyframe all @${"%.2f".format(currentTimeSec)}s (removed)")
+                            } else {
+                                applied.add("keyframe all @${"%.2f".format(currentTimeSec)}s (added)")
+                            }
+                            return@keyframeBlock
+                        }
+
+                        // ─── KEYFRAME PROP [VALUE] ───
+                        val validProps = setOf(
+                            "x", "y", "scale", "rotation",
+                            "anchorX", "anchorY",
+                            "cropL", "cropR", "cropT", "cropB"
+                        )
+                        if (cmd.key !in validProps) {
+                            errors.add("keyframe: unknown property '${cmd.key}'")
+                            return@keyframeBlock
+                        }
+
+                        val value = cmd.value1
+
+                        if (value == null) {
+                            // Toggle keyframe at playhead for that prop
+                            viewModel.toggleKeyframeAtPlayhead(cmd.key)
+                            val exists = KeyframeStore.hasKeyframeAt(
+                                sel.keyframes, cmd.key, currentTimeSec
+                            )
+                            if (exists) {
+                                applied.add(
+                                    "keyframe ${cmd.key} removed @${
+                                        "%.2f".format(
+                                            currentTimeSec
+                                        )
+                                    }s"
+                                )
+                            } else {
+                                applied.add(
+                                    "keyframe ${cmd.key} added @${
+                                        "%.2f".format(
+                                            currentTimeSec
+                                        )
+                                    }s"
+                                )
+                            }
+                        } else {
+                            // ─── Set value AT playhead with keyframe (always creates/updates) ───
+
+                            // Step 1: Ensure keyframe exists
+                            val alreadyHasKf = KeyframeStore.hasKeyframeAt(
+                                sel.keyframes, cmd.key, currentTimeSec
+                            )
+                            if (!alreadyHasKf) {
+                                viewModel.toggleKeyframeAtPlayhead(cmd.key)
+                            }
+
+                            // Step 2: Update base + keyframe value
+                            viewModel.changeTransformProperty(cmd.key, value)
+
+                            // Step 3: Safety pass
+                            val refreshed = viewModel.state.value.clips
+                                .firstOrNull { it.id == sel.id }
+                            if (refreshed != null) {
+                                val kfValueAtTime = KeyframeStore.getKeyframes(
+                                    refreshed.keyframes, cmd.key
+                                ).firstOrNull { abs(it.time - currentTimeSec) < 0.05f }
+
+                                if (kfValueAtTime != null &&
+                                    abs(kfValueAtTime.value - value) > 0.01f
+                                ) {
+                                    viewModel.updateClipKeyframeValue(
+                                        refreshed.id, cmd.key, currentTimeSec, value
+                                    )
+                                }
+                            }
+
+                            applied.add(
+                                "keyframe ${cmd.key} = $value @${"%.2f".format(currentTimeSec)}s"
+                            )
+                        }
+                    }
                     // ═══════════════════════════════════════════
                     //  VISUALIZER
                     // ═══════════════════════════════════════════
@@ -564,23 +905,26 @@ object PromptExecutor {
                             }
 
                             "preset" -> {
-                                val p = resolveVisualizerPreset(
-                                    cmd.stringValue ?: ""
-                                )
-                                if (existingViz != null && p != null) {
-                                    viewModel.updateVisualizerLayer(
-                                        existingViz.id,
-                                        (existingViz.visualizer
-                                            ?: VisualizerState())
-                                            .copy(preset = p)
-                                    )
-                                    applied.add(
-                                        "visualizer preset ${p.label}"
-                                    )
-                                } else {
-                                    errors.add(
-                                        "Unknown preset: ${cmd.stringValue}"
-                                    )
+                                val p = resolveVisualizerPreset(cmd.stringValue ?: "")
+                                when {
+                                    p == null -> {
+                                        errors.add("Unknown preset: ${cmd.stringValue}")
+                                    }
+
+                                    existingViz == null -> {
+                                        errors.add(
+                                            "visualizer: no visualizer layer — run 'visualizer add' first"
+                                        )
+                                    }
+
+                                    else -> {
+                                        viewModel.updateVisualizerLayer(
+                                            existingViz.id,
+                                            (existingViz.visualizer ?: VisualizerState())
+                                                .copy(preset = p)
+                                        )
+                                        applied.add("visualizer preset ${p.label}")
+                                    }
                                 }
                             }
 
@@ -759,6 +1103,7 @@ object PromptExecutor {
                                 } else errors.add("No visualizer")
                             }
 
+
                             else -> {
                                 errors.add(
                                     "visualizer: unknown command " +
@@ -767,6 +1112,7 @@ object PromptExecutor {
                             }
                         }
                     }
+
 
                     else -> {}
                 }
@@ -783,6 +1129,14 @@ object PromptExecutor {
     }
 
     //  HELPERS
+    private fun currentTimeSecForPrompt(
+        state: com.moody.moodyvideoeditor.data.EditorState,
+        clip: com.moody.moodyvideoeditor.data.EditorClip
+    ): Float {
+        return KeyframeStore.clipLocalTimeSeconds(
+            state.currentPosMs, clip.timelineStartMs, clip.durationMs
+        )
+    }
 
     /**
      * Does this command have an explicit user position?
@@ -831,6 +1185,24 @@ object PromptExecutor {
             .replace("-", "")
             .replace("_", "")
         if (clean.isBlank()) return null
+        // ═══════════════════════════════════════════════════════
+        //  🆕 PRIORITY 1: Exact match by preset key (camelCase → lowercase)
+        //  Handles: "neonGlowRing", "circularSpectrum", "audioSphere", etc.
+        // ═══════════════════════════════════════════════════════
+        VisualizerPreset.values().firstOrNull {
+            it.key.lowercase() == clean
+        }?.let { return it }
+
+        // ═══════════════════════════════════════════════════════
+        //  🆕 PRIORITY 2: Match by label (spaces removed)
+        //  Handles: "Neon Glow Ring" → "neonglowring", "Audio Sphere" → "audiosphere"
+        // ═══════════════════════════════════════════════════════
+        VisualizerPreset.values().firstOrNull {
+            it.label.lowercase()
+                .replace(" ", "")
+                .replace("-", "")
+                .replace("_", "") == clean
+        }?.let { return it }
 
         // SPECTRUM
         val spectrumAliases = mapOf(

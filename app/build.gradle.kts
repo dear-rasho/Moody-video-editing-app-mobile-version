@@ -115,7 +115,8 @@ dependencies {
     //  Without this: NoClassDefFoundError crash
     // ═══════════════════════════════════════════════════════════
     implementation("com.arthenica:smart-exception-java:0.2.1")
-
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
     // ═══════════════════════════════════════════════════════════
     //  TESTING
     // ═══════════════════════════════════════════════════════════

@@ -145,6 +145,7 @@ class VideoExporter(
             }
         }
 
+        // ─── Visual clips (video / image with a real URI) ───
         val allVisual = clips.filter {
             it.isVisualClip &&
                     it.uri.toString().isNotBlank() &&
@@ -153,6 +154,14 @@ class VideoExporter(
 
         val trimmedVisualClips = trimClipsToRange(
             allVisual,
+            rangeStart,
+            rangeEnd
+        )
+
+        // ─── 🆕 Color Matte layers (data-only, no URI) ───
+        val allMatteClips = clips.filter { it.isColorMatteClip }
+        val trimmedMatteClips = trimClipsToRange(
+            allMatteClips,
             rangeStart,
             rangeEnd
         )
@@ -200,7 +209,10 @@ class VideoExporter(
                     "Visualizer=${vizClips.size}"
         )
 
-        val hasBaseVideo = trimmedVisualClips.isNotEmpty()
+        // Matas are considered a real base — they can stand alone.
+        val hasBaseVideo = trimmedVisualClips.isNotEmpty() ||
+                trimmedMatteClips.isNotEmpty()
+
         val hasSynthetic = trimmedTextClips.isNotEmpty() ||
                 overlayImageClips.isNotEmpty() ||
                 vizClips.isNotEmpty()
@@ -209,6 +221,10 @@ class VideoExporter(
             hasBaseVideo -> {
                 val outputFile = createOutputFile(fileName, format)
                 onProgress(0.01f)
+
+                // If there are no real video/image clips, we still need a
+                // visible base. Color mattes will be composited on top of
+                // a synthetic black background in the FFmpeg pipeline.
 
                 val textSequences = try {
                     TextBitmapRenderer.renderCombinedOverlays(
@@ -300,6 +316,7 @@ class VideoExporter(
                         fps = fps, bitrateKbps = bitrateKbps,
                         textSequences = allSequences,
                         audioOnlyClips = audioOnlyClips,
+                        matteClips = trimmedMatteClips,   // 🆕
                         explicitDurationMs = exportDurationMs
                     )
                 } catch (e: CancellationException) {
@@ -316,6 +333,7 @@ class VideoExporter(
                         overlayImageClips = overlayImageClips,
                         overlayClips = trimmedOverlayClips,
                         vizClips = vizClips,
+                        matteClips = trimmedMatteClips,   // 🆕
                         audioOnlyClips = audioOnlyClips,
                         rangeStart = rangeStart,
                         rangeEnd = rangeEnd,
@@ -582,6 +600,7 @@ class VideoExporter(
         overlayImageClips: List<EditorClip>,
         overlayClips: List<EditorClip>,
         vizClips: List<EditorClip>,
+        matteClips: List<EditorClip> = emptyList(),   // 🆕
         audioOnlyClips: List<EditorClip>,
         rangeStart: Long,
         rangeEnd: Long,

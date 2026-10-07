@@ -2,6 +2,7 @@ package com.moody.moodyvideoeditor.utils
 
 import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.EffectLibrary
+import com.moody.moodyvideoeditor.data.FilterState
 
 enum class CmdType {
     ADJUSTMENT, FILTER, EFFECT, SPEED, TRANSFORM, TRIM,
@@ -16,7 +17,8 @@ enum class CmdType {
     BRUSH_DRAW,
     BRUSH_CLEAR,
     BEAT_ANIMATION,
-    VISUALIZER,       // 🆕
+    VISUALIZER,
+    COLOR_MATTE,          // 🆕
     UNKNOWN
 }
 
@@ -73,18 +75,93 @@ object PromptEngine {
         "cropl", "cropr", "cropt", "cropb"
     )
 
-    private val ANIMATIONS = setOf(
-        "none", "typewriter", "decoder", "fadein", "fadeup", "fadedown",
-        "slideleft", "slideright", "slideup", "slidedown", "popin", "bouncein",
-        "flicker", "cinematicblur", "flip3dx", "flip3dy", "rotate3d",
-        "scribble", "glitch", "wave", "bouncewave", "pulse", "shake",
-        "zoomin", "zoomout", "vortexspin", "spiralin", "tornado"
-    )
+    // All 89 animations from AnimationsEngine.CATEGORIES
+    private val ANIMATIONS: Set<String> = buildSet {
+        // BASIC
+        addAll(
+            listOf(
+                "none", "typewriter", "decoder", "fadein", "fadeup", "fadedown",
+                "slideleft", "slideright", "slideup", "slidedown",
+                "popin", "bouncein", "flicker", "cinematicblur"
+            )
+        )
 
-    private val EFFECT_NAMES = EffectLibrary.ALL.map { it.key }.toSet()
+        // REVEALS
+        addAll(
+            listOf(
+                "wordreveal", "characterrise", "maskvertical", "maskhorizontal",
+                "centerout", "linedraw", "blurryreveal", "smokedissolve", "trailfade"
+            )
+        )
 
+        // GLITCH
+        addAll(
+            listOf(
+                "glitch", "rgbsplit", "sliceglitch", "blockglitch", "staticnoise",
+                "vcrdistort", "shakejitter", "cyberpunk", "matrixrain", "interlaced"
+            )
+        )
 
+        // WAVES
+        addAll(
+            listOf(
+                "wave", "bouncewave", "sinewave", "liquidmelt", "flagwave",
+                "waterripple", "heatwave", "elasticwave", "pulsingwave",
+                "turbulent", "circularwave"
+            )
+        )
+
+        // BOUNCES
+        addAll(
+            listOf(
+                "overshootpop", "elasticdrop", "jellybounce", "microbounce",
+                "stompbounce", "squeezestretch", "float", "diagonaljump",
+                "gravityfall", "heavylanding", "doublebounce", "bouncyspin",
+                "snapback", "springstring", "sidekick"
+            )
+        )
+
+        // SLIDERS
+        addAll(
+            listOf(
+                "flydiagonaltl", "flydiagonalbr", "crossslide", "accelslide",
+                "decelslide", "splitslide", "zigzagslide", "smoothglide",
+                "infinitescroll", "pushslide"
+            )
+        )
+
+        // ROTATIONS
+        addAll(
+            listOf(
+                "flip3dx", "flip3dy", "rotate3d", "yaxisflip", "xaxisflip",
+                "vortexspin", "zaxisspin", "spiralin", "tornado", "skewspin",
+                "pendulum", "propeller", "barrelroll", "cuberoll",
+                "gentletilt", "twister"
+            )
+        )
+
+        // ZOOMS
+        addAll(
+            listOf(
+                "zoomin", "zoomout", "cinematiczoom", "hyperzoomout", "pulsescale",
+                "elasticzoom", "lensflarezoom", "shrinkreveal", "popscale",
+                "depthzoom", "snapzoom"
+            )
+        )
+
+        // SPECIAL
+        addAll(
+            listOf(
+                "scribble", "neonglow", "gradientshift", "ghosttrail",
+                "silhouette", "explosion", "implosion", "pulse", "shake"
+            )
+        )
+    }
+    private val EFFECT_NAMES = EffectLibrary.ALL.associateBy { it.key.lowercase() }
+
+    // ═══════════════════════════════════════════════════════════
     //  MAIN PARSE
+    // ═══════════════════════════════════════════════════════════
 
     fun parse(input: String): ParseResult {
         val trimmed = input.trim()
@@ -116,8 +193,9 @@ object PromptEngine {
         return result
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  TIMESTAMPED PARSE
+    // ═══════════════════════════════════════════════════════════
 
     private fun parseTimestamped(input: String): ParseResult {
         val commands = mutableListOf<ParsedCommand>()
@@ -160,8 +238,9 @@ object PromptEngine {
         return ParseResult(commands, unknown)
     }
 
-
-    //  LINEAR PARSE — handles L1 transitions, C1 slide, ...
+    // ═══════════════════════════════════════════════════════════
+    //  LINEAR PARSE
+    // ═══════════════════════════════════════════════════════════
 
     private fun parseLinear(input: String): ParseResult {
         val commands = mutableListOf<ParsedCommand>()
@@ -179,7 +258,7 @@ object PromptEngine {
         while (i < rawParts.size) {
             val part = rawParts[i]
 
-            // Detect "L1 transitions" / "L2 transitions" / "L1 transition"
+            // Detect "L1 transitions" / "L2 transitions"
             val layerMatch = Regex(
                 """^l(\d+)\s+transitions?$""",
                 RegexOption.IGNORE_CASE
@@ -190,7 +269,6 @@ object PromptEngine {
                 val clipPairs = mutableListOf<String>()
                 i++
 
-                // Consume following "C1 slide" / "C5 skip" / "C2 push left" entries
                 while (i < rawParts.size) {
                     val cMatch = Regex(
                         """^c(\d+)(?:\s+(.+))?$""",
@@ -200,7 +278,7 @@ object PromptEngine {
 
                     val clipNum = cMatch.groupValues[1]
                     val transName = cMatch.groupValues[2].trim()
-                        .ifBlank { "skip" }  // bare "C1" = skip
+                        .ifBlank { "skip" }
                     clipPairs.add("$clipNum=$transName")
                     i++
                 }
@@ -234,24 +312,132 @@ object PromptEngine {
         return ParseResult(commands, unknown)
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  PARSE ONE
+    // ═══════════════════════════════════════════════════════════
 
     private fun parseOne(text: String): ParsedCommand? {
         val lower = text.lowercase().trim()
         if (lower.isBlank()) return null
 
-        // SPECIAL
+        // ── SPECIAL ──
         if (lower == "tighten track" || lower == "tighten")
             return ParsedCommand(CmdType.TIGHTEN, "tighten", raw = text)
-        if (lower == "graph on")
-            return ParsedCommand(CmdType.GRAPH, "on", raw = text)
-        if (lower == "graph off")
-            return ParsedCommand(CmdType.GRAPH, "off", raw = text)
+
+        // GRAPH — repurposed as keyframe info report
+        if (lower == "graph" || lower == "graph on" || lower == "graph info" ||
+            lower == "keyframes" || lower == "show keyframes"
+        ) {
+            return ParsedCommand(CmdType.GRAPH, "info", raw = text)
+        }
+
         if (lower == "clear keyframes")
             return ParsedCommand(CmdType.CLEAR_KEYFRAMES, "clear", raw = text)
 
-        // RATIO
+        // ─── 🆕 COLOR MATTE ───
+        // Matches:
+        //   "color matte"
+        //   "color matte #FF0066"
+        //   "color matte red"
+        //   "color matte #FF0066 opacity 80 duration 5"
+        //   "create a color matte with color #0066FF"
+        //   "add a color matte color blue opacity 60 duration 8"
+        if (lower.contains("color matte") || lower.contains("colour matte")) {
+            // ── Extract color ──
+            var matteColorLong: Long? = null
+
+            // Try hex first
+            val hexMatch = Regex("""#([0-9a-fA-F]{6})""").find(text)
+            if (hexMatch != null) {
+                try {
+                    matteColorLong = 0xFF000000L or
+                            hexMatch.groupValues[1].toLong(16)
+                } catch (_: Exception) {
+                }
+            }
+
+            // Try named color
+            if (matteColorLong == null) {
+                val colorNames = listOf(
+                    "black", "white", "red", "green", "blue",
+                    "yellow", "orange", "cyan", "magenta",
+                    "purple", "pink", "gray", "grey"
+                )
+                for (name in colorNames) {
+                    if (lower.contains(name)) {
+                        matteColorLong = when (name) {
+                            "black" -> 0xFF000000L
+                            "white" -> 0xFFFFFFFFL
+                            "red" -> 0xFFFF0000L
+                            "green" -> 0xFF00FF00L
+                            "blue" -> 0xFF0066FFL
+                            "yellow" -> 0xFFFFCC00L
+                            "orange" -> 0xFFFF6B00L
+                            "cyan" -> 0xFF00E5FFL
+                            "magenta" -> 0xFFFF00FFL
+                            "purple" -> 0xFF7C3AEDL
+                            "pink" -> 0xFFFF4F8BL
+                            "gray", "grey" -> 0xFF808080L
+                            else -> null
+                        }
+                        break
+                    }
+                }
+            }
+
+            // ── Extract opacity ──
+            var matteOpacity: Float? = null
+            Regex("""opacity\s+(\d+)""").find(lower)?.let {
+                matteOpacity = it.groupValues[1].toFloatOrNull()
+            }
+
+            // ── Extract duration ──
+            var matteDuration: Long? = null
+            Regex("""duration\s+(\d+)""").find(lower)?.let {
+                matteDuration = it.groupValues[1].toLongOrNull()?.times(1000L)
+            }
+
+            // ── Build ParsedCommand ──
+            return ParsedCommand(
+                CmdType.COLOR_MATTE,
+                key = "matte",
+                value1 = matteOpacity,
+                value2 = matteDuration?.toFloat(),
+                extra = matteColorLong?.toString(),
+                raw = text
+            )
+        }
+        // ── KEYFRAME ──
+        if (lower == "keyframe all" || lower == "keyframe") {
+            return ParsedCommand(CmdType.KEYFRAME, "all", raw = text)
+        }
+
+        Regex("""^keyframe\s+(x|y|scale|rotation|anchorx|anchory|cropl|cropr|cropt|cropb)(?:\s+(-?[\d.]+))?$""")
+            .find(lower)
+            ?.let { m ->
+                val prop = when (val rawProp = m.groupValues[1]) {
+                    "x" -> "x"
+                    "y" -> "y"
+                    "scale" -> "scale"
+                    "rotation" -> "rotation"
+                    "anchorx" -> "anchorX"
+                    "anchory" -> "anchorY"
+                    "cropl" -> "cropL"
+                    "cropr" -> "cropR"
+                    "cropt" -> "cropT"
+                    "cropb" -> "cropB"
+                    else -> rawProp
+                }
+                val value = m.groupValues[2].toFloatOrNull()
+                return ParsedCommand(
+                    CmdType.KEYFRAME,
+                    prop,
+                    value1 = value,
+                    raw = text
+                )
+            }
+
+        // ── RATIO ──
         Regex("""^ratio\s+(\d+):(\d+)$""").find(lower)?.let { m ->
             return ParsedCommand(
                 CmdType.RATIO,
@@ -260,7 +446,7 @@ object PromptEngine {
             )
         }
 
-        // TEMPLATE
+        // ── TEMPLATE ──
         if (lower.startsWith("template ")) {
             val tId = lower.substring(9).trim()
             if (tId.isNotBlank()) {
@@ -268,7 +454,7 @@ object PromptEngine {
             }
         }
 
-        // TRANSITION ALL
+        // ── TRANSITION ALL ──
         Regex("""^transition\s+all\s+([a-z\s]+?)(?:\s+([\d.]+))?$""", RegexOption.IGNORE_CASE)
             .find(lower)?.let { m ->
                 val key = m.groupValues[1].trim().replace(" ", "")
@@ -276,7 +462,7 @@ object PromptEngine {
                 return ParsedCommand(CmdType.TRANSITION_ALL, key, value1 = dur, raw = text)
             }
 
-        // TRANSITION AT
+        // ── TRANSITION AT ──
         Regex(
             """^transition\s+at\s+([\d.]+)\s+([a-z\s]+?)(?:\s+([\d.]+))?$""",
             RegexOption.IGNORE_CASE
@@ -293,7 +479,7 @@ object PromptEngine {
             )
         }
 
-        // TRANSITION LAYER (pattern)
+        // ── TRANSITION LAYER (pattern) ──
         Regex("""^layer\s+(v|a)(\d+)\s+transitions\s+(.+)$""", RegexOption.IGNORE_CASE)
             .find(text)?.let { m ->
                 val isAudio = m.groupValues[1].lowercase() == "a"
@@ -308,7 +494,7 @@ object PromptEngine {
                 )
             }
 
-        // TRANSITION SINGLE
+        // ── TRANSITION SINGLE ──
         Regex(
             """^(fade|dissolve|fadeblack|fadewhite|slide\s+left|slide\s+right|slide\s+up|slide\s+down|zoom\s+in|zoom\s+out|wipe\s+left|wipe\s+right|circleIn|blur)(?:\s+in)?(?:\s+([\d.]+))?$""",
             RegexOption.IGNORE_CASE
@@ -317,8 +503,28 @@ object PromptEngine {
             val dur = m.groupValues[2].toFloatOrNull() ?: 0.5f
             return ParsedCommand(CmdType.TRANSITION, key, value1 = dur, raw = text)
         }
+        // 🆕 TRANSITION PRESET — matches any preset key from TransitionLibrary
+        // Example: "rgbShift", "whiteFlash", "heartPop", "inkSplash"
+        // Supports optional duration:  "rgbShift 0.8"
+        Regex("""^([a-zA-Z]+)(?:\s+([\d.]+))?$""").find(text)?.let { m ->
+            val key = m.groupValues[1]
+            val dur = m.groupValues[2].toFloatOrNull()
 
-        // TEXT
+            // Only treat as transition if key matches a TransitionLibrary preset
+            val preset = com.moody.moodyvideoeditor.data.TransitionLibrary
+                .PRESETS.firstOrNull {
+                    it.key.equals(key, ignoreCase = true) && it.key != "none"
+                }
+            if (preset != null) {
+                return ParsedCommand(
+                    CmdType.TRANSITION,
+                    preset.key,
+                    value1 = dur ?: 0.5f,
+                    raw = text
+                )
+            }
+        }
+        // ── TEXT ──
         val textFull =
             Regex("""^text\s+"([^"]+)"(?:\s+(.+))?$""", RegexOption.IGNORE_CASE).find(text)
         if (textFull != null) {
@@ -330,7 +536,7 @@ object PromptEngine {
             )
         }
 
-        // STICKER with optional properties
+        // ── STICKER with optional properties ──
         val stickerFull = Regex(
             """^sticker\s+(\S+)(?:\s+(.+))?$""",
             RegexOption.IGNORE_CASE
@@ -346,17 +552,39 @@ object PromptEngine {
             )
         }
 
-        // BRUSH COMMANDS
+        // ═══════════════════════════════════════════════════════
+        //  BRUSH COMMANDS
+        // ═══════════════════════════════════════════════════════
+
+        // BRUSH GRADIENT — supports 2/3 colors + reverse
         Regex(
-            """^brush\s+gradient\s+(?:#([0-9a-fA-F]{6})|([a-z]+))\s+to\s+(?:#([0-9a-fA-F]{6})|([a-z]+))$""",
+            """^brush\s+gradient\s+(?:#([0-9a-fA-F]{6})|([a-z]+))\s+to\s+(?:#([0-9a-fA-F]{6})|([a-z]+))(?:\s+to\s+(?:#([0-9a-fA-F]{6})|([a-z]+)))?(?:\s+(reverse))?$""",
             RegexOption.IGNORE_CASE
         ).find(text)?.let { m ->
             val c1 = m.groupValues[1].ifBlank { colorNameToHex(m.groupValues[2]) }
             val c2 = m.groupValues[3].ifBlank { colorNameToHex(m.groupValues[4]) }
+            val c3 = m.groupValues[5].ifBlank {
+                if (m.groupValues[6].isNotBlank()) colorNameToHex(m.groupValues[6])
+                else ""
+            }
+            val isReverse = m.groupValues[7].equals("reverse", ignoreCase = true)
+
+            val payload = buildString {
+                append("#$c1")
+                append(",")
+                append("#$c2")
+                if (c3.isNotBlank()) {
+                    append(",")
+                    append("#$c3")
+                }
+                append(",")
+                append(if (isReverse) "reverse" else "linear")
+            }
+
             return ParsedCommand(
                 CmdType.BRUSH_GRADIENT,
-                "linear",
-                stringValue = "#$c1,#$c2",
+                "set",
+                stringValue = payload,
                 raw = text
             )
         }
@@ -365,18 +593,28 @@ object PromptEngine {
             return ParsedCommand(CmdType.BRUSH_GRADIENT, "off", raw = text)
         }
 
+        // BRUSH TYPE — pen/marker/chalk/neon/glow/spray [color X] [width N]
         Regex(
             """^brush\s+(pen|marker|chalk|neon|glow|spray)(?:\s+color\s+(?:#([0-9a-fA-F]{6})|([a-z]+)))?(?:\s+width\s+([\d.]+))?$""",
             RegexOption.IGNORE_CASE
         ).find(text)?.let { m ->
             val type = m.groupValues[1].lowercase()
-            val colorHex = m.groupValues[2].ifBlank { colorNameToHex(m.groupValues[3]) }
+
+            val hexGroup = m.groupValues[2]
+            val nameGroup = m.groupValues[3]
+            val colorHex = when {
+                hexGroup.isNotBlank() -> hexGroup
+                nameGroup.isNotBlank() -> colorNameToHex(nameGroup)
+                else -> null
+            }
+
             val width = m.groupValues[4].toFloatOrNull()
+
             return ParsedCommand(
                 CmdType.BRUSH_TYPE,
                 type,
                 value1 = width,
-                stringValue = if (colorHex.isNotBlank()) "#$colorHex" else null,
+                stringValue = colorHex?.let { "#$it" },
                 raw = text
             )
         }
@@ -393,23 +631,20 @@ object PromptEngine {
             return ParsedCommand(CmdType.BRUSH_CLEAR, "clear", raw = text)
         }
 
-
-        //  🆕 VISUALIZER COMMANDS
+        // ═══════════════════════════════════════════════════════
+        //  VISUALIZER COMMANDS
+        // ═══════════════════════════════════════════════════════
 
         if (lower == "visualizer" || lower.startsWith("visualizer ")) {
             val rest = if (lower == "visualizer") "" else lower.substring(11).trim()
 
-            // visualizer add / create / new
             if (rest == "add" || rest == "create" || rest == "new") {
                 return ParsedCommand(CmdType.VISUALIZER, "add", raw = text)
             }
-
-            // visualizer remove / delete
             if (rest == "remove" || rest == "delete") {
                 return ParsedCommand(CmdType.VISUALIZER, "remove", raw = text)
             }
 
-            // visualizer preset NAME
             Regex("""^preset\s+(\S+)$""").find(rest)?.let { m ->
                 return ParsedCommand(
                     CmdType.VISUALIZER, "preset",
@@ -418,11 +653,8 @@ object PromptEngine {
                 )
             }
 
-            // visualizer color1 #hex OR name
             Regex("""^color1\s+(?:#([0-9a-fA-F]{6})|([a-z]+))$""").find(rest)?.let { m ->
-                val hex = m.groupValues[1].ifBlank {
-                    colorNameToHex(m.groupValues[2])
-                }
+                val hex = m.groupValues[1].ifBlank { colorNameToHex(m.groupValues[2]) }
                 return ParsedCommand(
                     CmdType.VISUALIZER, "color1",
                     stringValue = "#$hex",
@@ -430,11 +662,8 @@ object PromptEngine {
                 )
             }
 
-            // visualizer color2 #hex OR name
             Regex("""^color2\s+(?:#([0-9a-fA-F]{6})|([a-z]+))$""").find(rest)?.let { m ->
-                val hex = m.groupValues[1].ifBlank {
-                    colorNameToHex(m.groupValues[2])
-                }
+                val hex = m.groupValues[1].ifBlank { colorNameToHex(m.groupValues[2]) }
                 return ParsedCommand(
                     CmdType.VISUALIZER, "color2",
                     stringValue = "#$hex",
@@ -442,7 +671,6 @@ object PromptEngine {
                 )
             }
 
-            // visualizer size N  (15..60 percent)
             Regex("""^size\s+([\d.]+)$""").find(rest)?.let { m ->
                 return ParsedCommand(
                     CmdType.VISUALIZER, "size",
@@ -451,7 +679,6 @@ object PromptEngine {
                 )
             }
 
-            // visualizer position X Y  (0..100)
             Regex("""^pos(?:ition)?\s+([\d.]+)\s+([\d.]+)$""").find(rest)?.let { m ->
                 return ParsedCommand(
                     CmdType.VISUALIZER, "position",
@@ -461,7 +688,6 @@ object PromptEngine {
                 )
             }
 
-            // visualizer opacity N (0..100)
             Regex("""^opacity\s+([\d.]+)$""").find(rest)?.let { m ->
                 return ParsedCommand(
                     CmdType.VISUALIZER, "opacity",
@@ -470,7 +696,6 @@ object PromptEngine {
                 )
             }
 
-            // visualizer glow on/off
             Regex("""^glow\s+(on|off)$""").find(rest)?.let { m ->
                 return ParsedCommand(
                     CmdType.VISUALIZER, "glow",
@@ -479,7 +704,6 @@ object PromptEngine {
                 )
             }
 
-            // visualizer reaction N (0..2)
             Regex("""^reaction\s+([\d.]+)$""").find(rest)?.let { m ->
                 return ParsedCommand(
                     CmdType.VISUALIZER, "reaction",
@@ -488,7 +712,6 @@ object PromptEngine {
                 )
             }
 
-            // visualizer text "..." (with optional size)
             Regex("""^text\s+"([^"]+)"(?:\s+size\s+(\d+))?$""").find(text)?.let { m ->
                 return ParsedCommand(
                     CmdType.VISUALIZER, "text",
@@ -498,7 +721,6 @@ object PromptEngine {
                 )
             }
 
-            // visualizer show text / image
             Regex("""^show\s+(text|image)$""").find(rest)?.let { m ->
                 return ParsedCommand(
                     CmdType.VISUALIZER, "show",
@@ -507,7 +729,6 @@ object PromptEngine {
                 )
             }
 
-            // visualizer hide text / image
             Regex("""^hide\s+(text|image)$""").find(rest)?.let { m ->
                 return ParsedCommand(
                     CmdType.VISUALIZER, "hide",
@@ -516,7 +737,6 @@ object PromptEngine {
                 )
             }
 
-            // visualizer order text-top / image-top
             Regex("""^order\s+(text-top|image-top)$""").find(rest)?.let { m ->
                 return ParsedCommand(
                     CmdType.VISUALIZER, "order",
@@ -525,7 +745,6 @@ object PromptEngine {
                 )
             }
 
-            // Unknown visualizer sub-command
             return ParsedCommand(
                 CmdType.VISUALIZER, "unknown",
                 stringValue = rest,
@@ -533,7 +752,10 @@ object PromptEngine {
             )
         }
 
-        // BEAT ANIMATIONS
+        // ═══════════════════════════════════════════════════════
+        //  BEAT ANIMATIONS
+        // ═══════════════════════════════════════════════════════
+
         if (lower.startsWith("beat ")) {
             val rest = lower.substring(5).trim()
             val parts = rest.split(Regex("\\s+"))
@@ -558,14 +780,14 @@ object PromptEngine {
             }
         }
 
-        // ANIMATION
+        // ── ANIMATION ──
         if (lower.startsWith("animation ")) {
             val anim = lower.substring(10).trim().replace(" ", "")
             if (ANIMATIONS.contains(anim))
                 return ParsedCommand(CmdType.ANIMATION, anim, raw = text)
         }
 
-        // FONT
+        // ── FONT ──
         Regex("""^font\s+(?:"([^"]+)"|([a-z]+))(?:\s+size\s+(\d+))?$""", RegexOption.IGNORE_CASE)
             .find(text)?.let { m ->
                 val name = m.groupValues[1].ifBlank { m.groupValues[2] }
@@ -573,17 +795,37 @@ object PromptEngine {
                 return ParsedCommand(CmdType.FONT, name, value1 = size, raw = text)
             }
 
-        // ALIGN
+        // ── ALIGN ──
         Regex("""^align\s+(left|center|right)$""").find(lower)?.let { m ->
             return ParsedCommand(CmdType.ALIGN, m.groupValues[1], raw = text)
         }
 
-        // ANCHOR
+        // ── ANCHOR (named) ──
         Regex("""^anchor\s+(top-left|top-center|top-right|center-left|center|center-right|bottom-left|bottom-center|bottom-right)$""")
             .find(lower)
             ?.let { return ParsedCommand(CmdType.ANCHOR, it.groupValues[1], raw = text) }
 
-        // SPEED
+        // ── ANCHOR (coordinate) ──
+        Regex("""^anchor\s+([\d.]+)\s+([\d.]+)$""")
+            .find(lower)
+            ?.let { m ->
+                val ax = m.groupValues[1].toFloatOrNull()
+                val ay = m.groupValues[2].toFloatOrNull()
+                if (ax != null && ay != null &&
+                    ax.isFinite() && ay.isFinite() &&
+                    ax in 0f..100f && ay in 0f..100f
+                ) {
+                    return ParsedCommand(
+                        CmdType.ANCHOR,
+                        "coords",
+                        value1 = ax,
+                        value2 = ay,
+                        raw = text
+                    )
+                }
+            }
+
+        // ── SPEED ──
         Regex("""^speed\s+([\d.]+)x?$""").find(lower)?.let { m ->
             return ParsedCommand(
                 CmdType.SPEED,
@@ -593,7 +835,7 @@ object PromptEngine {
             )
         }
 
-        // TRIM
+        // ── TRIM ──
         when (lower) {
             "trim left" -> return ParsedCommand(CmdType.TRIM, "left", raw = text)
             "trim right" -> return ParsedCommand(CmdType.TRIM, "right", raw = text)
@@ -601,13 +843,37 @@ object PromptEngine {
             "green screen" -> return ParsedCommand(CmdType.CHROMA, "#00ff00", raw = text)
         }
 
-        // AUDIO FX
-        if (lower.startsWith("audio ")) {
-            val fx = lower.substring(6).trim()
-            if (fx.isNotBlank()) return ParsedCommand(CmdType.AUDIO_FX, fx, raw = text)
+        // ═══════════════════════════════════════════════════════
+        //  AUDIO FX + SOUND FX
+        // ═══════════════════════════════════════════════════════
+
+        // "audio NAME [INTENSITY]"
+        Regex("""^audio\s+([a-z]+)(?:\s+(\d+))?$""").find(lower)?.let { m ->
+            val fx = m.groupValues[1]
+            val intensity = m.groupValues[2].toFloatOrNull()
+            return ParsedCommand(
+                CmdType.AUDIO_FX,
+                fx,
+                value1 = intensity,
+                stringValue = "audio",
+                raw = text
+            )
         }
 
-        // COLOR WHEEL
+        // "sound NAME [INTENSITY]" or "soundfx NAME [INTENSITY]"
+        Regex("""^(?:sound|soundfx)\s+([a-z]+)(?:\s+(\d+))?$""").find(lower)?.let { m ->
+            val fx = m.groupValues[1]
+            val intensity = m.groupValues[2].toFloatOrNull()
+            return ParsedCommand(
+                CmdType.AUDIO_FX,
+                fx,
+                value1 = intensity,
+                stringValue = "sound",
+                raw = text
+            )
+        }
+
+        // ── COLOR WHEEL ──
         Regex("""^(shadows|midtones|highlights)\s+([a-z]+)\s+(\d+)\s+(\d+)$""").find(lower)
             ?.let { m ->
                 return ParsedCommand(
@@ -627,11 +893,25 @@ object PromptEngine {
             )
         }
 
-        // EFFECT
-        if (EFFECT_NAMES.contains(lower))
-            return ParsedCommand(CmdType.EFFECT, lower, raw = text)
+        // ═══════════════════════════════════════════════════════
+        //  EFFECT (before filter preset)
+        // ═══════════════════════════════════════════════════════
+        EFFECT_NAMES[lower]?.let { preset ->
+            return ParsedCommand(CmdType.EFFECT, preset.key, raw = text)
+        }
 
-        // KEY VALUE
+        // ═══════════════════════════════════════════════════════
+        //  FILTER PRESET (135 presets from FilterState.PRESETS)
+        // ═══════════════════════════════════════════════════════
+        FilterState.findPreset(lower)?.let { preset ->
+            return ParsedCommand(
+                CmdType.FILTER,
+                "preset:${preset.key}",
+                raw = text
+            )
+        }
+
+        // ── KEY VALUE ──
         Regex("""^([a-z_]+)\s+(-?[\d.]+)$""").find(lower)?.let { m ->
             val key = m.groupValues[1]
             val value = m.groupValues[2].toFloatOrNull()
@@ -662,7 +942,7 @@ object PromptEngine {
             }
         }
 
-        // FILTER (no value)
+        // ── FILTER (primitive, no value) ──
         if (FILTER_KEYS.contains(lower)) {
             val def = when (lower) {
                 "grayscale", "invert" -> 100f
@@ -674,15 +954,16 @@ object PromptEngine {
             return ParsedCommand(CmdType.FILTER, lower, value1 = def, raw = text)
         }
 
-        // CHROMA
+        // ── CHROMA ──
         if (lower.startsWith("chroma "))
             return ParsedCommand(CmdType.CHROMA, text.substring(7).trim(), raw = text)
 
         return null
     }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  HELPERS
+    // ═══════════════════════════════════════════════════════════
 
     fun withAdjustment(adj: AdjustmentData, key: String, v: Float): AdjustmentData = when (key) {
         "brightness" -> adj.copy(brightness = v)

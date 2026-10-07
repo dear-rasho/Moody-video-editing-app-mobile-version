@@ -6,7 +6,7 @@ object TextScaler {
     const val REFERENCE_WIDTH_DP = 720f
 
     fun scaleFactor(canvasWidth: Float): Float =
-        (canvasWidth / REFERENCE_WIDTH_DP).coerceIn(0.15f, 5.0f)
+        canvasWidth / REFERENCE_WIDTH_DP
 
     // ═══════════════════════════════════════════════════════════
     //  FONT SIZE — accepts EITHER canvasWidthDp OR canvasWidthPx

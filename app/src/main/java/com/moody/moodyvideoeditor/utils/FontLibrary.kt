@@ -3,12 +3,11 @@ package com.moody.moodyvideoeditor.utils
 import android.graphics.Typeface
 import androidx.compose.ui.text.font.FontFamily
 
-// Mirrors js/codebase/fontLibrary.js
-// Maps font names → Compose FontFamily (via generic fallback).
-// Add .ttf files to res/font later for real custom fonts.
 object FontLibrary {
 
-    // 15 categories — mirrors FONT_CATEGORIES in JS
+    // ═══════════════════════════════════════════════════════════
+    //  15 categories — mirrors FONT_CATEGORIES in JS
+    // ═══════════════════════════════════════════════════════════
     val FONT_CATEGORIES: Map<String, List<String>> = mapOf(
         "custom" to listOf(
             "Amita", "Bangela", "Brisound", "Chopin Script", "Christmas Music",
@@ -109,16 +108,11 @@ object FontLibrary {
         )
     )
 
-    // All fonts, deduped
     fun allFonts(): List<String> =
         FONT_CATEGORIES.values.flatten().distinct().sorted()
 
-    // Category names
     fun categories(): List<String> = FONT_CATEGORIES.keys.toList()
 
-    // Mirrors JS resolveFontFamily().
-    // If input is category name → first font of that category.
-    // Else return input as-is.
     fun resolveFontName(input: String): String {
         val raw = input.trim()
         if (raw.isEmpty()) return "Arial"
@@ -132,6 +126,103 @@ object FontLibrary {
     fun familyFor(fontName: String): FontFamily =
         FontFamily(typefaceFor(fontName))
 
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 FONT → ANDROID SYSTEM FAMILY MAP
+    //  Maps every custom font name to closest real system font
+    // ═══════════════════════════════════════════════════════════
+
+    private val FONT_MAP: Map<String, String> = buildMap {
+        // ─── SANS-SERIF (Roboto) ───
+        val sansList = listOf(
+            "arial", "helvetica", "segoe ui", "roboto", "inter",
+            "verdana", "tahoma", "trebuchet ms", "calibri", "candara",
+            "corbel", "franklin gothic medium", "lucida grande", "geneva",
+            "optima", "avenir", "futura", "gill sans",
+            "century gothic", "tw cen mt",
+            "poppins", "montserrat", "raleway", "work sans",
+            "dm sans", "manrope", "space grotesk", "outfit", "sora",
+            "ibm plex sans", "public sans", "archivo", "mulish",
+            "nunito", "rubik", "karla", "lato", "open sans",
+            "source sans 3", "noto sans", "brisound", "daffiys",
+            "eighties", "funkora", "funky groove"
+        )
+        sansList.forEach { put(it, "sans-serif") }
+
+        // ─── SANS-SERIF LIGHT ───
+        listOf("roboto light", "segoe ui light").forEach {
+            put(it, "sans-serif-light")
+        }
+
+        // ─── SANS-SERIF MEDIUM ───
+        listOf("roboto medium", "segoe ui semibold").forEach {
+            put(it, "sans-serif-medium")
+        }
+
+        // ─── SANS-SERIF BLACK (heavy display) ───
+        listOf(
+            "impact", "arial black", "franklin gothic heavy",
+            "haettenschweiler", "bungee", "titan one",
+            "bowlby one sc", "alfa slab one", "ultra",
+            "bungee shade", "abril fatface", "archivo black"
+        ).forEach { put(it, "sans-serif-black") }
+
+        // ─── SANS-SERIF CONDENSED (narrow display) ───
+        listOf(
+            "anton", "bebas neue", "oswald", "russo one", "righteous",
+            "bungee inline", "monoton", "audiowide", "orbitron",
+            "fighter attack", "forceless demo", "komika", "pricedown",
+            "rengkox", "rockybilly", "shockwave", "bangela",
+            "bree serif", "special elite"
+        ).forEach { put(it, "sans-serif-condensed") }
+
+        // ─── SERIF ───
+        listOf(
+            "times new roman", "georgia", "cambria", "constantia",
+            "palatino linotype", "book antiqua", "bookman old style",
+            "garamond", "baskerville", "didot", "rockwell",
+            "playfair display", "cormorant garamond", "eb garamond",
+            "lora", "merriweather", "crimson text", "libre baskerville",
+            "cinzel", "cormorant", "spectral", "prata", "cardo",
+            "bodoni moda", "cormorant upright"
+        ).forEach { put(it, "serif") }
+
+        // ─── MONOSPACE ───
+        listOf(
+            "courier new", "consolas", "monaco", "menlo", "lucida console",
+            "andale mono", "courier", "inconsolata", "source code pro",
+            "roboto mono", "fira code", "jetbrains mono", "space mono",
+            "ibm plex mono", "cascadia code", "cascadia mono"
+        ).forEach { put(it, "monospace") }
+
+        // ─── CURSIVE / SCRIPT ───
+        listOf(
+            "amita", "chopin script", "gwathlyn", "legendary brush",
+            "musiclife", "orchard song", "kaway", "rumburak",
+            "comic sans ms", "brush script mt", "segoe script",
+            "bradley hand", "lucida handwriting", "apple chancery",
+            "dancing script", "pacifico", "great vibes", "allura",
+            "alex brush", "satisfy", "kaushan script", "parisienne",
+            "sacramento", "tangerine", "caveat", "shadows into light",
+            "indie flower", "amatic sc", "patrick hand", "kalam",
+            "permanent marker", "caveat brush", "rock salt",
+            "baloo 2", "fredoka", "chewy", "luckiest guy",
+            "bangers", "bubblegum sans", "sniglet", "grandstander",
+            "coiny", "lobster"
+        ).forEach { put(it, "cursive") }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  MAIN TYPE RESOLVER
+    // ═══════════════════════════════════════════════════════════
+
+    private val SYSTEM_FAMILIES = setOf(
+        "sans-serif", "sans-serif-light", "sans-serif-thin",
+        "sans-serif-medium", "sans-serif-black", "sans-serif-condensed",
+        "sans-serif-condensed-light", "sans-serif-condensed-medium",
+        "sans-serif-condensed-black", "sans-serif-smallcaps",
+        "serif", "serif-monospace", "monospace", "casual", "cursive"
+    )
+
     fun typefaceFor(
         fontName: String,
         bold: Boolean = false,
@@ -139,49 +230,22 @@ object FontLibrary {
     ): Typeface {
         val name = fontName.trim().ifEmpty { "Arial" }
         val normalized = name.lowercase()
-        val directTypeface = Typeface.create(name, Typeface.NORMAL)
-        val isDirectFamilyAvailable = normalized.startsWith("sans-serif") ||
-                normalized in setOf("serif", "monospace", "cursive") ||
-                directTypeface != Typeface.DEFAULT
-        val family = if (isDirectFamilyAvailable) {
-            name
-        } else when {
-            normalized.contains("mono") || normalized.contains("courier")
-                    || normalized.contains("consol") || normalized.contains("menlo")
-                    || normalized.contains("monaco") || normalized.contains("code") ->
-                "monospace"
 
-            normalized.contains("script") || normalized.contains("brush")
-                    || normalized.contains("hand") || normalized.contains("comic")
-                    || normalized.contains("cursive") || normalized.contains("dancing")
-                    || normalized.contains("pacific") || normalized.contains("vibes")
-                    || normalized.contains("amita") || normalized.contains("chopin")
-                    || normalized.contains("musiclife") || normalized.contains("caveat")
-                    || normalized.contains("allura") || normalized.contains("satisfy")
-                    || normalized.contains("kaushan") || normalized.contains("parisienne")
-                    || normalized.contains("sacramento") || normalized.contains("tangerine")
-                    || normalized.contains("indie") || normalized.contains("patrick")
-                    || normalized.contains("kalam") -> "cursive"
-
-            normalized.contains("serif") || normalized.contains("times")
-                    || normalized.contains("georgia") || normalized.contains("garamond")
-                    || normalized.contains("baskerville") || normalized.contains("playfair")
-                    || normalized.contains("cinzel") || normalized.contains("bodoni")
-                    || normalized.contains("cormorant") || normalized.contains("merriweather")
-                    || normalized.contains("lora") || normalized.contains("crimson")
-                    || normalized.contains("prata") || normalized.contains("cardo")
-                    || normalized.contains("spectral") || normalized.contains("abril")
-                    || normalized.contains("palatino") || normalized.contains("book")
-                    || normalized.contains("didot") -> "serif"
-
-            else -> "sans-serif"
+        // If user already provided a system family, use it directly
+        val family = if (normalized in SYSTEM_FAMILIES) {
+            normalized
+        } else {
+            // Look up in map, fallback to sans-serif
+            FONT_MAP[normalized] ?: "sans-serif"
         }
+
         val style = when {
             bold && italic -> Typeface.BOLD_ITALIC
             bold -> Typeface.BOLD
             italic -> Typeface.ITALIC
             else -> Typeface.NORMAL
         }
+
         return Typeface.create(family, style)
     }
 }

@@ -37,11 +37,9 @@ object ProjectRepository {
         if (state.clips.isEmpty()) return false
 
         try {
-            // Save state
             val stateFile = File(getProjectsDir(context), "${meta.id}.json")
             stateFile.writeText(editorStateToJson(state).toString())
 
-            // Update index
             val index = listProjects(context).toMutableList()
             index.removeAll { it.id == meta.id }
             index.add(0, meta)
@@ -81,7 +79,10 @@ object ProjectRepository {
         val index = listProjects(context).toMutableList()
         val idx = index.indexOfFirst { it.id == projectId }
         if (idx >= 0) {
-            index[idx] = index[idx].copy(name = newName, updatedAt = System.currentTimeMillis())
+            index[idx] = index[idx].copy(
+                name = newName,
+                updatedAt = System.currentTimeMillis()
+            )
             writeIndex(context, index)
         }
     }
@@ -129,7 +130,8 @@ object ProjectRepository {
         name = o.optString("name", "Untitled"),
         createdAt = o.optLong("createdAt", 0L),
         updatedAt = o.optLong("updatedAt", 0L),
-        thumbnailPath = if (o.isNull("thumbnailPath")) null else o.optString("thumbnailPath", null),
+        thumbnailPath = if (o.isNull("thumbnailPath")) null
+        else o.optString("thumbnailPath", null),
         clipCount = o.optInt("clipCount", 0),
         durationMs = o.optLong("durationMs", 0L)
     )
@@ -164,7 +166,8 @@ object ProjectRepository {
         val clips = mutableListOf<EditorClip>()
         val arr = o.optJSONArray("clips") ?: JSONArray()
         for (i in 0 until arr.length()) {
-            arr.optJSONObject(i)?.let { clips.add(clipFromJson(it)) }
+            val obj = arr.optJSONObject(i)
+            if (obj != null) clips.add(clipFromJson(obj))
         }
         return EditorState(
             clips = clips,
@@ -214,9 +217,9 @@ object ProjectRepository {
         put("isAudio", c.isAudio)
         put("sourceTotalMs", c.sourceTotalMs)
         put("linkedId", c.linkedId ?: JSONObject.NULL)
+        put("linkGroupId", c.linkGroupId ?: JSONObject.NULL)
         put("isMuted", c.isMuted)
 
-        // 🆕 per-clip audio effects
         put("audioFx", c.audioFx)
         put("audioFxIntensity", c.audioFxIntensity.toDouble())
         put("soundFx", c.soundFx)
@@ -226,19 +229,47 @@ object ProjectRepository {
         put("filters", filterToJson(c.filters))
         put("colorWheel", colorWheelToJson(c.colorWheel))
         put("overlay", overlayToJson(c.overlay))
-        c.effectState?.let { put("effectState", effectStateToJson(it)) }
-        c.textState?.let { put("textState", textStateToJson(it)) }
-        c.stickerState?.let { put("stickerState", stickerStateToJson(it)) }
-        c.chroma?.let { put("chroma", chromaToJson(it)) }
-        c.freeze?.let { put("freeze", freezeToJson(it)) }
-        c.transition?.let { put("transition", transitionToJson(it)) }
-        c.ratio?.let { put("ratio", ratioToJson(it)) }
+
+        val effectState = c.effectState
+        if (effectState != null) put("effectState", effectStateToJson(effectState))
+
+        val textState = c.textState
+        if (textState != null) put("textState", textStateToJson(textState))
+
+        val stickerState = c.stickerState
+        if (stickerState != null) put("stickerState", stickerStateToJson(stickerState))
+
+        val chroma = c.chroma
+        if (chroma != null) put("chroma", chromaToJson(chroma))
+
+        val freeze = c.freeze
+        if (freeze != null) put("freeze", freezeToJson(freeze))
+
+        val transition = c.transition
+        if (transition != null) put("transition", transitionToJson(transition))
+
+        val ratio = c.ratio
+        if (ratio != null) put("ratio", ratioToJson(ratio))
+
         put("mask", maskToJson(c.mask))
         put("brush", brushToJson(c.brush))
-        c.visualizer?.let { put("visualizer", visualizerToJson(it)) }
+        put("matteStyle", matteStyleToJson(c.matteStyle))
 
+        val visualizer = c.visualizer
+        if (visualizer != null) put("visualizer", visualizerToJson(visualizer))
+
+        // Advanced Effects list
+        val advFxArr = JSONArray()
+        c.advancedEffects.forEach { fx ->
+            advFxArr.put(advancedEffectToJson(fx))
+        }
+        put("advancedEffects", advFxArr)
+
+        // Keyframes
         val kfObj = JSONObject()
-        c.keyframes.forEach { (prop, list) ->
+        c.keyframes.forEach { entry ->
+            val prop = entry.key
+            val list = entry.value
             val kfArr = JSONArray()
             list.forEach { kf ->
                 kfArr.put(JSONObject().apply {
@@ -252,55 +283,382 @@ object ProjectRepository {
         put("keyframes", kfObj)
     }
 
-    private fun clipFromJson(o: JSONObject): EditorClip = EditorClip(
-        id = o.getString("id"),
-        uri = Uri.parse(o.optString("uri", "")),
-        name = o.optString("name", ""),
-        type = o.optString("type", "video/mp4"),
-        sourceStartMs = o.optLong("sourceStartMs", 0L),
-        sourceEndMs = o.optLong("sourceEndMs", 3000L),
-        timelineStartMs = o.optLong("timelineStartMs", 0L),
-        speed = o.optDouble("speed", 1.0).toFloat(),
-        volume = o.optDouble("volume", 1.0).toFloat(),
-        scale = o.optDouble("scale", 1.0).toFloat(),
-        rotation = o.optDouble("rotation", 0.0).toFloat(),
-        offsetX = o.optDouble("offsetX", 0.0).toFloat(),
-        offsetY = o.optDouble("offsetY", 0.0).toFloat(),
-        cropL = o.optDouble("cropL", 0.0).toFloat(),
-        cropR = o.optDouble("cropR", 0.0).toFloat(),
-        cropT = o.optDouble("cropT", 0.0).toFloat(),
-        cropB = o.optDouble("cropB", 0.0).toFloat(),
-        trackIndex = o.optInt("trackIndex", 0),
-        isAudio = o.optBoolean("isAudio", false),
-        sourceTotalMs = o.optLong("sourceTotalMs", Long.MAX_VALUE),
-        linkedId = if (o.isNull("linkedId")) null else o.optString("linkedId", null),
-        isMuted = o.optBoolean("isMuted", false),
+    private fun clipFromJson(o: JSONObject): EditorClip {
+        val advFxList =
+            mutableListOf<com.moody.moodyvideoeditor.data.advanced.AdvancedEffectState>()
+        val advFxArr = o.optJSONArray("advancedEffects")
+        if (advFxArr != null) {
+            for (i in 0 until advFxArr.length()) {
+                val fxObj = advFxArr.optJSONObject(i)
+                if (fxObj != null) {
+                    advFxList.add(advancedEffectFromJson(fxObj))
+                }
+            }
+        }
 
-        // 🆕 per-clip audio effects
-        audioFx = o.optString("audioFx", "none"),
-        audioFxIntensity = o.optDouble("audioFxIntensity", 100.0).toFloat(),
-        soundFx = o.optString("soundFx", "none"),
-        soundFxIntensity = o.optDouble("soundFxIntensity", 100.0).toFloat(),
+        return EditorClip(
+            id = o.getString("id"),
+            uri = Uri.parse(o.optString("uri", "")),
+            name = o.optString("name", ""),
+            type = o.optString("type", "video/mp4"),
+            sourceStartMs = o.optLong("sourceStartMs", 0L),
+            sourceEndMs = o.optLong("sourceEndMs", 3000L),
+            timelineStartMs = o.optLong("timelineStartMs", 0L),
+            speed = o.optDouble("speed", 1.0).toFloat(),
+            volume = o.optDouble("volume", 1.0).toFloat(),
+            scale = o.optDouble("scale", 1.0).toFloat(),
+            rotation = o.optDouble("rotation", 0.0).toFloat(),
+            offsetX = o.optDouble("offsetX", 0.0).toFloat(),
+            offsetY = o.optDouble("offsetY", 0.0).toFloat(),
+            cropL = o.optDouble("cropL", 0.0).toFloat(),
+            cropR = o.optDouble("cropR", 0.0).toFloat(),
+            cropT = o.optDouble("cropT", 0.0).toFloat(),
+            cropB = o.optDouble("cropB", 0.0).toFloat(),
+            trackIndex = o.optInt("trackIndex", 0),
+            isAudio = o.optBoolean("isAudio", false),
+            sourceTotalMs = o.optLong("sourceTotalMs", Long.MAX_VALUE),
+            linkedId = if (o.isNull("linkedId")) null
+            else o.optString("linkedId", null),
+            linkGroupId = if (o.isNull("linkGroupId")) null
+            else o.optString("linkGroupId", null),
+            isMuted = o.optBoolean("isMuted", false),
 
-        adjustments = adjustmentsFromJson(o.optJSONObject("adjustments")),
-        filters = filterFromJson(o.optJSONObject("filters")),
-        colorWheel = colorWheelFromJson(o.optJSONObject("colorWheel")),
-        overlay = overlayFromJson(o.optJSONObject("overlay")),
-        effectState = o.optJSONObject("effectState")?.let { effectStateFromJson(it) },
-        textState = o.optJSONObject("textState")?.let { textStateFromJson(it) },
-        stickerState = o.optJSONObject("stickerState")?.let { stickerStateFromJson(it) },
-        chroma = o.optJSONObject("chroma")?.let { chromaFromJson(it) },
-        freeze = o.optJSONObject("freeze")?.let { freezeFromJson(it) },
-        transition = o.optJSONObject("transition")?.let { transitionFromJson(it) },
-        ratio = o.optJSONObject("ratio")?.let { ratioFromJson(it) },
-        mask = maskFromJson(o.optJSONObject("mask")),
-        brush = brushFromJson(o.optJSONObject("brush")),
-        visualizer = o.optJSONObject("visualizer")?.let { visualizerFromJson(it) },
-        keyframes = keyframesFromJson(o.optJSONObject("keyframes"))
-    )
+            audioFx = o.optString("audioFx", "none"),
+            audioFxIntensity = o.optDouble("audioFxIntensity", 100.0).toFloat(),
+            soundFx = o.optString("soundFx", "none"),
+            soundFxIntensity = o.optDouble("soundFxIntensity", 100.0).toFloat(),
+
+            adjustments = adjustmentsFromJson(o.optJSONObject("adjustments")),
+            filters = filterFromJson(o.optJSONObject("filters")),
+            colorWheel = colorWheelFromJson(o.optJSONObject("colorWheel")),
+            overlay = overlayFromJson(o.optJSONObject("overlay")),
+
+            effectState = o.optJSONObject("effectState")?.let { effectStateFromJson(it) },
+            textState = o.optJSONObject("textState")?.let { textStateFromJson(it) },
+            stickerState = o.optJSONObject("stickerState")?.let { stickerStateFromJson(it) },
+            chroma = o.optJSONObject("chroma")?.let { chromaFromJson(it) },
+            freeze = o.optJSONObject("freeze")?.let { freezeFromJson(it) },
+            transition = o.optJSONObject("transition")?.let { transitionFromJson(it) },
+            ratio = o.optJSONObject("ratio")?.let { ratioFromJson(it) },
+            mask = maskFromJson(o.optJSONObject("mask")),
+            brush = brushFromJson(o.optJSONObject("brush")),
+            matteStyle = matteStyleFromJson(o.optJSONObject("matteStyle")),
+            visualizer = o.optJSONObject("visualizer")?.let { visualizerFromJson(it) },
+            advancedEffects = advFxList,
+            keyframes = keyframesFromJson(o.optJSONObject("keyframes"))
+        )
+    }
+
+
+    //  ADVANCED EFFECTS
+
+
+    private fun advancedEffectToJson(
+        e: com.moody.moodyvideoeditor.data.advanced.AdvancedEffectState
+    ): JSONObject {
+        val obj = JSONObject()
+        obj.put("type", e.type.key)
+
+        val mirror = e.mirror
+        if (mirror != null) {
+            obj.put("mirror", JSONObject().apply {
+                put("centerX", mirror.centerX.toDouble())
+                put("centerY", mirror.centerY.toDouble())
+                put("angleDeg", mirror.angleDeg.toDouble())
+                put("opacity", mirror.opacity.toDouble())
+                put("keyframes", keyframesToJson(mirror.keyframes))
+            })
+        }
+
+        val blur = e.gaussianBlur
+        if (blur != null) {
+            obj.put("gaussianBlur", JSONObject().apply {
+                put("blurriness", blur.blurriness.toDouble())
+                put("dimension", blur.dimension.name)
+                put("keyframes", keyframesToJson(blur.keyframes))
+            })
+        }
+
+        val roughen = e.roughenEdges
+        if (roughen != null) {
+            obj.put("roughenEdges", JSONObject().apply {
+                put("borderWidth", roughen.borderWidth.toDouble())
+                put("edgeSharpness", roughen.edgeSharpness.toDouble())
+                put("fractalScale", roughen.fractalScale.toDouble())
+                put("evolution", roughen.evolution.toDouble())
+                put("complexity", roughen.complexity.toDouble())
+                put("randomSeed", roughen.randomSeed.toDouble())
+                put("keyframes", keyframesToJson(roughen.keyframes))
+            })
+        }
+
+        val rCrop = e.roundedCrop
+        if (rCrop != null) {
+            obj.put("roundedCrop", JSONObject().apply {
+                put("cornerRadius", rCrop.cornerRadius.toDouble())
+                put("cropTop", rCrop.cropTop.toDouble())
+                put("cropBottom", rCrop.cropBottom.toDouble())
+                put("cropLeft", rCrop.cropLeft.toDouble())
+                put("cropRight", rCrop.cropRight.toDouble())
+                put("feathering", rCrop.feathering.toDouble())
+                put("keyframes", keyframesToJson(rCrop.keyframes))
+            })
+        }
+
+        val grad = e.fourColorGradient
+        if (grad != null) {
+            obj.put("fourColorGradient", JSONObject().apply {
+                put("color1", grad.color1)
+                put("color2", grad.color2)
+                put("color3", grad.color3)
+                put("color4", grad.color4)
+                put("blendMode", grad.blendMode.key)
+                put("globalOpacity", grad.globalOpacity.toDouble())
+                put("keyframes", keyframesToJson(grad.keyframes))
+            })
+        }
+
+        val shadow = e.dropShadow
+        if (shadow != null) {
+            obj.put("dropShadow", JSONObject().apply {
+                put("shadowColor", shadow.shadowColor)
+                put("opacity", shadow.opacity.toDouble())
+                put("distance", shadow.distance.toDouble())
+                put("directionAngle", shadow.directionAngle.toDouble())
+                put("blurSoftness", shadow.blurSoftness.toDouble())
+                put("keyframes", keyframesToJson(shadow.keyframes))
+            })
+        }
+
+        val disp = e.turbulentDisplace
+        if (disp != null) {
+            obj.put("turbulentDisplace", JSONObject().apply {
+                put("amount", disp.amount.toDouble())
+                put("size", disp.size.toDouble())
+                put("offsetX", disp.offsetX.toDouble())
+                put("offsetY", disp.offsetY.toDouble())
+                put("evolutionSpeed", disp.evolutionSpeed.toDouble())
+                put("keyframes", keyframesToJson(disp.keyframes))
+            })
+        }
+
+        val chroma = e.chromaticAberration
+        if (chroma != null) {
+            obj.put("chromaticAberration", JSONObject().apply {
+                put("redShiftX", chroma.redShiftX.toDouble())
+                put("redShiftY", chroma.redShiftY.toDouble())
+                put("blueShiftX", chroma.blueShiftX.toDouble())
+                put("blueShiftY", chroma.blueShiftY.toDouble())
+                put("blurRadius", chroma.blurRadius.toDouble())
+                put("falloffThreshold", chroma.falloffThreshold.toDouble())
+                put("keyframes", keyframesToJson(chroma.keyframes))
+            })
+        }
+
+        val mBlur = e.motionBlur
+        if (mBlur != null) {
+            obj.put("motionBlur", JSONObject().apply {
+                put("shutterAngle", mBlur.shutterAngle.toDouble())
+                put("samples", mBlur.samples.toDouble())
+                put("intensity", mBlur.intensity.toDouble())
+                put("keyframes", keyframesToJson(mBlur.keyframes))
+            })
+        }
+
+        val tMatte = e.trackMatte
+        if (tMatte != null) {
+            obj.put("trackMatte", JSONObject().apply {
+                put("matteType", tMatte.matteType.key)
+                put("targetLayerId", tMatte.targetLayerId ?: JSONObject.NULL)
+                put("keyframes", keyframesToJson(tMatte.keyframes))
+            })
+        }
+
+        return obj
+    }
+
+    private fun advancedEffectFromJson(
+        o: JSONObject
+    ): com.moody.moodyvideoeditor.data.advanced.AdvancedEffectState {
+        val type = com.moody.moodyvideoeditor.data.advanced.AdvancedEffectType
+            .fromKey(o.optString("type", "mirror"))
+            ?: com.moody.moodyvideoeditor.data.advanced.AdvancedEffectType.MIRROR
+
+        val mirrorObj = o.optJSONObject("mirror")
+        val blurObj = o.optJSONObject("gaussianBlur")
+        val roughenObj = o.optJSONObject("roughenEdges")
+        val rCropObj = o.optJSONObject("roundedCrop")
+        val gradObj = o.optJSONObject("fourColorGradient")
+        val shadowObj = o.optJSONObject("dropShadow")
+        val dispObj = o.optJSONObject("turbulentDisplace")
+        val chromaObj = o.optJSONObject("chromaticAberration")
+        val mBlurObj = o.optJSONObject("motionBlur")
+        val tMatteObj = o.optJSONObject("trackMatte")
+
+        return com.moody.moodyvideoeditor.data.advanced.AdvancedEffectState(
+            type = type,
+
+            mirror = if (mirrorObj != null) {
+                com.moody.moodyvideoeditor.data.advanced.MirrorEffect(
+                    centerX = mirrorObj.optDouble("centerX", 0.5).toFloat(),
+                    centerY = mirrorObj.optDouble("centerY", 0.5).toFloat(),
+                    angleDeg = mirrorObj.optDouble("angleDeg", 90.0).toFloat(),
+                    opacity = mirrorObj.optDouble("opacity", 100.0).toFloat(),
+                    keyframes = keyframesFromJson(
+                        mirrorObj.optJSONObject("keyframes")
+                    )
+                )
+            } else null,
+
+            gaussianBlur = if (blurObj != null) {
+                val dim = try {
+                    com.moody.moodyvideoeditor.data.advanced.BlurDimension
+                        .valueOf(blurObj.optString("dimension", "BOTH"))
+                } catch (_: Exception) {
+                    com.moody.moodyvideoeditor.data.advanced.BlurDimension.BOTH
+                }
+                com.moody.moodyvideoeditor.data.advanced.GaussianBlurEffect(
+                    blurriness = blurObj.optDouble("blurriness", 20.0).toFloat(),
+                    dimension = dim,
+                    keyframes = keyframesFromJson(
+                        blurObj.optJSONObject("keyframes")
+                    )
+                )
+            } else null,
+
+            roughenEdges = if (roughenObj != null) {
+                com.moody.moodyvideoeditor.data.advanced.RoughenEdgesEffect(
+                    borderWidth = roughenObj.optDouble("borderWidth", 20.0).toFloat(),
+                    edgeSharpness = roughenObj.optDouble("edgeSharpness", 1.0).toFloat(),
+                    fractalScale = roughenObj.optDouble("fractalScale", 100.0).toFloat(),
+                    evolution = roughenObj.optDouble("evolution", 0.0).toFloat(),
+                    complexity = roughenObj.optDouble("complexity", 1.0).toFloat(),
+                    randomSeed = roughenObj.optDouble("randomSeed", 0.0).toFloat(),
+                    keyframes = keyframesFromJson(
+                        roughenObj.optJSONObject("keyframes")
+                    )
+                )
+            } else null,
+
+            roundedCrop = if (rCropObj != null) {
+                com.moody.moodyvideoeditor.data.advanced.RoundedCropEffect(
+                    cornerRadius = rCropObj.optDouble("cornerRadius", 40.0).toFloat(),
+                    cropTop = rCropObj.optDouble("cropTop", 0.0).toFloat(),
+                    cropBottom = rCropObj.optDouble("cropBottom", 0.0).toFloat(),
+                    cropLeft = rCropObj.optDouble("cropLeft", 0.0).toFloat(),
+                    cropRight = rCropObj.optDouble("cropRight", 0.0).toFloat(),
+                    feathering = rCropObj.optDouble("feathering", 0.0).toFloat(),
+                    keyframes = keyframesFromJson(
+                        rCropObj.optJSONObject("keyframes")
+                    )
+                )
+            } else null,
+
+            fourColorGradient = if (gradObj != null) {
+                com.moody.moodyvideoeditor.data.advanced.FourColorGradientEffect(
+                    color1 = gradObj.optLong("color1", 0xFFFF0000L),
+                    color2 = gradObj.optLong("color2", 0xFF00FF00L),
+                    color3 = gradObj.optLong("color3", 0xFF0000FFL),
+                    color4 = gradObj.optLong("color4", 0xFFFFCC00L),
+                    blendMode = com.moody.moodyvideoeditor.data.advanced.GradientBlendMode
+                        .fromKey(gradObj.optString("blendMode", "normal")),
+                    globalOpacity = gradObj.optDouble("globalOpacity", 100.0).toFloat(),
+                    keyframes = keyframesFromJson(
+                        gradObj.optJSONObject("keyframes")
+                    )
+                )
+            } else null,
+
+            dropShadow = if (shadowObj != null) {
+                com.moody.moodyvideoeditor.data.advanced.DropShadowEffect(
+                    shadowColor = shadowObj.optLong("shadowColor", 0xFF000000L),
+                    opacity = shadowObj.optDouble("opacity", 50.0).toFloat(),
+                    distance = shadowObj.optDouble("distance", 5.0).toFloat(),
+                    directionAngle = shadowObj.optDouble("directionAngle", 135.0)
+                        .toFloat(),
+                    blurSoftness = shadowObj.optDouble("blurSoftness", 5.0).toFloat(),
+                    keyframes = keyframesFromJson(
+                        shadowObj.optJSONObject("keyframes")
+                    )
+                )
+            } else null,
+
+            turbulentDisplace = if (dispObj != null) {
+                com.moody.moodyvideoeditor.data.advanced.TurbulentDisplaceEffect(
+                    amount = dispObj.optDouble("amount", 50.0).toFloat(),
+                    size = dispObj.optDouble("size", 100.0).toFloat(),
+                    offsetX = dispObj.optDouble("offsetX", 0.5).toFloat(),
+                    offsetY = dispObj.optDouble("offsetY", 0.5).toFloat(),
+                    evolutionSpeed = dispObj.optDouble("evolutionSpeed", 1.0)
+                        .toFloat(),
+                    keyframes = keyframesFromJson(
+                        dispObj.optJSONObject("keyframes")
+                    )
+                )
+            } else null,
+
+            chromaticAberration = if (chromaObj != null) {
+                com.moody.moodyvideoeditor.data.advanced.ChromaticAberrationEffect(
+                    redShiftX = chromaObj.optDouble("redShiftX", 0.0).toFloat(),
+                    redShiftY = chromaObj.optDouble("redShiftY", 0.0).toFloat(),
+                    blueShiftX = chromaObj.optDouble("blueShiftX", 0.0).toFloat(),
+                    blueShiftY = chromaObj.optDouble("blueShiftY", 0.0).toFloat(),
+                    blurRadius = chromaObj.optDouble("blurRadius", 0.0).toFloat(),
+                    falloffThreshold = chromaObj.optDouble("falloffThreshold", 0.5)
+                        .toFloat(),
+                    keyframes = keyframesFromJson(
+                        chromaObj.optJSONObject("keyframes")
+                    )
+                )
+            } else null,
+
+            motionBlur = if (mBlurObj != null) {
+                com.moody.moodyvideoeditor.data.advanced.MotionBlurEffect(
+                    shutterAngle = mBlurObj.optDouble("shutterAngle", 180.0)
+                        .toFloat(),
+                    samples = mBlurObj.optDouble("samples", 16.0).toFloat(),
+                    intensity = mBlurObj.optDouble("intensity", 1.0).toFloat(),
+                    keyframes = keyframesFromJson(
+                        mBlurObj.optJSONObject("keyframes")
+                    )
+                )
+            } else null,
+
+            trackMatte = if (tMatteObj != null) {
+                com.moody.moodyvideoeditor.data.advanced.TrackMatteEffect(
+                    matteType = com.moody.moodyvideoeditor.data.advanced.TrackMatteType
+                        .fromKey(tMatteObj.optString("matteType", "alpha")),
+                    targetLayerId = if (tMatteObj.isNull("targetLayerId")) null
+                    else tMatteObj.optString("targetLayerId", null),
+                    keyframes = keyframesFromJson(
+                        tMatteObj.optJSONObject("keyframes")
+                    )
+                )
+            } else null
+        )
+    }
+
+    private fun keyframesToJson(kfs: Map<String, List<Keyframe>>): JSONObject {
+        val o = JSONObject()
+        kfs.forEach { entry ->
+            val prop = entry.key
+            val list = entry.value
+            val arr = JSONArray()
+            list.forEach { kf ->
+                arr.put(JSONObject().apply {
+                    put("time", kf.time.toDouble())
+                    put("value", kf.value.toDouble())
+                    put("ease", kf.ease)
+                })
+            }
+            o.put(prop, arr)
+        }
+        return o
+    }
 
 
     //  ADJUSTMENTS
+
 
     private fun adjustmentsToJson(a: AdjustmentData) = JSONObject().apply {
         put("brightness", a.brightness.toDouble())
@@ -362,6 +720,7 @@ object ProjectRepository {
 
     //  FILTERS
 
+
     private fun filterToJson(f: FilterState) = JSONObject().apply {
         put("brightness", f.brightness.toDouble())
         put("contrast", f.contrast.toDouble())
@@ -391,6 +750,7 @@ object ProjectRepository {
 
 
     //  COLOR WHEEL
+
 
     private fun toneToJson(t: ToneValue) = JSONObject().apply {
         put("hue", t.hue.toDouble())
@@ -427,6 +787,7 @@ object ProjectRepository {
 
     //  OVERLAY
 
+
     private fun overlayToJson(o: OverlayState) = JSONObject().apply {
         put("type", o.type)
         put("intensity", o.intensity.toDouble())
@@ -445,46 +806,56 @@ object ProjectRepository {
 
     //  EFFECT STATE
 
+
     private fun effectStateToJson(e: EffectState) = JSONObject().apply {
         put("kind", e.kind)
         put("presetKey", e.presetKey ?: JSONObject.NULL)
-        e.motion?.let { m ->
+        val motion = e.motion
+        if (motion != null) {
             put("motion", JSONObject().apply {
-                put("type", m.type)
-                put("intensity", m.intensity.toDouble())
-                put("speed", m.speed.toDouble())
+                put("type", motion.type)
+                put("intensity", motion.intensity.toDouble())
+                put("speed", motion.speed.toDouble())
             })
         }
-        e.overlay?.let { ov ->
+        val overlay = e.overlay
+        if (overlay != null) {
             put("overlayCfg", JSONObject().apply {
-                put("type", ov.type)
-                put("intensity", ov.intensity.toDouble())
-                put("color", ov.color)
+                put("type", overlay.type)
+                put("intensity", overlay.intensity.toDouble())
+                put("color", overlay.color)
             })
         }
     }
 
-    private fun effectStateFromJson(o: JSONObject): EffectState = EffectState(
-        kind = o.optString("kind", EffectState.KIND_EFFECT),
-        presetKey = if (o.isNull("presetKey")) null else o.optString("presetKey", null),
-        motion = o.optJSONObject("motion")?.let {
-            MotionConfig(
-                type = it.optString("type", "shake"),
-                intensity = it.optDouble("intensity", 100.0).toFloat(),
-                speed = it.optDouble("speed", 1.0).toFloat()
-            )
-        },
-        overlay = o.optJSONObject("overlayCfg")?.let {
-            OverlayConfig(
-                type = it.optString("type", "rain"),
-                intensity = it.optDouble("intensity", 100.0).toFloat(),
-                color = it.optLong("color", 0xFFFFFFFFL)
-            )
-        }
-    )
+    private fun effectStateFromJson(o: JSONObject): EffectState {
+        val motionObj = o.optJSONObject("motion")
+        val overlayObj = o.optJSONObject("overlayCfg")
+
+        return EffectState(
+            kind = o.optString("kind", EffectState.KIND_EFFECT),
+            presetKey = if (o.isNull("presetKey")) null
+            else o.optString("presetKey", null),
+            motion = if (motionObj != null) {
+                MotionConfig(
+                    type = motionObj.optString("type", "shake"),
+                    intensity = motionObj.optDouble("intensity", 100.0).toFloat(),
+                    speed = motionObj.optDouble("speed", 1.0).toFloat()
+                )
+            } else null,
+            overlay = if (overlayObj != null) {
+                OverlayConfig(
+                    type = overlayObj.optString("type", "rain"),
+                    intensity = overlayObj.optDouble("intensity", 100.0).toFloat(),
+                    color = overlayObj.optLong("color", 0xFFFFFFFFL)
+                )
+            } else null
+        )
+    }
 
 
     //  TEXT
+
 
     private fun textSegmentToJson(s: TextSegment) = JSONObject().apply {
         put("start", s.start)
@@ -505,7 +876,8 @@ object ProjectRepository {
         fontFamily = if (o.has("fontFamily")) o.optString("fontFamily") else null,
         fontWeight = if (o.has("fontWeight")) o.optString("fontWeight") else null,
         fontStyle = if (o.has("fontStyle")) o.optString("fontStyle") else null,
-        letterSpacing = if (o.has("letterSpacing")) o.optDouble("letterSpacing").toFloat() else null
+        letterSpacing = if (o.has("letterSpacing"))
+            o.optDouble("letterSpacing").toFloat() else null
     )
 
     private fun textStateToJson(t: TextState) = JSONObject().apply {
@@ -556,7 +928,8 @@ object ProjectRepository {
         val segArr = o.optJSONArray("segments")
         if (segArr != null) {
             for (i in 0 until segArr.length()) {
-                segArr.optJSONObject(i)?.let { segments.add(textSegmentFromJson(it)) }
+                val segObj = segArr.optJSONObject(i)
+                if (segObj != null) segments.add(textSegmentFromJson(segObj))
             }
         }
         return TextState(
@@ -595,13 +968,15 @@ object ProjectRepository {
             opacity = o.optDouble("opacity", 100.0).toFloat(),
             animation = o.optString("animation", "none"),
             animationDuration = o.optDouble("animationDuration", 0.6).toFloat(),
-            templateId = if (o.isNull("templateId")) null else o.optString("templateId", null),
+            templateId = if (o.isNull("templateId")) null
+            else o.optString("templateId", null),
             segments = segments
         )
     }
 
 
     //  STICKER
+
 
     private fun stickerStateToJson(s: StickerState) = JSONObject().apply {
         put("emoji", s.emoji)
@@ -622,6 +997,7 @@ object ProjectRepository {
 
     //  CHROMA
 
+
     private fun chromaToJson(c: ChromaState) = JSONObject().apply {
         put("keyColor", c.keyColor)
         put("similarity", c.similarity.toDouble())
@@ -641,6 +1017,7 @@ object ProjectRepository {
 
     //  FREEZE
 
+
     private fun freezeToJson(f: FreezeState) = JSONObject().apply {
         put("durationMs", f.durationMs)
         put("atTimeMs", f.atTimeMs)
@@ -654,6 +1031,7 @@ object ProjectRepository {
 
     //  TRANSITION
 
+
     private fun transitionToJson(t: TransitionState) = JSONObject().apply {
         put("key", t.key)
         put("durationMs", t.durationMs)
@@ -666,6 +1044,7 @@ object ProjectRepository {
 
 
     //  RATIO
+
 
     private fun ratioToJson(r: RatioState) = JSONObject().apply {
         put("key", r.key)
@@ -681,6 +1060,7 @@ object ProjectRepository {
 
 
     //  MASK
+
 
     private fun maskToJson(m: MaskState) = JSONObject().apply {
         put("type", m.type.name)
@@ -758,7 +1138,8 @@ object ProjectRepository {
         val ptsArr = o.optJSONArray("customPoints")
         if (ptsArr != null) {
             for (i in 0 until ptsArr.length()) {
-                ptsArr.optJSONObject(i)?.let { p ->
+                val p = ptsArr.optJSONObject(i)
+                if (p != null) {
                     pts.add(
                         MaskPoint(
                             x = p.optDouble("x", 0.0).toFloat(),
@@ -778,20 +1159,26 @@ object ProjectRepository {
         val kfArr = o.optJSONArray("keyframes")
         if (kfArr != null) {
             for (i in 0 until kfArr.length()) {
-                kfArr.optJSONObject(i)?.let { k ->
+                val k = kfArr.optJSONObject(i)
+                if (k != null) {
                     val kfPts = mutableListOf<MaskPoint>()
                     val kpArr = k.optJSONArray("customPoints")
                     if (kpArr != null) {
                         for (j in 0 until kpArr.length()) {
-                            kpArr.optJSONObject(j)?.let { p ->
+                            val p = kpArr.optJSONObject(j)
+                            if (p != null) {
                                 kfPts.add(
                                     MaskPoint(
                                         x = p.optDouble("x", 0.0).toFloat(),
                                         y = p.optDouble("y", 0.0).toFloat(),
-                                        handleInX = p.optDouble("handleInX", 0.0).toFloat(),
-                                        handleInY = p.optDouble("handleInY", 0.0).toFloat(),
-                                        handleOutX = p.optDouble("handleOutX", 0.0).toFloat(),
-                                        handleOutY = p.optDouble("handleOutY", 0.0).toFloat(),
+                                        handleInX = p.optDouble("handleInX", 0.0)
+                                            .toFloat(),
+                                        handleInY = p.optDouble("handleInY", 0.0)
+                                            .toFloat(),
+                                        handleOutX = p.optDouble("handleOutX", 0.0)
+                                            .toFloat(),
+                                        handleOutY = p.optDouble("handleOutY", 0.0)
+                                            .toFloat(),
                                         hasHandles = p.optBoolean("hasHandles", false)
                                     )
                                 )
@@ -851,6 +1238,7 @@ object ProjectRepository {
 
     //  BRUSH
 
+
     private fun brushToJson(b: BrushState) = JSONObject().apply {
         val arr = JSONArray()
         b.strokes.forEach { s ->
@@ -891,12 +1279,14 @@ object ProjectRepository {
         val arr = o.optJSONArray("strokes")
         if (arr != null) {
             for (i in 0 until arr.length()) {
-                arr.optJSONObject(i)?.let { s ->
+                val s = arr.optJSONObject(i)
+                if (s != null) {
                     val pts = mutableListOf<BrushPoint>()
                     val pArr = s.optJSONArray("points")
                     if (pArr != null) {
                         for (j in 0 until pArr.length()) {
-                            pArr.optJSONObject(j)?.let { p ->
+                            val p = pArr.optJSONObject(j)
+                            if (p != null) {
                                 pts.add(
                                     BrushPoint(
                                         x = p.optDouble("x", 0.0).toFloat(),
@@ -927,7 +1317,10 @@ object ProjectRepository {
 
                     strokes.add(
                         BrushStroke(
-                            id = s.optString("id", java.util.UUID.randomUUID().toString()),
+                            id = s.optString(
+                                "id",
+                                java.util.UUID.randomUUID().toString()
+                            ),
                             type = type,
                             color = s.optLong("color", 0xFFFF0000L),
                             width = s.optDouble("width", 20.0).toFloat(),
@@ -945,7 +1338,43 @@ object ProjectRepository {
     }
 
 
+    //  COLOR MATTE STYLE
+
+
+    private fun matteStyleToJson(s: ColorMatteStyle) = JSONObject().apply {
+        put("mode", s.mode.name)
+        put("solidColor", s.solidColor)
+        put("rampColor1", s.rampColor1)
+        put("rampColor2", s.rampColor2)
+        put("rampAngleDeg", s.rampAngleDeg.toDouble())
+        put("topLeft", s.topLeft)
+        put("topRight", s.topRight)
+        put("bottomLeft", s.bottomLeft)
+        put("bottomRight", s.bottomRight)
+    }
+
+    private fun matteStyleFromJson(o: JSONObject?): ColorMatteStyle {
+        if (o == null) return ColorMatteStyle()
+        return try {
+            ColorMatteStyle(
+                mode = ColorMatteMode.valueOf(o.optString("mode", "SOLID")),
+                solidColor = o.optLong("solidColor", 0xFF000000L),
+                rampColor1 = o.optLong("rampColor1", 0xFF000000L),
+                rampColor2 = o.optLong("rampColor2", 0xFFFFFFFFL),
+                rampAngleDeg = o.optDouble("rampAngleDeg", 90.0).toFloat(),
+                topLeft = o.optLong("topLeft", 0xFFFF0000L),
+                topRight = o.optLong("topRight", 0xFF00FF00L),
+                bottomLeft = o.optLong("bottomLeft", 0xFF0000FFL),
+                bottomRight = o.optLong("bottomRight", 0xFFFFCC00L)
+            )
+        } catch (_: Exception) {
+            ColorMatteStyle()
+        }
+    }
+
+
     //  KEYFRAMES
+
 
     private fun keyframesFromJson(o: JSONObject?): Map<String, List<Keyframe>> {
         if (o == null) return emptyMap()
@@ -956,7 +1385,8 @@ object ProjectRepository {
             val arr = o.optJSONArray(prop) ?: continue
             val list = mutableListOf<Keyframe>()
             for (i in 0 until arr.length()) {
-                arr.optJSONObject(i)?.let { kf ->
+                val kf = arr.optJSONObject(i)
+                if (kf != null) {
                     list.add(
                         Keyframe(
                             time = kf.optDouble("time", 0.0).toFloat(),
@@ -972,7 +1402,8 @@ object ProjectRepository {
     }
 
 
-    //  🆕 VISUALIZER
+    //  VISUALIZER
+
 
     private fun visualizerToJson(v: VisualizerState): JSONObject =
         JSONObject().apply {

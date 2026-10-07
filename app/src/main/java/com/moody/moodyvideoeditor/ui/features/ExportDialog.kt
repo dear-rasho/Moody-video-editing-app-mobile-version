@@ -104,10 +104,23 @@ fun ExportDialog(
         mutableStateOf("MoodyExport_${System.currentTimeMillis()}")
     }
 
+    val settings = com.moody.moodyvideoeditor.utils.SettingsConsumer.current.value
+
     var videoFormat by remember { mutableStateOf("mp4") }
-    var resolution by remember { mutableStateOf("720p") }
-    var fps by remember { mutableStateOf(30) }
-    var bitrateKbps by remember { mutableStateOf(8000) }
+    var resolution by remember(settings.defaultExportResolution) {
+        mutableStateOf(settings.defaultExportResolution)
+    }
+    var fps by remember(settings.defaultFps) {
+        mutableStateOf(settings.defaultFps)
+    }
+    var bitrateKbps by remember(settings.defaultExportResolution, settings.defaultFps) {
+        mutableStateOf(
+            ExportSettings.autoBitrate(
+                settings.defaultExportResolution,
+                settings.defaultFps
+            )
+        )
+    }
     var exportAspectRatio by remember(aspectRatio) {
         mutableStateOf(RatioLibrary.find(aspectRatio).key)
     }
@@ -769,7 +782,7 @@ fun ExportDialog(
                             Text(
                                 text = if (currentFolderUri == null)
                                     "Default location"
-                                else currentFolderUri.takeLast(36),
+                                else android.net.Uri.decode(currentFolderUri).takeLast(40),
                                 color = Color(0xFF666666),
                                 fontSize = 8.sp,
                                 maxLines = 1

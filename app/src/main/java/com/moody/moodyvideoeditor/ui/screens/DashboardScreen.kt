@@ -35,9 +35,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.moody.moodyvideoeditor.data.EditorState
 import com.moody.moodyvideoeditor.data.ProjectMeta
 import com.moody.moodyvideoeditor.data.ProjectRepository
-import com.moody.moodyvideoeditor.data.EditorState
 import com.moody.moodyvideoeditor.data.templates.HomeTemplatePreset
 import com.moody.moodyvideoeditor.ui.home.CodeBaseShelf
 import com.moody.moodyvideoeditor.ui.home.RecentProjects
@@ -50,6 +50,7 @@ fun DashboardScreen(
     onOpenProject: (String) -> Unit,
     onCodeEditor: (String) -> Unit,
     onOpenHelp: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     onTemplateProject: (String, String) -> Unit
 ) {
     val context = LocalContext.current
@@ -75,7 +76,7 @@ fun DashboardScreen(
         )
         ProjectRepository.saveProject(
             context, meta,
-            com.moody.moodyvideoeditor.data.EditorState()
+            EditorState()
         )
         if (isCodeMode) onCodeEditor(id) else onNewProject(id)
     }
@@ -126,7 +127,21 @@ fun DashboardScreen(
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // 🆕 Help button
+                // 🆕 Settings button
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF181818))
+                        .pointerInput(Unit) {
+                            detectTapGestures { onOpenSettings() }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("⚙️", fontSize = 20.sp)
+                }
+
+                // Help button
                 Box(
                     modifier = Modifier
                         .size(48.dp)
@@ -162,7 +177,6 @@ fun DashboardScreen(
             projects = projects,
             onOpen = { projectId -> onOpenProject(projectId) },
             onDelete = { projectId ->
-                // Show confirmation dialog
                 pendingDeleteId = projectId
             }
         )
@@ -184,7 +198,7 @@ fun DashboardScreen(
         HelpCard(onOpenHelp)
     }
 
-    // 🆕 Delete Confirmation Dialog
+    // Delete Confirmation Dialog
     if (pendingDeleteId != null) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { pendingDeleteId = null },

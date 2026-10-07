@@ -49,7 +49,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.BeatsState
-import com.moody.moodyvideoeditor.data.BrushType
 import com.moody.moodyvideoeditor.data.ChromaState
 import com.moody.moodyvideoeditor.data.ColorWheelState
 import com.moody.moodyvideoeditor.data.MaskState
@@ -70,6 +69,7 @@ import com.moody.moodyvideoeditor.ui.features.AudioPanel
 import com.moody.moodyvideoeditor.ui.features.BeatsPanel
 import com.moody.moodyvideoeditor.ui.features.BrushPanel
 import com.moody.moodyvideoeditor.ui.features.ChromaKeyPanel
+import com.moody.moodyvideoeditor.ui.features.ColorMattePanel
 import com.moody.moodyvideoeditor.ui.features.ColorWheelPanel
 import com.moody.moodyvideoeditor.ui.features.CropPanel
 import com.moody.moodyvideoeditor.ui.features.EffectsPanel
@@ -91,6 +91,7 @@ import com.moody.moodyvideoeditor.ui.features.TrimPanel
 import com.moody.moodyvideoeditor.ui.features.VisualizerPanel
 import com.moody.moodyvideoeditor.ui.features.VolumePanel
 import com.moody.moodyvideoeditor.utils.AudioPreviewEngine
+import com.moody.moodyvideoeditor.utils.BrushConfigHolder
 import com.moody.moodyvideoeditor.utils.CropEngine
 import com.moody.moodyvideoeditor.utils.PromptEngine
 import com.moody.moodyvideoeditor.utils.PromptExecutor
@@ -156,9 +157,16 @@ fun EditorScreen(
         }
     }
 
-    LaunchedEffect(state.clips) {
-        if (projectId.isNotBlank()) {
-            delay(1500)
+    val settings by com.moody.moodyvideoeditor.utils.SettingsConsumer
+        .current.collectAsState()
+
+    LaunchedEffect(
+        state.clips,
+        settings.autoSaveEnabled,
+        settings.autoSaveIntervalSec
+    ) {
+        if (projectId.isNotBlank() && settings.autoSaveEnabled) {
+            delay(settings.autoSaveIntervalSec * 1000L)
             try {
                 viewModel.saveCurrentProject(context)
             } catch (_: Exception) {
@@ -179,19 +187,21 @@ fun EditorScreen(
 
     var filterEditLayerId by remember { mutableStateOf<String?>(null) }
     var effectEditLayerId by remember { mutableStateOf<String?>(null) }
+    var matteEditLayerId by remember { mutableStateOf<String?>(null) }
 
-    // Brush state
-    var isDrawingMode by remember { mutableStateOf(false) }
+
+    // Mask state — local (only UI concern)
     var isMaskPenMode by remember { mutableStateOf(false) }
     var isMaskHandMode by remember { mutableStateOf(false) }
-    var brushType by remember { mutableStateOf(BrushType.PEN) }
-    var brushColor by remember { mutableStateOf(0xFFFF0000L) }
-    var brushWidth by remember { mutableFloatStateOf(20f) }
-    var brushOpacity by remember { mutableFloatStateOf(1f) }
-    var brushGradient by remember {
-        mutableStateOf(com.moody.moodyvideoeditor.data.BrushGradient())
-    }
 
+    // Brush state — shared via BrushConfigHolder so Code Mode can control it
+    val brushConfig by BrushConfigHolder.config.collectAsState()
+    val isDrawingMode = brushConfig.isDrawingMode
+    val brushType = brushConfig.type
+    val brushColor = brushConfig.color
+    val brushWidth = brushConfig.width
+    val brushOpacity = brushConfig.opacity
+    val brushGradient = brushConfig.gradient
     // Import state
     var pendingUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var pendingVizImageUri by remember { mutableStateOf<String?>(null) }
@@ -504,8 +514,8 @@ fun EditorScreen(
         try {
             context.contentResolver.takePersistableUriPermission(
                 uri,
-                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             )
             Log.e("FOLDER_PICK", "Permission granted: $uri")
         } catch (e: Exception) {
@@ -836,7 +846,8 @@ fun EditorScreen(
                 },
                 onVisualizerTransformChanged = { clipId: String, s: Float, r: Float ->
                     viewModel.updateSelectedTransformBulk(clipId, s, r)
-                }
+                },
+                previewAdvancedEffect = state.previewAdvancedEffect   // 🆕
             )
         }
 
@@ -910,6 +921,10 @@ fun EditorScreen(
                         if (clip.isFilterLayerClip) {
                             filterEditLayerId = clip.id
                             activePanel = "filters"
+                        }
+                        if (clip.isColorMatteClip) {
+                            matteEditLayerId = clip.id
+                            activePanel = "matte"
                         }
 
                         if (clip.isEffectClip) {
@@ -1128,6 +1143,81 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
+                "advfx" -> {
+                    val selected = state.selectedClip
+                    val currentTimeSec = selected?.let {
+                        ((state.currentPosMs - it.timelineStartMs).toFloat() / 1000f)
+                            .coerceAtLeast(0f)
+                    } ?: 0f
+
+                    com.moody.moodyvideoeditor.ui.features.AdvancedEffectsPanel(
+                        selectedClip = selected,
+                        currentTimeSec = currentTimeSec,
+                        onAddEffect = { effectState ->
+                            viewModel.addAdvancedEffectToSelected(effectState)
+                        },
+                        onUpdateEffect = { index, effectState ->
+                            selected?.let {
+                                viewModel.updateAdvancedEffectAt(it.id, index, effectState)
+                            }
+                        },
+                        onRemoveEffect = { index ->
+                            selected?.let {
+                                viewModel.removeAdvancedEffectAt(it.id, index)
+                            }
+                        },
+                        onLivePreview = { effectState ->
+                            viewModel.setPreviewAdvancedEffect(effectState)
+                        },
+                        onClose = {
+                            viewModel.clearPreviewAdvancedEffect()
+                            activePanel = null
+                        }
+                    )
+                }
+
+                "matte" -> {
+                    val editLayer = matteEditLayerId?.let { id ->
+                        state.clips.firstOrNull {
+                            it.id == id && it.isColorMatteClip
+                        }
+                    }
+                    ColorMattePanel(
+                        editLayerId = editLayer?.id,
+                        initialStyle = editLayer?.matteStyle
+                            ?: com.moody.moodyvideoeditor.data.ColorMatteStyle(),
+                        initialOpacity = editLayer?.filters?.opacity
+                            ?: com.moody.moodyvideoeditor.data.ColorMatteDefaults.DEFAULT_OPACITY,
+                        initialDurationMs = editLayer?.durationMs
+                            ?: com.moody.moodyvideoeditor.data.ColorMatteDefaults.DEFAULT_DURATION_MS,
+                        onApply = { style, opacity, durationMs ->
+                            viewModel.createColorMatte(
+                                color = style.solidColor,
+                                opacity = opacity,
+                                durationMs = durationMs,
+                                style = style
+                            )
+                            matteEditLayerId = null
+                        },
+                        onUpdate = { style, opacity, durationMs ->
+                            editLayer?.let {
+                                viewModel.updateColorMatte(
+                                    it.id, style, opacity, durationMs
+                                )
+                            }
+                        },
+                        onDelete = {
+                            editLayer?.let { viewModel.removeColorMatte(it.id) }
+                            matteEditLayerId = null
+                            activePanel = null
+                        },
+                        onClose = {
+                            matteEditLayerId = null
+                            activePanel = null
+                        }
+                    )
+                }
+
                 "filters" -> {
                     val editLayer = filterEditLayerId?.let { id ->
                         state.clips.firstOrNull {
@@ -1260,6 +1350,7 @@ fun EditorScreen(
                         hintText = when {
                             selectedVisual == null ->
                                 "Pehle timeline pe ek video ya image clip select karo."
+
                             target == null -> "Is clip ke saath koi adjacent clip chahiye."
                             else -> "Transition lagao"
                         },
@@ -1331,12 +1422,26 @@ fun EditorScreen(
                         activeGradient = brushGradient,
                         strokeCount = brushClip?.brush?.strokes?.size ?: 0,
                         hasBrushLayer = brushClip != null,
-                        onToggleDrawing = { isDrawingMode = !isDrawingMode },
-                        onTypeChanged = { brushType = it },
-                        onColorChanged = { brushColor = it },
-                        onWidthChanged = { brushWidth = it },
-                        onOpacityChanged = { brushOpacity = it },
-                        onGradientChanged = { brushGradient = it },
+                        onToggleDrawing = {
+                            BrushConfigHolder.update {
+                                it.copy(isDrawingMode = !it.isDrawingMode)
+                            }
+                        },
+                        onTypeChanged = { newType ->
+                            BrushConfigHolder.update { it.copy(type = newType) }
+                        },
+                        onColorChanged = { newColor ->
+                            BrushConfigHolder.update { it.copy(color = newColor) }
+                        },
+                        onWidthChanged = { newWidth ->
+                            BrushConfigHolder.update { it.copy(width = newWidth) }
+                        },
+                        onOpacityChanged = { newOpacity ->
+                            BrushConfigHolder.update { it.copy(opacity = newOpacity) }
+                        },
+                        onGradientChanged = { newGradient ->
+                            BrushConfigHolder.update { it.copy(gradient = newGradient) }
+                        },
                         onUndoStroke = {
                             brushClip?.let {
                                 viewModel.undoLastStrokeOnBrushClip(it.id)
@@ -1349,11 +1454,11 @@ fun EditorScreen(
                         },
                         onCreateLayer = {
                             viewModel.createBrushClip()
-                            isDrawingMode = true
+                            BrushConfigHolder.update { it.copy(isDrawingMode = true) }
                         },
                         onClose = {
                             activePanel = null
-                            isDrawingMode = false
+                            BrushConfigHolder.update { it.copy(isDrawingMode = false) }
                         }
                     )
                 }
@@ -1363,8 +1468,14 @@ fun EditorScreen(
                     cropR = selected?.cropR ?: 0f,
                     cropT = selected?.cropT ?: 0f,
                     cropB = selected?.cropB ?: 0f,
-                    hasClipSelected = selected?.isVisualClip == true ||
-                            state.multiSelectedIds.isNotEmpty(),
+                    hasClipSelected =
+                        selected?.isVisualClip == true ||
+                                selected?.isColorMatteClip == true ||     // 🆕
+                                selected?.isTextClip == true ||            // 🆕
+                                selected?.isStickerClip == true ||         // 🆕
+                                selected?.isBrushClip == true ||           // 🆕
+                                selected?.isVisualizerClip == true ||      // 🆕
+                                state.multiSelectedIds.isNotEmpty(),
                     onCropChanged = { l, r, t, b ->
                         viewModel.setCrop(l, r, t, b)
                     },

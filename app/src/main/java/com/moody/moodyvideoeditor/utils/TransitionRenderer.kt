@@ -248,7 +248,7 @@ object TransitionRenderer {
 
             //  GLITCH / DISTORTION
 
-            "glitch", "rgbsplit", "glitchshake", "vcrDistortion".lowercase(),
+            "glitch", "rgbsplit", "rgbshift", "glitchshake", "vcrDistortion".lowercase(),
             "vcrdistortion", "glitchblur", "glitchpaint",
             "hblur", "anaglyphslide", "bitcrushed", "prismblur",
             "gaussianBlur".lowercase() -> {
@@ -479,7 +479,7 @@ object TransitionRenderer {
             )
 
             // Glitch
-            "glitch", "rgbsplit", "glitchshake", "vcrdistortion",
+            "glitch", "rgbsplit", "rgbshift", "glitchshake", "vcrdistortion",
             "glitchblur", "glitchpaint", "hblur",
             "anaglyphslide", "bitcrushed", "prismblur" ->
                 Transform2D(

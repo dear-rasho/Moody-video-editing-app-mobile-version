@@ -10,14 +10,17 @@ import androidx.navigation.navArgument
 import com.moody.moodyvideoeditor.ui.screens.DashboardScreen
 import com.moody.moodyvideoeditor.ui.screens.EditorScreen
 import com.moody.moodyvideoeditor.ui.screens.HelpGuideScreen
+import com.moody.moodyvideoeditor.ui.screens.SettingsScreen
 
 object AppRoutes {
     const val DASHBOARD = "dashboard"
     const val HELP = "help"
+    const val SETTINGS = "settings"
 
     fun editorWithProject(projectId: String): String = "editor/$projectId"
     fun editorWithTemplate(projectId: String, templateId: String): String =
         "editor/$projectId?templateId=$templateId"
+
     fun codeModeWithProject(projectId: String): String = "code_mode/$projectId"
 }
 
@@ -40,6 +43,9 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
                 },
                 onOpenHelp = {
                     navController.navigate(AppRoutes.HELP)
+                },
+                onOpenSettings = {
+                    navController.navigate(AppRoutes.SETTINGS)
                 },
                 onTemplateProject = { projectId, templateId ->
                     navController.navigate(
@@ -83,6 +89,13 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
 
         composable(AppRoutes.HELP) {
             HelpGuideScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // 🆕 Settings route
+        composable(AppRoutes.SETTINGS) {
+            SettingsScreen(
                 onBack = { navController.popBackStack() }
             )
         }

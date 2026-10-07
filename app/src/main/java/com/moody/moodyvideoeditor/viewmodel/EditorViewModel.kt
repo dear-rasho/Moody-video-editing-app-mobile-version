@@ -9,6 +9,9 @@ import com.moody.moodyvideoeditor.data.BeatsState
 import com.moody.moodyvideoeditor.data.BrushState
 import com.moody.moodyvideoeditor.data.BrushStroke
 import com.moody.moodyvideoeditor.data.ChromaState
+import com.moody.moodyvideoeditor.data.ColorMatteDefaults
+import com.moody.moodyvideoeditor.data.ColorMatteMode
+import com.moody.moodyvideoeditor.data.ColorMatteStyle
 import com.moody.moodyvideoeditor.data.ColorWheelState
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.EditorState
@@ -28,6 +31,7 @@ import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.data.TransitionLibrary
 import com.moody.moodyvideoeditor.data.TransitionState
 import com.moody.moodyvideoeditor.data.VisualizerState
+import com.moody.moodyvideoeditor.data.advanced.AdvancedEffectState
 import com.moody.moodyvideoeditor.service.ExportService
 import com.moody.moodyvideoeditor.service.ExportServiceConfig
 import com.moody.moodyvideoeditor.service.ExportStateHolder
@@ -39,6 +43,7 @@ import com.moody.moodyvideoeditor.utils.FreezeEngine
 import com.moody.moodyvideoeditor.utils.HistoryManager
 import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.utils.MaskEngine
+import com.moody.moodyvideoeditor.utils.SettingsConsumer
 import com.moody.moodyvideoeditor.utils.SpeedEngine
 import com.moody.moodyvideoeditor.utils.TimelineEngine
 import com.moody.moodyvideoeditor.utils.TimelineTools
@@ -137,6 +142,17 @@ class EditorViewModel : ViewModel() {
         currentProjectName = name
         history.clear()
         _state.value = EditorState()
+
+        // 🆕 Apply "free layer enabled" setting from Settings panel
+        if (SettingsConsumer.freeLayerEnabled) {
+            _state.update {
+                it.copy(
+                    visualLayerCount = maxOf(it.visualLayerCount, 3),
+                    audioLayerCount = maxOf(it.audioLayerCount, 2)
+                )
+            }
+        }
+
         updateHistoryFlags()
         return id
     }
@@ -351,7 +367,7 @@ class EditorViewModel : ViewModel() {
             return
         }
 
-        val deltaScale = if (kotlin.math.abs(anchorBase.scale) < 0.001f) 1f
+        val deltaScale = if (abs(anchorBase.scale) < 0.001f) 1f
         else (newScale / anchorBase.scale)
         val deltaRot = newRotation - anchorBase.rotation
 
@@ -469,9 +485,14 @@ class EditorViewModel : ViewModel() {
             it.endsWith(".png") || it.endsWith(".jpg") ||
                     it.endsWith(".jpeg") || it.endsWith(".webp")
         }
+
+        // 🆕 Use default image duration from settings
+        val imageDur = SettingsConsumer.defaultImageDurationMs.toLong()
+
         val videoClip = EditorClip(
             uri = uri, name = name, type = "video/mp4",
-            sourceStartMs = 0L, sourceEndMs = duration,
+            sourceStartMs = 0L,
+            sourceEndMs = if (isImage) imageDur else duration,
             timelineStartMs = 0L, trackIndex = 0, isAudio = false,
             sourceTotalMs = if (isImage) Long.MAX_VALUE else sourceTotalMs,
             linkedId = linkId
@@ -521,7 +542,10 @@ class EditorViewModel : ViewModel() {
         val durMs = if (durationMs < 100L) 5_000L else durationMs.coerceAtLeast(1_000L)
         val isImage = mediaType.startsWith("image/")
         val isAudioFile = mediaType.startsWith("audio/")
-        val finalDurMs = if (isImage && durationMs < 100L) 5000L else durMs
+
+        // 🆕 Use default image duration from settings
+        val settingsDefaultImg = SettingsConsumer.defaultImageDurationMs.toLong()
+        val finalDurMs = if (isImage && durationMs < 100L) settingsDefaultImg else durMs
 
         if (isAudioFile) {
             val audioPlacement = TimelineTools.findPlacement(
@@ -1356,7 +1380,7 @@ class EditorViewModel : ViewModel() {
 
         val anchorScale = getClipScale(anchor)
         val anchorRot = getClipRotation(anchor)
-        val scaleFactor = if (kotlin.math.abs(anchorScale) > 0.001f) {
+        val scaleFactor = if (abs(anchorScale) > 0.001f) {
             newScale / anchorScale
         } else {
             1f
@@ -1943,12 +1967,27 @@ class EditorViewModel : ViewModel() {
         val targetId = clipId
             ?: s.selectedClip?.takeIf { it.isBrushClip }?.id
             ?: s.clips.lastOrNull { it.isBrushClip }?.id
+
+        android.util.Log.d(
+            "BRUSH_DEBUG",
+            "addStrokeToBrushClip: targetId=$targetId, " +
+                    "selected=${s.selectedClip?.id}, " +
+                    "brushClips=${s.clips.filter { it.isBrushClip }.size}"
+        )
+
         if (targetId == null) {
+            android.util.Log.d("BRUSH_DEBUG", "No brush clip found, creating new")
             createBrushClip(BrushState(strokes = listOf(stroke)))
             return
         }
         updateClipDirect(targetId) { clip ->
-            clip.copy(brush = clip.brush.copy(strokes = clip.brush.strokes + stroke))
+            val newStrokes = clip.brush.strokes + stroke
+            android.util.Log.d(
+                "BRUSH_DEBUG",
+                "Adding stroke. Old count=${clip.brush.strokes.size}, " +
+                        "New count=${newStrokes.size}"
+            )
+            clip.copy(brush = clip.brush.copy(strokes = newStrokes))
         }
     }
 
@@ -2740,6 +2779,160 @@ class EditorViewModel : ViewModel() {
             if (c.isFilterLayerClip) c.copy(filters = filters) else c
         }
     }
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 COLOR MATTE
+    //  Solid-color layers that behave like Premiere Pro color mattes.
+    //  Use trackIndex as Z-index. Use filters.opacity as alpha.
+    // ═══════════════════════════════════════════════════════════
+
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 COLOR MATTE — Full featured
+    //  Behaves like a real visual layer (crop/scale/rotation/etc.)
+    // ═══════════════════════════════════════════════════════════
+
+    fun createColorMatte(
+        color: Long = ColorMatteDefaults.DEFAULT_COLOR,
+        opacity: Float = ColorMatteDefaults.DEFAULT_OPACITY,
+        durationMs: Long = ColorMatteDefaults.DEFAULT_DURATION_MS,
+        style: ColorMatteStyle = ColorMatteStyle(mode = ColorMatteMode.SOLID, solidColor = color)
+    ) {
+        val s = _state.value
+        val baseClip = s.selectedClip
+        val effectiveDur = durationMs.coerceIn(
+            ColorMatteDefaults.MIN_DURATION_MS,
+            ColorMatteDefaults.MAX_DURATION_MS
+        )
+
+        val targetTrack = (baseClip?.trackIndex ?: 0) + 1
+
+        val matteFilters = FilterState(
+            opacity = opacity.coerceIn(0f, 100f)
+        )
+
+        val clip = EditorClip(
+            id = UUID.randomUUID().toString(),
+            uri = Uri.EMPTY,
+            name = "🎨 Color Matte",
+            type = "matte/plain",
+            sourceStartMs = 0L,
+            sourceEndMs = effectiveDur,
+            timelineStartMs = s.currentPosMs,
+            trackIndex = 0,
+            isAudio = false,
+            sourceTotalMs = Long.MAX_VALUE,
+            filters = matteFilters,
+            matteStyle = style
+        )
+
+        pushHistory()
+        addClipOnNewLayer(clip, targetTrack)
+        updateHistoryFlags()
+    }
+
+    fun updateColorMatte(
+        layerId: String,
+        style: ColorMatteStyle,
+        opacity: Float,
+        durationMs: Long
+    ) {
+        val clampedOpacity = opacity.coerceIn(0f, 100f)
+        val clampedDur = durationMs.coerceIn(
+            ColorMatteDefaults.MIN_DURATION_MS,
+            ColorMatteDefaults.MAX_DURATION_MS
+        )
+
+        updateClipDirect(layerId) { clip ->
+            if (!clip.isColorMatteClip) clip
+            else clip.copy(
+                matteStyle = style,
+                filters = clip.filters.copy(opacity = clampedOpacity),
+                sourceEndMs = clip.sourceStartMs + clampedDur
+            )
+        }
+    }
+
+    // Legacy wrapper — keeps PromptExecutor working
+    fun updateColorMatte(
+        layerId: String,
+        color: Long,
+        opacity: Float,
+        durationMs: Long
+    ) {
+        val clip = _state.value.clips.firstOrNull { it.id == layerId } ?: return
+        if (!clip.isColorMatteClip) return
+        val newStyle = clip.matteStyle.copy(
+            mode = ColorMatteMode.SOLID,
+            solidColor = color
+        )
+        updateColorMatte(layerId, newStyle, opacity, durationMs)
+    }
+
+    fun removeColorMatte(layerId: String) {
+        val clip = _state.value.clips.firstOrNull { it.id == layerId } ?: return
+        if (!clip.isColorMatteClip) return
+        pushHistory()
+        val list = _state.value.clips.toMutableList()
+        list.removeAll { it.id == layerId }
+        _state.update {
+            it.copy(clips = list, selectedClipId = null)
+        }
+        updateHistoryFlags()
+    }
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 ADVANCED EFFECTS — stored on the SELECTED clip itself
+    //  No new layer is created. Effects modify the selected clip's
+    //  own rendering.
+    // ═══════════════════════════════════════════════════════════
+
+    // Add a new advanced effect to the currently selected clip
+    fun addAdvancedEffectToSelected(effectState: AdvancedEffectState) {
+        val s = _state.value
+        val targetId = s.selectedClipId ?: return
+        pushHistory()
+        updateClipDirect(targetId) { clip ->
+            clip.copy(advancedEffects = clip.advancedEffects + effectState)
+        }
+        updateHistoryFlags()
+    }
+
+    // Update an existing advanced effect (by index) on the selected clip
+    fun updateAdvancedEffectAt(
+        selectedClipId: String,
+        index: Int,
+        effectState: AdvancedEffectState
+    ) {
+        updateClipDirect(selectedClipId) { clip ->
+            if (index !in clip.advancedEffects.indices) clip
+            else {
+                val newList = clip.advancedEffects.toMutableList()
+                newList[index] = effectState
+                clip.copy(advancedEffects = newList)
+            }
+        }
+    }
+
+    // Remove an advanced effect (by index) from the selected clip
+    fun removeAdvancedEffectAt(selectedClipId: String, index: Int) {
+        pushHistory()
+        updateClipDirect(selectedClipId) { clip ->
+            if (index !in clip.advancedEffects.indices) clip
+            else {
+                val newList = clip.advancedEffects.toMutableList()
+                newList.removeAt(index)
+                clip.copy(advancedEffects = newList)
+            }
+        }
+        updateHistoryFlags()
+    }
+
+    // 🆕 Live preview state for advanced effects (before Apply)
+    fun setPreviewAdvancedEffect(effectState: AdvancedEffectState?) {
+        _state.update { it.copy(previewAdvancedEffect = effectState) }
+    }
+
+    fun clearPreviewAdvancedEffect() {
+        _state.update { it.copy(previewAdvancedEffect = null) }
+    }
 
     fun removeFilterLayer(layerId: String) {
         val clip = _state.value.clips.firstOrNull { it.id == layerId } ?: return
@@ -2985,6 +3178,29 @@ class EditorViewModel : ViewModel() {
         } else updated
 
         updateClipDirect(sel.id) { finalClip }
+    }
+
+    fun updateClipKeyframeValue(
+        clipId: String,
+        prop: String,
+        timeSec: Float,
+        value: Float
+    ) {
+        val s = _state.value
+        val clip = s.clips.firstOrNull { it.id == clipId } ?: return
+
+        val list = KeyframeStore.getKeyframes(clip.keyframes, prop).toMutableList()
+        val idx = list.indexOfFirst { abs(it.time - timeSec) < 0.05f }
+
+        if (idx >= 0) {
+            list[idx] = list[idx].copy(value = value)
+        } else {
+            list.add(Keyframe(timeSec, value, Keyframe.DEFAULT_EASE))
+            list.sortBy { it.time }
+        }
+
+        val newKeyframes = clip.keyframes + (prop to list)
+        updateClipDirect(clipId) { it.copy(keyframes = newKeyframes) }
     }
 
     fun toggleKeyframeAtPlayhead(prop: String) {
@@ -3562,7 +3778,6 @@ class EditorViewModel : ViewModel() {
     }
 }
 
-
 // Bundle of config passed from UI to ViewModel when starting export
 data class ExportUiStateBundle(
     val fileName: String,
@@ -3584,7 +3799,6 @@ data class ExportUiStateBundle(
     val totalDurationMs: Long,
     val clips: List<EditorClip>
 )
-
 
 // Holds clips in memory between ViewModel and Service
 object ExportClipsHolder {

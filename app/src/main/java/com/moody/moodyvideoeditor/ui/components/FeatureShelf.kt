@@ -28,6 +28,8 @@ import androidx.compose.ui.unit.sp
 data class Feature(val key: String, val label: String, val icon: String)
 
 val FEATURES = listOf(
+    Feature("matte", "Matte", "🎨"),
+    Feature("advfx", "Adv. FX", "✨"),
     Feature("trim", "Trim", "✂️"),
     Feature("speed", "Speed", "⏩"),
     Feature("text", "Text", "📝"),

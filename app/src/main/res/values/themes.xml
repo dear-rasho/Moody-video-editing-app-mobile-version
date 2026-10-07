@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <!-- Dark theme — matches app's Color(0xFF121212) background -->
-    <style name="Theme.MoodyVideoEditor" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.MoodyVideoEditor" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">#FF121212</item>
         <item name="android:statusBarColor">#FF0A0A0A</item>
         <item name="android:navigationBarColor">#FF0A0A0A</item>

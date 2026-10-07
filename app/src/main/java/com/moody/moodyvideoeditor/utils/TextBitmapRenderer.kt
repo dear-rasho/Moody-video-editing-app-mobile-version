@@ -668,11 +668,6 @@ object TextBitmapRenderer {
 
             if (content.isEmpty()) return
 
-            val scale = W.toFloat() / REFERENCE_WIDTH_PX
-
-            val baseFontSize = st.fontSize.coerceAtLeast(8)
-            val initialFontSize = (baseFontSize * scale).coerceAtLeast(8f)
-
             val typeface = try {
                 FontLibrary.typefaceFor(
                     st.fontFamily,
@@ -683,18 +678,14 @@ object TextBitmapRenderer {
                 Typeface.DEFAULT
             }
 
-            val measurePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                this.typeface = typeface
-                this.textSize = initialFontSize
-                textAlign = Paint.Align.CENTER
-            }
-            val naturalWidth = measurePaint.measureText(content)
-            val maxWidthPx = W * (st.maxWidth.coerceIn(30f, 100f) / 100f)
-            val fontSize = if (naturalWidth > maxWidthPx) {
-                initialFontSize * (maxWidthPx / naturalWidth)
-            } else {
-                initialFontSize
-            }
+            val scale = W.toFloat() / REFERENCE_WIDTH_PX
+            val fontSize = TextRenderContract.fittedFontSizePx(
+                content = content,
+                baseSizePx = st.fontSize.toFloat(),
+                canvasWidthPx = W.toFloat(),
+                maxWidthPercent = st.maxWidth,
+                typeface = typeface
+            )
 
             val spacingPx = st.letterSpacing * scale
             val spacingEm = if (fontSize <= 0f) 0f
@@ -703,11 +694,8 @@ object TextBitmapRenderer {
             val basePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 this.typeface = typeface
                 this.textSize = fontSize
-                textAlign = when (st.alignment) {
-                    "left" -> Paint.Align.LEFT
-                    "right" -> Paint.Align.RIGHT
-                    else -> Paint.Align.CENTER
-                }
+                // Preview positions the intrinsically-sized text box by its center.
+                textAlign = Paint.Align.CENTER
                 letterSpacing = spacingEm
                 color = st.color.toInt()
             }
@@ -793,6 +781,14 @@ object TextBitmapRenderer {
                     strokeCap = Paint.Cap.ROUND
                     alpha = alphaInt
                     setShadowLayer(0f, 0f, 0f, 0)
+
+                    // 🆕 Apply animation blur to stroke too
+                    if (frame.blurRadiusPx > 0.5f) {
+                        maskFilter = BlurMaskFilter(
+                            frame.blurRadiusPx.coerceIn(0.5f, 40f),
+                            BlurMaskFilter.Blur.NORMAL
+                        )
+                    }
                 }
                 canvas.drawText(content, tx, ty, strokePaint)
             }
@@ -804,8 +800,15 @@ object TextBitmapRenderer {
                 letterSpacing = basePaint.letterSpacing
                 alpha = alphaInt
                 setShadowLayer(0f, 0f, 0f, 0)
-            }
 
+                // 🆕 Apply animation blur (cinematicBlur, blurryReveal, etc.)
+                if (frame.blurRadiusPx > 0.5f) {
+                    maskFilter = BlurMaskFilter(
+                        frame.blurRadiusPx.coerceIn(0.5f, 40f),
+                        BlurMaskFilter.Blur.NORMAL
+                    )
+                }
+            }
             if (st.gradientEnabled) {
                 val rad = Math.toRadians(st.gradientAngle.toDouble())
                 val dx = kotlin.math.cos(rad).toFloat() * W * 0.5f
