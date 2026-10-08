@@ -2473,6 +2473,11 @@ class EditorViewModel : ViewModel() {
         updateClipDirect(layerId) { it.copy(effectState = scaled) }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 LIGHT LEAK
+    // ═══════════════════════════════════════════════════════════
+
+
     fun removeEffectLayer(layerId: String) {
         val clip = _state.value.clips.firstOrNull { it.id == layerId } ?: return
         if (!clip.isEffectClip) return
@@ -2493,28 +2498,61 @@ class EditorViewModel : ViewModel() {
         intensity: Float
     ): EffectState {
         val t = (intensity / 100f).coerceIn(0f, 2f)
-        val scaledMotion = preset.motion?.let {
-            it.copy(intensity = (it.intensity * t).coerceIn(0f, 500f))
+
+        // ─── Motion ─────────────────────────────────────────
+        val scaledMotion = preset.motion?.let { m ->
+            m.copy(intensity = (m.intensity * t).coerceIn(0f, 500f))
         }
-        val scaledFilters = preset.filters?.let { f ->
-            fun s100(v: Float) = (100f + (v - 100f) * t).coerceIn(0f, 300f)
-            fun s0(v: Float) = (v * t).coerceIn(0f, 300f)
-            f.copy(
-                brightness = s100(f.brightness), contrast = s100(f.contrast),
-                saturation = s100(f.saturation), hue = s0(f.hue).coerceIn(0f, 360f),
-                grayscale = s0(f.grayscale).coerceIn(0f, 100f),
-                sepia = s0(f.sepia).coerceIn(0f, 100f),
-                invert = s0(f.invert).coerceIn(0f, 100f),
-                blur = s0(f.blur), opacity = s100(f.opacity).coerceIn(0f, 100f)
+
+        // ─── Filters ────────────────────────────────────────
+        val scaledFilters: com.moody.moodyvideoeditor.data.ColorFilterValues? =
+            preset.filters?.let { f ->
+                val s100: (Float) -> Float = { v ->
+                    (100f + (v - 100f) * t).coerceIn(0f, 300f)
+                }
+                val s0: (Float) -> Float = { v ->
+                    (v * t).coerceIn(0f, 300f)
+                }
+                f.copy(
+                    brightness = s100(f.brightness),
+                    contrast = s100(f.contrast),
+                    saturation = s100(f.saturation),
+                    hue = s0(f.hue).coerceIn(0f, 360f),
+                    grayscale = s0(f.grayscale).coerceIn(0f, 100f),
+                    sepia = s0(f.sepia).coerceIn(0f, 100f),
+                    invert = s0(f.invert).coerceIn(0f, 100f),
+                    blur = s0(f.blur),
+                    opacity = s100(f.opacity).coerceIn(0f, 100f)
+                )
+            }
+
+        // ─── Overlay ────────────────────────────────────────
+        val scaledOverlay = preset.overlay?.let { o ->
+            o.copy(intensity = (o.intensity * t).coerceIn(0f, 300f))
+        }
+
+        // ─── Edge Glow (🆕) ─────────────────────────────────
+        val scaledEdgeGlow = preset.edgeGlow?.let { g ->
+            g.copy(intensity = (g.intensity * t).coerceIn(0f, 300f))
+        }
+
+        // 🆕 Light Leak scale
+        val scaledLightLeak = preset.lightLeak?.let { l ->
+            l.copy(
+                intensity = (l.intensity * t).coerceIn(0f, 300f),
+                radius = (l.radius * (0.85f + 0.15f * t)).coerceIn(0.1f, 2f)
             )
         }
-        val scaledOverlay = preset.overlay?.let {
-            it.copy(intensity = (it.intensity * t).coerceIn(0f, 300f))
-        }
+        // ─── Final EffectState ─────────────────────────────
         return EffectState(
-            kind = EffectState.KIND_EFFECT, presetKey = preset.key,
-            filters = scaledFilters, motion = scaledMotion,
-            overlay = scaledOverlay, masterIntensity = intensity
+            kind = EffectState.KIND_EFFECT,
+            presetKey = preset.key,
+            filters = scaledFilters,
+            motion = scaledMotion,
+            overlay = scaledOverlay,
+            edgeGlow = scaledEdgeGlow,
+            lightLeak = scaledLightLeak,
+            masterIntensity = intensity
         )
     }
 

@@ -40,6 +40,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
@@ -61,14 +64,18 @@ import com.moody.moodyvideoeditor.data.EffectState
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.EffectsEngine
+import com.moody.moodyvideoeditor.utils.LightLeakEngine
 import com.moody.moodyvideoeditor.utils.OverlayEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+
 private val CATEGORIES = listOf(
     Triple(EffectKind.MOTION, "💫 Motion", EffectLibrary.MOTION_EFFECTS),
     Triple(EffectKind.COLOR, "🎨 Color", EffectLibrary.COLOR_EFFECTS),
-    Triple(EffectKind.OVERLAY, "🎬 Overlay", EffectLibrary.OVERLAY_EFFECTS)
+    Triple(EffectKind.OVERLAY, "🎬 Overlay", EffectLibrary.OVERLAY_EFFECTS),
+    Triple(EffectKind.EDGE_GLOW, "✨ Edge Glow", EffectLibrary.EDGE_GLOW_EFFECTS),
+    Triple(EffectKind.LIGHT_LEAK, "🌅 Light Leaks", EffectLibrary.LIGHT_LEAK_EFFECTS)
 )
 
 @Composable
@@ -89,7 +96,6 @@ fun EffectsPanel(
     var selectedPreset by remember { mutableStateOf<EffectPreset?>(null) }
     var intensity by remember { mutableStateOf(100f) }
 
-    // Reference image
     var refBitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(Unit) {
         refBitmap = withContext(Dispatchers.IO) {
@@ -97,7 +103,6 @@ fun EffectsPanel(
         }
     }
 
-    // 🆕 Shared animation clock (0-10 sec loop)
     val infiniteTransition = rememberInfiniteTransition(label = "fxClock")
     val clockSec by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -142,8 +147,7 @@ fun EffectsPanel(
         ) {
 
 
-            //  CATEGORY CHIPS
-
+            // ─── CATEGORY CHIPS ───
             Text(
                 "Category (${EffectLibrary.ALL.size} effects)",
                 color = Color(0xFF888888),
@@ -185,9 +189,7 @@ fun EffectsPanel(
 
             Spacer(Modifier.height(2.dp))
 
-
-            //  PRESET CHIPS — ANIMATED PREVIEWS
-
+            // ─── PRESET CHIPS ───
             val (currentKind, catLabel, catPresets) = CATEGORIES[selectedCategoryIdx]
 
             Text(
@@ -222,9 +224,7 @@ fun EffectsPanel(
                 }
             }
 
-
-            //  INTENSITY + ACTIONS
-
+            // ─── INTENSITY + ACTIONS ───
             val current = selectedPreset
             if (current != null) {
                 Spacer(Modifier.height(2.dp))
@@ -419,11 +419,100 @@ fun EffectsPanel(
     }
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  🆕 LIGHT LEAK THUMB CHIP
+// ═══════════════════════════════════════════════════════════════
 
-//  EFFECT THUMB CHIP — ANIMATED previews
-//  - Color  → image + ColorMatrix (static)
-//  - Motion → image + LIVE animated transform
-//  - Overlay → image + LIVE animated overlay
+@Composable
+private fun LightLeakThumbChip(
+    preset: com.moody.moodyvideoeditor.data.LightLeakPreset,
+    refBitmap: Bitmap?,
+    clockSec: Float,
+    onClick: () -> Unit
+) {
+    val hasImage = refBitmap != null && !refBitmap.isRecycled
+
+    val frame = remember(preset.key, clockSec) {
+        LightLeakEngine.computeFrame(preset.config, clockSec)
+    }
+
+    Column(
+        modifier = Modifier
+            .width(76.dp)
+            .height(102.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFF181818))
+            .pointerInput(preset.key) {
+                detectTapGestures { onClick() }
+            }
+            .padding(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(60.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF0F0F0F))
+        ) {
+            if (hasImage) {
+                Image(
+                    bitmap = refBitmap!!.asImageBitmap(),
+                    contentDescription = preset.label,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.matchParentSize()
+                )
+
+                Canvas(modifier = Modifier.matchParentSize()) {
+                    try {
+                        val cx = frame.posX * size.width
+                        val cy = frame.posY * size.height
+                        val maxDim = maxOf(size.width, size.height)
+                        val r = frame.radius * maxDim
+                        val alpha = (frame.alpha * frame.intensityMul * 0.7f)
+                            .coerceIn(0f, 1f)
+
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    frame.color1.copy(alpha = alpha),
+                                    frame.color2.copy(alpha = alpha * 0.5f),
+                                    Color.Transparent
+                                ),
+                                center = Offset(cx, cy),
+                                radius = r
+                            ),
+                            radius = r,
+                            center = Offset(cx, cy),
+                            blendMode = BlendMode.Screen
+                        )
+                    } catch (_: Throwable) {
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier.matchParentSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(preset.icon, fontSize = 24.sp)
+                }
+            }
+        }
+
+        Text(
+            preset.label,
+            color = Color.White,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            lineHeight = 10.sp
+        )
+    }
+}
+// ═══════════════════════════════════════════════════════════════
+//  EFFECT THUMB CHIP
+// ═══════════════════════════════════════════════════════════════
 
 @Composable
 private fun EffectThumbChip(
@@ -434,7 +523,6 @@ private fun EffectThumbChip(
     clockSec: Float,
     onClick: () -> Unit
 ) {
-    // Color matrix (COLOR only)
     val colorFilter = remember(preset.key, kind) {
         if (kind != EffectKind.COLOR || preset.filters == null) {
             null
@@ -448,7 +536,6 @@ private fun EffectThumbChip(
         }
     }
 
-    // LIVE motion frame (MOTION only)
     val motionFrame = remember(preset.key, kind, clockSec) {
         if (kind != EffectKind.MOTION || preset.motion == null) {
             EffectsEngine.MotionFrame()
@@ -457,14 +544,38 @@ private fun EffectThumbChip(
         }
     }
 
-    // Overlay state (OVERLAY only)
-    val overlayState = remember(preset.key, kind) {
-        if (kind != EffectKind.OVERLAY || preset.overlay == null) null
-        else OverlayState(
-            type = preset.overlay.type,
-            intensity = (preset.overlay.intensity * 1.3f).coerceAtMost(200f),
-            color = preset.overlay.color
-        )
+    val overlayState: OverlayState? = remember(preset.key, kind) {
+        if (kind == EffectKind.OVERLAY && preset.overlay != null) {
+            try {
+                OverlayState(
+                    type = preset.overlay.type,
+                    intensity = preset.overlay.intensity,
+                    color = preset.overlay.color
+                )
+            } catch (_: Throwable) {
+                null
+            }
+        } else null
+    }
+
+    val edgeGlowFrame: EffectsEngine.EdgeGlowFrame? = remember(preset.key, kind, clockSec) {
+        if (kind == EffectKind.EDGE_GLOW && preset.edgeGlow != null) {
+            try {
+                EffectsEngine.computeEdgeGlow(preset.edgeGlow, clockSec)
+            } catch (_: Throwable) {
+                null
+            }
+        } else null
+    }
+
+    val lightLeakFrame: LightLeakEngine.Frame? = remember(preset.key, kind, clockSec) {
+        if (kind == EffectKind.LIGHT_LEAK && preset.lightLeak != null) {
+            try {
+                LightLeakEngine.computeFrame(preset.lightLeak, clockSec)
+            } catch (_: Throwable) {
+                null
+            }
+        } else null
     }
 
     val hasImage = refBitmap != null && !refBitmap.isRecycled
@@ -482,7 +593,6 @@ private fun EffectThumbChip(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-
         Box(
             modifier = Modifier
                 .size(60.dp)
@@ -490,7 +600,6 @@ private fun EffectThumbChip(
                 .background(Color(0xFF0F0F0F))
         ) {
             if (hasImage) {
-                // Image with motion transform
                 Image(
                     bitmap = refBitmap!!.asImageBitmap(),
                     contentDescription = preset.label,
@@ -508,7 +617,6 @@ private fun EffectThumbChip(
                         }
                 )
 
-                // Overlay animation on top
                 if (overlayState != null) {
                     Canvas(modifier = Modifier.matchParentSize()) {
                         try {
@@ -525,8 +633,57 @@ private fun EffectThumbChip(
                         }
                     }
                 }
+
+                if (edgeGlowFrame != null && preset.edgeGlow != null) {
+                    val r = (preset.edgeGlow.radius * edgeGlowFrame.radiusMul / 3f)
+                        .coerceIn(1f, 12f)
+                    val a = (
+                            edgeGlowFrame.intensityMul *
+                                    (preset.edgeGlow.intensity / 100f) *
+                                    edgeGlowFrame.alpha
+                            ).coerceIn(0f, 1f)
+
+                    Canvas(modifier = Modifier.matchParentSize()) {
+                        val cx = size.width / 2f + edgeGlowFrame.offsetX
+                        val cy = size.height / 2f + edgeGlowFrame.offsetY
+                        drawCircle(
+                            color = edgeGlowFrame.color.copy(alpha = a * 0.7f),
+                            radius = r,
+                            center = Offset(cx, cy)
+                        )
+                    }
+                }
+
+                if (lightLeakFrame != null) {
+                    Canvas(modifier = Modifier.matchParentSize()) {
+                        try {
+                            val cx = lightLeakFrame.posX * size.width
+                            val cy = lightLeakFrame.posY * size.height
+                            val maxDim = maxOf(size.width, size.height)
+                            val r = lightLeakFrame.radius * maxDim
+                            val alpha = (lightLeakFrame.alpha *
+                                    lightLeakFrame.intensityMul * 0.75f)
+                                .coerceIn(0f, 1f)
+
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    colors = listOf(
+                                        lightLeakFrame.color1.copy(alpha = alpha),
+                                        lightLeakFrame.color2.copy(alpha = alpha * 0.5f),
+                                        Color.Transparent
+                                    ),
+                                    center = Offset(cx, cy),
+                                    radius = r
+                                ),
+                                radius = r,
+                                center = Offset(cx, cy),
+                                blendMode = BlendMode.Screen
+                            )
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
             } else {
-                // Fallback icon while image loads
                 Box(
                     modifier = Modifier.matchParentSize(),
                     contentAlignment = Alignment.Center
@@ -535,7 +692,6 @@ private fun EffectThumbChip(
                 }
             }
 
-            // Selection overlay (top-most)
             if (isSelected) {
                 Box(
                     modifier = Modifier
@@ -556,9 +712,9 @@ private fun EffectThumbChip(
         )
     }
 }
-
-
+// ═══════════════════════════════════════════════════════════════
 //  REFERENCE IMAGE LOADER
+// ═══════════════════════════════════════════════════════════════
 
 private fun loadRefImage(context: android.content.Context): Bitmap? {
     return try {

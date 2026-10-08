@@ -1,2796 +1,3859 @@
-package com.moody.moodyvideoeditor.utils
+@file:OptIn(UnstableApi::class)
 
-import android.content.Context
+package com.moody.moodyvideoeditor.ui.components
+
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Color
-import android.net.Uri
+import android.graphics.BlurMaskFilter
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.media.MediaMetadataRetriever
 import android.os.Build
 import android.util.Log
-import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.FFmpegSession
-import com.arthenica.ffmpegkit.ReturnCode
+import android.view.LayoutInflater
+import android.view.TextureView
+import android.view.View
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size       // ← YE ADD
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
+import coil.compose.rememberAsyncImagePainter
+import coil.decode.BitmapFactoryDecoder
+import coil.request.ImageRequest
+import com.moody.moodyvideoeditor.data.BrushPoint
+import com.moody.moodyvideoeditor.data.BrushStroke
+import com.moody.moodyvideoeditor.data.BrushType
 import com.moody.moodyvideoeditor.data.ColorFilterValues
-import com.moody.moodyvideoeditor.data.ColorWheelState
+import com.moody.moodyvideoeditor.data.ColorMatteMode
 import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.data.EffectState
+import com.moody.moodyvideoeditor.data.FilterState
+import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.MaskType
-import com.moody.moodyvideoeditor.data.MotionConfig
-import com.moody.moodyvideoeditor.data.advanced.AdvancedEffectType
-import com.moody.moodyvideoeditor.data.advanced.BlurDimension
-import kotlinx.coroutines.CancellationException
+import com.moody.moodyvideoeditor.data.OverlayState
+import com.moody.moodyvideoeditor.data.advanced.AdvancedEffectState
+import com.moody.moodyvideoeditor.utils.BrushEngine
+import com.moody.moodyvideoeditor.utils.ColorMatrixBuilder
+import com.moody.moodyvideoeditor.utils.ColorWheelEngine
+import com.moody.moodyvideoeditor.utils.ColorWheelPreviewFilter
+import com.moody.moodyvideoeditor.utils.EffectsEngine
+import com.moody.moodyvideoeditor.utils.FontLibrary
+import com.moody.moodyvideoeditor.utils.KeyframeStore
+import com.moody.moodyvideoeditor.utils.MaskEngine
+import com.moody.moodyvideoeditor.utils.OverlayEngine
+import com.moody.moodyvideoeditor.utils.RatioHelper
+import com.moody.moodyvideoeditor.utils.TextRenderContract
+import com.moody.moodyvideoeditor.utils.TextScaler
+import com.moody.moodyvideoeditor.utils.Transform2D
+import com.moody.moodyvideoeditor.utils.TransformApplier
+import com.moody.moodyvideoeditor.utils.TransitionRenderer
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
-import java.security.MessageDigest
-import java.util.Locale
+import java.util.UUID
 
-class FFmpegExecutor(
-    private val context: Context,
-    private val onProgress: (Float) -> Unit,
-    private val onSuccess: (File) -> Unit,
-    private val onError: (String) -> Unit
-) {
-    @Volatile
-    private var isCancelled = false
-    private var currentSession: FFmpegSession? = null
-    private val audioCache = mutableMapOf<String, Boolean>()
-    private val maskSequenceDirectories = mutableListOf<File>()
+// ═══════════════════════════════════════════════════════════════
+//  HELPER — Per-clip color matrix
+// ═══════════════════════════════════════════════════════════════
 
-    private var xfadeFallback: (() -> Unit)? = null
+private fun buildClipMatrix(
+    clip: EditorClip,
+    globalMatrix: android.graphics.ColorMatrix,
+    applyGlobal: Boolean,
+    colorWheelMatrix: android.graphics.ColorMatrix? = null,
+    useExactColorWheels: Boolean = false
+): android.graphics.ColorMatrix? {
+    val cm = android.graphics.ColorMatrix()
 
-    private fun buildFastVideoArgs(
-        bitrateKbps: Int,
-        targetW: Int,
-        targetH: Int,
-        encoderThreads: Int = 0
-    ): List<String> {
-        return listOf(
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-tune", "fastdecode",
-            "-b:v", "${bitrateKbps}k",
-            "-s:v", "${targetW}x${targetH}",
-            "-aspect", "$targetW:$targetH",
-            "-pix_fmt", "yuv420p",
-            "-threads", encoderThreads.toString()
-        )
-    }
-
-    suspend fun export(
-        clips: List<EditorClip>,
-        allClips: List<EditorClip>,
-        outputFile: File,
-        targetW: Int = 1280,
-        targetH: Int = 720,
-        fps: Int = 30,
-        bitrateKbps: Int = 8000,
-        textSequences: List<TextOverlaySequence> = emptyList(),
-        audioOnlyClips: List<EditorClip> = emptyList(),
-        matteClips: List<EditorClip> = emptyList(),
-        explicitDurationMs: Long = 0L
+    if (!clip.adjustments.isDefault &&
+        ColorMatrixBuilder.hasRealTimeAdjustments(clip.adjustments)
     ) {
-        isCancelled = false
-        try {
-            if (clips.isEmpty() && audioOnlyClips.isEmpty() &&
-                matteClips.isEmpty()
-            ) {
-                onError("No clips to export")
-                return
-            }
-
-            val computedTotal = (
-                    clips.maxOfOrNull { it.timelineEndMs } ?: 0L
-                    ).coerceAtLeast(
-                    audioOnlyClips.maxOfOrNull { it.timelineEndMs } ?: 0L
-                ).coerceAtLeast(
-                    matteClips.maxOfOrNull { it.timelineEndMs } ?: 0L
-                )
-            val totalDurationMs = if (explicitDurationMs > 0L)
-                explicitDurationMs else computedTotal
-
-            val (localFiles, audioLocalFiles) = withContext(Dispatchers.IO) {
-                currentCoroutineContext().ensureActive()
-                val videoFiles = mutableListOf<File>()
-                for (clip in clips) {
-                    currentCoroutineContext().ensureActive()
-                    if (isCancelled) throw CancellationException("Export cancelled")
-                    val file = copyUriToCache(clip.uri, "clip_${clip.id}.mp4")
-                        ?: throw IllegalStateException(
-                            "Could not read file: ${clip.name}"
-                        )
-                    videoFiles.add(file)
-                }
-
-                val audioFiles = mutableListOf<File>()
-                for (clip in audioOnlyClips) {
-                    currentCoroutineContext().ensureActive()
-                    if (isCancelled) throw CancellationException("Export cancelled")
-                    val file = copyUriToCache(clip.uri, "audio_${clip.id}.mp3")
-                        ?: throw IllegalStateException(
-                            "Could not read audio: ${clip.name}"
-                        )
-                    audioFiles.add(file)
-                }
-                videoFiles to audioFiles
-            }
-
-            val maskSequences = renderMaskSequences(clips, targetW, targetH, fps)
-
-            val needsLayered =
-                clips.map { it.trackIndex }.distinct().size > 1 ||
-                        maskSequences.isNotEmpty() ||
-                        matteClips.isNotEmpty()
-
-            if (needsLayered) {
-                exportLayeredTracks(
-                    clips = clips,
-                    allClips = allClips,
-                    localFiles = localFiles,
-                    audioOnlyClips = audioOnlyClips,
-                    audioLocalFiles = audioLocalFiles,
-                    outputFile = outputFile,
-                    targetW = targetW,
-                    targetH = targetH,
-                    fps = fps,
-                    bitrateKbps = bitrateKbps,
-                    sequences = textSequences,
-                    maskSequences = maskSequences,
-                    colorMettes = matteClips,
-                    totalDurationMs = totalDurationMs
-                )
-                return
-            }
-
-            when {
-                localFiles.size == 1 && audioLocalFiles.isEmpty() -> {
-                    exportSingleClip(
-                        clips[0], allClips, localFiles[0], outputFile,
-                        targetW, targetH, fps, bitrateKbps, textSequences,
-                        totalDurationMs
-                    )
-                }
-
-                localFiles.size == 1 && audioLocalFiles.isNotEmpty() -> {
-                    exportSingleClipWithAudio(
-                        clips[0], allClips, localFiles[0],
-                        audioOnlyClips, audioLocalFiles,
-                        outputFile, targetW, targetH, fps, bitrateKbps,
-                        textSequences, totalDurationMs
-                    )
-                }
-
-                localFiles.size >= 2 -> {
-                    exportMultipleClips(
-                        clips, allClips, localFiles,
-                        audioOnlyClips, audioLocalFiles,
-                        outputFile, targetW, targetH, fps, bitrateKbps,
-                        textSequences, totalDurationMs
-                    )
-                }
-
-                else -> onError("No visual clips")
-            }
-        } catch (e: CancellationException) {
-            cleanupMaskSequences()
-            throw e
-        } catch (e: Exception) {
-            cleanupMaskSequences()
-            Log.e("FFMPEG", "Export crash", e)
-            onError("Export failed: ${e.message}")
-        }
+        cm.postConcat(ColorMatrixBuilder.build(clip.adjustments))
+    }
+    val ownFilter = ColorFilterValues(
+        brightness = clip.filters.brightness,
+        contrast = clip.filters.contrast,
+        saturation = clip.filters.saturation,
+        hue = clip.filters.hue,
+        grayscale = clip.filters.grayscale,
+        sepia = clip.filters.sepia,
+        invert = clip.filters.invert,
+        blur = clip.filters.blur,
+        opacity = clip.filters.opacity
+    )
+    if (EffectsEngine.hasColorEffect(ownFilter)) {
+        cm.postConcat(EffectsEngine.buildColorMatrix(ownFilter))
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  ADVANCED EFFECTS — FFmpeg filter chain per clip
-    // ═══════════════════════════════════════════════════════════
-
-    private fun buildAdvancedEffectFilters(
-        clip: EditorClip,
-        targetW: Int,
-        targetH: Int
-    ): List<String> {
-        val filters = mutableListOf<String>()
-        if (clip.advancedEffects.isEmpty()) return filters
-
-        clip.advancedEffects.forEach { effect ->
-            when (effect.type) {
-
-                AdvancedEffectType.MIRROR -> {
-                    val m = effect.mirror
-                    if (m != null) {
-                        val angleNorm = ((m.angleDeg % 360f) + 360f) % 360f
-                        val isHorizontal =
-                            angleNorm in 45f..135f || angleNorm in 225f..315f
-                        if (isHorizontal) {
-                            filters.add("hflip")
-                        } else {
-                            filters.add("vflip")
-                        }
-                    }
-                }
-
-                AdvancedEffectType.GAUSSIAN_BLUR -> {
-                    val b = effect.gaussianBlur
-                    if (b != null) {
-                        val sigma = (b.blurriness / 10f).coerceIn(0.1f, 100f)
-                        val sigmaStr = "%.2f".format(sigma)
-                        when (b.dimension) {
-                            BlurDimension.BOTH ->
-                                filters.add("gblur=sigma=$sigmaStr:steps=2")
-
-                            BlurDimension.HORIZONTAL ->
-                                filters.add("gblur=sigma=$sigmaStr:steps=2:planes=1")
-
-                            BlurDimension.VERTICAL ->
-                                filters.add("gblur=sigma=$sigmaStr:steps=2:planes=2")
-                        }
-                    }
-                }
-
-                AdvancedEffectType.CHROMATIC_ABERRATION -> {
-                    val ca = effect.chromaticAberration
-                    if (ca != null) {
-                        val rx = ca.redShiftX.coerceIn(-50f, 50f).toInt()
-                        val ry = ca.redShiftY.coerceIn(-50f, 50f).toInt()
-                        val bx = ca.blueShiftX.coerceIn(-50f, 50f).toInt()
-                        val by = ca.blueShiftY.coerceIn(-50f, 50f).toInt()
-                        filters.add(
-                            "rgbashift=rh=$rx:rv=$ry:bh=$bx:bv=$by:gh=0:gv=0"
-                        )
-                        if (ca.blurRadius > 0.5f) {
-                            filters.add(
-                                "gblur=sigma=${"%.2f".format(ca.blurRadius / 3f)}"
-                            )
-                        }
-                    }
-                }
-
-                AdvancedEffectType.MOTION_BLUR -> {
-                    val mb = effect.motionBlur
-                    if (mb != null) {
-                        val samples = mb.samples.coerceIn(2f, 24f).toInt()
-                        val intensity = mb.intensity.coerceIn(0.1f, 2f)
-                        if (mb.shutterAngle > 10f) {
-                            filters.add("tmix=frames=$samples:weights=1")
-                        }
-                        if (intensity > 1.2f) {
-                            filters.add("gblur=sigma=${"%.2f".format(intensity)}")
-                        }
-                    }
-                }
-
-                AdvancedEffectType.TURBULENT_DISPLACE -> {
-                    val t = effect.turbulentDisplace
-                    if (t != null) {
-                        val amount = t.amount.coerceIn(0f, 1000f)
-                        if (amount > 1f) {
-                            val intensity = (amount / 30f).coerceIn(1f, 30f)
-                            filters.add("noise=alls=${intensity.toInt()}:allf=t+u")
-                        }
-                    }
-                }
-
-                AdvancedEffectType.DROP_SHADOW -> {
-                    val s = effect.dropShadow
-                    if (s != null) {
-                        // Approximate drop shadow with blur
-                        val blur = s.blurSoftness.coerceIn(0f, 100f)
-                        if (blur > 0.5f) {
-                            filters.add("gblur=sigma=${"%.2f".format(blur / 5f)}")
-                        }
-                    }
-                }
-
-                AdvancedEffectType.ROUNDED_CROP -> {
-                    val r = effect.roundedCrop
-                    if (r != null) {
-                        val cropT = r.cropTop.coerceIn(0f, 0.5f)
-                        val cropB = r.cropBottom.coerceIn(0f, 0.5f)
-                        val cropL = r.cropLeft.coerceIn(0f, 0.5f)
-                        val cropR = r.cropRight.coerceIn(0f, 0.5f)
-                        if (cropT > 0.001f || cropB > 0.001f ||
-                            cropL > 0.001f || cropR > 0.001f
-                        ) {
-                            val w = "iw*${"%.4f".format(1f - cropL - cropR)}"
-                            val h = "ih*${"%.4f".format(1f - cropT - cropB)}"
-                            val x = "iw*${"%.4f".format(cropL)}"
-                            val y = "ih*${"%.4f".format(cropT)}"
-                            filters.add("crop=$w:$h:$x:$y")
-                        }
-                    }
-                }
-
-                AdvancedEffectType.ROUGHEN_EDGES -> {
-                    val r = effect.roughenEdges
-                    if (r != null) {
-                        val bw = r.borderWidth.coerceIn(0f, 500f)
-                        if (bw > 0.5f) {
-                            val intensity = (bw / 20f).toInt().coerceIn(1, 20)
-                            filters.add("noise=alls=$intensity:allf=t")
-                        }
-                    }
-                }
-
-                AdvancedEffectType.FOUR_COLOR_GRADIENT,
-                AdvancedEffectType.TRACK_MATTE -> {
-                    // Handled separately (needs overlay composition)
-                }
-            }
-        }
-        return filters
+    if (applyGlobal) cm.postConcat(globalMatrix)
+    if (!useExactColorWheels) {
+        ColorWheelEngine.buildColorMatrix(clip.colorWheel)?.let(cm::postConcat)
+        colorWheelMatrix?.let(cm::postConcat)
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  MASK RENDERING
-    // ═══════════════════════════════════════════════════════════
+    val hasChange =
+        !clip.adjustments.isDefault ||
+                clip.filters.hasAnyChange ||
+                (clip.colorWheel.hasAnyChange && !useExactColorWheels) ||
+                applyGlobal ||
+                (colorWheelMatrix != null && !useExactColorWheels)
 
-    private data class MaskFrameSequence(
-        val clipId: String,
-        val pattern: String,
-        val staticFile: File?,
-        val fps: Int,
-        val directory: File
+    return if (hasChange) cm else null
+}
+
+private fun colorWheelStatesForClip(
+    clip: EditorClip,
+    activeWheels: List<EditorClip>
+) = buildList {
+    if (clip.colorWheel.hasAnyChange) add(clip.colorWheel)
+    activeWheels
+        .filter { it.trackIndex > clip.trackIndex && it.colorWheel.hasAnyChange }
+        .forEach { add(it.colorWheel) }
+}
+
+private fun colorWheelMatrixForClip(
+    clip: EditorClip,
+    activeWheels: List<EditorClip>
+): android.graphics.ColorMatrix? {
+    val applicableWheels = activeWheels.filter {
+        it.trackIndex > clip.trackIndex && it.colorWheel.hasAnyChange
+    }
+    if (applicableWheels.isEmpty()) return null
+
+    val result = android.graphics.ColorMatrix()
+    applicableWheels.forEach { wheel ->
+        ColorWheelEngine.buildColorMatrix(wheel.colorWheel)?.let(result::postConcat)
+    }
+    return result
+}
+
+private fun fittedBoundsFractions(
+    containerWidth: Float,
+    containerHeight: Float,
+    contentAspectRatio: Float
+): Pair<Float, Float> {
+    if (containerWidth <= 0f || containerHeight <= 0f ||
+        !contentAspectRatio.isFinite() || contentAspectRatio <= 0f
+    ) {
+        return 1f to 1f
+    }
+    val containerAspectRatio = containerWidth / containerHeight
+    return if (contentAspectRatio >= containerAspectRatio) {
+        1f to (containerAspectRatio / contentAspectRatio)
+    } else {
+        (contentAspectRatio / containerAspectRatio) to 1f
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ADVANCED EFFECTS — Full Preview Renderers
+// ═══════════════════════════════════════════════════════════════
+
+@Composable
+private fun MirrorRenderedContent(
+    mirror: com.moody.moodyvideoeditor.data.advanced.models.MirrorEffect,
+    localTimeSec: Float,
+    content: @Composable () -> Unit
+) {
+    val cX = KeyframeStore.sample(mirror.keyframes, "centerX", localTimeSec, mirror.centerX)
+    val cY = KeyframeStore.sample(mirror.keyframes, "centerY", localTimeSec, mirror.centerY)
+    val angle = KeyframeStore.sample(mirror.keyframes, "angleDeg", localTimeSec, mirror.angleDeg)
+    val op = KeyframeStore.sample(mirror.keyframes, "opacity", localTimeSec, mirror.opacity)
+
+    val angleNorm = ((angle % 360f) + 360f) % 360f
+    val isHorizontal = angleNorm in 45f..135f || angleNorm in 225f..315f
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = 1f - (op / 200f).coerceIn(0f, 0.5f)
+                }
+        ) { content() }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    if (isHorizontal) scaleX = -1f else scaleY = -1f
+                    alpha = (op / 100f).coerceIn(0f, 1f)
+                    transformOrigin = TransformOrigin(
+                        pivotFractionX = cX.coerceIn(0f, 1f),
+                        pivotFractionY = cY.coerceIn(0f, 1f)
+                    )
+                }
+        ) { content() }
+    }
+}
+
+@Composable
+private fun RoundedCropWrapper(
+    crop: com.moody.moodyvideoeditor.data.advanced.models.RoundedCropEffect,
+    localTimeSec: Float,
+    content: @Composable () -> Unit
+) {
+    val cr = KeyframeStore.sample(crop.keyframes, "cornerRadius", localTimeSec, crop.cornerRadius)
+    val ct = KeyframeStore.sample(crop.keyframes, "cropTop", localTimeSec, crop.cropTop)
+    val cb = KeyframeStore.sample(crop.keyframes, "cropBottom", localTimeSec, crop.cropBottom)
+    val cl = KeyframeStore.sample(crop.keyframes, "cropLeft", localTimeSec, crop.cropLeft)
+    val crR = KeyframeStore.sample(crop.keyframes, "cropRight", localTimeSec, crop.cropRight)
+    val feather = KeyframeStore.sample(crop.keyframes, "feathering", localTimeSec, crop.feathering)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clip(RoundedCornerShape(cr.dp))
+            .padding(
+                top = (ct * 100f).dp,
+                bottom = (cb * 100f).dp,
+                start = (cl * 100f).dp,
+                end = (crR * 100f).dp
+            )
+            .then(
+                if (feather > 0.5f) Modifier.blur(
+                    radius = (feather / 10f).dp,
+                    edgeTreatment = BlurredEdgeTreatment.Unbounded
+                ) else Modifier
+            )
+    ) { content() }
+}
+
+@Composable
+private fun FourColorGradientOverlay(
+    grad: com.moody.moodyvideoeditor.data.advanced.models.FourColorGradientEffect,
+    localTimeSec: Float
+) {
+    val opacity = KeyframeStore.sample(
+        grad.keyframes, "globalOpacity", localTimeSec, grad.globalOpacity
+    )
+    if (opacity < 0.5f) return
+
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val tlR = ((grad.color1 shr 16) and 0xFF) / 255f
+            val tlG = ((grad.color1 shr 8) and 0xFF) / 255f
+            val tlB = (grad.color1 and 0xFF) / 255f
+            val trR = ((grad.color2 shr 16) and 0xFF) / 255f
+            val trG = ((grad.color2 shr 8) and 0xFF) / 255f
+            val trB = (grad.color2 and 0xFF) / 255f
+            val brR = ((grad.color3 shr 16) and 0xFF) / 255f
+            val brG = ((grad.color3 shr 8) and 0xFF) / 255f
+            val brB = (grad.color3 and 0xFF) / 255f
+            val blR = ((grad.color4 shr 16) and 0xFF) / 255f
+            val blG = ((grad.color4 shr 8) and 0xFF) / 255f
+            val blB = (grad.color4 and 0xFF) / 255f
+
+            val stepX = (size.width / 96f).coerceAtLeast(1f)
+            val stepY = (size.height / 96f).coerceAtLeast(1f)
+            val alphaVal = (opacity / 100f).coerceIn(0f, 1f)
+
+            var y = 0f
+            while (y < size.height) {
+                var x = 0f
+                while (x < size.width) {
+                    val fx = (x / size.width).coerceIn(0f, 1f)
+                    val fy = (y / size.height).coerceIn(0f, 1f)
+                    val wTL = (1f - fx) * (1f - fy)
+                    val wTR = fx * (1f - fy)
+                    val wBL = (1f - fx) * fy
+                    val wBR = fx * fy
+                    val r = tlR * wTL + trR * wTR + blR * wBL + brR * wBR
+                    val g = tlG * wTL + trG * wTR + blG * wBL + brG * wBR
+                    val b = tlB * wTL + trB * wTR + blB * wBL + brB * wBR
+                    drawRect(
+                        color = Color(r, g, b, alphaVal),
+                        topLeft = Offset(x, y),
+                        size = Size(stepX, stepY)
+                    )
+                    x += stepX
+                }
+                y += stepY
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChromaticAberrationWrapper(
+    ca: com.moody.moodyvideoeditor.data.advanced.models.ChromaticAberrationEffect,
+    localTimeSec: Float,
+    content: @Composable () -> Unit
+) {
+    val rx = KeyframeStore.sample(ca.keyframes, "redShiftX", localTimeSec, ca.redShiftX)
+    val ry = KeyframeStore.sample(ca.keyframes, "redShiftY", localTimeSec, ca.redShiftY)
+    val bx = KeyframeStore.sample(ca.keyframes, "blueShiftX", localTimeSec, ca.blueShiftX)
+    val by = KeyframeStore.sample(ca.keyframes, "blueShiftY", localTimeSec, ca.blueShiftY)
+
+    val hasShift = kotlin.math.abs(rx) > 0.1f || kotlin.math.abs(ry) > 0.1f ||
+            kotlin.math.abs(bx) > 0.1f || kotlin.math.abs(by) > 0.1f
+    if (!hasShift) {
+        content()
+        return
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        content()
+
+        if (kotlin.math.abs(rx) > 0.1f || kotlin.math.abs(ry) > 0.1f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        translationX = rx * 3f
+                        translationY = ry * 3f
+                        alpha = 0.25f
+                        blendMode = BlendMode.Screen
+                    }
+            ) { content() }
+        }
+
+        if (kotlin.math.abs(bx) > 0.1f || kotlin.math.abs(by) > 0.1f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        translationX = -bx * 3f
+                        translationY = -by * 3f
+                        alpha = 0.25f
+                        blendMode = BlendMode.Screen
+                    }
+            ) { content() }
+        }
+    }
+}
+
+@Composable
+private fun RoughenEdgesOverlay(
+    r: com.moody.moodyvideoeditor.data.advanced.models.RoughenEdgesEffect,
+    localTimeSec: Float,
+    content: @Composable () -> Unit
+) {
+    val bw = KeyframeStore.sample(r.keyframes, "borderWidth", localTimeSec, r.borderWidth)
+    if (bw < 0.5f) {
+        content()
+        return
+    }
+
+    val evolution = KeyframeStore.sample(r.keyframes, "evolution", localTimeSec, r.evolution)
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        content()
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val steps = 60
+            val seed = (evolution * 10f).toInt()
+            val rnd = java.util.Random(seed.toLong())
+            val barWidth = (bw / 2f).coerceIn(1f, 40f)
+
+            for (i in 0..steps) {
+                val x = (i.toFloat() / steps) * size.width
+                val noise = (rnd.nextFloat() - 0.5f) * (bw * 0.5f)
+                drawRect(
+                    color = Color.Black.copy(alpha = 0.6f),
+                    topLeft = Offset(x, 0f),
+                    size = Size(
+                        size.width / steps + 1f, barWidth + noise
+                    )
+                )
+            }
+            for (i in 0..steps) {
+                val x = (i.toFloat() / steps) * size.width
+                val noise = (rnd.nextFloat() - 0.5f) * (bw * 0.5f)
+                drawRect(
+                    color = Color.Black.copy(alpha = 0.6f),
+                    topLeft = Offset(x, size.height - barWidth - noise),
+                    size = Size(
+                        size.width / steps + 1f, barWidth + noise
+                    )
+                )
+            }
+            for (i in 0..steps) {
+                val y = (i.toFloat() / steps) * size.height
+                val noise = (rnd.nextFloat() - 0.5f) * (bw * 0.5f)
+                drawRect(
+                    color = Color.Black.copy(alpha = 0.6f),
+                    topLeft = Offset(0f, y),
+                    size = Size(
+                        barWidth + noise, size.height / steps + 1f
+                    )
+                )
+            }
+            for (i in 0..steps) {
+                val y = (i.toFloat() / steps) * size.height
+                val noise = (rnd.nextFloat() - 0.5f) * (bw * 0.5f)
+                drawRect(
+                    color = Color.Black.copy(alpha = 0.6f),
+                    topLeft = Offset(size.width - barWidth - noise, y),
+                    size = Size(
+                        barWidth + noise, size.height / steps + 1f
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MotionBlurOverlay(
+    m: com.moody.moodyvideoeditor.data.advanced.models.MotionBlurEffect,
+    localTimeSec: Float,
+    content: @Composable () -> Unit
+) {
+    val shutter = KeyframeStore.sample(
+        m.keyframes, "shutterAngle", localTimeSec, m.shutterAngle
+    )
+    val intensity = KeyframeStore.sample(
+        m.keyframes, "intensity", localTimeSec, m.intensity
     )
 
-    private suspend fun renderMaskSequences(
-        clips: List<EditorClip>,
-        width: Int,
-        height: Int,
-        fps: Int
-    ): List<MaskFrameSequence> = withContext(Dispatchers.IO) {
-        val maskedClips = clips.filter { clip ->
-            val mask = clip.mask
-            mask.isActive && (
-                    mask.type != MaskType.CUSTOM ||
-                            (mask.customPoints.size >= 3 && mask.customClosed)
+    if (shutter < 10f || intensity < 0.1f) {
+        content()
+        return
+    }
+
+    val blurAmount = ((shutter / 720f) * 6f * intensity).coerceIn(0f, 12f)
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        repeat(3) { i ->
+            val factor = (i + 1) / 4f
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        alpha = 0.15f * (1f - factor)
+                        scaleX = 1f + 0.03f * factor * intensity
+                        scaleY = 1f + 0.03f * factor * intensity
+                    }
+                    .blur(
+                        radius = (blurAmount * factor).dp,
+                        edgeTreatment = BlurredEdgeTreatment.Unbounded
                     )
+            ) { content() }
         }
-        if (maskedClips.isEmpty()) return@withContext emptyList()
 
-        val output = mutableListOf<MaskFrameSequence>()
-        try {
-            maskedClips.forEach { clip ->
-                currentCoroutineContext().ensureActive()
-                val directory = File(
-                    context.cacheDir,
-                    "mask_${clip.id}_${System.nanoTime()}"
-                )
-                if (!directory.mkdirs()) {
-                    throw java.io.IOException("Could not create mask render directory")
-                }
-                maskSequenceDirectories.add(directory)
+        Box(modifier = Modifier.fillMaxSize()) { content() }
+    }
+}
 
-                val hasAnimation = clip.mask.keyframes.isNotEmpty()
-                val frameCount = if (hasAnimation) {
-                    ((clip.durationMs.toDouble() * fps) / 1000.0)
-                        .toLong().coerceAtMost(Int.MAX_VALUE.toLong())
-                        .toInt().coerceAtLeast(1)
-                } else 1
-                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                try {
-                    val canvas = Canvas(bitmap)
-                    repeat(frameCount) { frameIndex ->
-                        currentCoroutineContext().ensureActive()
-                        canvas.drawColor(
-                            Color.WHITE,
-                            android.graphics.PorterDuff.Mode.SRC
-                        )
-                        val timeSec = if (hasAnimation) frameIndex.toFloat() / fps else 0f
-                        MaskEngine.drawMask(
-                            canvas = canvas,
-                            state = MaskEngine.sampleAt(clip.mask, timeSec),
-                            viewWidth = width.toFloat(),
-                            viewHeight = height.toFloat()
-                        )
-                        val frameFile = File(
-                            directory,
-                            "mask_%05d.png".format(Locale.US, frameIndex + 1)
-                        )
-                        FileOutputStream(frameFile).use { stream ->
-                            if (!bitmap.compress(
-                                    Bitmap.CompressFormat.PNG, 100, stream
-                                )
-                            ) {
-                                throw java.io.IOException("Could not encode mask frame")
-                            }
-                        }
-                    }
-                } finally {
-                    bitmap.recycle()
-                }
+@Composable
+private fun TurbulentDisplaceWrapper(
+    t: com.moody.moodyvideoeditor.data.advanced.models.TurbulentDisplaceEffect,
+    localTimeSec: Float,
+    content: @Composable () -> Unit
+) {
+    val amount = KeyframeStore.sample(t.keyframes, "amount", localTimeSec, t.amount)
+    val speed = KeyframeStore.sample(
+        t.keyframes, "evolutionSpeed", localTimeSec, t.evolutionSpeed
+    )
+    val offX = KeyframeStore.sample(t.keyframes, "offsetX", localTimeSec, t.offsetX)
+    val offY = KeyframeStore.sample(t.keyframes, "offsetY", localTimeSec, t.offsetY)
 
-                val staticFile = if (hasAnimation) null else File(directory, "mask_00001.png")
-                output += MaskFrameSequence(
-                    clipId = clip.id,
-                    pattern = File(directory, "mask_%05d.png").absolutePath,
-                    staticFile = staticFile,
-                    fps = fps,
-                    directory = directory
-                )
-            }
-            output
-        } catch (error: Throwable) {
-            cleanupMaskSequences()
-            throw error
-        }
+    if (amount < 1f) {
+        content()
+        return
     }
 
-    private fun cleanupMaskSequences() {
-        synchronized(maskSequenceDirectories) {
-            maskSequenceDirectories.toList().forEach { directory ->
-                if (directory.exists() && !directory.deleteRecursively()) {
-                    Log.w("FFMPEG", "Could not remove mask sequence ${directory.name}")
-                }
+    val time = localTimeSec * speed
+    Box(modifier = Modifier.fillMaxSize()) {
+        content()
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val bands = (amount / 5f).toInt().coerceIn(2, 40)
+            val amp = amount * 0.05f
+            repeat(bands) { i ->
+                val yBase = (i.toFloat() / bands) * size.height
+                val phase = offX * 6f + offY * 6f + time * 3f + i * 0.5f
+                val offset = kotlin.math.sin(phase.toDouble()).toFloat() * amp
+                drawRect(
+                    color = Color.Transparent,
+                    topLeft = Offset(offset, yBase),
+                    size = Size(size.width, 1f)
+                )
             }
-            maskSequenceDirectories.clear()
         }
     }
+}
 
-    // ═══════════════════════════════════════════════════════════
-    //  AUDIO ONLY EXPORT
-    // ═══════════════════════════════════════════════════════════
+@Composable
+private fun DropShadowBehind(
+    effect: com.moody.moodyvideoeditor.data.advanced.models.DropShadowEffect,
+    localTimeSec: Float,
+    content: @Composable () -> Unit
+) {
+    val op = KeyframeStore.sample(effect.keyframes, "opacity", localTimeSec, effect.opacity)
+    val dist = KeyframeStore.sample(effect.keyframes, "distance", localTimeSec, effect.distance)
+    val angle = KeyframeStore.sample(
+        effect.keyframes, "directionAngle", localTimeSec, effect.directionAngle
+    )
+    val soft = KeyframeStore.sample(
+        effect.keyframes, "blurSoftness", localTimeSec, effect.blurSoftness
+    )
 
-    suspend fun exportAudioOnly(
-        allClips: List<EditorClip>,
-        outputFile: File,
-        durationMs: Long,
-        audioFormat: String = "mp3",
-        bitrateKbps: Int = 192,
-        rangeStartMs: Long = 0L,
-        rangeEndMs: Long = 0L
-    ) {
-        isCancelled = false
-        try {
-            val audioClips = allClips.filter {
-                it.isAudio &&
-                        !it.isAudioEffectClip &&
-                        it.uri.toString().isNotBlank() &&
-                        it.uri != Uri.EMPTY
-            }
+    val rad = Math.toRadians(angle.toDouble())
+    val dx = (kotlin.math.cos(rad) * dist).toFloat()
+    val dy = (kotlin.math.sin(rad) * dist).toFloat()
 
-            if (audioClips.isEmpty()) {
-                onError("No audio clips found in timeline")
-                return
-            }
-
-            Log.e(
-                "FFMPEG_AUDIO",
-                "Exporting ${audioClips.size} audio clips to $audioFormat"
-            )
-
-            val effectiveStart = rangeStartMs.coerceAtLeast(0L)
-            val effectiveEnd = if (rangeEndMs > effectiveStart) rangeEndMs
-            else durationMs
-            val effectiveDurMs = (effectiveEnd - effectiveStart).coerceAtLeast(500L)
-
-            val audioLocalFiles = withContext(Dispatchers.IO) {
-                val files = mutableListOf<File>()
-                for (clip in audioClips) {
-                    currentCoroutineContext().ensureActive()
-                    if (isCancelled) throw CancellationException("Export cancelled")
-                    val file = copyUriToCache(clip.uri, "audio_${clip.id}.mp3")
-                        ?: throw IllegalStateException("Could not read: ${clip.name}")
-                    files.add(file)
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    translationX = dx
+                    translationY = dy
+                    alpha = (op / 100f).coerceIn(0f, 1f)
                 }
-                files
-            }
+                .blur(
+                    radius = soft.dp.coerceAtLeast(0.dp),
+                    edgeTreatment = BlurredEdgeTreatment.Unbounded
+                )
+        ) { content() }
 
-            val args = mutableListOf<String>()
-            args.add("-y")
+        content()
+    }
+}
 
-            args.add("-f"); args.add("lavfi")
-            args.add("-t"); args.add((effectiveDurMs / 1000.0).toString())
-            args.add("-i"); args.add("anullsrc=r=44100:cl=stereo")
+// ═══════════════════════════════════════════════════════════════
+//  APPLY ADVANCED EFFECTS
+// ═══════════════════════════════════════════════════════════════
 
-            audioLocalFiles.forEach { f ->
-                args.add("-i"); args.add(f.absolutePath)
-            }
-
-            val filterParts = mutableListOf<String>()
-            val audioLabels = mutableListOf<String>()
-
-            filterParts.add("[0:a]aresample=44100[basea]")
-            audioLabels.add("[basea]")
-
-            audioClips.forEachIndexed { idx, clip ->
-                val inputIdx = idx + 1
-                val clipStart = clip.timelineStartMs
-                val clipEnd = clip.timelineEndMs
-
-                if (clipEnd <= effectiveStart || clipStart >= effectiveEnd) {
-                    return@forEachIndexed
-                }
-
-                val leftCut = (effectiveStart - clipStart).coerceAtLeast(0L)
-                val rightCut = (clipEnd - effectiveEnd).coerceAtLeast(0L)
-                val speed = clip.speed.coerceAtLeast(0.01f)
-                val srcStartMs = clip.sourceStartMs + (leftCut * speed).toLong()
-                val srcEndMs = (clip.sourceEndMs - (rightCut * speed).toLong())
-                    .coerceAtLeast(srcStartMs + 100L)
-                val durSec = ((srcEndMs - srcStartMs) / 1000.0).coerceAtLeast(0.1)
-                val delayMs = ((clipStart - effectiveStart).coerceAtLeast(0L)).toInt()
-
-                val chain = mutableListOf<String>()
-                chain.add("atrim=start=${srcStartMs / 1000.0}:duration=$durSec")
-                chain.add("asetpts=PTS-STARTPTS")
-                if (delayMs > 0) chain.add("adelay=$delayMs|$delayMs")
-                if (speed != 1.0f) chain.add("atempo=${speed.coerceIn(0.5f, 2.0f)}")
-                if (clip.volume != 1.0f) chain.add("volume=${clip.volume}")
-                if (clip.audioFx != "none") {
-                    val fxFilter = AudioEngine.buildAudioFilter(
-                        clip.audioFx, clip.audioFxIntensity
-                    )
-                    if (fxFilter.isNotBlank()) chain.add(fxFilter)
-                }
-                chain.add("aresample=44100")
-
-                val label = "a$idx"
-                filterParts.add("[$inputIdx:a]${chain.joinToString(",")}[$label]")
-                audioLabels.add("[$label]")
-            }
-
-            if (audioLabels.size == 1) {
-                onError("No audio in selected range")
-                return
-            }
-
-            filterParts.add(
-                "${audioLabels.joinToString("")}" +
-                        "amix=inputs=${audioLabels.size}:" +
-                        "duration=longest:dropout_transition=0[outa]"
-            )
-
-            val codecArgs = if (audioFormat == "m4a") {
-                listOf("-c:a", "aac", "-b:a", "${bitrateKbps}k")
-            } else {
-                listOf("-c:a", "libmp3lame", "-b:a", "${bitrateKbps}k")
-            }
-
-            args.add("-filter_complex")
-            args.add(filterParts.joinToString(";"))
-            args.add("-map"); args.add("[outa]")
-            args.addAll(codecArgs)
-            args.add("-ar"); args.add("44100")
-            args.add("-ac"); args.add("2")
-            args.add("-t"); args.add((effectiveDurMs / 1000.0).toString())
-            args.add("-threads"); args.add("0")
-            args.add(outputFile.absolutePath)
-
-            Log.e("FFMPEG_AUDIO_ARGS", "Command: ${args.joinToString(" ")}")
-
-            val argsArray = args.toTypedArray()
-            val session = FFmpegKit.executeWithArgumentsAsync(
-                argsArray,
-                { s ->
-                    if (isCancelled) {
-                        onError("Audio export cancelled")
-                    } else if (ReturnCode.isSuccess(s.returnCode)) {
-                        if (outputFile.exists() && outputFile.length() > 0) {
-                            onSuccess(outputFile)
-                        } else {
-                            onError("Audio output empty")
-                        }
-                    } else {
-                        val logs = s.allLogsAsString ?: "Unknown"
-                        Log.e("FFMPEG_AUDIO", "FAILED: $logs")
-                        onError("Audio export failed:\n${logs.takeLast(1200)}")
-                    }
-                },
-                { _ -> },
-                { stats ->
-                    if (!isCancelled) {
-                        try {
-                            val t = stats.time
-                            if (t > 0) {
-                                val p = ((t / (effectiveDurMs.toDouble() * 1.2))
-                                    .coerceIn(0.0, 0.95)).toFloat()
-                                onProgress(p)
-                            }
-                        } catch (_: Exception) {
-                        }
-                    }
-                }
-            )
-            currentSession = session
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e("FFMPEG_AUDIO", "Crash", e)
-            onError("Audio export crash: ${e.message}")
-        }
+@Composable
+private fun RenderAdvancedEffects(
+    clip: EditorClip,
+    localTimeSec: Float,
+    content: @Composable () -> Unit
+) {
+    if (clip.advancedEffects.isEmpty()) {
+        content()
+        return
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  IMAGE SEQUENCE EXPORT
-    // ═══════════════════════════════════════════════════════════
-
-    suspend fun exportImageSequence(
-        allClips: List<EditorClip>,
-        outputDir: File,
-        targetW: Int,
-        targetH: Int,
-        fps: Int,
-        durationMs: Long,
-        imageFormat: String = "png",
-        jpegQuality: Int = 90,
-        rangeStartMs: Long = 0L,
-        rangeEndMs: Long = 0L,
-        onFrameProgress: (Int, Int) -> Unit = { _, _ -> }
-    ) {
-        isCancelled = false
-        try {
-            if (!outputDir.exists()) outputDir.mkdirs()
-
-            val effectiveStart = rangeStartMs.coerceAtLeast(0L)
-            val effectiveEnd = if (rangeEndMs > effectiveStart) rangeEndMs else durationMs
-            val effectiveDurMs = (effectiveEnd - effectiveStart).coerceAtLeast(500L)
-
-            val totalFrames = ((effectiveDurMs.toDouble() * fps / 1000.0).toInt())
-                .coerceAtLeast(1)
-
-            Log.e(
-                "FFMPEG_SEQ",
-                "Export image sequence: $totalFrames frames, format=$imageFormat"
-            )
-
-            val ext = if (imageFormat == "jpeg") "jpg" else "png"
-            val pattern = File(
-                outputDir,
-                "MoodyExport_frame_%05d.$ext"
-            ).absolutePath
-
-            val trimmedAllClips = trimClipsToRange(
-                allClips, effectiveStart, effectiveEnd
-            )
-
-            val textClips = trimmedAllClips.filter {
-                it.isTextClip || it.isStickerClip
-            }
-            val overlayImageClips = trimmedAllClips.filter {
-                it.isVisualClip && it.type.startsWith("image/") &&
-                        it.trackIndex > 0
-            }
-            val overlayClips = trimmedAllClips.filter {
-                it.isOverlayClip ||
-                        (it.isEffectClip && it.effectState?.overlay != null)
-            }
-            val vizClips = trimmedAllClips.filter { it.isVisualizerClip }
-
-            val textSequences = if (textClips.isNotEmpty() ||
-                overlayImageClips.isNotEmpty() ||
-                overlayClips.isNotEmpty()
-            ) {
-                TextBitmapRenderer.renderCombinedOverlays(
-                    context = context,
-                    textClips = textClips,
-                    imageClips = overlayImageClips,
-                    overlayClips = overlayClips,
-                    W = targetW, H = targetH, fps = fps,
-                    totalDurationMs = effectiveDurMs,
-                    onProgress = { p -> onProgress(p * 0.25f) },
-                    shouldCancel = { isCancelled },
-                    imageFormat = imageFormat,
-                    jpegQuality = jpegQuality
-                )
-            } else emptyList()
-
-            val vizSequences = if (vizClips.isNotEmpty()) {
-                VisualizerBitmapRenderer.renderCombinedOverlays(
-                    context = context,
-                    visualizerClips = vizClips,
-                    allClips = allClips,
-                    rangeStart = effectiveStart,
-                    W = targetW, H = targetH, fps = fps,
-                    totalDurationMs = effectiveDurMs,
-                    onProgress = { p -> onProgress(0.25f + p * 0.25f) },
-                    shouldCancel = { isCancelled },
-                    imageFormat = imageFormat,
-                    jpegQuality = jpegQuality
-                )
-            } else emptyList()
-
-            val allSequences = (textSequences + vizSequences).sortedBy { it.trackIndex }
-
-            val baseVisualClips = trimmedAllClips.filter {
-                it.isVisualClip &&
-                        it.uri.toString().isNotBlank() &&
-                        it.uri != Uri.EMPTY &&
-                        it.trackIndex == 0
-            }
-
-            if (baseVisualClips.isEmpty() && allSequences.isEmpty()) {
-                onError("Nothing to export as sequence")
-                return
-            }
-
-            val args = mutableListOf<String>()
-            args.add("-y")
-
-            val baseLocalFiles = withContext(Dispatchers.IO) {
-                val files = mutableListOf<File>()
-                for (clip in baseVisualClips) {
-                    if (isCancelled) throw CancellationException("cancelled")
-                    val file = copyUriToCache(clip.uri, "seq_${clip.id}.mp4")
-                        ?: throw IllegalStateException("Could not read ${clip.name}")
-                    files.add(file)
-                }
-                files
-            }
-
-            if (baseLocalFiles.isEmpty()) {
-                args.add("-f"); args.add("lavfi")
-                args.add("-t"); args.add((effectiveDurMs / 1000.0).toString())
-                args.add("-i")
-                args.add("color=c=black:s=${targetW}x${targetH}:r=$fps")
-            } else {
-                baseVisualClips.forEachIndexed { idx, clip ->
-                    val img = isImage(clip)
-                    if (img) {
-                        args.add("-loop"); args.add("1")
-                        args.add("-framerate"); args.add(fps.toString())
-                        args.add("-t")
-                        args.add((clip.durationMs / 1000.0).toString())
-                    } else {
-                        val srcDurSec = (
-                                (clip.sourceEndMs - clip.sourceStartMs) / 1000.0
-                                ).coerceAtLeast(0.1)
-                        if (clip.sourceStartMs > 0) {
-                            args.add("-ss")
-                            args.add((clip.sourceStartMs / 1000.0).toString())
-                        }
-                        args.add("-t"); args.add(srcDurSec.toString())
-                    }
-                    args.add("-i"); args.add(baseLocalFiles[idx].absolutePath)
-                }
-            }
-
-            val seqStartIdx = baseLocalFiles.size.coerceAtLeast(1)
-            allSequences.forEach { seq ->
-                if (seq.startSec > 0.0001) {
-                    args.add("-itsoffset")
-                    args.add("%.4f".format(seq.startSec))
-                }
-                args.add("-framerate"); args.add(seq.fps.toString())
-                args.add("-start_number"); args.add(seq.startNumber.toString())
-                args.add("-i"); args.add(seq.pattern)
-            }
-
-            val filterParts = mutableListOf<String>()
-            val baseVf = mutableListOf<String>()
-
-            if (baseLocalFiles.isEmpty()) {
-                baseVf.add("setsar=1")
-            } else if (baseVisualClips.size == 1) {
-                val clip = baseVisualClips[0]
-                if (clip.speed != 1.0f && !isImage(clip)) {
-                    baseVf.add("setpts=${1.0f / clip.speed}*PTS")
-                }
-                baseVf.addAll(buildPerClipFilterChain(clip, allClips))
-                baseVf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
-            } else {
-                baseVisualClips.forEachIndexed { idx, clip ->
-                    val vf = mutableListOf<String>()
-                    if (isImage(clip)) {
-                        vf.add("setpts=PTS-STARTPTS")
-                    } else {
-                        vf.add(
-                            "trim=duration=${
-                                (clip.sourceEndMs - clip.sourceStartMs) / 1000.0
-                            }"
-                        )
-                        vf.add("setpts=PTS-STARTPTS")
-                    }
-                    if (clip.speed != 1.0f && !isImage(clip)) {
-                        vf.add("setpts=${1.0f / clip.speed}*PTS")
-                    }
-                    vf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
-                    vf.add("fps=$fps")
-                    vf.add("format=yuv420p")
-                    filterParts.add("[$idx:v]${vf.joinToString(",")}[v$idx]")
-                }
-
-                val concatInputs = (0 until baseVisualClips.size)
-                    .joinToString("") { "[v$it]" }
-                filterParts.add(
-                    "${concatInputs}concat=n=${baseVisualClips.size}:v=1:a=0[basev]"
-                )
-            }
-
-            if (baseLocalFiles.isNotEmpty() && baseVisualClips.size == 1) {
-                filterParts.add("[0:v]${baseVf.joinToString(",")}[basev]")
-            } else if (baseLocalFiles.isEmpty()) {
-                filterParts.add("[0:v]setsar=1[basev]")
-            }
-
-            var lastLabel = "basev"
-            allSequences.forEachIndexed { idx, seq ->
-                val inIdx = seqStartIdx + idx
-                val srcLabel = "seqsrc$idx"
-                val outLabel = "ov$idx"
-                filterParts.add("[$inIdx:v]format=rgba[$srcLabel]")
-                val startS = "%.4f".format(seq.startSec)
-                val endS = "%.4f".format(seq.endSec)
-                filterParts.add(
-                    "[$lastLabel][$srcLabel]overlay=0:0:" +
-                            "enable='between(t,$startS,$endS)'[$outLabel]"
-                )
-                lastLabel = outLabel
-            }
-
-            filterParts.add("[$lastLabel]format=yuv420p[outv]")
-
-            args.add("-filter_complex")
-            args.add(filterParts.joinToString(";"))
-            args.add("-map"); args.add("[outv]")
-            args.add("-frames:v"); args.add(totalFrames.toString())
-            args.add("-r"); args.add(fps.toString())
-            args.add("-threads"); args.add("0")
-            args.add(pattern)
-
-            Log.e("FFMPEG_SEQ", "Pattern: $pattern")
-            Log.e("FFMPEG_SEQ", "Total frames: $totalFrames")
-
-            val argsArray = args.toTypedArray()
-            val session = FFmpegKit.executeWithArgumentsAsync(
-                argsArray,
-                { s ->
-                    if (isCancelled) {
-                        onError("Sequence export cancelled")
-                    } else if (ReturnCode.isSuccess(s.returnCode)) {
-                        val files = outputDir.listFiles()?.filter {
-                            it.name.startsWith("MoodyExport_frame_")
-                        } ?: emptyList()
-                        if (files.isNotEmpty()) {
-                            Log.e("FFMPEG_SEQ", "Created ${files.size} images")
-                            onSuccess(outputDir)
-                        } else {
-                            onError("No images created")
-                        }
-                    } else {
-                        val logs = s.allLogsAsString ?: "Unknown"
-                        Log.e("FFMPEG_SEQ", "FAILED: $logs")
-                        onError("Sequence failed:\n${logs.takeLast(1200)}")
-                    }
-                },
-                { _ -> },
-                { stats ->
-                    if (!isCancelled) {
-                        try {
-                            val t = stats.time
-                            if (t > 0) {
-                                val p = 0.5f + (
-                                        (t / (effectiveDurMs.toDouble() * 1.2))
-                                            .coerceIn(0.0, 0.45)
-                                        ).toFloat()
-                                onProgress(p)
-                            }
-                        } catch (_: Exception) {
-                        }
-                    }
-                }
-            )
-            currentSession = session
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e("FFMPEG_SEQ", "Crash", e)
-            onError("Sequence export crash: ${e.message}")
+    var wrapped: @Composable () -> Unit = content
+    val fxList = clip.advancedEffects
+    for (idx in fxList.indices.reversed()) {
+        val fx = fxList[idx]
+        val renderer = com.moody.moodyvideoeditor.advanced.AdvancedEffectRegistry
+            .get(fx.type)
+            ?: continue
+        val prev = wrapped
+        wrapped = {
+            renderer.RenderPreview(clip, fx, localTimeSec) { prev() }
         }
     }
+    wrapped()
+}
+// ═══════════════════════════════════════════════════════════════
+//  MAIN PREVIEW CANVAS
+// ═══════════════════════════════════════════════════════════════
 
-    // ═══════════════════════════════════════════════════════════
-    //  HELPERS
-    // ═══════════════════════════════════════════════════════════
+@OptIn(UnstableApi::class)
+@Composable
+fun PreviewCanvas(
+    exoPlayer: ExoPlayer,
+    hasVideo: Boolean,
+    rotation: Int,
+    aspectMode: Int,
+    clips: List<EditorClip>,
+    currentPosMs: Long,
+    isPlaying: Boolean = false,
+    hiddenVisualTracks: Set<Int> = emptySet(),
+    aspectRatioKey: String = "16:9",
+    selectedClipId: String? = null,
+    multiSelectedIds: Set<String> = emptySet(),
+    previewFilters: FilterState? = null,
+    previewEffectState: EffectState? = null,
+    previewAdvancedEffect: AdvancedEffectState? = null,
+    isDrawingMode: Boolean = false,
+    activeBrushType: BrushType = BrushType.PEN,
+    activeBrushColor: Long = 0xFFFF0000,
+    activeBrushWidth: Float = 20f,
+    activeBrushOpacity: Float = 1f,
+    onBrushStrokeComplete: (BrushStroke) -> Unit = {},
+    isMaskPenMode: Boolean = false,
+    isMaskHandMode: Boolean = false,
+    onMaskGestureStart: () -> Unit = {},
+    onMaskGestureEnd: () -> Unit = {},
+    onMaskPointAdd: (Float, Float) -> Unit = { _, _ -> },
+    onMaskAnchorMove: (Int, Float, Float) -> Unit = { _, _, _ -> },
+    onMaskHandleMove: (Int, Boolean, Float, Float) -> Unit = { _, _, _, _ -> },
+    onMaskPointToggle: (Int) -> Unit = {},
+    onMaskPointDelete: (Int) -> Unit = {},
+    onMaskMove: (Float, Float) -> Unit = { _, _ -> },
+    onMaskStateChanged: (MaskState) -> Unit = {},
+    onClosePath: () -> Unit = {},
+    onClipSelected: (String) -> Unit = {},
+    onDeleteLayer: (String) -> Unit = {},
+    onGroupGestureStart: () -> Unit = {},
+    onGroupGestureEnd: () -> Unit = {},
+    onGroupGesture: (String, Float, Float, Float, Float) -> Unit =
+        { _, _, _, _, _ -> },
+    onTextPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onTextTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onStickerPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onStickerTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onBrushPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onBrushTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onVisualizerPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onVisualizerTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> }
+) {
+    val context = LocalContext.current
 
-    private fun isImage(clip: EditorClip): Boolean =
-        clip.type.startsWith("image/")
+    val baseActiveClips = clips
+        .filter {
+            !it.isAudio &&
+                    !it.isAdjustmentClip &&
+                    !it.isEffectClip &&
+                    !it.isFilterLayerClip &&
+                    currentPosMs >= it.timelineStartMs &&
+                    currentPosMs < it.timelineEndMs &&
+                    !hiddenVisualTracks.contains(it.trackIndex)
+        }
+        .sortedWith(compareBy({ it.trackIndex }, { it.timelineStartMs }))
 
-    private fun trimClipsToRange(
-        clips: List<EditorClip>,
-        rangeStart: Long,
-        rangeEnd: Long
-    ): List<EditorClip> {
-        return clips
-            .filter { it.timelineEndMs > rangeStart && it.timelineStartMs < rangeEnd }
-            .map { clip ->
-                val clipStart = clip.timelineStartMs
-                val clipEnd = clip.timelineEndMs
-                val leftCut = (rangeStart - clipStart).coerceAtLeast(0L)
-                val rightCut = (clipEnd - rangeEnd).coerceAtLeast(0L)
-                val speed = clip.speed.coerceAtLeast(0.01f)
-                val sourceLeftCut = (leftCut * speed).toLong()
-                val sourceRightCut = (rightCut * speed).toLong()
-                val newSourceStart = clip.sourceStartMs + sourceLeftCut
-                val newSourceEnd = (clip.sourceEndMs - sourceRightCut)
-                    .coerceAtLeast(newSourceStart + 33L)
-                val newTimelineStart = (clipStart - rangeStart).coerceAtLeast(0L)
+    val activeClips = if (previewAdvancedEffect != null) {
+        baseActiveClips.map { clip ->
+            if (clip.id == selectedClipId) {
                 clip.copy(
-                    sourceStartMs = newSourceStart,
-                    sourceEndMs = newSourceEnd,
-                    timelineStartMs = newTimelineStart
+                    advancedEffects = clip.advancedEffects + previewAdvancedEffect
                 )
-            }
+            } else clip
+        }
+    } else baseActiveClips
+
+    val topVideoClip = activeClips
+        .filter { it.isVisualClip && !it.type.startsWith("image/") }
+        .maxByOrNull { it.trackIndex }
+
+    val activeVisual = activeClips.maxByOrNull { it.trackIndex }
+    val videoTrackIdx = activeVisual?.trackIndex ?: 0
+
+    val activeTransitionClip = remember(currentPosMs, clips) {
+        clips.firstOrNull { c ->
+            !c.isAudio && c.transition != null && c.transition.isActive &&
+                    currentPosMs >= c.timelineStartMs &&
+                    currentPosMs < c.timelineStartMs + c.transition.durationMs
+        }
     }
 
-    private fun copyUriToCache(uri: Uri, fileName: String): File? {
-        return try {
-            val mime = try {
-                context.contentResolver.getType(uri) ?: ""
-            } catch (_: Throwable) {
-                ""
-            }
-            val ext = when {
-                mime.startsWith("image/jpeg") -> "jpg"
-                mime.startsWith("image/png") -> "png"
-                mime.startsWith("image/webp") -> "webp"
-                mime.startsWith("image/gif") -> "gif"
-                mime.startsWith("image/bmp") -> "bmp"
-                mime.startsWith("image/heic") -> "heic"
-                mime.startsWith("audio/mpeg") -> "mp3"
-                mime.startsWith("audio/wav") -> "wav"
-                mime.startsWith("audio/aac") -> "aac"
-                mime.startsWith("audio/mp4") -> "m4a"
-                mime.startsWith("audio/ogg") -> "ogg"
-                mime.startsWith("video/quicktime") -> "mov"
-                mime.startsWith("video/webm") -> "webm"
-                else -> "mp4"
-            }
+    val outgoingClip = remember(activeTransitionClip?.id, clips) {
+        activeTransitionClip?.let { tc ->
+            clips.filter {
+                it.isVisualClip && it.trackIndex == tc.trackIndex &&
+                        it.id != tc.id &&
+                        it.timelineEndMs <= tc.timelineStartMs + 50L
+            }.maxByOrNull { it.timelineEndMs }
+        }
+    }
 
-            val baseName = fileName.substringBeforeLast('.')
-            val realFileName = "$baseName.$ext"
-            val file = File(context.cacheDir, realFileName)
-
-            if (file.exists() && file.length() > 0) return file
-            val tempFile = File(
-                context.cacheDir,
-                "$realFileName.${java.util.UUID.randomUUID()}.part"
-            )
+    var outgoingBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(outgoingClip?.id) {
+        outgoingBitmap?.takeIf { !it.isRecycled }?.recycle()
+        outgoingBitmap = null
+        val oc = outgoingClip ?: return@LaunchedEffect
+        val bmp = withContext(Dispatchers.IO) {
             try {
-                val input = context.contentResolver.openInputStream(uri)
-                    ?: throw java.io.IOException("Could not open media URI: $uri")
-                input.use {
-                    tempFile.outputStream().use { output -> it.copyTo(output) }
-                }
-                if (tempFile.length() <= 0L) {
-                    throw java.io.IOException(
-                        "Media URI produced an empty file: $uri"
-                    )
-                }
-                if (file.exists() && !file.delete()) {
-                    throw java.io.IOException("Could not replace cached media file")
-                }
-                if (!tempFile.renameTo(file)) {
-                    throw java.io.IOException("Could not finalize cached media file")
-                }
-            } finally {
-                tempFile.delete()
-            }
-            if (file.length() > 0) file else null
-        } catch (e: Exception) {
-            Log.e("FFMPEG", "Copy failed", e)
-            null
-        }
-    }
-
-    private fun clipHasAudio(clip: EditorClip): Boolean {
-        val key = clip.uri.toString()
-        audioCache[key]?.let { return it }
-        val has = try {
-            val extractor = android.media.MediaExtractor()
-            try {
-                extractor.setDataSource(context, clip.uri, null)
-                var found = false
-                for (i in 0 until extractor.trackCount) {
-                    val fmt = extractor.getTrackFormat(i)
-                    val mime = fmt.getString(
-                        android.media.MediaFormat.KEY_MIME
-                    ) ?: ""
-                    if (mime.startsWith("audio/")) {
-                        found = true
-                        break
-                    }
-                }
-                found
-            } finally {
-                extractor.release()
-            }
-        } catch (_: Throwable) {
-            false
-        }
-        audioCache[key] = has
-        return has
-    }
-
-    private fun addSequenceInputs(
-        args: MutableList<String>,
-        sequences: List<TextOverlaySequence>
-    ) {
-        sequences.forEach { seq ->
-            if (seq.startSec > 0.0001) {
-                args.add("-itsoffset")
-                args.add("%.4f".format(seq.startSec))
-            }
-            args.add("-framerate"); args.add(seq.fps.toString())
-            args.add("-start_number"); args.add(seq.startNumber.toString())
-            args.add("-i"); args.add(seq.pattern)
-        }
-    }
-
-    private fun buildOverlayChain(
-        filterParts: MutableList<String>,
-        sequences: List<TextOverlaySequence>,
-        seqStartIdx: Int,
-        baseLabel: String
-    ): String {
-        var lastLabel = baseLabel
-        sequences.forEachIndexed { idx, seq ->
-            val inIdx = seqStartIdx + idx
-            val srcLabel = "seqsrc$idx"
-            val outLabel = "ov$idx"
-            filterParts.add("[$inIdx:v]format=rgba[$srcLabel]")
-            val startS = "%.4f".format(seq.startSec)
-            val endS = "%.4f".format(seq.endSec)
-            filterParts.add(
-                "[$lastLabel][$srcLabel]overlay=0:0:" +
-                        "enable='between(t,$startS,$endS)'" +
-                        "[$outLabel]"
-            )
-            lastLabel = outLabel
-        }
-        filterParts.add("[$lastLabel]null[outv]")
-        return "outv"
-    }
-
-    private fun enforceOutputDimensions(
-        filterParts: MutableList<String>,
-        inputLabel: String,
-        targetW: Int,
-        targetH: Int
-    ): String {
-        filterParts.add(
-            "[$inputLabel]scale=$targetW:$targetH:flags=lanczos," +
-                    "setsar=1[exportv]"
-        )
-        return "exportv"
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  VISUAL TRANSFORM FILTERS
-    // ═══════════════════════════════════════════════════════════
-
-    private fun buildVisualTransformFilters(
-        clip: EditorClip,
-        targetW: Int,
-        targetH: Int,
-        transparentPadding: Boolean = false,
-        positionByOverlay: Boolean = false
-    ): List<String> {
-        val filters = mutableListOf<String>()
-
-        if (transparentPadding) {
-            filters.add("format=rgba")
-        }
-
-        // Crop first
-        val cropL = clip.cropL.coerceIn(0f, 0.45f)
-        val cropR = clip.cropR.coerceIn(0f, 0.45f)
-        val cropT = clip.cropT.coerceIn(0f, 0.45f)
-        val cropB = clip.cropB.coerceIn(0f, 0.45f)
-
-        if (cropL > 0.001f || cropR > 0.001f ||
-            cropT > 0.001f || cropB > 0.001f
-        ) {
-            val w = "iw*${"%.4f".format(1f - cropL - cropR)}"
-            val h = "ih*${"%.4f".format(1f - cropT - cropB)}"
-            val x = "iw*${"%.4f".format(cropL)}"
-            val y = "ih*${"%.4f".format(cropT)}"
-            filters.add("crop=$w:$h:$x:$y")
-        }
-
-        filters.add(
-            "scale=$targetW:$targetH:" +
-                    "force_original_aspect_ratio=decrease"
-        )
-        filters.add(
-            "pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:" +
-                    "color=${if (transparentPadding) "black@0" else "black"}"
-        )
-
-        val userScale = clip.scale.coerceIn(0.1f, 5f)
-        if (kotlin.math.abs(userScale - 1.0f) > 0.01f) {
-            val scaleStr = String.format(Locale.US, "%.4f", userScale)
-            filters.add("scale=iw*$scaleStr:ih*$scaleStr")
-            if (userScale < 1f) {
-                filters.add(
-                    "pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:" +
-                            "color=${if (transparentPadding) "black@0" else "black"}"
-                )
-            } else {
-                filters.add("crop=$targetW:$targetH")
-            }
-        }
-
-        if (kotlin.math.abs(clip.rotation) > 0.1f) {
-            val rad = String.format(
-                Locale.US, "%.4f",
-                Math.toRadians(clip.rotation.toDouble())
-            )
-            filters.add(
-                "rotate=$rad:c=${if (transparentPadding) "black@0" else "black"}:" +
-                        "ow=$targetW:oh=$targetH"
-            )
-        }
-
-        val offsetXpx = (clip.offsetX * targetW).toInt()
-        val offsetYpx = (clip.offsetY * targetH).toInt()
-
-        if (!positionByOverlay && (offsetXpx != 0 || offsetYpx != 0)) {
-            filters.add(
-                "crop=$targetW:$targetH:" +
-                        "max(0\\,min(iw-$targetW\\," +
-                        "(iw-$targetW)/2+$offsetXpx)):" +
-                        "max(0\\,min(ih-$targetH\\," +
-                        "(ih-$targetH)/2+$offsetYpx))"
-            )
-        }
-
-        if (transparentPadding) filters.add("format=rgba")
-        filters.add("setsar=1")
-        return filters
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  AUDIO ONLY MIX
-    // ═══════════════════════════════════════════════════════════
-
-    private fun buildAudioOnlyMix(
-        filterParts: MutableList<String>,
-        audioLocalFiles: List<File>,
-        audioClips: List<EditorClip>,
-        firstInputIdx: Int,
-        baseAudioLabel: String,
-        outLabel: String
-    ): Boolean {
-        if (audioLocalFiles.isEmpty()) return false
-
-        val audioLabels = mutableListOf<String>()
-        audioClips.forEachIndexed { idx, clip ->
-            val inputIdx = firstInputIdx + idx
-            val durSec = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
-                .coerceAtLeast(0.1)
-            val startSec = clip.timelineStartMs / 1000.0
-            val delayMs = (startSec * 1000).toInt()
-            val speed = clip.speed.coerceAtLeast(0.01f)
-
-            val chain = mutableListOf<String>()
-            chain.add("atrim=start=${(clip.sourceStartMs / 1000.0)}:duration=$durSec")
-            chain.add("asetpts=PTS-STARTPTS")
-            if (delayMs > 0) chain.add("adelay=$delayMs|$delayMs")
-            if (speed != 1.0f) {
-                chain.add("atempo=${speed.coerceIn(0.5f, 2.0f)}")
-            }
-            if (clip.volume != 1.0f) {
-                chain.add("volume=${clip.volume}")
-            }
-            if (clip.audioFx != "none") {
-                val fxFilter = AudioEngine.buildAudioFilter(
-                    clip.audioFx, clip.audioFxIntensity
-                )
-                if (fxFilter.isNotBlank()) chain.add(fxFilter)
-            }
-            chain.add("aresample=44100")
-
-            val label = "extra$idx"
-            filterParts.add("[$inputIdx:a]${chain.joinToString(",")}[$label]")
-            audioLabels.add("[$label]")
-        }
-
-        val allMixInputs = "[$baseAudioLabel]" + audioLabels.joinToString("")
-        filterParts.add(
-            "${allMixInputs}amix=inputs=${audioLabels.size + 1}:" +
-                    "duration=longest[$outLabel]"
-        )
-        return true
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  LAYERED TRACK EXPORT — MAIN PATH
-    // ═══════════════════════════════════════════════════════════
-
-    private fun exportLayeredTracks(
-        clips: List<EditorClip>,
-        allClips: List<EditorClip>,
-        localFiles: List<File>,
-        audioOnlyClips: List<EditorClip>,
-        audioLocalFiles: List<File>,
-        outputFile: File,
-        targetW: Int,
-        targetH: Int,
-        fps: Int,
-        bitrateKbps: Int,
-        sequences: List<TextOverlaySequence>,
-        maskSequences: List<MaskFrameSequence>,
-        colorMettes: List<EditorClip> = emptyList(),
-        totalDurationMs: Long
-    ) {
-        try {
-            val durationSec = (totalDurationMs / 1000.0).coerceAtLeast(0.1)
-            val orderedClips = clips.indices
-                .map { clips[it] to localFiles[it] }
-                .sortedWith(
-                    compareBy<Pair<EditorClip, File>>(
-                        { it.first.trackIndex },
-                        { it.first.timelineStartMs }
-                    )
-                )
-            val args = mutableListOf("-y")
-
-            Log.e(
-                "FFMPEG_LAYERED",
-                "Layered export: videoClips=${orderedClips.size}, " +
-                        "mattes=${colorMettes.size}, " +
-                        "audioOnly=${audioLocalFiles.size}, " +
-                        "duration=${"%.2f".format(durationSec)}s"
-            )
-
-            orderedClips.forEach { (clip, file) ->
-                if (isImage(clip)) {
-                    args.addAll(
-                        listOf(
-                            "-loop", "1",
-                            "-framerate", fps.toString(),
-                            "-t", (clip.durationMs / 1000.0).toString()
-                        )
+                if (oc.type.startsWith("image/")) {
+                    android.graphics.BitmapFactory.decodeStream(
+                        context.contentResolver.openInputStream(oc.uri)
                     )
                 } else {
-                    if (clip.sourceStartMs > 0L) {
-                        args.addAll(
-                            listOf("-ss", (clip.sourceStartMs / 1000.0).toString())
-                        )
-                    }
-                    args.addAll(
-                        listOf(
-                            "-t",
-                            ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
-                                .coerceAtLeast(0.1).toString()
-                        )
+                    val retriever = MediaMetadataRetriever()
+                    retriever.setDataSource(context, oc.uri)
+                    val timeUs = (oc.sourceEndMs - 33).coerceAtLeast(0L) * 1000L
+                    val b = retriever.getFrameAtTime(
+                        timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC
                     )
+                    retriever.release()
+                    b
                 }
-                args.addAll(listOf("-i", file.absolutePath))
+            } catch (e: Exception) {
+                Log.e("PREVIEW_TRANS", "Outgoing bitmap load failed", e)
+                null
             }
-
-            audioLocalFiles.forEach { file ->
-                args.addAll(listOf("-i", file.absolutePath))
-            }
-
-            val backgroundInputIdx = orderedClips.size + audioLocalFiles.size
-            args.addAll(
-                listOf(
-                    "-f", "lavfi",
-                    "-t", durationSec.toString(),
-                    "-i", "color=c=black:s=${targetW}x${targetH}:r=$fps"
-                )
-            )
-
-            // Color matte inputs
-            val matteInputIndices = mutableMapOf<String, Int>()
-            var nextMatteIdx = backgroundInputIdx + 1
-            colorMettes.forEach { matte ->
-                val dur = (matte.durationMs / 1000.0).coerceAtLeast(0.1)
-                val mode = matte.matteStyle.mode
-
-                when (mode) {
-                    com.moody.moodyvideoeditor.data.ColorMatteMode.SOLID -> {
-                        val rgbHex = String.format(
-                            "0x%06X", matte.matteStyle.solidColor and 0xFFFFFF
-                        )
-                        args.addAll(
-                            listOf(
-                                "-f", "lavfi",
-                                "-t", dur.toString(),
-                                "-i",
-                                "color=c=$rgbHex:s=${targetW}x${targetH}:r=$fps"
-                            )
-                        )
-                    }
-
-                    com.moody.moodyvideoeditor.data.ColorMatteMode.RAMP -> {
-                        val rad = Math.toRadians(
-                            matte.matteStyle.rampAngleDeg.toDouble()
-                        )
-                        val dx = kotlin.math.cos(rad)
-                        val dy = kotlin.math.sin(rad)
-                        val x0 = (0.5 - dx * 0.5).coerceIn(0.0, 1.0)
-                        val y0 = (0.5 - dy * 0.5).coerceIn(0.0, 1.0)
-                        val x1 = (0.5 + dx * 0.5).coerceIn(0.0, 1.0)
-                        val y1 = (0.5 + dy * 0.5).coerceIn(0.0, 1.0)
-                        val c1 = String.format(
-                            "0x%06X", matte.matteStyle.rampColor1 and 0xFFFFFF
-                        )
-                        val c2 = String.format(
-                            "0x%06X", matte.matteStyle.rampColor2 and 0xFFFFFF
-                        )
-                        args.addAll(
-                            listOf(
-                                "-f", "lavfi",
-                                "-t", dur.toString(),
-                                "-i",
-                                "gradients=s=${targetW}x${targetH}:" +
-                                        "c0=$c1:c1=$c2:" +
-                                        "x0=${"%.4f".format(x0)}:" +
-                                        "y0=${"%.4f".format(y0)}:" +
-                                        "x1=${"%.4f".format(x1)}:" +
-                                        "y1=${"%.4f".format(y1)}:" +
-                                        "d=$dur:r=$fps:type=linear"
-                            )
-                        )
-                    }
-
-                    com.moody.moodyvideoeditor.data.ColorMatteMode.FOUR_COLOR -> {
-                        val cTL = matte.matteStyle.topLeft
-                        val cTR = matte.matteStyle.topRight
-                        val cBL = matte.matteStyle.bottomLeft
-                        val cBR = matte.matteStyle.bottomRight
-
-                        fun r(c: Long) = ((c shr 16) and 0xFF).toInt()
-                        fun g(c: Long) = ((c shr 8) and 0xFF).toInt()
-                        fun b(c: Long) = (c and 0xFF).toInt()
-
-                        val exprR = "${r(cTL)}*(1-X/W)*(1-Y/H)+" +
-                                "${r(cTR)}*(X/W)*(1-Y/H)+" +
-                                "${r(cBL)}*(1-X/W)*(Y/H)+" +
-                                "${r(cBR)}*(X/W)*(Y/H)"
-                        val exprG = "${g(cTL)}*(1-X/W)*(1-Y/H)+" +
-                                "${g(cTR)}*(X/W)*(1-Y/H)+" +
-                                "${g(cBL)}*(1-X/W)*(Y/H)+" +
-                                "${g(cBR)}*(X/W)*(Y/H)"
-                        val exprB = "${b(cTL)}*(1-X/W)*(1-Y/H)+" +
-                                "${b(cTR)}*(X/W)*(1-Y/H)+" +
-                                "${b(cBL)}*(1-X/W)*(Y/H)+" +
-                                "${b(cBR)}*(X/W)*(Y/H)"
-
-                        val filter =
-                            "color=c=black:s=${targetW}x${targetH}:d=$dur:r=$fps," +
-                                    "format=rgba," +
-                                    "geq=r='$exprR':g='$exprG':b='$exprB':a=255"
-
-                        args.addAll(
-                            listOf(
-                                "-f", "lavfi", "-t", dur.toString(),
-                                "-i", filter
-                            )
-                        )
-                    }
-                }
-                matteInputIndices[matte.id] = nextMatteIdx
-                nextMatteIdx++
-            }
-
-            val silenceInputIdx = nextMatteIdx
-            args.addAll(
-                listOf(
-                    "-f", "lavfi",
-                    "-t", durationSec.toString(),
-                    "-i", "anullsrc=r=44100:cl=stereo"
-                )
-            )
-
-            val sequenceStartIdx = silenceInputIdx + 1
-            addSequenceInputs(args, sequences)
-
-            val maskInputIndices = mutableMapOf<String, Int>()
-            var nextMaskInputIdx = sequenceStartIdx + sequences.size
-            maskSequences.forEach { sequence ->
-                if (sequence.staticFile != null) {
-                    args.addAll(
-                        listOf(
-                            "-loop", "1",
-                            "-framerate", fps.toString(),
-                            "-t", durationSec.toString(),
-                            "-i", sequence.staticFile.absolutePath
-                        )
-                    )
-                } else {
-                    args.addAll(
-                        listOf(
-                            "-framerate", sequence.fps.toString(),
-                            "-start_number", "1",
-                            "-i", sequence.pattern
-                        )
-                    )
-                }
-                maskInputIndices[sequence.clipId] = nextMaskInputIdx
-                nextMaskInputIdx++
-            }
-
-            val filterParts = mutableListOf<String>()
-            filterParts.add(
-                "[$backgroundInputIdx:v]setpts=PTS-STARTPTS,format=rgba[canvas0]"
-            )
-
-            var canvasLabel = "canvas0"
-
-            // Color mattes on top of canvas
-            colorMettes.forEachIndexed { idx, matte ->
-                val matteInput = matteInputIndices[matte.id]
-                    ?: return@forEachIndexed
-                val startSec = matte.timelineStartMs / 1000.0
-                val endSec = matte.timelineEndMs / 1000.0
-                val alpha = (matte.filters.opacity / 100f).coerceIn(0f, 1f)
-
-                val startExpr = String.format(Locale.US, "%.4f", startSec)
-                val endExpr = String.format(Locale.US, "%.4f", endSec)
-                val alphaStr = String.format(Locale.US, "%.3f", alpha)
-
-                val srcLabel = "matte_src_$idx"
-                val scaledLabel = "matte_scaled_$idx"
-                val outLabel = "matte_out_$idx"
-
-                val chain = mutableListOf<String>()
-                chain.add("format=rgba")
-                chain.add("colorchannelmixer=aa=$alphaStr")
-                chain.addAll(
-                    buildVisualTransformFilters(
-                        clip = matte,
-                        targetW = targetW,
-                        targetH = targetH,
-                        transparentPadding = true,
-                        positionByOverlay = true
-                    )
-                )
-                chain.add("setpts=PTS-STARTPTS+${startSec}/TB")
-
-                filterParts.add(
-                    "[$matteInput:v]${chain.joinToString(",")}[$scaledLabel]"
-                )
-
-                filterParts.add(
-                    "[$canvasLabel][$scaledLabel]overlay=0:0:" +
-                            "eof_action=pass:repeatlast=0:" +
-                            "enable='between(t,$startExpr,$endExpr)'" +
-                            "[$outLabel]"
-                )
-                canvasLabel = outLabel
-            }
-
-            // Video/image clips
-            orderedClips.forEachIndexed { index, (clip, _) ->
-                val startSec = clip.timelineStartMs / 1000.0
-                val endSec = (clip.timelineStartMs + clip.durationMs) / 1000.0
-                val startExpr = String.format(Locale.US, "%.4f", startSec)
-                val endExpr = String.format(Locale.US, "%.4f", endSec)
-                val clipDurationSec = (clip.durationMs / 1000.0).coerceAtLeast(0.1)
-                val filters = mutableListOf("setpts=PTS-STARTPTS")
-                if (!isImage(clip) && clip.speed != 1.0f) {
-                    filters.add("setpts=${1.0f / clip.speed}*PTS")
-                }
-                filters.addAll(buildPerClipFilterChain(clip, allClips))
-                filters.addAll(buildAdvancedEffectFilters(clip, targetW, targetH))
-                filters.addAll(
-                    buildVisualTransformFilters(
-                        clip = clip,
-                        targetW = targetW,
-                        targetH = targetH,
-                        transparentPadding = true,
-                        positionByOverlay = true
-                    )
-                )
-                filters.add("fps=$fps")
-                filters.add("trim=duration=$clipDurationSec")
-                filters.add("setpts=PTS-STARTPTS+${startSec}/TB")
-                filters.add("format=rgba")
-                val unmaskedLayerLabel = "layer_unmasked$index"
-                filterParts.add(
-                    "[${index}:v]${filters.joinToString(",")}[$unmaskedLayerLabel]"
-                )
-                val maskInputIdx = maskInputIndices[clip.id]
-                val layerLabel = if (maskInputIdx != null) {
-                    val maskPtsLabel = "mask_pts$index"
-                    val matteLabel = "matte$index"
-                    filterParts.add(
-                        "[$maskInputIdx:v]format=rgba,alphaextract," +
-                                "setpts=PTS-STARTPTS+${startSec}/TB[$maskPtsLabel]"
-                    )
-                    filterParts.add(
-                        "[$unmaskedLayerLabel][$maskPtsLabel]alphamerge[masked$index]"
-                    )
-                    "masked$index"
-                } else {
-                    unmaskedLayerLabel
-                }
-
-                val outputLabel = "canvas${index + 1}"
-                val x = (clip.offsetX * targetW).toInt()
-                val y = (clip.offsetY * targetH).toInt()
-                filterParts.add(
-                    "[$canvasLabel][$layerLabel]overlay=$x:$y:" +
-                            "eof_action=pass:repeatlast=0:" +
-                            "enable='between(t,$startExpr,$endExpr)'" +
-                            "[$outputLabel]"
-                )
-                canvasLabel = outputLabel
-            }
-
-            // Audio
-            val audioLabels = mutableListOf<String>()
-            orderedClips.forEachIndexed { index, (clip, _) ->
-                if (isImage(clip) || !clipHasAudio(clip)) return@forEachIndexed
-                val clipDurationSec = (clip.durationMs / 1000.0).coerceAtLeast(0.1)
-                val filters = mutableListOf("asetpts=PTS-STARTPTS")
-                if (clip.speed != 1.0f) {
-                    filters.add("atempo=${clip.speed.coerceIn(0.5f, 2.0f)}")
-                }
-                filters.add("atrim=duration=$clipDurationSec")
-                filters.add("volume=${if (clip.isMuted) 0f else clip.volume}")
-                if (clip.audioFx != "none") {
-                    val audioFilter = AudioEngine.buildAudioFilter(
-                        clip.audioFx, clip.audioFxIntensity
-                    )
-                    if (audioFilter.isNotBlank()) filters.add(audioFilter)
-                }
-                val delayMs = clip.timelineStartMs.coerceAtLeast(0L)
-                filters.add("adelay=$delayMs|$delayMs")
-                filters.add("aresample=44100")
-                val label = "trackAudio$index"
-                filterParts.add("[$index:a]${filters.joinToString(",")}[$label]")
-                audioLabels.add("[$label]")
-            }
-
-            audioOnlyClips.forEachIndexed { index, clip ->
-                val inputIdx = orderedClips.size + index
-                val duration = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
-                    .coerceAtLeast(0.1)
-                val clipDurationSec = (clip.durationMs / 1000.0).coerceAtLeast(0.1)
-                val filters = mutableListOf(
-                    "atrim=start=${clip.sourceStartMs / 1000.0}:duration=$duration",
-                    "asetpts=PTS-STARTPTS"
-                )
-                if (clip.speed != 1.0f) {
-                    filters.add("atempo=${clip.speed.coerceIn(0.5f, 2.0f)}")
-                }
-                filters.add("atrim=duration=$clipDurationSec")
-                filters.add("volume=${if (clip.isMuted) 0f else clip.volume}")
-                if (clip.audioFx != "none") {
-                    val audioFilter = AudioEngine.buildAudioFilter(
-                        clip.audioFx, clip.audioFxIntensity
-                    )
-                    if (audioFilter.isNotBlank()) filters.add(audioFilter)
-                }
-                val delayMs = clip.timelineStartMs.coerceAtLeast(0L)
-                filters.add("adelay=$delayMs|$delayMs")
-                filters.add("aresample=44100")
-                val label = "extraAudio$index"
-                filterParts.add("[$inputIdx:a]${filters.joinToString(",")}[$label]")
-                audioLabels.add("[$label]")
-            }
-
-            filterParts.add("[$silenceInputIdx:a]aresample=44100[silentAudio]")
-            audioLabels.add("[silentAudio]")
-            filterParts.add(
-                "${audioLabels.joinToString("")}amix=" +
-                        "inputs=${audioLabels.size}:duration=longest:" +
-                        "dropout_transition=0[mixedAudio]"
-            )
-
-            val outputVideo = buildOverlayChain(
-                filterParts, sequences, sequenceStartIdx, canvasLabel
-            )
-            val finalVideo = enforceOutputDimensions(
-                filterParts, outputVideo, targetW, targetH
-            )
-            args.addAll(
-                listOf(
-                    "-filter_complex", filterParts.joinToString(";"),
-                    "-map", "[$finalVideo]",
-                    "-map", "[mixedAudio]",
-                    "-t", durationSec.toString()
-                )
-            )
-            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH))
-            args.addAll(
-                listOf(
-                    "-r", fps.toString(),
-                    "-c:a", "aac",
-                    "-b:a", "128k",
-                    "-movflags", "+faststart",
-                    outputFile.absolutePath
-                )
-            )
-            execute(args, outputFile)
-        } catch (e: Exception) {
-            Log.e("FFMPEG", "Layered-track export error", e)
-            onError("Layered-track export failed: ${e.message}")
         }
+        outgoingBitmap = bmp
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  SINGLE CLIP
-    // ═══════════════════════════════════════════════════════════
+    DisposableEffect(Unit) {
+        onDispose { outgoingBitmap?.takeIf { !it.isRecycled }?.recycle() }
+    }
 
-    private fun exportSingleClip(
-        clip: EditorClip,
-        allClips: List<EditorClip>,
-        localFile: File,
-        outputFile: File,
-        targetW: Int,
-        targetH: Int,
-        fps: Int,
-        bitrateKbps: Int,
-        sequences: List<TextOverlaySequence>,
-        totalDurationMs: Long
+    val selectedClip = clips.firstOrNull { it.id == selectedClipId }
+    val maskToRender: MaskState? = if ((isMaskPenMode || isMaskHandMode) && selectedClip != null) {
+        val timeSec = ((currentPosMs - selectedClip.timelineStartMs) / 1000f)
+            .coerceAtLeast(0f)
+        MaskEngine.sampleAt(selectedClip.mask, timeSec)
+    } else null
+
+    val activeAdjustment = clips
+        .filter {
+            it.isAdjustmentClip &&
+                    currentPosMs >= it.timelineStartMs &&
+                    currentPosMs < it.timelineEndMs &&
+                    !hiddenVisualTracks.contains(it.trackIndex)
+        }
+        .maxByOrNull { it.trackIndex }
+        ?.adjustments
+    val activeColorWheels = clips.filter {
+        it.isAdjustmentClip &&
+                it.colorWheel.hasAnyChange &&
+                currentPosMs >= it.timelineStartMs &&
+                currentPosMs < it.timelineEndMs &&
+                !hiddenVisualTracks.contains(it.trackIndex)
+    }.sortedBy { it.trackIndex }
+
+    val activeEffects = EffectsEngine.getEffectsAbove(clips, currentPosMs, videoTrackIdx)
+    val timeSec = currentPosMs / 1000f
+
+    val motionFrames = activeEffects.mapNotNull { clip ->
+        clip.effectState?.motion?.let { EffectsEngine.computeMotion(it, timeSec) }
+    }.toMutableList()
+
+    previewEffectState?.motion?.let { m ->
+        motionFrames.add(EffectsEngine.computeMotion(m, timeSec))
+    }
+    val combinedMotion = EffectsEngine.combineMotions(motionFrames)
+
+    val filterList = activeEffects.mapNotNull { it.effectState?.filters }.toMutableList()
+    previewEffectState?.filters?.let { filterList.add(it) }
+
+    val combinedFilter = if (filterList.isNotEmpty())
+        EffectsEngine.combineFilters(filterList) else null
+
+    val previewOverlays = previewEffectState?.overlay?.let {
+        listOf(OverlayState(type = it.type, intensity = it.intensity, color = it.color))
+    } ?: emptyList()
+    val allOverlays = EffectsEngine.collectActiveOverlays(clips, currentPosMs, videoTrackIdx)
+        .toMutableList()
+        .apply { addAll(previewOverlays) }
+
+    val activeFilterLayer = clips
+        .filter {
+            it.isFilterLayerClip &&
+                    currentPosMs >= it.timelineStartMs &&
+                    currentPosMs < it.timelineEndMs &&
+                    !hiddenVisualTracks.contains(it.trackIndex)
+        }
+        .maxByOrNull { it.trackIndex }
+
+    val hasAdjustments = activeAdjustment?.let {
+        ColorMatrixBuilder.hasRealTimeAdjustments(it)
+    } ?: false
+    val hasFilters = EffectsEngine.hasColorEffect(combinedFilter)
+    val applyMatrix = hasAdjustments || hasFilters ||
+            activeFilterLayer != null || previewFilters != null
+
+    val combinedMatrix = remember(
+        activeAdjustment, combinedFilter, activeFilterLayer?.id, previewFilters
     ) {
-        try {
-            val img = isImage(clip)
-            val durSec = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
-                .coerceAtLeast(0.1)
-            val clipDurSec = (clip.durationMs / 1000.0).coerceAtLeast(0.1)
-            val totalDurSec = (totalDurationMs / 1000.0).coerceAtLeast(durSec)
-            val extraPadSec = (totalDurSec - clipDurSec).coerceAtLeast(0.0)
-
-            val args = mutableListOf<String>()
-            args.add("-y")
-
-            if (img) {
-                args.add("-loop"); args.add("1")
-                args.add("-framerate"); args.add(fps.toString())
-                args.add("-t"); args.add(clipDurSec.toString())
-            } else {
-                if (clip.sourceStartMs > 0) {
-                    args.add("-ss"); args.add((clip.sourceStartMs / 1000.0).toString())
-                }
-                if (clip.sourceEndMs > clip.sourceStartMs) {
-                    args.add("-t"); args.add(durSec.toString())
-                }
-            }
-            args.add("-i"); args.add(localFile.absolutePath)
-
-            val audioInputIdx: Int
-            if (img) {
-                args.add("-f"); args.add("lavfi")
-                args.add("-t"); args.add(totalDurSec.toString())
-                args.add("-i"); args.add("anullsrc=r=44100:cl=stereo")
-                audioInputIdx = 1
-            } else {
-                audioInputIdx = 0
-            }
-
-            val seqStartIdx = if (img) 2 else 1
-            addSequenceInputs(args, sequences)
-
-            val filterParts = mutableListOf<String>()
-            val baseVf = mutableListOf<String>()
-
-            if (clip.speed != 1.0f && !img) {
-                baseVf.add("setpts=${1.0f / clip.speed}*PTS")
-            }
-
-            baseVf.addAll(buildPerClipFilterChain(clip, allClips))
-            baseVf.addAll(buildAdvancedEffectFilters(clip, targetW, targetH))
-            baseVf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
-
-            if (extraPadSec > 0.05) {
-                val padSec = String.format(Locale.US, "%.3f", extraPadSec)
-                baseVf.add("tpad=stop_mode=add:stop_duration=$padSec")
-            }
-
-            filterParts.add("[0:v]${baseVf.joinToString(",")}[base]")
-
-            val outVLabel = buildOverlayChain(
-                filterParts, sequences, seqStartIdx, "base"
-            )
-            val finalVideoLabel = enforceOutputDimensions(
-                filterParts, outVLabel, targetW, targetH
-            )
-
-            val af = mutableListOf<String>()
-            if (clip.speed != 1.0f && !img) {
-                af.add("atempo=${clip.speed.coerceIn(0.5f, 2.0f)}")
-            }
-            if (clip.volume != 1.0f) af.add("volume=${clip.volume}")
-            if (clip.audioFx != "none") {
-                val fxFilter = AudioEngine.buildAudioFilter(
-                    clip.audioFx, clip.audioFxIntensity
-                )
-                if (fxFilter.isNotBlank()) af.add(fxFilter)
-            }
-
-            if (af.isEmpty()) {
-                filterParts.add("[$audioInputIdx:a]aresample=44100[basea]")
-            } else {
-                filterParts.add(
-                    "[$audioInputIdx:a]${af.joinToString(",")},aresample=44100[basea]"
-                )
-            }
-
-            val fxApplied = applyAudioEffectLayers(
-                filterParts, allClips, 0L, "basea", "fxa"
-            )
-            val afterFxLabel = if (fxApplied) "fxa" else "basea"
-
-            args.add("-filter_complex")
-            args.add(filterParts.joinToString(";"))
-            args.add("-map"); args.add("[$finalVideoLabel]")
-            args.add("-map"); args.add("[$afterFxLabel]")
-            args.add("-t"); args.add(totalDurSec.toString())
-
-            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH))
-            args.add("-r"); args.add(fps.toString())
-            args.add("-c:a"); args.add("aac")
-            args.add("-b:a"); args.add("128k")
-            args.add("-movflags"); args.add("+faststart")
-            args.add(outputFile.absolutePath)
-
-            execute(args, outputFile)
-        } catch (e: Throwable) {
-            Log.e("FFMPEG", "Single build error", e)
-            onError("Build error: ${e.message}")
+        val cm = android.graphics.ColorMatrix()
+        if (hasAdjustments && activeAdjustment != null) {
+            cm.postConcat(ColorMatrixBuilder.build(activeAdjustment))
         }
-    }
-
-    private fun exportSingleClipWithAudio(
-        clip: EditorClip,
-        allClips: List<EditorClip>,
-        localFile: File,
-        audioClips: List<EditorClip>,
-        audioLocalFiles: List<File>,
-        outputFile: File,
-        targetW: Int,
-        targetH: Int,
-        fps: Int,
-        bitrateKbps: Int,
-        sequences: List<TextOverlaySequence>,
-        totalDurationMs: Long
-    ) {
-        try {
-            val img = isImage(clip)
-            val sourceDurSec = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
-                .coerceAtLeast(0.1)
-            val clipDurSec = (clip.durationMs / 1000.0).coerceAtLeast(0.1)
-            val totalDurSec = (totalDurationMs / 1000.0).coerceAtLeast(clipDurSec)
-            val extraPadSec = (totalDurSec - clipDurSec).coerceAtLeast(0.0)
-
-            val args = mutableListOf<String>()
-            args.add("-y")
-
-            if (img) {
-                args.add("-loop"); args.add("1")
-                args.add("-framerate"); args.add(fps.toString())
-                args.add("-t"); args.add(sourceDurSec.toString())
-            } else {
-                if (clip.sourceStartMs > 0) {
-                    args.add("-ss"); args.add((clip.sourceStartMs / 1000.0).toString())
-                }
-                if (clip.sourceEndMs > clip.sourceStartMs) {
-                    args.add("-t"); args.add(sourceDurSec.toString())
-                }
-            }
-            args.add("-i"); args.add(localFile.absolutePath)
-
-            val audioInputIdx: Int
-            if (img) {
-                args.add("-f"); args.add("lavfi")
-                args.add("-t"); args.add(totalDurSec.toString())
-                args.add("-i"); args.add("anullsrc=r=44100:cl=stereo")
-                audioInputIdx = 1
-            } else {
-                audioInputIdx = 0
-            }
-
-            val audioStartIdx = if (img) 2 else 1
-            audioLocalFiles.forEach { f ->
-                args.add("-i"); args.add(f.absolutePath)
-            }
-
-            val seqStartIdx = audioStartIdx + audioLocalFiles.size
-            addSequenceInputs(args, sequences)
-
-            val filterParts = mutableListOf<String>()
-            val baseVf = mutableListOf<String>()
-
-            if (clip.speed != 1.0f && !img) {
-                baseVf.add("setpts=${1.0f / clip.speed}*PTS")
-            }
-
-            baseVf.addAll(buildPerClipFilterChain(clip, allClips))
-            baseVf.addAll(buildAdvancedEffectFilters(clip, targetW, targetH))
-            baseVf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
-
-            if (extraPadSec > 0.05) {
-                val padSec = String.format(Locale.US, "%.3f", extraPadSec)
-                baseVf.add("tpad=stop_mode=add:stop_duration=$padSec")
-            }
-
-            filterParts.add("[0:v]${baseVf.joinToString(",")}[base]")
-
-            val outVLabel = buildOverlayChain(
-                filterParts, sequences, seqStartIdx, "base"
-            )
-            val finalVideoLabel = enforceOutputDimensions(
-                filterParts, outVLabel, targetW, targetH
-            )
-
-            val af = mutableListOf<String>()
-            if (clip.speed != 1.0f && !img) {
-                af.add("atempo=${clip.speed.coerceIn(0.5f, 2.0f)}")
-            }
-            if (clip.volume != 1.0f) af.add("volume=${clip.volume}")
-            if (clip.audioFx != "none") {
-                val fxFilter = AudioEngine.buildAudioFilter(
-                    clip.audioFx, clip.audioFxIntensity
-                )
-                if (fxFilter.isNotBlank()) af.add(fxFilter)
-            }
-
-            if (af.isEmpty()) {
-                filterParts.add("[$audioInputIdx:a]aresample=44100[basea]")
-            } else {
-                filterParts.add(
-                    "[$audioInputIdx:a]${af.joinToString(",")},aresample=44100[basea]"
-                )
-            }
-
-            val mixed = buildAudioOnlyMix(
-                filterParts = filterParts,
-                audioLocalFiles = audioLocalFiles,
-                audioClips = audioClips,
-                firstInputIdx = audioStartIdx,
-                baseAudioLabel = "basea",
-                outLabel = "mixeda"
-            )
-            val afterMixLabel = if (mixed) "mixeda" else "basea"
-
-            val fxApplied = applyAudioEffectLayers(
-                filterParts, allClips, 0L, afterMixLabel, "fxa"
-            )
-            val finalAudioLabel = if (fxApplied) "fxa" else afterMixLabel
-
-            args.add("-filter_complex")
-            args.add(filterParts.joinToString(";"))
-            args.add("-map"); args.add("[$finalVideoLabel]")
-            args.add("-map"); args.add("[$finalAudioLabel]")
-            args.add("-t"); args.add(totalDurSec.toString())
-
-            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH))
-            args.add("-r"); args.add(fps.toString())
-            args.add("-c:a"); args.add("aac")
-            args.add("-b:a"); args.add("128k")
-            args.add("-movflags"); args.add("+faststart")
-            args.add(outputFile.absolutePath)
-
-            execute(args, outputFile)
-        } catch (e: Throwable) {
-            Log.e("FFMPEG", "Single+Audio error", e)
-            onError("Build error: ${e.message}")
+        if (hasFilters && combinedFilter != null) {
+            cm.postConcat(EffectsEngine.buildColorMatrix(combinedFilter))
         }
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  MULTIPLE CLIPS
-    // ═══════════════════════════════════════════════════════════
-
-    private fun exportMultipleClips(
-        clips: List<EditorClip>,
-        allClips: List<EditorClip>,
-        localFiles: List<File>,
-        audioClips: List<EditorClip>,
-        audioLocalFiles: List<File>,
-        outputFile: File,
-        targetW: Int,
-        targetH: Int,
-        fps: Int,
-        bitrateKbps: Int,
-        sequences: List<TextOverlaySequence>,
-        totalDurationMs: Long
-    ) {
-        val sortedClips = clips.sortedBy { it.timelineStartMs }
-        val sortedLocalFiles = sortedClips.mapNotNull { c ->
-            val originalIdx = clips.indexOf(c)
-            if (originalIdx >= 0) localFiles.getOrNull(originalIdx) else null
-        }
-
-        if (sortedClips.size != sortedLocalFiles.size) {
-            Log.e("FFMPEG", "Sort mismatch, falling back to concat")
-            exportWithConcat(
-                sortedClips, allClips, sortedLocalFiles,
-                audioClips, audioLocalFiles,
-                outputFile, targetW, targetH, fps, bitrateKbps,
-                sequences, totalDurationMs
-            )
-            return
-        }
-
-        val sameTrack = sortedClips.all {
-            it.trackIndex == sortedClips.first().trackIndex
-        }
-        val allNormalSpeed = sortedClips.all {
-            kotlin.math.abs(it.speed - 1.0f) < 0.01f
-        }
-        val hasAnyTransition = sortedClips.drop(1).any {
-            it.transition?.isActive == true
-        }
-        val allAdjacent = sortedClips.zipWithNext().all { (a, b) ->
-            val gap = b.timelineStartMs - a.timelineEndMs
-            kotlin.math.abs(gap) < 100L
-        }
-
-        val useXfade = sortedClips.size >= 2 &&
-                sameTrack &&
-                allNormalSpeed &&
-                allAdjacent &&
-                hasAnyTransition
-
-        if (useXfade) {
-            exportWithTransitions(
-                sortedClips, allClips, sortedLocalFiles,
-                audioClips, audioLocalFiles,
-                outputFile, targetW, targetH, fps, bitrateKbps,
-                sequences, totalDurationMs
-            )
-        } else {
-            exportWithConcat(
-                sortedClips, allClips, sortedLocalFiles,
-                audioClips, audioLocalFiles,
-                outputFile, targetW, targetH, fps, bitrateKbps,
-                sequences, totalDurationMs
-            )
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  TRANSITIONS
-    // ═══════════════════════════════════════════════════════════
-
-    private fun exportWithTransitions(
-        clips: List<EditorClip>,
-        allClips: List<EditorClip>,
-        localFiles: List<File>,
-        audioClips: List<EditorClip>,
-        audioLocalFiles: List<File>,
-        outputFile: File,
-        targetW: Int,
-        targetH: Int,
-        fps: Int,
-        bitrateKbps: Int,
-        sequences: List<TextOverlaySequence>,
-        totalDurationMs: Long
-    ) {
-        try {
-            val args = mutableListOf<String>()
-            args.add("-y")
-
-            clips.forEachIndexed { idx, clip ->
-                val img = isImage(clip)
-                if (img) {
-                    args.add("-loop"); args.add("1")
-                    args.add("-framerate"); args.add(fps.toString())
-                    args.add("-t"); args.add((clip.durationMs / 1000.0).toString())
-                } else {
-                    val srcDurSec = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
-                        .coerceAtLeast(0.1)
-                    if (clip.sourceStartMs > 0) {
-                        args.add("-ss")
-                        args.add((clip.sourceStartMs / 1000.0).toString())
-                    }
-                    args.add("-t"); args.add(srcDurSec.toString())
-                }
-                args.add("-threads"); args.add("1")
-                args.add("-i"); args.add(localFiles[idx].absolutePath)
-            }
-
-            val silentIdx = mutableMapOf<Int, Int>()
-            var nextIdx = clips.size
-            clips.forEachIndexed { idx, clip ->
-                if (!clipHasAudio(clip)) {
-                    args.add("-f"); args.add("lavfi")
-                    args.add("-t"); args.add((clip.durationMs / 1000.0).toString())
-                    args.add("-i"); args.add("anullsrc=r=44100:cl=stereo")
-                    silentIdx[idx] = nextIdx
-                    nextIdx++
-                }
-            }
-
-            val audioStartIdx = nextIdx
-            audioLocalFiles.forEach { f ->
-                args.add("-i"); args.add(f.absolutePath)
-                nextIdx++
-            }
-
-            val seqStartIdx = nextIdx
-            addSequenceInputs(args, sequences)
-
-            val filterParts = mutableListOf<String>()
-
-            clips.forEachIndexed { idx, clip ->
-                val vf = mutableListOf<String>()
-
-                if (isImage(clip)) {
-                    vf.add("setpts=PTS-STARTPTS")
-                } else {
-                    vf.add(
-                        "trim=duration=${
-                            (clip.sourceEndMs - clip.sourceStartMs) / 1000.0
-                        }"
-                    )
-                    vf.add("setpts=PTS-STARTPTS")
-                }
-
-                if (clip.speed != 1.0f && !isImage(clip)) {
-                    vf.add("setpts=${1.0f / clip.speed}*PTS")
-                }
-
-                vf.addAll(buildPerClipFilterChain(clip, allClips))
-                vf.addAll(buildAdvancedEffectFilters(clip, targetW, targetH))
-                vf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
-                vf.add("fps=$fps")
-                vf.add("settb=AVTB")
-                vf.add("setpts=PTS-STARTPTS")
-                vf.add("format=yuv420p")
-                vf.add("setsar=1")
-
-                filterParts.add("[$idx:v]${vf.joinToString(",")}[nv$idx]")
-            }
-
-            val transitionSteps = TransitionExportPlan.create(
-                clipDurationsMs = clips.map { it.durationMs },
-                transitions = clips.map { it.transition },
-                fps = fps
-            )
-            var currentLabel = "nv0"
-
-            for (i in 1 until clips.size) {
-                val step = transitionSteps[i - 1]
-                val transDurSec = step.durationMs / 1000.0
-                val offsetSec = step.offsetMs / 1000.0
-
-                val outLabel = "xfd$i"
-                filterParts.add(
-                    "[$currentLabel][nv$i]xfade=" +
-                            "transition=${step.ffmpegTransition}:" +
-                            "duration=$transDurSec:" +
-                            "offset=$offsetSec" +
-                            "[$outLabel]"
-                )
-
-                currentLabel = outLabel
-            }
-
-            clips.forEachIndexed { idx, clip ->
-                val hasAudio = clipHasAudio(clip)
-                val srcIdx = if (hasAudio) idx else (silentIdx[idx] ?: idx)
-                val durSec = clip.durationMs / 1000.0
-                val label = "ca$idx"
-
-                val af = mutableListOf<String>()
-                af.add("atrim=start=0:duration=$durSec")
-                af.add("asetpts=PTS-STARTPTS")
-                af.add("aresample=44100")
-
-                filterParts.add("[$srcIdx:a]${af.joinToString(",")}[$label]")
-            }
-
-            var currentAudioLabel = "ca0"
-            for (i in 1 until clips.size) {
-                val step = transitionSteps[i - 1]
-                val outLabel = "across$i"
-                filterParts.add(
-                    "[$currentAudioLabel][ca$i]acrossfade=" +
-                            "d=${step.durationMs / 1000.0}:c1=tri:c2=tri[$outLabel]"
-                )
-                currentAudioLabel = outLabel
-            }
-            var finalAudioLabel = currentAudioLabel
-
-            if (audioLocalFiles.isNotEmpty()) {
-                val mixed = buildAudioOnlyMix(
-                    filterParts, audioLocalFiles, audioClips,
-                    audioStartIdx, finalAudioLabel, "mixeda"
-                )
-                if (mixed) finalAudioLabel = "mixeda"
-            }
-
-            val fxApplied = applyAudioEffectLayers(
-                filterParts, allClips, 0L, finalAudioLabel, "fxa"
-            )
-            if (fxApplied) finalAudioLabel = "fxa"
-
-            val outVLabel = buildOverlayChain(
-                filterParts, sequences, seqStartIdx, currentLabel
-            )
-            val finalVideoLabel = enforceOutputDimensions(
-                filterParts, outVLabel, targetW, targetH
-            )
-
-            val totalDurSec = (totalDurationMs / 1000.0).coerceAtLeast(0.1)
-
-            args.add("-filter_complex_threads")
-            args.add("1")
-            args.add("-filter_complex")
-            args.add(filterParts.joinToString(";"))
-            args.add("-map"); args.add("[$finalVideoLabel]")
-            args.add("-map"); args.add("[$finalAudioLabel]")
-            args.add("-t"); args.add(totalDurSec.toString())
-
-            args.addAll(
-                buildFastVideoArgs(
-                    bitrateKbps = bitrateKbps,
-                    targetW = targetW,
-                    targetH = targetH,
-                    encoderThreads = 1
-                )
-            )
-            args.add("-r"); args.add(fps.toString())
-            args.add("-c:a"); args.add("aac")
-            args.add("-b:a"); args.add("128k")
-            args.add("-movflags"); args.add("+faststart")
-            args.add(outputFile.absolutePath)
-
-            xfadeFallback = {
-                Log.e("FFMPEG_TRANS", "Retrying as CONCAT (no transitions)")
-                exportWithConcat(
-                    clips, allClips, localFiles,
-                    audioClips, audioLocalFiles,
-                    outputFile, targetW, targetH, fps, bitrateKbps,
-                    sequences, totalDurationMs
-                )
-            }
-
-            execute(args, outputFile)
-        } catch (e: Throwable) {
-            Log.e("FFMPEG", "Transition export error", e)
-            xfadeFallback = null
-            exportWithConcat(
-                clips, allClips, localFiles,
-                audioClips, audioLocalFiles,
-                outputFile, targetW, targetH, fps, bitrateKbps,
-                sequences, totalDurationMs
-            )
-        }
-    }
-
-    private fun exportWithConcat(
-        clips: List<EditorClip>,
-        allClips: List<EditorClip>,
-        localFiles: List<File>,
-        audioClips: List<EditorClip>,
-        audioLocalFiles: List<File>,
-        outputFile: File,
-        targetW: Int,
-        targetH: Int,
-        fps: Int,
-        bitrateKbps: Int,
-        sequences: List<TextOverlaySequence>,
-        totalDurationMs: Long
-    ) {
-        try {
-            xfadeFallback = null
-
-            val args = mutableListOf<String>()
-            args.add("-y")
-
-            clips.forEachIndexed { idx, clip ->
-                val file = localFiles[idx]
-                val img = isImage(clip)
-                if (img) {
-                    args.add("-loop"); args.add("1")
-                    args.add("-framerate"); args.add(fps.toString())
-                    args.add("-t"); args.add((clip.durationMs / 1000.0).toString())
-                }
-                args.add("-i"); args.add(file.absolutePath)
-            }
-
-            val imageAudioInputs = mutableMapOf<Int, Int>()
-            var nextInputIdx = clips.size
-            clips.forEachIndexed { idx, clip ->
-                if (isImage(clip)) {
-                    val durSec = clip.durationMs / 1000.0
-                    args.add("-f"); args.add("lavfi")
-                    args.add("-t"); args.add(durSec.toString())
-                    args.add("-i"); args.add("anullsrc=r=44100:cl=stereo")
-                    imageAudioInputs[idx] = nextInputIdx
-                    nextInputIdx++
-                }
-            }
-
-            val audioStartIdx = nextInputIdx
-            audioLocalFiles.forEach { f ->
-                args.add("-i"); args.add(f.absolutePath)
-                nextInputIdx++
-            }
-
-            val seqStartIdx = nextInputIdx
-            addSequenceInputs(args, sequences)
-
-            val filterParts = mutableListOf<String>()
-            val concatInputs = mutableListOf<String>()
-
-            clips.forEachIndexed { idx, clip ->
-                val img = isImage(clip)
-                val durationSec = clip.durationMs / 1000.0
-
-                val vf = mutableListOf<String>()
-                if (img) {
-                    vf.add("setpts=PTS-STARTPTS")
-                } else {
-                    val ssSec = clip.sourceStartMs / 1000.0
-                    vf.add("trim=start=$ssSec:duration=$durationSec")
-                    vf.add("setpts=PTS-STARTPTS")
-                }
-                if (clip.speed != 1.0f && !img) {
-                    vf.add("setpts=${1.0f / clip.speed}*PTS")
-                }
-
-                vf.addAll(buildPerClipFilterChain(clip, allClips))
-                vf.addAll(buildAdvancedEffectFilters(clip, targetW, targetH))
-                vf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
-                vf.add("fps=$fps")
-                vf.add("format=yuv420p")
-                filterParts.add("[$idx:v]${vf.joinToString(",")}[v$idx]")
-
-                val aIdx = imageAudioInputs[idx] ?: idx
-                val aStart = if (img) 0.0 else clip.sourceStartMs / 1000.0
-
-                val af = mutableListOf<String>()
-                if (img) {
-                    af.add("asetpts=PTS-STARTPTS")
-                } else {
-                    af.add("atrim=start=$aStart:duration=$durationSec")
-                    af.add("asetpts=PTS-STARTPTS")
-                }
-                if (clip.speed != 1.0f && !img) {
-                    af.add("atempo=${clip.speed.coerceIn(0.5f, 2.0f)}")
-                }
-                if (clip.audioFx != "none") {
-                    val fxFilter = AudioEngine.buildAudioFilter(
-                        clip.audioFx, clip.audioFxIntensity
-                    )
-                    if (fxFilter.isNotBlank()) af.add(fxFilter)
-                }
-                af.add("aresample=44100")
-                filterParts.add("[$aIdx:a]${af.joinToString(",")}[a$idx]")
-
-                concatInputs.add("[v$idx][a$idx]")
-            }
-
-            filterParts.add(
-                "${concatInputs.joinToString("")}" +
-                        "concat=n=${clips.size}:v=1:a=1[concatv][basea]"
-            )
-
-            val mixed = if (audioLocalFiles.isNotEmpty()) {
-                buildAudioOnlyMix(
-                    filterParts = filterParts,
-                    audioLocalFiles = audioLocalFiles,
-                    audioClips = audioClips,
-                    firstInputIdx = audioStartIdx,
-                    baseAudioLabel = "basea",
-                    outLabel = "mixeda"
-                )
-            } else false
-
-            val afterMixLabel = if (mixed) "mixeda" else "basea"
-
-            val fxApplied = applyAudioEffectLayers(
-                filterParts, allClips, 0L, afterMixLabel, "fxa"
-            )
-            val finalAudioLabel = if (fxApplied) "fxa" else afterMixLabel
-
-            val outVLabel = buildOverlayChain(
-                filterParts, sequences, seqStartIdx, "concatv"
-            )
-            val finalVideoLabel = enforceOutputDimensions(
-                filterParts, outVLabel, targetW, targetH
-            )
-
-            val totalDurSec = (totalDurationMs / 1000.0).coerceAtLeast(0.1)
-
-            args.add("-filter_complex")
-            args.add(filterParts.joinToString(";"))
-            args.add("-map"); args.add("[$finalVideoLabel]")
-            args.add("-map"); args.add("[$finalAudioLabel]")
-            args.add("-t"); args.add(totalDurSec.toString())
-
-            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH))
-            args.add("-r"); args.add(fps.toString())
-            args.add("-c:a"); args.add("aac")
-            args.add("-b:a"); args.add("128k")
-            args.add("-movflags"); args.add("+faststart")
-            args.add(outputFile.absolutePath)
-
-            execute(args, outputFile)
-        } catch (e: Throwable) {
-            Log.e("FFMPEG", "Concat export error", e)
-            onError("Concat export: ${e.message}")
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  PER-CLIP FILTER CHAIN
-    // ═══════════════════════════════════════════════════════════
-
-    private fun buildPerClipFilterChain(
-        clip: EditorClip,
-        allClips: List<EditorClip>
-    ): List<String> {
-        val filters = mutableListOf<String>()
-
-        val filterLayersAbove = allClips.filter { e ->
-            e.isFilterLayerClip &&
-                    e.trackIndex > clip.trackIndex &&
-                    e.timelineEndMs > clip.timelineStartMs &&
-                    e.timelineStartMs < clip.timelineEndMs
-        }.sortedBy { it.trackIndex }
-
-        filterLayersAbove.forEach { layer ->
-            val ff = layer.filters
+        activeFilterLayer?.let { layer ->
             val cfv = ColorFilterValues(
-                brightness = ff.brightness,
-                contrast = ff.contrast,
-                saturation = ff.saturation,
-                hue = ff.hue,
-                grayscale = ff.grayscale,
-                sepia = ff.sepia,
-                invert = ff.invert,
-                blur = ff.blur,
-                opacity = ff.opacity
+                brightness = layer.filters.brightness,
+                contrast = layer.filters.contrast,
+                saturation = layer.filters.saturation,
+                hue = layer.filters.hue,
+                grayscale = layer.filters.grayscale,
+                sepia = layer.filters.sepia,
+                invert = layer.filters.invert,
+                blur = layer.filters.blur,
+                opacity = layer.filters.opacity
             )
-            val filterStr = colorFilterValuesToFfmpeg(cfv)
-            if (filterStr.isNotBlank()) filters.add(filterStr)
-        }
-
-        val effectClipsAbove = allClips.filter { e ->
-            e.isEffectClip &&
-                    e.trackIndex > clip.trackIndex &&
-                    e.timelineEndMs > clip.timelineStartMs &&
-                    e.timelineStartMs < clip.timelineEndMs
-        }.sortedBy { it.trackIndex }
-
-        effectClipsAbove.forEach { effClip ->
-            val m = effClip.effectState?.motion
-            if (m != null) {
-                val f = motionToFfmpeg(m)
-                if (f.isNotBlank()) filters.add(f)
-            }
-
-            val cf = effClip.effectState?.filters
-            if (cf != null) {
-                val f = colorFilterValuesToFfmpeg(cf)
-                if (f.isNotBlank()) filters.add(f)
+            if (EffectsEngine.hasColorEffect(cfv)) {
+                cm.postConcat(EffectsEngine.buildColorMatrix(cfv))
             }
         }
+        previewFilters?.let { pf ->
+            val cfv = ColorFilterValues(
+                brightness = pf.brightness,
+                contrast = pf.contrast,
+                saturation = pf.saturation,
+                hue = pf.hue,
+                grayscale = pf.grayscale,
+                sepia = pf.sepia,
+                invert = pf.invert,
+                blur = pf.blur,
+                opacity = pf.opacity
+            )
+            if (EffectsEngine.hasColorEffect(cfv)) {
+                cm.postConcat(EffectsEngine.buildColorMatrix(cfv))
+            }
+        }
+        cm
+    }
 
-        val f = clip.filters
-        if (f.brightness != 100f || f.contrast != 100f || f.saturation != 100f) {
-            val eqParts = mutableListOf<String>()
-            if (f.brightness != 100f) {
-                eqParts.add(
-                    "brightness=${((f.brightness - 100f) / 100f).coerceIn(-1f, 1f)}"
+    val opacityAlpha = EffectsEngine.opacityAlpha(combinedFilter)
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0A0A0A)),
+        contentAlignment = Alignment.Center
+    ) {
+        val windowW = maxWidth.value
+        val windowH = maxHeight.value
+        if (windowW <= 0f || windowH <= 0f) return@BoxWithConstraints
+
+        val targetRatio = RatioHelper.ratioValue(aspectRatioKey)
+        val windowRatio = windowW / windowH
+
+        val canvasW: Float
+        val canvasH: Float
+        if (targetRatio >= windowRatio) {
+            canvasW = windowW
+            canvasH = windowW / targetRatio
+        } else {
+            canvasH = windowH
+            canvasW = windowH * targetRatio
+        }
+
+        val sideBar = ((windowW - canvasW) / 2f).coerceAtLeast(0f)
+        val topBar = ((windowH - canvasH) / 2f).coerceAtLeast(0f)
+
+        Box(
+            modifier = Modifier
+                .width(canvasW.dp)
+                .height(canvasH.dp)
+                .align(Alignment.Center)
+                .clipToBounds()
+                .background(Color.Black)
+        ) {
+            activeClips.forEach { clip ->
+                when {
+                    // ─── VIDEO ───
+                    clip.isVisualClip && !clip.type.startsWith("image/") -> {
+                        if (clip.id != topVideoClip?.id) return@forEach
+                        val videoLocalSec =
+                            ((currentPosMs - clip.timelineStartMs) / 1000f)
+                                .coerceAtLeast(0f)
+                        val videoTransform2 = TransformApplier.resolveLive(clip, videoLocalSec)
+                        val videoSize = exoPlayer.videoSize
+                        val rawVideoAspect = if (videoSize.width > 0 && videoSize.height > 0) {
+                            videoSize.width * videoSize.pixelWidthHeightRatio /
+                                    videoSize.height
+                        } else {
+                            canvasW / canvasH
+                        }
+                        val videoAspect = if (
+                            videoSize.unappliedRotationDegrees % 180 != 0
+                        ) {
+                            1f / rawVideoAspect
+                        } else {
+                            rawVideoAspect
+                        }
+                        val videoBounds = fittedBoundsFractions(
+                            canvasW, canvasH, videoAspect
+                        )
+                        val useExactColorWheels = Build.VERSION.SDK_INT >= 33
+                        val videoWheelStates = remember(clip.colorWheel, activeColorWheels) {
+                            colorWheelStatesForClip(clip, activeColorWheels)
+                        }
+                        val videoWheelEffect = remember(videoWheelStates) {
+                            if (useExactColorWheels) {
+                                ColorWheelPreviewFilter.createRenderEffect(videoWheelStates)
+                            } else null
+                        }
+                        val useExactVideoColorWheels =
+                            useExactColorWheels &&
+                                    (videoWheelStates.isEmpty() || videoWheelEffect != null)
+                        val videoWheelMatrix = remember(
+                            clip.id, activeColorWheels, useExactVideoColorWheels
+                        ) {
+                            if (useExactVideoColorWheels) null
+                            else colorWheelMatrixForClip(clip, activeColorWheels)
+                        }
+
+                        MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
+                            RenderAdvancedEffects(clip, videoLocalSec) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .graphicsLayer {
+                                            val w = size.width
+                                            val h = size.height
+                                            val cropSx = 1f /
+                                                    (1f - videoTransform2.cropL -
+                                                            videoTransform2.cropR)
+                                                        .coerceAtLeast(0.05f)
+                                            val cropSy = 1f /
+                                                    (1f - videoTransform2.cropT -
+                                                            videoTransform2.cropB)
+                                                        .coerceAtLeast(0.05f)
+                                            val cropTx =
+                                                -(videoTransform2.cropL -
+                                                        videoTransform2.cropR) / 2f * w
+                                            val cropTy =
+                                                -(videoTransform2.cropT -
+                                                        videoTransform2.cropB) / 2f * h
+                                            val posTx =
+                                                (videoTransform2.x - 50f) / 100f * w
+                                            val posTy =
+                                                (videoTransform2.y - 50f) / 100f * h
+
+                                            val transT: Transform2D =
+                                                if (activeTransitionClip != null) {
+                                                    val st =
+                                                        activeTransitionClip.transition!!
+                                                    val prog = (
+                                                            (currentPosMs -
+                                                                    activeTransitionClip
+                                                                        .timelineStartMs)
+                                                                .toFloat() /
+                                                                    st.durationMs
+                                                                        .coerceAtLeast(1L)
+                                                            ).coerceIn(0f, 1f)
+                                                    TransitionRenderer
+                                                        .getIncomingTransform(
+                                                            st.key, prog, w, h
+                                                        )
+                                                } else Transform2D()
+
+                                            translationX = posTx + cropTx +
+                                                    combinedMotion.tx + transT.tx
+                                            translationY = posTy + cropTy +
+                                                    combinedMotion.ty + transT.ty
+                                            scaleX = (videoTransform2.scale / 100f) *
+                                                    cropSx * combinedMotion.scale *
+                                                    transT.scaleX
+                                            scaleY = (videoTransform2.scale / 100f) *
+                                                    cropSy * combinedMotion.scale *
+                                                    transT.scaleY
+                                            rotationZ = videoTransform2.rotation +
+                                                    combinedMotion.rotation +
+                                                    transT.rotZ
+                                            transformOrigin = TransformOrigin(
+                                                pivotFractionX =
+                                                    videoTransform2.anchorX / 100f,
+                                                pivotFractionY =
+                                                    videoTransform2.anchorY / 100f
+                                            )
+                                            alpha = opacityAlpha * transT.alpha
+                                            this.clip = true
+                                        }
+                                ) {
+                                    AndroidView(
+                                        factory = { ctx ->
+                                            LayoutInflater.from(ctx)
+                                                .inflate(
+                                                    com.moody.moodyvideoeditor.R.layout
+                                                        .view_player,
+                                                    null
+                                                ) as PlayerView
+                                        },
+                                        update = { view ->
+                                            view.player = exoPlayer
+                                            view.resizeMode =
+                                                AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                            view.rotation = rotation.toFloat()
+                                            val sv = view.videoSurfaceView
+                                            if (sv is TextureView) {
+                                                val videoCm = buildClipMatrix(
+                                                    clip,
+                                                    combinedMatrix,
+                                                    applyMatrix,
+                                                    videoWheelMatrix,
+                                                    useExactVideoColorWheels
+                                                )
+                                                if (videoCm != null) {
+                                                    val paint = Paint().apply {
+                                                        colorFilter =
+                                                            android.graphics.ColorMatrixColorFilter(
+                                                                videoCm
+                                                            )
+                                                    }
+                                                    sv.setLayerType(
+                                                        View.LAYER_TYPE_HARDWARE, paint
+                                                    )
+                                                } else {
+                                                    sv.setLayerType(
+                                                        View.LAYER_TYPE_HARDWARE, null
+                                                    )
+                                                }
+                                                if (Build.VERSION.SDK_INT >= 31) {
+                                                    view.setRenderEffect(
+                                                        if (Build.VERSION.SDK_INT >= 33)
+                                                            videoWheelEffect
+                                                        else null
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                    if (clip.id == selectedClipId && !isDrawingMode) {
+                                        LayerTransformHandles(
+                                            clipId = clip.id,
+                                            scale = videoTransform2.scale,
+                                            rotation = videoTransform2.rotation,
+                                            widthFraction = videoBounds.first,
+                                            heightFraction = videoBounds.second,
+                                            positionX = videoTransform2.x,
+                                            positionY = videoTransform2.y,
+                                            onPositionChanged = { x, y ->
+                                                onGroupGesture(
+                                                    clip.id, x, y,
+                                                    videoTransform2.scale,
+                                                    videoTransform2.rotation
+                                                )
+                                            },
+                                            onGestureStart = onGroupGestureStart,
+                                            onGestureEnd = onGroupGestureEnd,
+                                            onTransformChanged = { scale, rotation ->
+                                                onGroupGesture(
+                                                    clip.id,
+                                                    videoTransform2.x,
+                                                    videoTransform2.y,
+                                                    scale,
+                                                    rotation
+                                                )
+                                            },
+                                            onDelete = { onDeleteLayer(clip.id) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ─── IMAGE ───
+                    clip.isVisualClip && clip.type.startsWith("image/") -> {
+                        val imgLocalSec =
+                            ((currentPosMs - clip.timelineStartMs) / 1000f)
+                                .coerceAtLeast(0f)
+                        val imgTransform = TransformApplier.resolveLive(clip, imgLocalSec)
+
+                        val isSelected = clip.id == selectedClipId
+                        val isMulti = clip.id in multiSelectedIds
+                        val borderColor = when {
+                            isSelected -> Color(0xFF60EFFF)
+                            isMulti -> Color(0xFFFFD166)
+                            else -> Color.Transparent
+                        }
+
+                        MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
+                            RenderAdvancedEffects(clip, imgLocalSec) {
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .graphicsLayer {
+                                            val w = size.width
+                                            val h = size.height
+                                            val cropSx = 1f /
+                                                    (1f - imgTransform.cropL -
+                                                            imgTransform.cropR)
+                                                        .coerceAtLeast(0.05f)
+                                            val cropSy = 1f /
+                                                    (1f - imgTransform.cropT -
+                                                            imgTransform.cropB)
+                                                        .coerceAtLeast(0.05f)
+                                            val cropTx =
+                                                -(imgTransform.cropL -
+                                                        imgTransform.cropR) / 2f * w
+                                            val cropTy =
+                                                -(imgTransform.cropT -
+                                                        imgTransform.cropB) / 2f * h
+                                            val posTx =
+                                                (imgTransform.x - 50f) / 100f * w
+                                            val posTy =
+                                                (imgTransform.y - 50f) / 100f * h
+
+                                            val transT: Transform2D =
+                                                if (activeTransitionClip != null &&
+                                                    activeTransitionClip.id == clip.id
+                                                ) {
+                                                    val st = activeTransitionClip.transition!!
+                                                    val prog = (
+                                                            (currentPosMs -
+                                                                    activeTransitionClip
+                                                                        .timelineStartMs)
+                                                                .toFloat() /
+                                                                    st.durationMs
+                                                                        .coerceAtLeast(1L)
+                                                            ).coerceIn(0f, 1f)
+                                                    TransitionRenderer
+                                                        .getIncomingTransform(
+                                                            st.key, prog, w, h
+                                                        )
+                                                } else Transform2D()
+
+                                            translationX = posTx + cropTx +
+                                                    combinedMotion.tx + transT.tx
+                                            translationY = posTy + cropTy +
+                                                    combinedMotion.ty + transT.ty
+                                            scaleX = (imgTransform.scale / 100f) *
+                                                    cropSx * combinedMotion.scale *
+                                                    transT.scaleX
+                                            scaleY = (imgTransform.scale / 100f) *
+                                                    cropSy * combinedMotion.scale *
+                                                    transT.scaleY
+                                            rotationZ = imgTransform.rotation +
+                                                    combinedMotion.rotation +
+                                                    transT.rotZ
+                                            transformOrigin = TransformOrigin(
+                                                pivotFractionX = imgTransform.anchorX / 100f,
+                                                pivotFractionY = imgTransform.anchorY / 100f
+                                            )
+                                            alpha = opacityAlpha * transT.alpha
+                                            this.clip = true
+                                        }
+                                        .then(
+                                            if (isMulti) Modifier.border(
+                                                width = 1.dp, color = borderColor,
+                                                shape = RoundedCornerShape(4.dp)
+                                            ) else Modifier
+                                        )
+                                        .pointerInput(clip.id, isSelected, isMulti, isDrawingMode) {
+                                            if (isDrawingMode) return@pointerInput
+                                            awaitEachGesture {
+                                                awaitFirstDown(requireUnconsumed = true)
+                                                onGroupGestureStart()
+
+                                                val baseX = imgTransform.x
+                                                val baseY = imgTransform.y
+                                                val baseScale = imgTransform.scale
+                                                val baseRot = imgTransform.rotation
+                                                var accumPanX = 0f
+                                                var accumPanY = 0f
+                                                var accumZoom = 1f
+                                                var accumRot = 0f
+                                                var lastDist = 0f
+                                                var lastAngle = 0f
+                                                var hasMulti = false
+
+                                                if (!isSelected && !isMulti) onClipSelected(clip.id)
+
+                                                var continueGesture = true
+                                                while (continueGesture) {
+                                                    val event = awaitPointerEvent()
+                                                    val pressed =
+                                                        event.changes.filter { it.pressed }
+                                                    if (pressed.isEmpty()) {
+                                                        continueGesture = false
+                                                    } else {
+                                                        if (pressed.size == 1) {
+                                                            val ch = pressed.first()
+                                                            val pan =
+                                                                ch.position - ch.previousPosition
+                                                            accumPanX += pan.x
+                                                            accumPanY += pan.y
+                                                            ch.consume()
+                                                        } else if (pressed.size >= 2) {
+                                                            val c1 = pressed[0]
+                                                            val c2 = pressed[1]
+                                                            val d = c1.position - c2.position
+                                                            val dist =
+                                                                kotlin.math.sqrt(d.x * d.x + d.y * d.y)
+                                                            val angle = kotlin.math.atan2(d.y, d.x)
+                                                            if (hasMulti && lastDist > 1f) {
+                                                                accumZoom *= dist / lastDist
+                                                                accumRot += Math.toDegrees(
+                                                                    normalizeAngle(angle - lastAngle)
+                                                                        .toDouble()
+                                                                ).toFloat()
+                                                            }
+                                                            lastDist = dist
+                                                            lastAngle = angle
+                                                            hasMulti = true
+                                                            c1.consume()
+                                                            c2.consume()
+                                                        }
+                                                        val newX =
+                                                            (baseX + accumPanX / size.width * 100f)
+                                                                .coerceIn(0f, 100f)
+                                                        val newY =
+                                                            (baseY + accumPanY / size.height * 100f)
+                                                                .coerceIn(0f, 100f)
+                                                        val newScale = (baseScale * accumZoom)
+                                                            .coerceIn(10f, 500f)
+                                                        val newRot = baseRot + accumRot
+
+                                                        onGroupGesture(
+                                                            clip.id, newX, newY,
+                                                            newScale, newRot
+                                                        )
+                                                    }
+                                                }
+                                                onGroupGestureEnd()
+                                            }
+                                        }
+                                        .pointerInput(clip.id, isMulti, isDrawingMode) {
+                                            if (isDrawingMode) return@pointerInput
+                                            detectTapGestures {
+                                                if (!isMulti) onClipSelected(clip.id)
+                                            }
+                                        }
+                                ) {
+                                    val imageRequest = remember(clip.uri) {
+                                        ImageRequest.Builder(context)
+                                            .data(clip.uri)
+                                            .decoderFactory(BitmapFactoryDecoder.Factory())
+                                            .allowHardware(false)
+                                            .crossfade(false)
+                                            .build()
+                                    }
+                                    val imgPainter = rememberAsyncImagePainter(imageRequest)
+                                    val imageIntrinsicSize = imgPainter.intrinsicSize
+                                    val imageAspect = if (
+                                        imageIntrinsicSize.width > 0f &&
+                                        imageIntrinsicSize.height > 0f
+                                    ) {
+                                        imageIntrinsicSize.width / imageIntrinsicSize.height
+                                    } else {
+                                        canvasW / canvasH
+                                    }
+                                    val imageBounds = fittedBoundsFractions(
+                                        canvasW, canvasH, imageAspect
+                                    )
+                                    val useExactImageColorWheels = Build.VERSION.SDK_INT >= 33
+                                    val imageWheelStates = remember(
+                                        clip.colorWheel, activeColorWheels
+                                    ) {
+                                        colorWheelStatesForClip(clip, activeColorWheels)
+                                    }
+                                    val imageWheelEffect = remember(imageWheelStates) {
+                                        if (useExactImageColorWheels) {
+                                            ColorWheelPreviewFilter.createRenderEffect(
+                                                imageWheelStates
+                                            )?.asComposeRenderEffect()
+                                        } else null
+                                    }
+                                    val useExactImageWheels =
+                                        useExactImageColorWheels &&
+                                                (imageWheelStates.isEmpty() ||
+                                                        imageWheelEffect != null)
+                                    val imgColorFilter = remember(
+                                        clip.filters, clip.adjustments,
+                                        combinedMatrix, applyMatrix, activeColorWheels, clip.id,
+                                        useExactImageWheels
+                                    ) {
+                                        val cm = buildClipMatrix(
+                                            clip,
+                                            combinedMatrix,
+                                            applyMatrix,
+                                            if (useExactImageWheels) null
+                                            else colorWheelMatrixForClip(clip, activeColorWheels),
+                                            useExactImageWheels
+                                        )
+                                        if (cm == null) null
+                                        else androidx.compose.ui.graphics.ColorFilter.colorMatrix(
+                                            androidx.compose.ui.graphics.ColorMatrix(cm.array)
+                                        )
+                                    }
+                                    Image(
+                                        painter = imgPainter,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Fit,
+                                        colorFilter = imgColorFilter,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .graphicsLayer {
+                                                renderEffect = imageWheelEffect
+                                            }
+                                    )
+                                    if (isSelected && !isDrawingMode) {
+                                        LayerTransformHandles(
+                                            clipId = clip.id,
+                                            scale = imgTransform.scale,
+                                            rotation = imgTransform.rotation,
+                                            widthFraction = imageBounds.first,
+                                            heightFraction = imageBounds.second,
+                                            positionX = imgTransform.x,
+                                            positionY = imgTransform.y,
+                                            onPositionChanged = { x, y ->
+                                                onGroupGesture(
+                                                    clip.id, x, y,
+                                                    imgTransform.scale,
+                                                    imgTransform.rotation
+                                                )
+                                            },
+                                            onGestureStart = onGroupGestureStart,
+                                            onGestureEnd = onGroupGestureEnd,
+                                            onTransformChanged = { scale, rotation ->
+                                                onGroupGesture(
+                                                    clip.id,
+                                                    imgTransform.x,
+                                                    imgTransform.y,
+                                                    scale,
+                                                    rotation
+                                                )
+                                            },
+                                            onDelete = { onDeleteLayer(clip.id) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ─── COLOR MATTE ───
+                    clip.isColorMatteClip -> {
+                        val localSec =
+                            ((currentPosMs - clip.timelineStartMs) / 1000f)
+                                .coerceAtLeast(0f)
+                        val matteTransform = TransformApplier.resolveLive(clip, localSec)
+                        val matteAlpha = (clip.filters.opacity / 100f)
+                            .coerceIn(0f, 1f)
+
+                        val isSel = clip.id == selectedClipId
+                        val isMulti = clip.id in multiSelectedIds
+                        val borderColor = when {
+                            isSel -> Color(0xFF60EFFF)
+                            isMulti -> Color(0xFFFFD166)
+                            else -> Color.Transparent
+                        }
+
+                        MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
+                            RenderAdvancedEffects(clip, localSec) {
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .graphicsLayer {
+                                            val w = size.width
+                                            val h = size.height
+                                            val cropSx = 1f /
+                                                    (1f - matteTransform.cropL -
+                                                            matteTransform.cropR)
+                                                        .coerceAtLeast(0.05f)
+                                            val cropSy = 1f /
+                                                    (1f - matteTransform.cropT -
+                                                            matteTransform.cropB)
+                                                        .coerceAtLeast(0.05f)
+                                            val cropTx =
+                                                -(matteTransform.cropL -
+                                                        matteTransform.cropR) / 2f * w
+                                            val cropTy =
+                                                -(matteTransform.cropT -
+                                                        matteTransform.cropB) / 2f * h
+                                            val posTx =
+                                                (matteTransform.x - 50f) / 100f * w
+                                            val posTy =
+                                                (matteTransform.y - 50f) / 100f * h
+
+                                            translationX = posTx + cropTx +
+                                                    combinedMotion.tx
+                                            translationY = posTy + cropTy +
+                                                    combinedMotion.ty
+                                            scaleX = (matteTransform.scale / 100f) *
+                                                    cropSx * combinedMotion.scale
+                                            scaleY = (matteTransform.scale / 100f) *
+                                                    cropSy * combinedMotion.scale
+                                            rotationZ = matteTransform.rotation +
+                                                    combinedMotion.rotation
+                                            transformOrigin = TransformOrigin(
+                                                pivotFractionX =
+                                                    matteTransform.anchorX / 100f,
+                                                pivotFractionY =
+                                                    matteTransform.anchorY / 100f
+                                            )
+                                            alpha = matteAlpha * opacityAlpha
+                                        }
+                                        .then(
+                                            if (isSel || isMulti) Modifier.border(
+                                                width = if (isSel) 1.5.dp else 1.dp,
+                                                color = borderColor,
+                                                shape = RoundedCornerShape(4.dp)
+                                            ) else Modifier
+                                        )
+                                        .pointerInput(clip.id, isSel, isMulti, isDrawingMode) {
+                                            if (isDrawingMode) return@pointerInput
+                                            awaitEachGesture {
+                                                awaitFirstDown(requireUnconsumed = true)
+                                                onGroupGestureStart()
+
+                                                val baseX = matteTransform.x
+                                                val baseY = matteTransform.y
+                                                val baseScale = matteTransform.scale
+                                                val baseRot = matteTransform.rotation
+                                                var accumPanX = 0f
+                                                var accumPanY = 0f
+                                                var accumZoom = 1f
+                                                var accumRot = 0f
+                                                var lastDist = 0f
+                                                var lastAngle = 0f
+                                                var hasMulti = false
+
+                                                if (!isSel && !isMulti) onClipSelected(clip.id)
+
+                                                var continueGesture = true
+                                                while (continueGesture) {
+                                                    val event = awaitPointerEvent()
+                                                    val pressed =
+                                                        event.changes.filter { it.pressed }
+                                                    if (pressed.isEmpty()) {
+                                                        continueGesture = false
+                                                    } else {
+                                                        if (pressed.size == 1) {
+                                                            val ch = pressed.first()
+                                                            val pan =
+                                                                ch.position - ch.previousPosition
+                                                            accumPanX += pan.x
+                                                            accumPanY += pan.y
+                                                            ch.consume()
+                                                        } else if (pressed.size >= 2) {
+                                                            val c1 = pressed[0]
+                                                            val c2 = pressed[1]
+                                                            val d = c1.position - c2.position
+                                                            val dist =
+                                                                kotlin.math.sqrt(d.x * d.x + d.y * d.y)
+                                                            val angle = kotlin.math.atan2(d.y, d.x)
+                                                            if (hasMulti && lastDist > 1f) {
+                                                                accumZoom *= dist / lastDist
+                                                                accumRot += Math.toDegrees(
+                                                                    normalizeAngle(angle - lastAngle)
+                                                                        .toDouble()
+                                                                ).toFloat()
+                                                            }
+                                                            lastDist = dist
+                                                            lastAngle = angle
+                                                            hasMulti = true
+                                                            c1.consume()
+                                                            c2.consume()
+                                                        }
+                                                        val newX =
+                                                            (baseX + accumPanX / size.width * 100f)
+                                                                .coerceIn(0f, 100f)
+                                                        val newY =
+                                                            (baseY + accumPanY / size.height * 100f)
+                                                                .coerceIn(0f, 100f)
+                                                        val newScale = (baseScale * accumZoom)
+                                                            .coerceIn(10f, 500f)
+                                                        val newRot = baseRot + accumRot
+
+                                                        if (isMulti) {
+                                                            onGroupGesture(
+                                                                clip.id, newX, newY,
+                                                                newScale, newRot
+                                                            )
+                                                        } else {
+                                                            onBrushPositionChanged(
+                                                                clip.id, newX, newY
+                                                            )
+                                                            onBrushTransformChanged(
+                                                                clip.id, newScale, newRot
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                                onGroupGestureEnd()
+                                            }
+                                        }
+                                        .pointerInput(clip.id, isMulti, isDrawingMode) {
+                                            if (isDrawingMode) return@pointerInput
+                                            detectTapGestures {
+                                                if (!isMulti) onClipSelected(clip.id)
+                                            }
+                                        }
+                                ) {
+                                    ColorMatteRenderer(
+                                        style = clip.matteStyle,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+
+                                    if (isSel && !isDrawingMode) {
+                                        LayerTransformHandles(
+                                            clipId = clip.id,
+                                            scale = matteTransform.scale,
+                                            rotation = matteTransform.rotation,
+                                            positionX = matteTransform.x,
+                                            positionY = matteTransform.y,
+                                            onPositionChanged = { x, y ->
+                                                onBrushPositionChanged(clip.id, x, y)
+                                            },
+                                            onGestureStart = onGroupGestureStart,
+                                            onGestureEnd = onGroupGestureEnd,
+                                            onTransformChanged = { s, r ->
+                                                onBrushTransformChanged(clip.id, s, r)
+                                            },
+                                            onDelete = { onDeleteLayer(clip.id) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ─── TEXT ───
+                    clip.isTextClip -> {
+                        val st = clip.textState ?: return@forEach
+                        val textLocalSec = ((currentPosMs - clip.timelineStartMs) / 1000f)
+                            .coerceAtLeast(0f)
+                        MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
+                            RenderAdvancedEffects(clip, textLocalSec) {
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    InteractiveTextOverlay(
+                                        clip = clip,
+                                        textState = st,
+                                        canvasW = canvasW,
+                                        canvasH = canvasH,
+                                        currentPosMs = currentPosMs,
+                                        isSelected = clip.id == selectedClipId,
+                                        isMulti = clip.id in multiSelectedIds,
+                                        isDrawingMode = isDrawingMode,
+                                        onSelect = { onClipSelected(clip.id) },
+                                        onGroupGestureStart = onGroupGestureStart,
+                                        onGroupGestureEnd = onGroupGestureEnd,
+                                        onGroupGesture = onGroupGesture,
+                                        onPositionChanged = { x, y ->
+                                            onTextPositionChanged(clip.id, x, y)
+                                        },
+                                        onTransformChanged = { s, r ->
+                                            onTextTransformChanged(clip.id, s, r)
+                                        },
+                                        onDeleteLayer = { onDeleteLayer(clip.id) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // ─── STICKER ───
+                    clip.isStickerClip -> {
+                        val ss = clip.stickerState ?: return@forEach
+                        val stickerLocalSec = ((currentPosMs - clip.timelineStartMs) / 1000f)
+                            .coerceAtLeast(0f)
+                        MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
+                            RenderAdvancedEffects(clip, stickerLocalSec) {
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    InteractiveStickerOverlay(
+                                        clip = clip,
+                                        stickerState = ss,
+                                        canvasW = canvasW,
+                                        canvasH = canvasH,
+                                        currentPosMs = currentPosMs,
+                                        isSelected = clip.id == selectedClipId,
+                                        isMulti = clip.id in multiSelectedIds,
+                                        isDrawingMode = isDrawingMode,
+                                        onSelect = { onClipSelected(clip.id) },
+                                        onGroupGestureStart = onGroupGestureStart,
+                                        onGroupGestureEnd = onGroupGestureEnd,
+                                        onGroupGesture = onGroupGesture,
+                                        onPositionChanged = { x, y ->
+                                            onStickerPositionChanged(clip.id, x, y)
+                                        },
+                                        onTransformChanged = { s, r ->
+                                            onStickerTransformChanged(clip.id, s, r)
+                                        },
+                                        onDeleteLayer = { onDeleteLayer(clip.id) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // ─── VISUALIZER ───
+                    clip.isVisualizerClip -> {
+                        val vs = clip.visualizer ?: return@forEach
+                        val vizLocalSec = ((currentPosMs - clip.timelineStartMs) / 1000f)
+                            .coerceAtLeast(0f)
+
+                        val minDimDp = minOf(canvasW, canvasH)
+                        val radiusDp = vs.size * minDimDp
+                        val diameterDp = radiusDp * 2f
+                        val leftDp = vs.positionX * canvasW - radiusDp
+                        val topDp = vs.positionY * canvasH - radiusDp
+
+                        val isSel = clip.id == selectedClipId
+                        val isMulti = clip.id in multiSelectedIds
+
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            MaskedClipContent(
+                                mask = maskAtClipTime(clip, currentPosMs)
+                            ) {
+                                RenderAdvancedEffects(clip, vizLocalSec) {
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        VisualizerOverlay(
+                                            state = vs,
+                                            visualizerClip = clip,
+                                            allClips = clips,
+                                            currentPosMs = currentPosMs,
+                                            isPlaying = isPlaying,
+                                            enabled = true,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    }
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = leftDp.dp, y = topDp.dp)
+                                    .size(diameterDp.dp)
+                                    .then(
+                                        if (isSel || isMulti) Modifier.border(
+                                            width = if (isSel) 2.dp else 1.dp,
+                                            color = if (isSel) Color(0xFF60EFFF)
+                                            else Color(0xFFFFD166),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) else Modifier
+                                    )
+                                    .pointerInput(
+                                        clip.id, isSel, isMulti, canvasW, canvasH, isDrawingMode
+                                    ) {
+                                        if (isDrawingMode) return@pointerInput
+                                        awaitEachGesture {
+                                            awaitFirstDown(requireUnconsumed = true)
+                                            onGroupGestureStart()
+
+                                            val baseX = vs.positionX * 100f
+                                            val baseY = vs.positionY * 100f
+                                            val baseScale = vs.size / 0.32f * 100f
+                                            val baseRot = vs.rotation
+                                            var accumPanX = 0f
+                                            var accumPanY = 0f
+                                            var accumZoom = 1f
+                                            var accumRot = 0f
+                                            var lastDist = 0f
+                                            var lastAngle = 0f
+                                            var hasMulti = false
+
+                                            if (!isSel && !isMulti) onClipSelected(clip.id)
+
+                                            var continueGesture = true
+                                            while (continueGesture) {
+                                                val event = awaitPointerEvent()
+                                                val pressed = event.changes.filter { it.pressed }
+                                                if (pressed.isEmpty()) {
+                                                    continueGesture = false
+                                                } else {
+                                                    if (pressed.size == 1) {
+                                                        val ch = pressed.first()
+                                                        val pan = ch.position - ch.previousPosition
+                                                        accumPanX += pan.x
+                                                        accumPanY += pan.y
+                                                        ch.consume()
+                                                    } else if (pressed.size >= 2) {
+                                                        val c1 = pressed[0]
+                                                        val c2 = pressed[1]
+                                                        val d = c1.position - c2.position
+                                                        val dist =
+                                                            kotlin.math.sqrt(d.x * d.x + d.y * d.y)
+                                                        val angle = kotlin.math.atan2(d.y, d.x)
+                                                        if (hasMulti && lastDist > 1f) {
+                                                            accumZoom *= dist / lastDist
+                                                            accumRot += Math.toDegrees(
+                                                                normalizeAngle(angle - lastAngle)
+                                                                    .toDouble()
+                                                            ).toFloat()
+                                                        }
+                                                        lastDist = dist
+                                                        lastAngle = angle
+                                                        hasMulti = true
+                                                        c1.consume()
+                                                        c2.consume()
+                                                    }
+                                                    val newX = (baseX + accumPanX /
+                                                            size.width * 100f).coerceIn(0f, 100f)
+                                                    val newY = (baseY + accumPanY /
+                                                            size.height * 100f).coerceIn(0f, 100f)
+                                                    val newScale = (baseScale * accumZoom)
+                                                        .coerceIn(10f, 500f)
+                                                    val newRot = baseRot + accumRot
+
+                                                    if (isMulti) {
+                                                        onGroupGesture(
+                                                            clip.id, newX, newY,
+                                                            newScale, newRot
+                                                        )
+                                                    } else {
+                                                        onVisualizerPositionChanged(
+                                                            clip.id, newX, newY
+                                                        )
+                                                        onVisualizerTransformChanged(
+                                                            clip.id, newScale, newRot
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            onGroupGestureEnd()
+                                        }
+                                    }
+                                    .pointerInput(clip.id, isMulti, isDrawingMode) {
+                                        if (isDrawingMode) return@pointerInput
+                                        detectTapGestures {
+                                            if (!isMulti) onClipSelected(clip.id)
+                                        }
+                                    }
+                            ) {
+                                if (isSel && !isDrawingMode) {
+                                    LayerTransformHandles(
+                                        clipId = clip.id,
+                                        scale = (vs.size / 0.32f) * 100f,
+                                        rotation = vs.rotation,
+                                        positionX = vs.positionX * 100f,
+                                        positionY = vs.positionY * 100f,
+                                        onPositionChanged = { x, y ->
+                                            onVisualizerPositionChanged(clip.id, x, y)
+                                        },
+                                        onGestureStart = onGroupGestureStart,
+                                        onGestureEnd = onGroupGestureEnd,
+                                        onTransformChanged = { scale, rotation ->
+                                            onVisualizerTransformChanged(
+                                                clip.id, scale, rotation
+                                            )
+                                        },
+                                        onDelete = { onDeleteLayer(clip.id) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+
+                    // ─── BRUSH ───
+                    clip.isBrushClip -> {
+                        val brushLocalSec =
+                            ((currentPosMs - clip.timelineStartMs) / 1000f)
+                                .coerceAtLeast(0f)
+                        val brushTransform =
+                            TransformApplier.resolveLive(clip, brushLocalSec)
+
+                        val isSelected = clip.id == selectedClipId
+                        val isMulti = clip.id in multiSelectedIds
+                        val borderColor = when {
+                            isSelected -> Color(0xFF60EFFF)
+                            isMulti -> Color(0xFFFFD166)
+                            else -> Color.Transparent
+                        }
+
+                        if (clip.brush.strokes.isEmpty()) {
+                            if (isDrawingMode && clip.id == selectedClipId) {
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .graphicsLayer { alpha = 0.55f }
+                                        .border(
+                                            width = 2.dp,
+                                            color = Color(0xFF7C3AED),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    androidx.compose.foundation.layout.Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = androidx.compose.foundation
+                                            .layout.Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text("✏️", fontSize = 32.sp)
+                                        Text(
+                                            "Draw here",
+                                            color = Color(0xFF7C3AED),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            "Drag your finger to draw a stroke",
+                                            color = Color(0xFFAAAAAA),
+                                            fontSize = 10.sp
+                                        )
+                                    }
+                                }
+                            }
+                            return@forEach
+                        }
+
+                        MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
+                            RenderAdvancedEffects(clip, brushLocalSec) {
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .graphicsLayer {
+                                            val w = size.width
+                                            val h = size.height
+                                            translationX =
+                                                (brushTransform.x - 50f) / 100f * w +
+                                                        combinedMotion.tx
+                                            translationY =
+                                                (brushTransform.y - 50f) / 100f * h +
+                                                        combinedMotion.ty
+                                            scaleX = (brushTransform.scale / 100f) *
+                                                    combinedMotion.scale
+                                            scaleY = (brushTransform.scale / 100f) *
+                                                    combinedMotion.scale
+                                            rotationZ = brushTransform.rotation +
+                                                    combinedMotion.rotation
+                                            alpha = opacityAlpha
+                                            transformOrigin = TransformOrigin(
+                                                pivotFractionX =
+                                                    brushTransform.anchorX / 100f,
+                                                pivotFractionY =
+                                                    brushTransform.anchorY / 100f
+                                            )
+                                        }
+                                        .then(
+                                            if (isSelected || isMulti) Modifier.border(
+                                                width = if (isSelected) 1.5.dp else 1.dp,
+                                                color = borderColor,
+                                                shape = RoundedCornerShape(4.dp)
+                                            ) else Modifier
+                                        )
+                                        .pointerInput(
+                                            clip.id, isSelected, isMulti, isDrawingMode
+                                        ) {
+                                            if (isDrawingMode) return@pointerInput
+                                            awaitEachGesture {
+                                                awaitFirstDown(requireUnconsumed = true)
+                                                onGroupGestureStart()
+
+                                                val baseX = brushTransform.x
+                                                val baseY = brushTransform.y
+                                                val baseScale = brushTransform.scale
+                                                val baseRot = brushTransform.rotation
+                                                var accumPanX = 0f
+                                                var accumPanY = 0f
+                                                var accumZoom = 1f
+                                                var accumRot = 0f
+                                                var lastDist = 0f
+                                                var lastAngle = 0f
+                                                var hasMulti = false
+
+                                                if (!isSelected && !isMulti) onClipSelected(clip.id)
+
+                                                var continueGesture = true
+                                                while (continueGesture) {
+                                                    val event = awaitPointerEvent()
+                                                    val pressed =
+                                                        event.changes.filter { it.pressed }
+                                                    if (pressed.isEmpty()) {
+                                                        continueGesture = false
+                                                    } else {
+                                                        if (pressed.size == 1) {
+                                                            val ch = pressed.first()
+                                                            val pan =
+                                                                ch.position - ch.previousPosition
+                                                            accumPanX += pan.x
+                                                            accumPanY += pan.y
+                                                            ch.consume()
+                                                        } else if (pressed.size >= 2) {
+                                                            val c1 = pressed[0]
+                                                            val c2 = pressed[1]
+                                                            val d = c1.position - c2.position
+                                                            val dist =
+                                                                kotlin.math.sqrt(d.x * d.x + d.y * d.y)
+                                                            val angle = kotlin.math.atan2(d.y, d.x)
+                                                            if (hasMulti && lastDist > 1f) {
+                                                                accumZoom *= dist / lastDist
+                                                                accumRot += Math.toDegrees(
+                                                                    normalizeAngle(angle - lastAngle)
+                                                                        .toDouble()
+                                                                ).toFloat()
+                                                            }
+                                                            lastDist = dist
+                                                            lastAngle = angle
+                                                            hasMulti = true
+                                                            c1.consume()
+                                                            c2.consume()
+                                                        }
+                                                        val newX =
+                                                            (baseX + accumPanX / size.width * 100f)
+                                                                .coerceIn(0f, 100f)
+                                                        val newY =
+                                                            (baseY + accumPanY / size.height * 100f)
+                                                                .coerceIn(0f, 100f)
+                                                        val newScale = (baseScale * accumZoom)
+                                                            .coerceIn(10f, 500f)
+                                                        val newRot = baseRot + accumRot
+
+                                                        if (isMulti) {
+                                                            onGroupGesture(
+                                                                clip.id, newX, newY,
+                                                                newScale, newRot
+                                                            )
+                                                        } else {
+                                                            onBrushPositionChanged(
+                                                                clip.id, newX, newY
+                                                            )
+                                                            onBrushTransformChanged(
+                                                                clip.id, newScale, newRot
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                                onGroupGestureEnd()
+                                            }
+                                        }
+                                        .pointerInput(clip.id, isMulti, isDrawingMode) {
+                                            if (isDrawingMode) return@pointerInput
+                                            detectTapGestures {
+                                                if (!isMulti) onClipSelected(clip.id)
+                                            }
+                                        }
+                                ) {
+                                    Canvas(modifier = Modifier.fillMaxSize()) {
+                                        clip.brush.strokes.forEach { stroke ->
+                                            BrushEngine.drawStroke(
+                                                scope = this,
+                                                stroke = stroke,
+                                                viewW = size.width,
+                                                viewH = size.height,
+                                                currentTimeMs =
+                                                    (currentPosMs - clip.timelineStartMs)
+                                                        .coerceAtLeast(0L)
+                                            )
+                                        }
+                                    }
+                                    if (isSelected && !isDrawingMode) {
+                                        LayerTransformHandles(
+                                            clipId = clip.id,
+                                            scale = brushTransform.scale,
+                                            rotation = brushTransform.rotation,
+                                            positionX = brushTransform.x,
+                                            positionY = brushTransform.y,
+                                            onPositionChanged = { x, y ->
+                                                onBrushPositionChanged(clip.id, x, y)
+                                            },
+                                            onGestureStart = onGroupGestureStart,
+                                            onGestureEnd = onGroupGestureEnd,
+                                            onTransformChanged = { scale, rotation ->
+                                                onBrushTransformChanged(
+                                                    clip.id, scale, rotation
+                                                )
+                                            },
+                                            onDelete = { onDeleteLayer(clip.id) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (allOverlays.isNotEmpty()) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    allOverlays.forEach { ov -> OverlayEngine.draw(this, timeSec, ov) }
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════
+            //  🆕 EDGE GLOW — render glowing border around canvas
+            // ═══════════════════════════════════════════════════════
+            val activeEdgeGlows = clips
+                .filter { c ->
+                    c.isEffectClip &&
+                            c.trackIndex > videoTrackIdx &&
+                            currentPosMs >= c.timelineStartMs &&
+                            currentPosMs < c.timelineEndMs &&
+                            c.effectState?.edgeGlow != null
+                }
+                .sortedBy { it.trackIndex }
+                .mapNotNull { it.effectState?.edgeGlow }
+
+            val previewEdgeGlow = previewEffectState?.edgeGlow
+            val allEdgeGlows = if (previewEdgeGlow != null)
+                activeEdgeGlows + previewEdgeGlow
+            else activeEdgeGlows
+
+            if (allEdgeGlows.isNotEmpty()) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    allEdgeGlows.forEach { glow ->
+                        try {
+                            val frame = EffectsEngine.computeEdgeGlow(glow, timeSec)
+                            val intensity = (glow.intensity / 100f) * frame.intensityMul
+                            val alpha = (intensity * frame.alpha).coerceIn(0f, 1f)
+                            if (alpha < 0.02f) return@forEach
+
+                            val baseColor = frame.color
+                            val thickness = (glow.radius * frame.radiusMul)
+                                .coerceIn(4f, minOf(size.width, size.height) * 0.45f)
+                            val ox = frame.offsetX
+                            val oy = frame.offsetY
+
+                            // Top edge
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(
+                                        baseColor.copy(alpha = alpha),
+                                        Color.Transparent
+                                    ),
+                                    startY = 0f,
+                                    endY = thickness
+                                ),
+                                topLeft = Offset(ox, oy),
+                                size = Size(size.width, thickness)
+                            )
+                            // Bottom edge
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color.Transparent,
+                                        baseColor.copy(alpha = alpha)
+                                    ),
+                                    startY = size.height - thickness,
+                                    endY = size.height
+                                ),
+                                topLeft = Offset(ox, size.height - thickness + oy),
+                                size = Size(size.width, thickness)
+                            )
+                            // Left edge
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    colors = listOf(
+                                        baseColor.copy(alpha = alpha),
+                                        Color.Transparent
+                                    ),
+                                    startX = 0f,
+                                    endX = thickness
+                                ),
+                                topLeft = Offset(ox, oy),
+                                size = Size(thickness, size.height)
+                            )
+                            // Right edge
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    colors = listOf(
+                                        Color.Transparent,
+                                        baseColor.copy(alpha = alpha)
+                                    ),
+                                    startX = size.width - thickness,
+                                    endX = size.width
+                                ),
+                                topLeft = Offset(size.width - thickness + ox, oy),
+                                size = Size(thickness, size.height)
+                            )
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            }
+            // 🆕 LIGHT LEAKS — from effect state above video
+            val activeLightLeaks = clips
+                .filter { c ->
+                    c.isEffectClip &&
+                            c.trackIndex > videoTrackIdx &&
+                            currentPosMs >= c.timelineStartMs &&
+                            currentPosMs < c.timelineEndMs &&
+                            c.effectState?.lightLeak != null
+                }
+                .sortedBy { it.trackIndex }
+                .mapNotNull { it.effectState?.lightLeak }
+
+            val previewLightLeak = previewEffectState?.lightLeak
+            val allLightLeaks = if (previewLightLeak != null)
+                activeLightLeaks + previewLightLeak
+            else activeLightLeaks
+
+            if (allLightLeaks.isNotEmpty()) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    allLightLeaks.forEach { leak ->
+                        try {
+                            val frame = com.moody.moodyvideoeditor.utils
+                                .LightLeakEngine.computeFrame(leak, timeSec)
+                            val intensity = (leak.intensity / 100f) * frame.intensityMul
+                            val alpha = (intensity * frame.alpha * 0.85f)
+                                .coerceIn(0f, 1f)
+                            if (alpha < 0.02f) return@forEach
+
+                            val cx = frame.posX * size.width
+                            val cy = frame.posY * size.height
+                            val maxDim = maxOf(size.width, size.height)
+                            val r = frame.radius * maxDim
+
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    colors = listOf(
+                                        frame.color1.copy(alpha = alpha),
+                                        frame.color2.copy(alpha = alpha * 0.5f),
+                                        Color.Transparent
+                                    ),
+                                    center = Offset(cx, cy),
+                                    radius = r
+                                ),
+                                radius = r,
+                                center = Offset(cx, cy),
+                                blendMode = BlendMode.Screen
+                            )
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            }
+            activeAdjustment?.let { adj ->
+                if (adj.vignette > 0f) {
+                    val alpha = (adj.vignette / 100f).coerceIn(0f, 1f)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.radialGradient(
+                                    colors = listOf(
+                                        Color.Transparent,
+                                        Color.Black.copy(alpha = alpha * 0.9f)
+                                    ),
+                                    radius = 800f
+                                )
+                            )
+                    )
+                }
+            }
+
+            if (activeTransitionClip != null && outgoingBitmap != null) {
+                val ts = activeTransitionClip.transition!!
+                val progress = (
+                        (currentPosMs - activeTransitionClip.timelineStartMs).toFloat() /
+                                ts.durationMs.coerceAtLeast(1L)
+                        ).coerceIn(0f, 1f)
+                TransitionRenderer.Render(outgoingBitmap!!, ts.key, progress)
+            }
+
+            if ((isMaskPenMode || isMaskHandMode) && selectedClip != null) {
+                MaskPenOverlay(
+                    maskState = maskToRender ?: MaskState(type = MaskType.CUSTOM),
+                    canvasW = canvasW,
+                    canvasH = canvasH,
+                    isHandMode = isMaskHandMode,
+                    onGestureStart = onMaskGestureStart,
+                    onGestureEnd = onMaskGestureEnd,
+                    onTapAddPoint = onMaskPointAdd,
+                    onAnchorMove = onMaskAnchorMove,
+                    onHandleMove = onMaskHandleMove,
+                    onTogglePoint = onMaskPointToggle,
+                    onDeletePoint = onMaskPointDelete,
+                    onClosePath = onClosePath,
+                    onMaskMove = onMaskMove,
+                    onMaskStateChanged = onMaskStateChanged
                 )
             }
-            if (f.contrast != 100f) {
-                eqParts.add("contrast=${(f.contrast / 100f).coerceIn(0f, 2f)}")
-            }
-            if (f.saturation != 100f) {
-                eqParts.add("saturation=${(f.saturation / 100f).coerceIn(0f, 3f)}")
-            }
-            if (eqParts.isNotEmpty()) filters.add("eq=${eqParts.joinToString(":")}")
-        }
-        if (f.hue != 0f) filters.add("hue=h=${f.hue}")
-        if (f.grayscale > 0f) filters.add("format=gray")
-        if (f.invert > 0f) filters.add("negate")
 
-        val adj = clip.adjustments
-        if (!adj.isDefault) {
-            val adjFilter = FFmpegFilters.build(adj)
-            if (adjFilter.isNotBlank()) filters.add(adjFilter)
-        }
-        if (clip.colorWheel.hasAnyChange) {
-            filters.add(buildColorWheelFilter(clip.colorWheel))
-        }
+            if (isDrawingMode && !isMaskPenMode && !isMaskHandMode) {
+                val brushClip = clips.firstOrNull {
+                    it.isBrushClip &&
+                            currentPosMs >= it.timelineStartMs &&
+                            currentPosMs < it.timelineEndMs
+                } ?: clips.lastOrNull { it.isBrushClip }
 
-        val colorWheelLayers = allClips.filter { wheel ->
-            wheel.isAdjustmentClip &&
-                    wheel.trackIndex > clip.trackIndex &&
-                    wheel.colorWheel.hasAnyChange &&
-                    wheel.timelineEndMs > clip.timelineStartMs &&
-                    wheel.timelineStartMs < clip.timelineEndMs
-        }.sortedBy { it.trackIndex }
-        colorWheelLayers.forEach { wheel ->
-            val startSec = (
-                    (wheel.timelineStartMs - clip.timelineStartMs)
-                        .coerceAtLeast(0L) / 1000.0
-                    ) / clip.speed.coerceAtLeast(0.01f)
-            val endSec = (
-                    (wheel.timelineEndMs - clip.timelineStartMs)
-                        .coerceAtLeast(0L) / 1000.0
-                    ) / clip.speed.coerceAtLeast(0.01f)
-            filters.add(buildColorWheelFilter(wheel.colorWheel, startSec, endSec))
-        }
-
-        val chroma = clip.chroma
-        if (chroma != null && chroma.isActive) {
-            try {
-                val cf = ChromaEngine.buildFfmpegFilter(chroma)
-                if (cf.isNotBlank()) filters.add(cf)
-            } catch (_: Throwable) {
+                if (brushClip != null) {
+                    BrushDrawLayer(
+                        brushType = activeBrushType,
+                        brushColor = activeBrushColor,
+                        brushWidth = activeBrushWidth,
+                        brushOpacity = activeBrushOpacity,
+                        clipStartMs = brushClip.timelineStartMs,
+                        clipEndMs = brushClip.timelineEndMs,
+                        currentPosMs = currentPosMs,
+                        onStrokeComplete = onBrushStrokeComplete
+                    )
+                }
             }
         }
 
-        return filters
+        if (sideBar > 0.5f) {
+            Box(
+                modifier = Modifier
+                    .width(sideBar.dp)
+                    .fillMaxHeight()
+                    .align(Alignment.CenterStart)
+                    .background(Color.Black)
+            )
+            Box(
+                modifier = Modifier
+                    .width(sideBar.dp)
+                    .fillMaxHeight()
+                    .align(Alignment.CenterEnd)
+                    .background(Color.Black)
+            )
+        }
+        if (topBar > 0.5f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(topBar.dp)
+                    .align(Alignment.TopCenter)
+                    .background(Color.Black)
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(topBar.dp)
+                    .align(Alignment.BottomCenter)
+                    .background(Color.Black)
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .width(canvasW.dp)
+                .height(canvasH.dp)
+                .align(Alignment.Center)
+                .border(
+                    width = 1.dp,
+                    color = Color.White.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(2.dp)
+                )
+        )
     }
+}
 
-    @Synchronized
-    private fun ensureColorWheelLut(state: ColorWheelState): File {
-        val key = MessageDigest.getInstance("SHA-256")
-            .digest(state.toString().toByteArray(Charsets.UTF_8))
-            .take(12)
-            .joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
-        val previewVersion = if (Build.VERSION.SDK_INT >= 33) "exact" else "matrix"
-        val file = File(context.cacheDir, "color-wheel-v33-$previewVersion-$key.cube")
-        if (file.exists() && file.length() > 0L) return file
+// ═══════════════════════════════════════════════════════════════
+//  COLOR MATTE RENDERER
+// ═══════════════════════════════════════════════════════════════
 
-        val gridSize = 33
-        val fallbackMatrix = if (Build.VERSION.SDK_INT < 33) {
-            ColorWheelEngine.buildColorMatrix(state)?.array
-        } else null
-        val contents = buildString {
-            appendLine("TITLE \"Moody Color Wheel\"")
-            appendLine("LUT_3D_SIZE $gridSize")
-            appendLine("DOMAIN_MIN 0.0 0.0 0.0")
-            appendLine("DOMAIN_MAX 1.0 1.0 1.0")
-            for (blueIndex in 0 until gridSize) {
-                for (greenIndex in 0 until gridSize) {
-                    for (redIndex in 0 until gridSize) {
-                        val red = redIndex * 255f / (gridSize - 1)
-                        val green = greenIndex * 255f / (gridSize - 1)
-                        val blue = blueIndex * 255f / (gridSize - 1)
-                        val output = if (Build.VERSION.SDK_INT >= 33) {
-                            ColorWheelEngine.applyPixel(red, green, blue, state)
-                        } else {
-                            applyColorWheelMatrix(red, green, blue, fallbackMatrix)
-                        }
-                        append(
-                            "%.6f %.6f %.6f\n".format(
-                                Locale.US,
-                                output.first / 255f,
-                                output.second / 255f,
-                                output.third / 255f
+@Composable
+private fun ColorMatteRenderer(
+    style: com.moody.moodyvideoeditor.data.ColorMatteStyle,
+    modifier: Modifier = Modifier
+) {
+    when (style.mode) {
+        ColorMatteMode.SOLID -> {
+            Box(modifier = modifier.background(Color(style.solidColor)))
+        }
+
+        ColorMatteMode.RAMP -> {
+            BoxWithConstraints(modifier = modifier) {
+                val w = constraints.maxWidth.toFloat().coerceAtLeast(1f)
+                val h = constraints.maxHeight.toFloat().coerceAtLeast(1f)
+                val rad = Math.toRadians(style.rampAngleDeg.toDouble())
+                val dx = kotlin.math.cos(rad).toFloat()
+                val dy = kotlin.math.sin(rad).toFloat()
+                val halfDiag = kotlin.math.sqrt(w * w + h * h) / 2f
+                val cx = w / 2f
+                val cy = h / 2f
+                val start = Offset(cx - dx * halfDiag, cy - dy * halfDiag)
+                val end = Offset(cx + dx * halfDiag, cy + dy * halfDiag)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    Color(style.rampColor1),
+                                    Color(style.rampColor2)
+                                ),
+                                start = start,
+                                end = end
                             )
                         )
+                )
+            }
+        }
+
+        ColorMatteMode.FOUR_COLOR -> {
+            BoxWithConstraints(modifier = modifier) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val W = size.width
+                    val H = size.height
+                    val tlR = ((style.topLeft shr 16) and 0xFF) / 255f
+                    val tlG = ((style.topLeft shr 8) and 0xFF) / 255f
+                    val tlB = (style.topLeft and 0xFF) / 255f
+                    val trR = ((style.topRight shr 16) and 0xFF) / 255f
+                    val trG = ((style.topRight shr 8) and 0xFF) / 255f
+                    val trB = (style.topRight and 0xFF) / 255f
+                    val blR = ((style.bottomLeft shr 16) and 0xFF) / 255f
+                    val blG = ((style.bottomLeft shr 8) and 0xFF) / 255f
+                    val blB = (style.bottomLeft and 0xFF) / 255f
+                    val brR = ((style.bottomRight shr 16) and 0xFF) / 255f
+                    val brG = ((style.bottomRight shr 8) and 0xFF) / 255f
+                    val brB = (style.bottomRight and 0xFF) / 255f
+
+                    val stepX = (W / 128f).coerceAtLeast(1f)
+                    val stepY = (H / 128f).coerceAtLeast(1f)
+                    var y = 0f
+                    while (y < H) {
+                        var x = 0f
+                        while (x < W) {
+                            val fx = (x / W).coerceIn(0f, 1f)
+                            val fy = (y / H).coerceIn(0f, 1f)
+                            val wTL = (1f - fx) * (1f - fy)
+                            val wTR = fx * (1f - fy)
+                            val wBL = (1f - fx) * fy
+                            val wBR = fx * fy
+                            val r = (tlR * wTL + trR * wTR + blR * wBL + brR * wBR)
+                                .coerceIn(0f, 1f)
+                            val g = (tlG * wTL + trG * wTR + blG * wBL + brG * wBR)
+                                .coerceIn(0f, 1f)
+                            val b = (tlB * wTL + trB * wTR + blB * wBL + brB * wBR)
+                                .coerceIn(0f, 1f)
+                            drawRect(
+                                color = Color(r, g, b, 1f),
+                                topLeft = Offset(x, y),
+                                size = Size(stepX, stepY)
+                            )
+                            x += stepX
+                        }
+                        y += stepY
                     }
                 }
             }
         }
-        file.writeText(contents)
-        return file
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MASKED CLIP CONTENT WRAPPER
+// ═══════════════════════════════════════════════════════════════
+
+private fun maskAtClipTime(clip: EditorClip, currentPosMs: Long): MaskState {
+    val localTimeSec = ((currentPosMs - clip.timelineStartMs).coerceAtLeast(0L)) / 1000f
+    return MaskEngine.sampleAt(clip.mask, localTimeSec)
+}
+
+@Composable
+private fun MaskedClipContent(
+    mask: MaskState,
+    content: @Composable BoxScope.() -> Unit
+) {
+    val shouldMask = mask.isActive && (
+            mask.type != MaskType.CUSTOM ||
+                    (mask.customPoints.size >= 3 && mask.customClosed)
+            )
+
+    if (!shouldMask) {
+        Box(modifier = Modifier.fillMaxSize(), content = content)
+        return
     }
 
-    private fun applyColorWheelMatrix(
-        red: Float,
-        green: Float,
-        blue: Float,
-        values: FloatArray?
-    ): Triple<Float, Float, Float> {
-        if (values == null) return Triple(red, green, blue)
-        return Triple(
-            (values[0] * red + values[1] * green + values[2] * blue + values[4])
-                .coerceIn(0f, 255f),
-            (values[5] * red + values[6] * green + values[7] * blue + values[9])
-                .coerceIn(0f, 255f),
-            (values[10] * red + values[11] * green + values[12] * blue + values[14])
-                .coerceIn(0f, 255f)
-        )
-    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                compositingStrategy = CompositingStrategy.Offscreen
+            }
+            .drawWithContent {
+                drawContent()
+                drawMaskBlend(mask, size.width, size.height)
+            },
+        content = content
+    )
+}
 
-    private fun buildColorWheelFilter(
-        state: ColorWheelState,
-        startSec: Double? = null,
-        endSec: Double? = null
-    ): String {
-        val lutPath = ensureColorWheelLut(state).absolutePath
-            .replace("\\", "\\\\")
-            .replace("'", "\\'")
-        val enable = if (startSec != null && endSec != null) {
-            ":enable='between(t,${"%.4f".format(Locale.US, startSec)}," +
-                    "${"%.4f".format(Locale.US, endSec)})'"
-        } else ""
-        return "lut3d=file='$lutPath':interp=tetrahedral$enable"
-    }
+private fun DrawScope.drawMaskBlend(mask: MaskState, w: Float, h: Float) {
+    val path = buildMaskPathCompose(mask, w, h) ?: return
+    drawIntoCanvas { canvas ->
+        val nativeCanvas = canvas.nativeCanvas
+        val featherPx = kotlin.math.abs(mask.feather / 100f * minOf(w, h) / 9f)
+        val alphaInt = (mask.opacity / 100f * 255).toInt().coerceIn(0, 255)
 
-    // ═══════════════════════════════════════════════════════════
-    //  AUDIO EFFECT LAYERS
-    // ═══════════════════════════════════════════════════════════
-
-    private fun applyAudioEffectLayers(
-        filterParts: MutableList<String>,
-        allClips: List<EditorClip>,
-        rangeStartMs: Long,
-        baseLabel: String,
-        outLabel: String
-    ): Boolean {
-        val layers = allClips
-            .filter { it.isAudioEffectClip }
-            .sortedBy { it.timelineStartMs }
-
-        if (layers.isEmpty()) return false
-
-        val n = layers.size
-        val splitLabels = (0..n).map { "fxsplt$it" }
-
-        filterParts.add(
-            "[$baseLabel]asplit=${n + 1}" +
-                    splitLabels.joinToString("") { "[$it]" }
-        )
-
-        val baseChainParts = mutableListOf<String>()
-        layers.forEach { layer ->
-            val s = ((layer.timelineStartMs - rangeStartMs).coerceAtLeast(0L)) / 1000.0
-            val e = (layer.timelineEndMs - rangeStartMs) / 1000.0
-            if (e - s < 0.02) return@forEach
-            baseChainParts.add(
-                "volume=enable='between(t,%.3f,%.3f)':volume=0".format(s, e)
+        if (featherPx > 0.5f) {
+            val paint = Paint().apply {
+                isAntiAlias = true
+                style = Paint.Style.FILL
+                color = android.graphics.Color.WHITE
+                alpha = alphaInt
+                xfermode = PorterDuffXfermode(
+                    if (mask.isInverted) PorterDuff.Mode.DST_OUT
+                    else PorterDuff.Mode.DST_IN
+                )
+                maskFilter = BlurMaskFilter(featherPx, BlurMaskFilter.Blur.NORMAL)
+            }
+            nativeCanvas.drawPath(path.asAndroidPath(), paint)
+            paint.reset()
+        } else {
+            drawPath(
+                path = path,
+                color = Color.White.copy(alpha = alphaInt / 255f),
+                blendMode = if (mask.isInverted) BlendMode.DstOut else BlendMode.DstIn
             )
-        }
-        val baseChain = if (baseChainParts.isEmpty()) "anull"
-        else baseChainParts.joinToString(",")
-        filterParts.add("[${splitLabels[0]}]$baseChain[fxn0]")
-
-        layers.forEachIndexed { i, layer ->
-            val s = ((layer.timelineStartMs - rangeStartMs).coerceAtLeast(0L)) / 1000.0
-            val e = (layer.timelineEndMs - rangeStartMs) / 1000.0
-            if (e - s < 0.02) {
-                filterParts.add("[${splitLabels[i + 1]}]anull[fxn${i + 1}]")
-                return@forEachIndexed
-            }
-
-            val fxKey = if (layer.isAudioFxClip) layer.audioFx else layer.soundFx
-            val intensity = if (layer.isAudioFxClip) layer.audioFxIntensity
-            else layer.soundFxIntensity
-
-            val gate = "volume=enable='not(between(t,%.3f,%.3f))':volume=0"
-                .format(s, e)
-            val fxFilter = AudioEngine.buildAudioFilter(fxKey, intensity)
-
-            val chain = if (fxFilter.isNotBlank()) "$gate,$fxFilter" else gate
-            filterParts.add("[${splitLabels[i + 1]}]$chain[fxn${i + 1}]")
-        }
-
-        val mixInputs = (0..n).joinToString("") { "[fxn$it]" }
-        filterParts.add(
-            "${mixInputs}amix=inputs=${n + 1}:duration=longest[$outLabel]"
-        )
-        return true
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  MOTION → FFMPEG
-    // ═══════════════════════════════════════════════════════════
-
-    private fun motionToFfmpeg(m: MotionConfig): String {
-        val I = (m.intensity / 100f).coerceIn(0.1f, 3.0f)
-        val S = m.speed.coerceIn(0.2f, 10f)
-        val PI = "3.141592653589793"
-
-        return when (m.type) {
-            "shake" -> {
-                val ampX = (6f * I).toInt().coerceAtLeast(2)
-                val ampY = (6f * I).toInt().coerceAtLeast(2)
-                "crop=iw-$ampX:ih-$ampY:" +
-                        "'(iw-ow)/2+$ampX*sin($S*t*37)':" +
-                        "'(ih-oh)/2+$ampY*cos($S*t*41)'"
-            }
-
-            "bounce" -> {
-                val amp = 0.12f * I
-                "scale=iw*(1+$amp*abs(sin($S*t*4))):" +
-                        "ih*(1+$amp*abs(sin($S*t*4))):eval=frame"
-            }
-
-            "pulse" -> {
-                val amp = 0.08f * I
-                "scale=iw*(1+$amp*sin($S*t*3)):" +
-                        "ih*(1+$amp*sin($S*t*3)):eval=frame"
-            }
-
-            "zoomPulse" -> {
-                val amp = 0.35f * I
-                "scale=iw*(1+$amp*0.5*(1+sin($S*t*2))):" +
-                        "ih*(1+$amp*0.5*(1+sin($S*t*2))):eval=frame"
-            }
-
-            "rotate" -> {
-                val amp = 0.05f * I
-                "rotate=$S*t*$amp*sin($S*t*2)*$PI/180:c=none:ow=iw:oh=ih"
-            }
-
-            "glitch" -> {
-                "noise=alls=${(20 * I).toInt().coerceIn(5, 80)}:allf=t+u"
-            }
-
-            else -> ""
         }
     }
+}
 
-    // ═══════════════════════════════════════════════════════════
-    //  COLOR FILTER VALUES → FFMPEG
-    // ═══════════════════════════════════════════════════════════
+private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
+    if (mask.type == MaskType.NONE) return null
+    val cx = mask.centerX * w
+    val cy = mask.centerY * h
+    val rad = Math.toRadians(mask.rotation.toDouble())
+    val cosR = kotlin.math.cos(rad).toFloat()
+    val sinR = kotlin.math.sin(rad).toFloat()
 
-    private fun colorFilterValuesToFfmpeg(cf: ColorFilterValues): String {
-        val parts = mutableListOf<String>()
-
-        if (cf.brightness != 100f) {
-            val m = String.format(
-                Locale.US, "%.4f", (cf.brightness / 100f).coerceIn(0f, 3f)
-            )
-            parts.add("lutrgb=r='val*$m':g='val*$m':b='val*$m'")
-        }
-
-        if (cf.contrast != 100f) {
-            val c = String.format(
-                Locale.US, "%.4f", (cf.contrast / 100f).coerceIn(0f, 3f)
-            )
-            parts.add("eq=contrast=$c")
-        }
-
-        if (cf.saturation != 100f) {
-            val s = String.format(
-                Locale.US, "%.4f", (cf.saturation / 100f).coerceIn(0f, 3f)
-            )
-            parts.add("eq=saturation=$s")
-        }
-
-        if (cf.hue != 0f) {
-            parts.add("hue=h=${cf.hue}")
-        }
-
-        if (cf.grayscale > 0f) {
-            val s = String.format(
-                Locale.US, "%.4f", (1f - (cf.grayscale / 100f).coerceIn(0f, 1f))
-            )
-            parts.add("eq=saturation=$s")
-        }
-
-        if (cf.sepia > 0f) {
-            val a = (cf.sepia / 100f).coerceIn(0f, 1f)
-            val sr = 0.393f
-            val sg = 0.769f
-            val sb = 0.189f
-            val mr = 0.349f
-            val mg = 0.686f
-            val mb = 0.168f
-            val hr = 0.272f
-            val hg = 0.534f
-            val hb = 0.131f
-            val rr = (1f - a) + a * sr
-            val rg = a * sg
-            val rb = a * sb
-            val gr = a * mr
-            val gg = (1f - a) + a * mg
-            val gb = a * mb
-            val br = a * hr
-            val bg = a * hg
-            val bb = (1f - a) + a * hb
-            val f = Locale.US
-            parts.add(
-                "colorchannelmixer=" +
-                        "rr=${"%.4f".format(f, rr)}:" +
-                        "rg=${"%.4f".format(f, rg)}:" +
-                        "rb=${"%.4f".format(f, rb)}:ra=0:" +
-                        "gr=${"%.4f".format(f, gr)}:" +
-                        "gg=${"%.4f".format(f, gg)}:" +
-                        "gb=${"%.4f".format(f, gb)}:ga=0:" +
-                        "br=${"%.4f".format(f, br)}:" +
-                        "bg=${"%.4f".format(f, bg)}:" +
-                        "bb=${"%.4f".format(f, bb)}:ba=0"
-            )
-        }
-        if (cf.invert > 0f) {
-            parts.add("negate")
-        }
-
-        return parts.joinToString(",")
+    fun rp(px: Float, py: Float): Pair<Float, Float> {
+        if (mask.rotation == 0f) return px to py
+        val dx = px - cx
+        val dy = py - cy
+        return (cx + dx * cosR - dy * sinR) to (cy + dx * sinR + dy * cosR)
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  EXECUTE FFMPEG SESSION
-    // ═══════════════════════════════════════════════════════════
+    return Path().apply {
+        when (mask.type) {
+            MaskType.CIRCLE -> {
+                val minDimension = minOf(w, h)
+                val r = (mask.radius * minDimension +
+                        mask.expansion / 100f * minDimension).coerceAtLeast(0f)
+                addOval(Rect(cx - r, cy - r, cx + r, cy + r))
+            }
 
-    private fun execute(args: List<String>, outputFile: File) {
-        try {
-            val argsArray = args.toTypedArray()
-            Log.e("FFMPEG_ARGS", "========================================")
-            Log.e("FFMPEG_ARGS", "FULL COMMAND:")
-            Log.e("FFMPEG_ARGS", argsArray.joinToString(" "))
-            Log.e("FFMPEG_ARGS", "========================================")
+            MaskType.RECTANGLE -> {
+                val expansionPx = mask.expansion / 100f * minOf(w, h)
+                val hw = (mask.width * w / 2f + expansionPx).coerceAtLeast(0f)
+                val hh = (mask.height * h / 2f + expansionPx).coerceAtLeast(0f)
+                val c1 = rp(cx - hw, cy - hh)
+                val c2 = rp(cx + hw, cy - hh)
+                val c3 = rp(cx + hw, cy + hh)
+                val c4 = rp(cx - hw, cy + hh)
+                moveTo(c1.first, c1.second)
+                lineTo(c2.first, c2.second)
+                lineTo(c3.first, c3.second)
+                lineTo(c4.first, c4.second)
+                close()
+            }
 
-            val session = FFmpegKit.executeWithArgumentsAsync(
-                argsArray,
-                { s ->
-                    try {
-                        Log.e("FFMPEG_RESULT", "Return code: ${s.returnCode}")
+            MaskType.LINEAR -> {
+                val diag = kotlin.math.sqrt(w * w + h * h) * 1.5f
+                val lineY = mask.positionY * h - mask.expansion / 100f * minOf(w, h)
+                val px = -sinR
+                val py = cosR
+                val p1x = cx - cosR * diag
+                val p1y = lineY - sinR * diag
+                val p2x = cx + cosR * diag
+                val p2y = lineY + sinR * diag
+                val p3x = p2x + px * diag
+                val p3y = p2y + py * diag
+                val p4x = p1x + px * diag
+                val p4y = p1y + py * diag
+                moveTo(p1x, p1y)
+                lineTo(p2x, p2y)
+                lineTo(p3x, p3y)
+                lineTo(p4x, p4y)
+                close()
+            }
 
-                        if (ReturnCode.isSuccess(s.returnCode)) {
-                            xfadeFallback = null
-                            if (outputFile.exists()) {
-                                Log.e(
-                                    "FFMPEG_RESULT",
-                                    "SUCCESS: ${outputFile.absolutePath} " +
-                                            "(${outputFile.length()} bytes)"
+            MaskType.HEART -> {
+                val s = (
+                        mask.scale * minOf(w, h) * 0.4f +
+                                mask.expansion / 100f * minOf(w, h)
+                        ).coerceAtLeast(0f)
+
+                fun rp2(px: Float, py: Float) =
+                    (cx + px * cosR - py * sinR) to (cy + px * sinR + py * cosR)
+
+                val p0 = rp2(0f, 0.6f * s)
+                moveTo(p0.first, p0.second)
+                val c1 = rp2(-0.7f * s, 0.1f * s)
+                val c2 = rp2(-1.0f * s, -0.5f * s)
+                val c3 = rp2(-0.5f * s, -0.7f * s)
+                cubicTo(c1.first, c1.second, c2.first, c2.second, c3.first, c3.second)
+                val c4 = rp2(-0.15f * s, -0.85f * s)
+                val c5 = rp2(0f, -0.55f * s)
+                val c6 = rp2(0f, -0.3f * s)
+                cubicTo(c4.first, c4.second, c5.first, c5.second, c6.first, c6.second)
+                val c7 = rp2(0f, -0.55f * s)
+                val c8 = rp2(0.15f * s, -0.85f * s)
+                val c9 = rp2(0.5f * s, -0.7f * s)
+                cubicTo(c7.first, c7.second, c8.first, c8.second, c9.first, c9.second)
+                val c10 = rp2(1.0f * s, -0.5f * s)
+                val c11 = rp2(0.7f * s, 0.1f * s)
+                val c12 = rp2(0f, 0.6f * s)
+                cubicTo(c10.first, c10.second, c11.first, c11.second, c12.first, c12.second)
+                close()
+            }
+
+            MaskType.CUSTOM -> {
+                val pts = MaskEngine.expandedPoints(
+                    mask.customPoints, mask.expansion / 100f
+                )
+                if (pts.size >= 3 && mask.customClosed) {
+                    fun rp3(px: Float, py: Float): Pair<Float, Float> {
+                        val dx = px - cx
+                        val dy = py - cy
+                        return (cx + dx * cosR - dy * sinR) to
+                                (cy + dx * sinR + dy * cosR)
+                    }
+
+                    val p0 = rp3(pts[0].x * w, pts[0].y * h)
+                    moveTo(p0.first, p0.second)
+                    for (i in 1 until pts.size) {
+                        val prev = pts[i - 1]
+                        val curr = pts[i]
+                        if (prev.hasHandles || curr.hasHandles) {
+                            val c1 = rp3(prev.outX * w, prev.outY * h)
+                            val c2 = rp3(curr.inX * w, curr.inY * h)
+                            val end = rp3(curr.x * w, curr.y * h)
+                            cubicTo(
+                                c1.first, c1.second, c2.first, c2.second,
+                                end.first, end.second
+                            )
+                        } else {
+                            val end = rp3(curr.x * w, curr.y * h)
+                            lineTo(end.first, end.second)
+                        }
+                    }
+                    val last = pts.last()
+                    val first = pts.first()
+                    if (last.hasHandles || first.hasHandles) {
+                        val c1 = rp3(last.outX * w, last.outY * h)
+                        val c2 = rp3(first.inX * w, first.inY * h)
+                        val end = rp3(first.x * w, first.y * h)
+                        cubicTo(
+                            c1.first, c1.second, c2.first, c2.second,
+                            end.first, end.second
+                        )
+                    }
+                    close()
+                }
+            }
+
+            MaskType.NONE -> {}
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MASK PEN OVERLAY
+// ═══════════════════════════════════════════════════════════════
+
+@Composable
+private fun MaskPenOverlay(
+    maskState: MaskState, canvasW: Float, canvasH: Float,
+    isHandMode: Boolean,
+    onGestureStart: () -> Unit,
+    onGestureEnd: () -> Unit,
+    onTapAddPoint: (Float, Float) -> Unit,
+    onAnchorMove: (Int, Float, Float) -> Unit,
+    onHandleMove: (Int, Boolean, Float, Float) -> Unit,
+    onTogglePoint: (Int) -> Unit,
+    onDeletePoint: (Int) -> Unit,
+    onClosePath: () -> Unit,
+    onMaskMove: (Float, Float) -> Unit,
+    onMaskStateChanged: (MaskState) -> Unit
+) {
+    val density = LocalDensity.current
+    val latestMaskState by rememberUpdatedState(maskState)
+    val pts = maskState.customPoints
+    val strokeColor = Color(maskState.strokeColor)
+    val isClosed = maskState.customClosed
+
+    var viewSizePx by remember { mutableStateOf(IntSize.Zero) }
+    var selectedPointIndex by remember { mutableStateOf(-1) }
+    var draggingAnchor by remember { mutableStateOf(-1) }
+    var draggingHandle by remember { mutableStateOf<Pair<Int, Boolean>?>(null) }
+
+    val hitRadiusPx = with(density) { 22.dp.toPx() }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onSizeChanged { viewSizePx = it }
+            .pointerInput(pts.size, maskState.type, isClosed, isHandMode) {
+                awaitEachGesture {
+                    val viewW = viewSizePx.width.toFloat()
+                    val viewH = viewSizePx.height.toFloat()
+                    if (viewW <= 0f || viewH <= 0f) return@awaitEachGesture
+
+                    val down = awaitFirstDown(requireUnconsumed = false)
+
+                    if (isHandMode) {
+                        val gestureMask = latestMaskState
+                        down.consume()
+                        onGestureStart()
+                        var baseMask = gestureMask
+                        var basePoint = down.position
+                        var handle = maskHandleAt(
+                            gestureMask, down.position.x, down.position.y,
+                            viewW, viewH, hitRadiusPx
+                        )
+                        var latestMask = gestureMask
+                        var multiBaseMask: MaskState? = null
+                        var multiStartCentroid = Offset.Zero
+                        var multiStartDistance = 1f
+                        var multiStartAngle = 0f
+                        var wasMultiTouch = false
+                        var dragging = true
+                        while (dragging) {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.filter { it.pressed }
+                            if (pressed.isEmpty()) {
+                                dragging = false
+                            } else if (pressed.size >= 2) {
+                                val first = pressed[0].position
+                                val second = pressed[1].position
+                                val centroid = (first + second) / 2f
+                                val distance = kotlin.math.hypot(
+                                    second.x - first.x, second.y - first.y
+                                ).coerceAtLeast(1f)
+                                val angle = kotlin.math.atan2(
+                                    second.y - first.y, second.x - first.x
                                 )
-                                cleanupMaskSequences()
-                                onSuccess(outputFile)
-                            } else {
-                                cleanupMaskSequences()
-                                onError("Output not created")
-                            }
-                        } else if (ReturnCode.isCancel(s.returnCode)) {
-                            xfadeFallback = null
-                            cleanupMaskSequences()
-                            onError("Export cancelled")
-                        } else {
-                            val output = s.allLogsAsString ?: ""
-                            Log.e("FFMPEG_FAILED", "=== FFmpeg logs ===")
-                            Log.e("FFMPEG_FAILED", output)
-
-                            val fb = xfadeFallback
-                            if (fb != null) {
-                                xfadeFallback = null
-                                Log.e("FFMPEG_TRANS", "xfade failed, fallback to concat")
-                                try {
-                                    fb.invoke()
-                                } catch (e: Throwable) {
-                                    Log.e("FFMPEG", "Fallback crashed", e)
-                                    onError("Export failed: ${e.message}")
+                                if (multiBaseMask == null) {
+                                    multiBaseMask = latestMask
+                                    multiStartCentroid = centroid
+                                    multiStartDistance = distance
+                                    multiStartAngle = angle
                                 }
+                                latestMask = transformMaskWithTwoFingers(
+                                    multiBaseMask!!, multiStartCentroid, centroid,
+                                    multiStartDistance, distance,
+                                    multiStartAngle, angle, viewW, viewH
+                                )
+                                onMaskStateChanged(latestMask)
+                                wasMultiTouch = true
+                                pressed.forEach { it.consume() }
                             } else {
-                                cleanupMaskSequences()
-                                val lastLines = output.lines()
-                                    .filter { it.isNotBlank() }
-                                    .takeLast(20)
-                                    .joinToString("\n")
-                                onError("FFmpeg error:\n$lastLines")
+                                val change = pressed.first()
+                                if (wasMultiTouch) {
+                                    baseMask = latestMask
+                                    basePoint = change.position
+                                    handle = MaskGestureHandle.MOVE
+                                    multiBaseMask = null
+                                    wasMultiTouch = false
+                                }
+                                latestMask = transformMaskWithOneFinger(
+                                    baseMask, handle, basePoint, change.position,
+                                    viewW, viewH
+                                )
+                                onMaskStateChanged(latestMask)
+                                change.consume()
                             }
                         }
-                    } catch (e: Throwable) {
-                        Log.e("FFMPEG", "Callback error", e)
-                        cleanupMaskSequences()
-                        onError("Callback error: ${e.message}")
+                        onGestureEnd()
+                        return@awaitEachGesture
                     }
-                },
-                { _ -> },
-                { statistics ->
-                    try {
-                        val timeMs = statistics.time
-                        if (timeMs > 0) {
-                            val p = ((timeMs / 10000.0).coerceIn(0.0, 0.95)).toFloat()
-                            onProgress(p)
-                        } else {
-                            Log.e("FFMPEG_STATS", "time=0")
+
+                    if (!isClosed && pts.size >= 3) {
+                        val first = pts[0]
+                        val dFirst = kotlin.math.sqrt(
+                            (down.position.x - first.x * viewW) *
+                                    (down.position.x - first.x * viewW) +
+                                    (down.position.y - first.y * viewH) *
+                                    (down.position.y - first.y * viewH)
+                        )
+                        if (dFirst < hitRadiusPx * 1.8f) {
+                            onClosePath()
+                            down.consume()
+                            return@awaitEachGesture
                         }
-                    } catch (t: Throwable) {
-                        Log.e("FFMPEG_STATS", "Stats error", t)
+                    }
+
+                    val downX = (down.position.x / viewW).coerceIn(0f, 1f)
+                    val downY = (down.position.y / viewH).coerceIn(0f, 1f)
+
+                    var hitAnchor = -1
+                    var hitHandle: Pair<Int, Boolean>? = null
+
+                    if (selectedPointIndex in pts.indices) {
+                        val sel = pts[selectedPointIndex]
+                        if (sel.hasHandles) {
+                            val dIn = kotlin.math.sqrt(
+                                (down.position.x - sel.inX * viewW) *
+                                        (down.position.x - sel.inX * viewW) +
+                                        (down.position.y - sel.inY * viewH) *
+                                        (down.position.y - sel.inY * viewH)
+                            )
+                            val dOut = kotlin.math.sqrt(
+                                (down.position.x - sel.outX * viewW) *
+                                        (down.position.x - sel.outX * viewW) +
+                                        (down.position.y - sel.outY * viewH) *
+                                        (down.position.y - sel.outY * viewH)
+                            )
+                            if (dIn < hitRadiusPx) hitHandle = selectedPointIndex to true
+                            else if (dOut < hitRadiusPx) hitHandle = selectedPointIndex to false
+                        }
+                    }
+
+                    if (hitHandle == null) {
+                        pts.forEachIndexed { i, p ->
+                            val d = kotlin.math.sqrt(
+                                (down.position.x - p.x * viewW) *
+                                        (down.position.x - p.x * viewW) +
+                                        (down.position.y - p.y * viewH) *
+                                        (down.position.y - p.y * viewH)
+                            )
+                            if (d < hitRadiusPx && hitAnchor == -1) hitAnchor = i
+                        }
+                    }
+
+                    if (hitHandle != null) {
+                        draggingHandle = hitHandle
+                        down.consume()
+                    } else if (hitAnchor >= 0) {
+                        selectedPointIndex = hitAnchor
+                        draggingAnchor = hitAnchor
+                        down.consume()
+                    } else if (!isClosed) {
+                        selectedPointIndex = pts.size
+                        onTapAddPoint(downX, downY)
+                        down.consume()
+                    }
+
+                    var continueGesture = true
+                    while (continueGesture) {
+                        val event = awaitPointerEvent()
+                        val pressed = event.changes.filter { it.pressed }
+                        if (pressed.isEmpty()) {
+                            draggingAnchor = -1
+                            draggingHandle = null
+                            continueGesture = false
+                        } else {
+                            pressed.forEach { ch ->
+                                if (draggingAnchor >= 0) {
+                                    onAnchorMove(
+                                        draggingAnchor,
+                                        (ch.position.x / viewW).coerceIn(0f, 1f),
+                                        (ch.position.y / viewH).coerceIn(0f, 1f)
+                                    )
+                                    ch.consume()
+                                } else if (draggingHandle != null) {
+                                    val dh = draggingHandle!!
+                                    val anchor = pts.getOrNull(dh.first)
+                                    if (anchor != null) {
+                                        onHandleMove(
+                                            dh.first, dh.second,
+                                            (ch.position.x / viewW) - anchor.x,
+                                            (ch.position.y / viewH) - anchor.y
+                                        )
+                                        ch.consume()
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
+            }
+            .pointerInput(pts.size) {
+                detectTapGestures(
+                    onDoubleTap = { tapOffset ->
+                        val viewW = viewSizePx.width.toFloat()
+                        val viewH = viewSizePx.height.toFloat()
+                        if (viewW > 0f && viewH > 0f) {
+                            var foundIndex = -1
+                            pts.forEachIndexed { i, p ->
+                                val d = kotlin.math.sqrt(
+                                    (tapOffset.x - p.x * viewW) *
+                                            (tapOffset.x - p.x * viewW) +
+                                            (tapOffset.y - p.y * viewH) *
+                                            (tapOffset.y - p.y * viewH)
+                                )
+                                if (d < hitRadiusPx && foundIndex == -1) foundIndex = i
+                            }
+                            if (foundIndex >= 0) {
+                                onTogglePoint(foundIndex)
+                                selectedPointIndex = foundIndex
+                            }
+                        }
+                    }
+                )
+            }
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val w = size.width
+            val h = size.height
+            if (!maskState.isActive) return@Canvas
+
+            val path = buildMaskPathCompose(maskState, w, h)
+            if (path != null) {
+                drawPath(path, strokeColor, style = Stroke(width = 3f))
+            }
+
+            if (maskState.type == MaskType.CUSTOM) {
+                pts.forEachIndexed { i, p ->
+                    val cx = p.x * w
+                    val cy = p.y * h
+                    val isSel = i == selectedPointIndex
+                    val isFirst = i == 0
+
+                    if (isFirst && !isClosed && pts.size >= 3) {
+                        drawCircle(
+                            Color(0xFF60EFFF).copy(alpha = 0.4f), 22f, Offset(cx, cy)
+                        )
+                        drawCircle(
+                            Color(0xFF60EFFF).copy(alpha = 0.8f), 16f, Offset(cx, cy),
+                            style = Stroke(width = 3f)
+                        )
+                    }
+
+                    drawCircle(
+                        color = when {
+                            isFirst && !isClosed -> Color(0xFF60EFFF)
+                            isSel -> Color(0xFFFFD166)
+                            else -> strokeColor
+                        },
+                        radius = if (isSel || (isFirst && !isClosed)) 12f else 9f,
+                        center = Offset(cx, cy)
+                    )
+                    drawCircle(
+                        Color.White,
+                        if (isSel || (isFirst && !isClosed)) 12f else 9f,
+                        Offset(cx, cy),
+                        style = Stroke(width = 2f)
+                    )
+                    drawCircle(Color.Black, 3f, Offset(cx, cy))
+                }
+            }
+
+            if (isHandMode) {
+                val (resize, rotate, feather) = maskHandlePositions(maskState, w, h)
+                val center = Offset(maskState.centerX * w, maskState.centerY * h)
+                drawLine(Color.White.copy(alpha = 0.75f), center, rotate, strokeWidth = 2f)
+                drawLine(Color(0xFF60EFFF), center, feather, strokeWidth = 2f)
+                drawCircle(Color(0xFFFFD166), 11f, resize)
+                drawCircle(Color.White, 11f, resize, style = Stroke(width = 2f))
+                drawCircle(Color(0xFF60EFFF), 10f, rotate)
+                drawCircle(Color.White, 10f, rotate, style = Stroke(width = 2f))
+                drawCircle(Color(0xFF22C55E), 10f, feather)
+                drawCircle(Color.White, 10f, feather, style = Stroke(width = 2f))
+            }
+        }
+    }
+}
+
+private enum class MaskGestureHandle {
+    MOVE, RESIZE, ROTATE, FEATHER
+}
+
+private fun maskHandlePositions(
+    mask: MaskState, width: Float, height: Float
+): Triple<Offset, Offset, Offset> {
+    val cx = mask.centerX * width
+    val cy = mask.centerY * height
+    val minDimension = minOf(width, height).coerceAtLeast(1f)
+    val radius = when (mask.type) {
+        MaskType.CIRCLE -> mask.radius * minDimension
+        MaskType.RECTANGLE -> kotlin.math.hypot(mask.width * width / 2f, mask.height * height / 2f)
+        MaskType.HEART -> mask.scale * minDimension * 0.4f
+        MaskType.CUSTOM -> mask.customPoints.maxOfOrNull { point ->
+            kotlin.math.hypot((point.x - mask.centerX) * width, (point.y - mask.centerY) * height)
+        } ?: minDimension * 0.2f
+
+        MaskType.LINEAR, MaskType.NONE -> minDimension * 0.22f
+    }.coerceAtLeast(24f)
+
+    val resizeLocal = when (mask.type) {
+        MaskType.CIRCLE -> Offset(radius, 0f)
+        MaskType.RECTANGLE -> Offset(mask.width * width / 2f, mask.height * height / 2f)
+        MaskType.HEART -> Offset(radius, 0f)
+        MaskType.CUSTOM -> {
+            val x = mask.customPoints.maxOfOrNull { it.x * width - cx } ?: radius
+            val y = mask.customPoints.maxOfOrNull { it.y * height - cy } ?: radius
+            Offset(x, y)
+        }
+
+        MaskType.LINEAR, MaskType.NONE -> Offset(radius * 0.65f, radius * 0.65f)
+    }
+    val resize = rotateMaskPoint(
+        Offset(cx + resizeLocal.x, cy + resizeLocal.y),
+        cx, cy,
+        if (mask.type == MaskType.CIRCLE) 0f else mask.rotation
+    )
+    val rotate = rotateMaskPoint(
+        Offset(cx, cy - radius - 34f), cx, cy, mask.rotation
+    )
+    val feather = Offset(cx + radius + 42f, cy)
+    return Triple(resize, rotate, feather)
+}
+
+private fun rotateMaskPoint(
+    point: Offset, centerX: Float, centerY: Float, rotationDegrees: Float
+): Offset {
+    val radians = Math.toRadians(rotationDegrees.toDouble())
+    val cosR = kotlin.math.cos(radians).toFloat()
+    val sinR = kotlin.math.sin(radians).toFloat()
+    val dx = point.x - centerX
+    val dy = point.y - centerY
+    return Offset(
+        centerX + dx * cosR - dy * sinR,
+        centerY + dx * sinR + dy * cosR
+    )
+}
+
+private fun maskHandleAt(
+    mask: MaskState, x: Float, y: Float, width: Float, height: Float, hitRadius: Float
+): MaskGestureHandle {
+    val point = Offset(x, y)
+    val (resize, rotate, feather) = maskHandlePositions(mask, width, height)
+    fun near(target: Offset) =
+        kotlin.math.hypot(point.x - target.x, point.y - target.y) <= hitRadius * 1.5f
+    return when {
+        near(feather) -> MaskGestureHandle.FEATHER
+        near(rotate) -> MaskGestureHandle.ROTATE
+        near(resize) -> MaskGestureHandle.RESIZE
+        else -> MaskGestureHandle.MOVE
+    }
+}
+
+private fun transformMaskWithOneFinger(
+    initial: MaskState, handle: MaskGestureHandle,
+    start: Offset, current: Offset, width: Float, height: Float
+): MaskState {
+    val minDimension = minOf(width, height).coerceAtLeast(1f)
+    val dx = (current.x - start.x) / width.coerceAtLeast(1f)
+    val dy = (current.y - start.y) / height.coerceAtLeast(1f)
+    val centerX = initial.centerX * width
+    val centerY = initial.centerY * height
+    return when (handle) {
+        MaskGestureHandle.MOVE -> initial.copy(
+            centerX = initial.centerX + dx,
+            centerY = initial.centerY + dy,
+            positionY = initial.positionY + dy,
+            customPoints = initial.customPoints.map {
+                it.copy(x = it.x + dx, y = it.y + dy)
+            }
+        )
+
+        MaskGestureHandle.ROTATE -> {
+            val startAngle = kotlin.math.atan2(start.y - centerY, start.x - centerX)
+            val currentAngle = kotlin.math.atan2(current.y - centerY, current.x - centerX)
+            val delta = Math.toDegrees((currentAngle - startAngle).toDouble()).toFloat()
+            initial.copy(rotation = initial.rotation + delta)
+        }
+
+        MaskGestureHandle.FEATHER -> {
+            val initialRadius = kotlin.math.hypot(start.x - centerX, start.y - centerY)
+            val currentRadius = kotlin.math.hypot(current.x - centerX, current.y - centerY)
+            initial.copy(
+                feather = (initial.feather +
+                        (currentRadius - initialRadius) / minDimension * 900f)
+                    .coerceIn(0f, 500f)
             )
-            currentSession = session
-        } catch (e: Throwable) {
-            Log.e("FFMPEG", "Execute error", e)
-            cleanupMaskSequences()
-            onError("Execute error: ${e.message}")
+        }
+
+        MaskGestureHandle.RESIZE -> {
+            val local = rotateMaskPoint(current, centerX, centerY, -initial.rotation)
+            when (initial.type) {
+                MaskType.CIRCLE -> initial.copy(
+                    radius = (kotlin.math.hypot(
+                        local.x - centerX,
+                        local.y - centerY
+                    ) / minDimension)
+                        .coerceIn(0.01f, 2f)
+                )
+
+                MaskType.RECTANGLE -> initial.copy(
+                    width = (kotlin.math.abs(local.x - centerX) * 2f / width).coerceIn(0.01f, 3f),
+                    height = (kotlin.math.abs(local.y - centerY) * 2f / height).coerceIn(0.01f, 3f)
+                )
+
+                MaskType.HEART -> initial.copy(
+                    scale = (kotlin.math.hypot(local.x - centerX, local.y - centerY) /
+                            (minDimension * 0.4f)).coerceIn(0.05f, 5f)
+                )
+
+                MaskType.CUSTOM -> {
+                    val handleStart = maskHandlePositions(initial, width, height).first
+                    val oldRadius =
+                        kotlin.math.hypot(handleStart.x - centerX, handleStart.y - centerY)
+                            .coerceAtLeast(1f)
+                    val newRadius = kotlin.math.hypot(local.x - centerX, local.y - centerY)
+                    val factor = (newRadius / oldRadius).coerceIn(0.05f, 20f)
+                    initial.copy(
+                        customPoints = initial.customPoints.map { point ->
+                            point.copy(
+                                x = initial.centerX + (point.x - initial.centerX) * factor,
+                                y = initial.centerY + (point.y - initial.centerY) * factor
+                            )
+                        }
+                    )
+                }
+
+                MaskType.LINEAR, MaskType.NONE -> initial.copy(
+                    positionY = (current.y / height).coerceIn(-1f, 2f)
+                )
+            }
         }
     }
+}
 
-    // ═══════════════════════════════════════════════════════════
-    //  CANCEL
-    // ═══════════════════════════════════════════════════════════
+private fun transformMaskWithTwoFingers(
+    initial: MaskState, startCentroid: Offset, centroid: Offset,
+    startDistance: Float, distance: Float,
+    startAngle: Float, angle: Float, width: Float, height: Float
+): MaskState {
+    val dx = (centroid.x - startCentroid.x) / width.coerceAtLeast(1f)
+    val dy = (centroid.y - startCentroid.y) / height.coerceAtLeast(1f)
+    val scaleFactor = (distance / startDistance.coerceAtLeast(1f)).coerceIn(0.05f, 20f)
+    val angleDelta = Math.toDegrees((angle - startAngle).toDouble()).toFloat()
+    val centerX = initial.centerX + dx
+    val centerY = initial.centerY + dy
+    val rotatedPoints = initial.customPoints.map { point ->
+        val x = initial.centerX + (point.x - initial.centerX) * scaleFactor + dx
+        val y = initial.centerY + (point.y - initial.centerY) * scaleFactor + dy
+        point.copy(x = x, y = y)
+    }
+    return initial.copy(
+        centerX = centerX, centerY = centerY,
+        positionY = initial.positionY + dy,
+        radius = (initial.radius * scaleFactor).coerceIn(0.01f, 2f),
+        width = (initial.width * scaleFactor).coerceIn(0.01f, 3f),
+        height = (initial.height * scaleFactor).coerceIn(0.01f, 3f),
+        scale = (initial.scale * scaleFactor).coerceIn(0.05f, 5f),
+        rotation = initial.rotation + angleDelta,
+        customPoints = rotatedPoints
+    )
+}
 
-    fun cancel() {
-        isCancelled = true
-        try {
-            currentSession?.let { FFmpegKit.cancel(it.sessionId) }
-        } catch (_: Throwable) {
+// ═══════════════════════════════════════════════════════════════
+//  BRUSH DRAW LAYER
+// ═══════════════════════════════════════════════════════════════
+
+@Composable
+private fun BrushDrawLayer(
+    brushType: BrushType, brushColor: Long,
+    brushWidth: Float, brushOpacity: Float,
+    clipStartMs: Long, clipEndMs: Long, currentPosMs: Long,
+    onStrokeComplete: (BrushStroke) -> Unit
+) {
+    var currentPoints by remember { mutableStateOf<List<BrushPoint>>(emptyList()) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(brushType, brushColor, brushWidth, brushOpacity) {
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        currentPoints = listOf(
+                            BrushPoint(
+                                (offset.x / size.width).coerceIn(0f, 1f),
+                                (offset.y / size.height).coerceIn(0f, 1f)
+                            )
+                        )
+                    },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        currentPoints = currentPoints + BrushPoint(
+                            (change.position.x / size.width).coerceIn(0f, 1f),
+                            (change.position.y / size.height).coerceIn(0f, 1f)
+                        )
+                    },
+                    onDragEnd = {
+                        if (currentPoints.isNotEmpty()) {
+                            val localStart = (currentPosMs - clipStartMs).coerceAtLeast(0L)
+                            val localEnd = (clipEndMs - clipStartMs)
+                                .coerceAtLeast(localStart + 1)
+                            onStrokeComplete(
+                                BrushStroke(
+                                    id = UUID.randomUUID().toString(),
+                                    type = brushType, color = brushColor,
+                                    width = brushWidth, opacity = brushOpacity,
+                                    points = currentPoints,
+                                    startMs = localStart, endMs = localEnd
+                                )
+                            )
+                        }
+                        currentPoints = emptyList()
+                    },
+                    onDragCancel = { currentPoints = emptyList() }
+                )
+            }
+    ) {
+        if (currentPoints.isNotEmpty()) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                BrushEngine.drawStroke(
+                    scope = this,
+                    stroke = BrushStroke(
+                        id = "temp", type = brushType, color = brushColor,
+                        width = brushWidth, opacity = brushOpacity,
+                        points = currentPoints,
+                        startMs = 0, endMs = Long.MAX_VALUE
+                    ),
+                    viewW = size.width, viewH = size.height, currentTimeMs = 0
+                )
+            }
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTERACTIVE TEXT OVERLAY
+// ═══════════════════════════════════════════════════════════════
+
+@Composable
+private fun InteractiveTextOverlay(
+    clip: EditorClip,
+    textState: com.moody.moodyvideoeditor.data.TextState,
+    canvasW: Float, canvasH: Float,
+    currentPosMs: Long,
+    isSelected: Boolean, isMulti: Boolean = false,
+    isDrawingMode: Boolean = false,
+    onSelect: () -> Unit,
+    onGroupGestureStart: () -> Unit,
+    onGroupGestureEnd: () -> Unit,
+    onGroupGesture: (String, Float, Float, Float, Float) -> Unit,
+    onPositionChanged: (Float, Float) -> Unit,
+    onTransformChanged: (Float, Float) -> Unit,
+    onDeleteLayer: () -> Unit,
+) {
+    if (textState.content.isBlank()) return
+
+    val localTimeSec = ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
+    val sampled = TransformApplier.resolveLive(clip, localTimeSec)
+    val animDur = textState.animationDuration.coerceAtLeast(0.1f)
+    val progress = (localTimeSec / animDur).coerceIn(0f, 1f)
+
+    var isDragging by remember { mutableStateOf(false) }
+
+    val rawFrame = com.moody.moodyvideoeditor.utils.AnimationsEngine.computeFrame(
+        textState.animation, progress, localTimeSec
+    )
+    val frame = if (isDragging) {
+        rawFrame.copy(translateX = 0f, translateY = 0f)
+    } else rawFrame
+
+    val displayContent =
+        if (textState.animation.equals("typewriter", ignoreCase = true)) {
+            val total = textState.content.length
+            val visible = (progress * total).toInt().coerceIn(0, total)
+            textState.content.substring(0, visible)
+        } else textState.content
+
+    if (displayContent.isEmpty() &&
+        textState.animation.equals("typewriter", ignoreCase = true)
+    ) return
+
+    val density = LocalDensity.current
+    val canvasWpx = with(density) { canvasW.dp.toPx() }
+    val canvasHpx = with(density) { canvasH.dp.toPx() }
+
+    val textTypeface = TextRenderContract.androidTypefaceFor(
+        textState.fontFamily,
+        textState.fontWeight == "bold",
+        textState.fontStyle == "italic"
+    )
+    val effFontSizePx = TextRenderContract.scaledFontSize(
+        baseSizePx = textState.fontSize.toFloat(),
+        canvasWidthPx = canvasWpx
+    )
+    val effLetterSpacingPx = TextScaler.letterSpacing(
+        base = textState.letterSpacing,
+        canvasWidthPx = canvasWpx
+    )
+    val effLineHeightPx = TextScaler.lineHeight(effFontSizePx, textState.lineHeight)
+    val family = FontLibrary.familyFor(textState.fontFamily)
+    val weight = if (textState.fontWeight == "bold") FontWeight.Bold
+    else FontWeight.Normal
+    val fontSty = if (textState.fontStyle == "italic")
+        androidx.compose.ui.text.font.FontStyle.Italic
+    else androidx.compose.ui.text.font.FontStyle.Normal
+
+    val userStrokePx = textState.strokeWidth.coerceAtLeast(0f) *
+            2f * (canvasWpx / 720f)
+
+    val finalFontSizePx = TextRenderContract.fittedFontSizePx(
+        content = displayContent,
+        baseSizePx = textState.fontSize.toFloat(),
+        canvasWidthPx = canvasWpx,
+        maxWidthPercent = textState.maxWidth,
+        typeface = textTypeface
+    )
+
+    val finalFontSizeSp = with(density) { finalFontSizePx.toSp() }
+    val finalLetterSpacingSp = with(density) { effLetterSpacingPx.toSp() }
+    val finalLineHeightSp = with(density) { effLineHeightPx.toSp() }
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+
+    val finalMeasure = remember(
+        displayContent, finalFontSizeSp, finalLetterSpacingSp,
+        finalLineHeightSp, family, weight, fontSty
+    ) {
+        measurer.measure(
+            text = displayContent,
+            style = androidx.compose.ui.text.TextStyle(
+                fontSize = finalFontSizeSp,
+                letterSpacing = finalLetterSpacingSp,
+                lineHeight = finalLineHeightSp,
+                fontFamily = family,
+                fontWeight = weight,
+                fontStyle = fontSty
+            ),
+            constraints = androidx.compose.ui.unit.Constraints(
+                maxWidth = Int.MAX_VALUE
+            ),
+            softWrap = false
+        )
+    }
+
+    val textWidthDp = with(density) { finalMeasure.size.width.toDp().value }
+    val textHeightDp = with(density) { finalMeasure.size.height.toDp().value }
+
+    val solidColor = Color(textState.color)
+    val gradient: Brush? = if (textState.gradientEnabled) {
+        val rad = Math.toRadians(textState.gradientAngle.toDouble())
+        val dx = kotlin.math.cos(rad).toFloat()
+        val dy = kotlin.math.sin(rad).toFloat()
+        Brush.linearGradient(
+            colors = listOf(
+                Color(textState.gradientColor1),
+                Color(textState.gradientColor2)
+            ),
+            start = Offset(-dx * 600f, -dy * 600f),
+            end = Offset(dx * 600f, dy * 600f)
+        )
+    } else null
+
+    val shadowStyle: androidx.compose.ui.graphics.Shadow? =
+        if (textState.shadowEnabled) {
+            androidx.compose.ui.graphics.Shadow(
+                color = Color(textState.shadowColor),
+                offset = Offset(
+                    textState.shadowOffsetX * (canvasWpx / 720f),
+                    textState.shadowOffsetY * (canvasWpx / 720f)
+                ),
+                blurRadius = textState.shadowBlur * (canvasWpx / 720f)
+            )
+        } else null
+
+    val textAlignValue = when (textState.alignment) {
+        "left" -> androidx.compose.ui.text.style.TextAlign.Left
+        "right" -> androidx.compose.ui.text.style.TextAlign.Right
+        else -> androidx.compose.ui.text.style.TextAlign.Center
+    }
+
+    val borderColor = when {
+        isSelected -> Color(0xFF60EFFF)
+        isMulti -> Color(0xFFFFD166)
+        else -> Color.Transparent
+    }
+
+    val glowDensity = density.density
+    val glowSizePx = finalFontSizePx
+    val glowLetterSpacingEm = if (finalFontSizePx <= 0f) 0f
+    else (effLetterSpacingPx / finalFontSizePx).coerceIn(-0.3f, 0.3f)
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .graphicsLayer {
+                    val posTx = (sampled.x - 50f) / 100f * canvasWpx
+                    val posTy = (sampled.y - 50f) / 100f * canvasHpx
+                    translationX = posTx + frame.translateX
+                    translationY = posTy + frame.translateY
+                    scaleX = (sampled.scale / 100f) * frame.scaleX
+                    scaleY = (sampled.scale / 100f) * frame.scaleY
+                    rotationZ = sampled.rotation + frame.rotationZ
+                    alpha = (textState.opacity / 100f) * frame.alpha
+                    transformOrigin = TransformOrigin.Center
+                }
+                .width((textWidthDp + 16f).coerceAtLeast(26f).dp)
+                .height((textHeightDp + 16f).coerceAtLeast(26f).dp)
+                .then(
+                    if (isSelected || isMulti) Modifier.border(
+                        width = if (isSelected) 1.5.dp else 1.dp,
+                        color = borderColor,
+                        shape = RoundedCornerShape(4.dp)
+                    ) else Modifier
+                )
+                .pointerInput(clip.id, canvasW, canvasH, isDrawingMode) {
+                    if (isDrawingMode) return@pointerInput
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        isDragging = true
+                        onGroupGestureStart()
+
+                        val baseX = sampled.x
+                        val baseY = sampled.y
+                        val baseScale = sampled.scale
+                        val baseRot = sampled.rotation
+                        var accumPanX = 0f
+                        var accumPanY = 0f
+                        var accumZoom = 1f
+                        var accumRot = 0f
+                        var lastDist = 0f
+                        var lastAngle = 0f
+                        var hasMultiGesture = false
+
+                        if (!isSelected && !isMulti) onSelect()
+
+                        var continueGesture = true
+                        while (continueGesture) {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.filter { it.pressed }
+                            if (pressed.isEmpty()) {
+                                isDragging = false
+                                continueGesture = false
+                            } else {
+                                if (pressed.size == 1) {
+                                    val ch = pressed.first()
+                                    val pan = ch.position - ch.previousPosition
+                                    val rotation = Math.toRadians(
+                                        (sampled.rotation + frame.rotationZ).toDouble()
+                                    )
+                                    val scaleX = (sampled.scale / 100f) * frame.scaleX
+                                    val scaleY = (sampled.scale / 100f) * frame.scaleY
+                                    accumPanX += (
+                                            pan.x * scaleX * kotlin.math.cos(rotation) -
+                                                    pan.y * scaleY * kotlin.math.sin(rotation)
+                                            ).toFloat()
+                                    accumPanY += (
+                                            pan.x * scaleX * kotlin.math.sin(rotation) +
+                                                    pan.y * scaleY * kotlin.math.cos(rotation)
+                                            ).toFloat()
+                                    ch.consume()
+                                } else if (pressed.size >= 2) {
+                                    val c1 = pressed[0]
+                                    val c2 = pressed[1]
+                                    val d = c1.position - c2.position
+                                    val dist = kotlin.math.sqrt(d.x * d.x + d.y * d.y)
+                                    val angle = kotlin.math.atan2(d.y, d.x)
+                                    if (hasMultiGesture && lastDist > 1f) {
+                                        accumZoom *= dist / lastDist
+                                        accumRot += Math.toDegrees(
+                                            normalizeAngle(angle - lastAngle).toDouble()
+                                        ).toFloat()
+                                    }
+                                    lastDist = dist
+                                    lastAngle = angle
+                                    hasMultiGesture = true
+                                    c1.consume()
+                                    c2.consume()
+                                }
+
+                                val rawX = baseX + accumPanX / canvasWpx * 100f
+                                val rawY = baseY + accumPanY / canvasHpx * 100f
+                                val newScale = (baseScale * accumZoom)
+                                    .coerceIn(10f, 500f)
+                                val newRot = baseRot + accumRot
+
+                                if (isMulti) {
+                                    onGroupGesture(clip.id, rawX, rawY, newScale, newRot)
+                                } else {
+                                    onPositionChanged(rawX, rawY)
+                                    onTransformChanged(newScale, newRot)
+                                }
+                            }
+                        }
+                        onGroupGestureEnd()
+                    }
+                }
+                .pointerInput(clip.id, isMulti, isDrawingMode) {
+                    if (isDrawingMode) return@pointerInput
+                    detectTapGestures { if (!isMulti) onSelect() }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                if (textState.glowEnabled && textState.glowRadius > 0f) {
+                    val glowColorInt = textState.glowColor.toInt()
+                    val glowAlign = when (textState.alignment) {
+                        "left" -> Paint.Align.LEFT
+                        "right" -> Paint.Align.RIGHT
+                        else -> Paint.Align.CENTER
+                    }
+                    val textSizePx = glowSizePx
+                    val letterSpacingEm = glowLetterSpacingEm
+                    val glowRadiusPx = textState.glowRadius * (canvasWpx / 720f)
+
+                    Canvas(modifier = Modifier.matchParentSize()) {
+                        val nativeCanvas = drawContext.canvas.nativeCanvas
+                        val layers = TextRenderContract.glowLayers()
+                        layers.forEach { layer ->
+                            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                isAntiAlias = true
+                                color = glowColorInt
+                                textSize = textSizePx * layer.fontScale
+                                textAlign = glowAlign
+                                this.typeface = textTypeface
+                                this.letterSpacing = letterSpacingEm
+                                alpha = (layer.alpha * 255).toInt().coerceIn(0, 255)
+                                setShadowLayer(
+                                    glowRadiusPx * layer.blurScale * glowDensity,
+                                    0f, 0f, glowColorInt
+                                )
+                            }
+                            val fm = paint.fontMetrics
+                            val baseline = size.height / 2f -
+                                    (fm.ascent + fm.descent) / 2f
+                            val x = when (glowAlign) {
+                                Paint.Align.LEFT -> 0f
+                                Paint.Align.RIGHT -> size.width
+                                else -> size.width / 2f
+                            }
+                            nativeCanvas.drawText(displayContent, x, baseline, paint)
+                        }
+                    }
+                }
+
+                if (textState.strokeEnabled && userStrokePx > 0f) {
+                    Text(
+                        text = displayContent,
+                        color = Color(textState.strokeColor),
+                        fontSize = finalFontSizeSp,
+                        fontWeight = weight,
+                        fontStyle = fontSty,
+                        fontFamily = family,
+                        textAlign = textAlignValue,
+                        softWrap = false,
+                        maxLines = 1,
+                        overflow = TextOverflow.Visible,
+                        style = androidx.compose.ui.text.TextStyle(
+                            drawStyle = Stroke(
+                                userStrokePx,
+                                join = androidx.compose.ui.graphics.StrokeJoin.Round,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                miter = 4f
+                            ),
+                            letterSpacing = finalLetterSpacingSp,
+                            lineHeight = finalLineHeightSp
+                        )
+                    )
+                }
+
+                Text(
+                    text = displayContent,
+                    color = if (gradient != null) Color.Unspecified else solidColor,
+                    fontSize = finalFontSizeSp,
+                    fontWeight = weight,
+                    fontStyle = fontSty,
+                    fontFamily = family,
+                    textAlign = textAlignValue,
+                    softWrap = false,
+                    maxLines = 1,
+                    overflow = TextOverflow.Visible,
+                    style = androidx.compose.ui.text.TextStyle(
+                        brush = gradient,
+                        shadow = shadowStyle,
+                        letterSpacing = finalLetterSpacingSp,
+                        lineHeight = finalLineHeightSp
+                    )
+                )
+                if (isSelected && !isDrawingMode) {
+                    LayerTransformHandles(
+                        clipId = clip.id,
+                        scale = sampled.scale,
+                        rotation = sampled.rotation,
+                        positionX = sampled.x,
+                        positionY = sampled.y,
+                        onPositionChanged = onPositionChanged,
+                        onGestureStart = onGroupGestureStart,
+                        onGestureEnd = onGroupGestureEnd,
+                        onTransformChanged = onTransformChanged,
+                        onDelete = onDeleteLayer,
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTERACTIVE STICKER OVERLAY
+// ═══════════════════════════════════════════════════════════════
+
+@Composable
+private fun InteractiveStickerOverlay(
+    clip: EditorClip,
+    stickerState: com.moody.moodyvideoeditor.data.StickerState,
+    canvasW: Float, canvasH: Float,
+    currentPosMs: Long,
+    isSelected: Boolean, isMulti: Boolean = false,
+    isDrawingMode: Boolean = false,
+    onSelect: () -> Unit,
+    onGroupGestureStart: () -> Unit,
+    onGroupGestureEnd: () -> Unit,
+    onGroupGesture: (String, Float, Float, Float, Float) -> Unit,
+    onPositionChanged: (Float, Float) -> Unit,
+    onTransformChanged: (Float, Float) -> Unit,
+    onDeleteLayer: () -> Unit,
+) {
+    if (stickerState.emoji.isBlank()) return
+
+    val localTimeSec = ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
+    val sampled = TransformApplier.resolveLive(clip, localTimeSec)
+    val animDur = stickerState.animationDuration.coerceAtLeast(0.1f)
+    val progress = (localTimeSec / animDur).coerceIn(0f, 1f)
+    val frame = try {
+        com.moody.moodyvideoeditor.utils.AnimationsEngine.computeFrame(
+            stickerState.animation, progress, localTimeSec
+        )
+    } catch (_: Throwable) {
+        com.moody.moodyvideoeditor.utils.AnimationsEngine.Frame()
+    }
+
+    val density = LocalDensity.current
+    val canvasWpx = with(density) { canvasW.dp.toPx() }
+    val canvasHpx = with(density) { canvasH.dp.toPx() }
+
+    val effStickerSizePx = TextScaler.fontSize(
+        baseSize = 48, canvasWidthPx = canvasWpx
+    )
+    val clampedX = sampled.x.coerceIn(0f, 100f)
+    val clampedY = sampled.y.coerceIn(0f, 100f)
+    val borderColor = when {
+        isSelected -> Color(0xFF60EFFF)
+        isMulti -> Color(0xFFFFD166)
+        else -> Color.Transparent
+    }
+    val effStickerSizeSp = (effStickerSizePx / density.density).sp
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .graphicsLayer {
+                    val posTx = (clampedX - 50f) / 100f * canvasWpx
+                    val posTy = (clampedY - 50f) / 100f * canvasHpx
+                    translationX = posTx + frame.translateX
+                    translationY = posTy + frame.translateY
+                    scaleX = (sampled.scale / 100f) * frame.scaleX
+                    scaleY = (sampled.scale / 100f) * frame.scaleY
+                    rotationZ = sampled.rotation + frame.rotationZ
+                    alpha = (stickerState.opacity / 100f) * frame.alpha
+                    transformOrigin = TransformOrigin.Center
+                }
+                .then(
+                    if (isSelected || isMulti) Modifier.border(
+                        width = if (isSelected) 1.5.dp else 1.dp,
+                        color = borderColor,
+                        shape = RoundedCornerShape(6.dp)
+                    ) else Modifier
+                )
+                .padding(6.dp)
+                .pointerInput(clip.id, isSelected, isMulti, canvasW, canvasH, isDrawingMode) {
+                    if (isDrawingMode) return@pointerInput
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = true)
+                        onGroupGestureStart()
+
+                        val baseX = clampedX
+                        val baseY = clampedY
+                        val baseScale = sampled.scale
+                        val baseRot = sampled.rotation
+                        var accumPanX = 0f
+                        var accumPanY = 0f
+                        var accumZoom = 1f
+                        var accumRot = 0f
+                        var lastDist = 0f
+                        var lastAngle = 0f
+                        var hasMultiGesture = false
+
+                        if (!isSelected && !isMulti) onSelect()
+
+                        var continueGesture = true
+                        while (continueGesture) {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.filter { it.pressed }
+                            if (pressed.isEmpty()) {
+                                continueGesture = false
+                            } else {
+                                if (pressed.size == 1) {
+                                    val ch = pressed.first()
+                                    val pan = ch.position - ch.previousPosition
+                                    accumPanX += pan.x
+                                    accumPanY += pan.y
+                                    ch.consume()
+                                } else if (pressed.size >= 2) {
+                                    val c1 = pressed[0]
+                                    val c2 = pressed[1]
+                                    val d = c1.position - c2.position
+                                    val dist = kotlin.math.sqrt(d.x * d.x + d.y * d.y)
+                                    val angle = kotlin.math.atan2(d.y, d.x)
+                                    if (hasMultiGesture && lastDist > 1f) {
+                                        accumZoom *= dist / lastDist
+                                        accumRot += Math.toDegrees(
+                                            normalizeAngle(angle - lastAngle).toDouble()
+                                        ).toFloat()
+                                    }
+                                    lastDist = dist
+                                    lastAngle = angle
+                                    hasMultiGesture = true
+                                    c1.consume()
+                                    c2.consume()
+                                }
+                                val rawX = baseX + accumPanX / canvasWpx * 100f
+                                val rawY = baseY + accumPanY / canvasHpx * 100f
+                                val cx = rawX.coerceIn(0f, 100f)
+                                val cy = rawY.coerceIn(0f, 100f)
+                                val newScale = (baseScale * accumZoom).coerceIn(10f, 500f)
+                                val newRot = baseRot + accumRot
+
+                                if (isMulti) {
+                                    onGroupGesture(clip.id, cx, cy, newScale, newRot)
+                                } else {
+                                    onPositionChanged(cx, cy)
+                                    onTransformChanged(newScale, newRot)
+                                }
+                            }
+                        }
+                        onGroupGestureEnd()
+                    }
+                }
+                .pointerInput(clip.id, isMulti, isDrawingMode) {
+                    if (isDrawingMode) return@pointerInput
+                    detectTapGestures { if (!isMulti) onSelect() }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(text = stickerState.emoji, fontSize = effStickerSizeSp)
+            if (isSelected && !isDrawingMode) {
+                LayerTransformHandles(
+                    clipId = clip.id,
+                    scale = sampled.scale,
+                    rotation = sampled.rotation,
+                    positionX = sampled.x,
+                    positionY = sampled.y,
+                    onPositionChanged = onPositionChanged,
+                    onGestureStart = onGroupGestureStart,
+                    onGestureEnd = onGroupGestureEnd,
+                    onTransformChanged = onTransformChanged,
+                    onDelete = onDeleteLayer,
+                )
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TRANSFORM HANDLES
+// ═══════════════════════════════════════════════════════════════
+
+@Composable
+private fun BoxScope.LayerTransformHandles(
+    clipId: String,
+    scale: Float, rotation: Float,
+    widthFraction: Float = 1f, heightFraction: Float = 1f,
+    positionX: Float, positionY: Float,
+    onPositionChanged: (Float, Float) -> Unit,
+    onGestureStart: () -> Unit,
+    onGestureEnd: () -> Unit,
+    onTransformChanged: (Float, Float) -> Unit,
+    onDelete: () -> Unit
+) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .align(Alignment.Center)
+            .fillMaxWidth(widthFraction.coerceIn(0.01f, 1f))
+            .fillMaxHeight(heightFraction.coerceIn(0.01f, 1f))
+            .border(1.5.dp, Color(0xFF60EFFF), RoundedCornerShape(4.dp))
+    ) {
+        val density = LocalDensity.current
+        val boundsWidthPx = with(density) { maxWidth.toPx() }
+        val boundsHeightPx = with(density) { maxHeight.toPx() }
+        val handleSizePx = with(density) { 22.dp.toPx() }
+
+        TransformHandle(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .offset(x = (-11).dp, y = (-11).dp),
+            clipId = clipId,
+            corner = TransformHandleCorner.Delete,
+            boundsWidthPx = boundsWidthPx,
+            boundsHeightPx = boundsHeightPx,
+            handleSizePx = handleSizePx,
+            scale = scale, rotation = rotation,
+            positionX = positionX, positionY = positionY,
+            onPositionChanged = onPositionChanged,
+            onGestureStart = onGestureStart,
+            onGestureEnd = onGestureEnd,
+            onTransformChanged = onTransformChanged,
+            onDelete = onDelete
+        )
+        TransformHandle(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .offset(x = (-11).dp, y = 11.dp),
+            clipId = clipId,
+            corner = TransformHandleCorner.Rotate,
+            boundsWidthPx = boundsWidthPx,
+            boundsHeightPx = boundsHeightPx,
+            handleSizePx = handleSizePx,
+            scale = scale, rotation = rotation,
+            positionX = positionX, positionY = positionY,
+            onPositionChanged = onPositionChanged,
+            onGestureStart = onGestureStart,
+            onGestureEnd = onGestureEnd,
+            onTransformChanged = onTransformChanged,
+            onDelete = onDelete
+        )
+        TransformHandle(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .offset(x = 11.dp, y = 11.dp),
+            clipId = clipId,
+            corner = TransformHandleCorner.Scale,
+            boundsWidthPx = boundsWidthPx,
+            boundsHeightPx = boundsHeightPx,
+            handleSizePx = handleSizePx,
+            scale = scale, rotation = rotation,
+            positionX = positionX, positionY = positionY,
+            onPositionChanged = onPositionChanged,
+            onGestureStart = onGestureStart,
+            onGestureEnd = onGestureEnd,
+            onTransformChanged = onTransformChanged,
+            onDelete = onDelete
+        )
+    }
+}
+
+private enum class TransformHandleCorner {
+    Delete, Rotate, Scale
+}
+
+@Composable
+private fun TransformHandle(
+    modifier: Modifier, clipId: String,
+    corner: TransformHandleCorner,
+    boundsWidthPx: Float, boundsHeightPx: Float, handleSizePx: Float,
+    scale: Float, rotation: Float,
+    positionX: Float, positionY: Float,
+    onPositionChanged: (Float, Float) -> Unit,
+    onGestureStart: () -> Unit,
+    onGestureEnd: () -> Unit,
+    onTransformChanged: (Float, Float) -> Unit,
+    onDelete: () -> Unit
+) {
+    val currentScale = rememberUpdatedState(scale)
+    val currentRotation = rememberUpdatedState(rotation)
+    val currentOnTransformChanged = rememberUpdatedState(onTransformChanged)
+    val currentOnGestureStart = rememberUpdatedState(onGestureStart)
+    val currentOnGestureEnd = rememberUpdatedState(onGestureEnd)
+    val currentOnDelete = rememberUpdatedState(onDelete)
+
+    Box(
+        modifier = modifier
+            .size(22.dp)
+            .clip(CircleShape)
+            .background(
+                when (corner) {
+                    TransformHandleCorner.Delete -> Color(0xFFE5484D)
+                    TransformHandleCorner.Rotate,
+                    TransformHandleCorner.Scale -> Color(0xFF171A22)
+                }
+            )
+            .border(1.dp, Color(0xFF60EFFF), CircleShape)
+            .pointerInput(clipId, corner, boundsWidthPx, boundsHeightPx) {
+                when (corner) {
+                    TransformHandleCorner.Delete -> detectTapGestures {
+                        currentOnDelete.value()
+                    }
+
+                    TransformHandleCorner.Rotate,
+                    TransformHandleCorner.Scale -> awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        currentOnGestureStart.value()
+
+                        val handleCenterOffsetX = if (
+                            corner == TransformHandleCorner.Scale
+                        ) boundsWidthPx - handleSizePx / 2f else -handleSizePx / 2f
+                        val startX = handleCenterOffsetX + down.position.x -
+                                boundsWidthPx / 2f
+                        val startY = boundsHeightPx - handleSizePx + down.position.y -
+                                boundsHeightPx / 2f
+                        val startDistance = kotlin.math.hypot(startX.toDouble(), startY.toDouble())
+                            .toFloat().coerceAtLeast(1f)
+                        val startAngle = kotlin.math.atan2(startY, startX)
+                        val startScale = currentScale.value
+                        val startRotation = currentRotation.value
+                        var previousAngle = startAngle
+                        var accumulatedRotation = 0f
+                        var dragX = 0f
+                        var dragY = 0f
+
+                        do {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull()
+                            if (change == null || !change.pressed) break
+                            val delta = change.position - change.previousPosition
+                            dragX += delta.x
+                            dragY += delta.y
+                            change.consume()
+
+                            val currentX = startX + dragX
+                            val currentY = startY + dragY
+                            val currentDistance = kotlin.math.hypot(
+                                currentX.toDouble(), currentY.toDouble()
+                            ).toFloat()
+                            val currentAngle = kotlin.math.atan2(currentY, currentX)
+                            accumulatedRotation += normalizeAngle(
+                                currentAngle - previousAngle
+                            )
+                            previousAngle = currentAngle
+                            if (corner == TransformHandleCorner.Scale) {
+                                currentOnTransformChanged.value(
+                                    (startScale * currentDistance / startDistance)
+                                        .coerceIn(10f, 500f),
+                                    startRotation
+                                )
+                            } else {
+                                currentOnTransformChanged.value(
+                                    startScale,
+                                    startRotation + Math.toDegrees(
+                                        accumulatedRotation.toDouble()
+                                    ).toFloat()
+                                )
+                            }
+                        } while (true)
+                        currentOnGestureEnd.value()
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = when (corner) {
+                TransformHandleCorner.Delete -> "×"
+                TransformHandleCorner.Rotate -> "⟳"
+                TransformHandleCorner.Scale -> "⤢"
+            },
+            color = Color.White,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+private fun normalizeAngle(radians: Float): Float {
+    val twoPi = (Math.PI * 2.0).toFloat()
+    var normalized = radians
+    while (normalized > Math.PI) normalized -= twoPi
+    while (normalized < -Math.PI) normalized += twoPi
+    return normalized
 }

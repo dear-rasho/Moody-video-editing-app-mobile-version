@@ -1271,6 +1271,7 @@ fun EditorScreen(
                             viewModel.createEffectLayerAt(key, intensity)
                             effectEditLayerId = null
                         },
+
                         onUpdateIntensity = { intensity ->
                             editLayer?.let {
                                 viewModel.updateEffectLayerIntensity(

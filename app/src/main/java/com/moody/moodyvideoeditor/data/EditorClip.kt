@@ -47,8 +47,8 @@ data class EditorClip(
     val transition: TransitionState? = null,
     val ratio: RatioState? = null,
     val mask: MaskState = MaskState(),
-
     val brush: BrushState = BrushState(),
+    val lightLeak: LightLeakState? = null,
 
     // 🆕 Color Matte — full style (solid / ramp / 4-color)
     val matteStyle: ColorMatteStyle = ColorMatteStyle(),

@@ -499,7 +499,7 @@ object ProjectRepository {
             type = type,
 
             mirror = if (mirrorObj != null) {
-                com.moody.moodyvideoeditor.data.advanced.MirrorEffect(
+                com.moody.moodyvideoeditor.data.advanced.models.MirrorEffect(
                     centerX = mirrorObj.optDouble("centerX", 0.5).toFloat(),
                     centerY = mirrorObj.optDouble("centerY", 0.5).toFloat(),
                     angleDeg = mirrorObj.optDouble("angleDeg", 90.0).toFloat(),
@@ -512,12 +512,12 @@ object ProjectRepository {
 
             gaussianBlur = if (blurObj != null) {
                 val dim = try {
-                    com.moody.moodyvideoeditor.data.advanced.BlurDimension
+                    com.moody.moodyvideoeditor.data.advanced.models.BlurDimension
                         .valueOf(blurObj.optString("dimension", "BOTH"))
                 } catch (_: Exception) {
-                    com.moody.moodyvideoeditor.data.advanced.BlurDimension.BOTH
+                    com.moody.moodyvideoeditor.data.advanced.models.BlurDimension.BOTH
                 }
-                com.moody.moodyvideoeditor.data.advanced.GaussianBlurEffect(
+                com.moody.moodyvideoeditor.data.advanced.models.GaussianBlurEffect(
                     blurriness = blurObj.optDouble("blurriness", 20.0).toFloat(),
                     dimension = dim,
                     keyframes = keyframesFromJson(
@@ -527,7 +527,7 @@ object ProjectRepository {
             } else null,
 
             roughenEdges = if (roughenObj != null) {
-                com.moody.moodyvideoeditor.data.advanced.RoughenEdgesEffect(
+                com.moody.moodyvideoeditor.data.advanced.models.RoughenEdgesEffect(
                     borderWidth = roughenObj.optDouble("borderWidth", 20.0).toFloat(),
                     edgeSharpness = roughenObj.optDouble("edgeSharpness", 1.0).toFloat(),
                     fractalScale = roughenObj.optDouble("fractalScale", 100.0).toFloat(),
@@ -541,7 +541,7 @@ object ProjectRepository {
             } else null,
 
             roundedCrop = if (rCropObj != null) {
-                com.moody.moodyvideoeditor.data.advanced.RoundedCropEffect(
+                com.moody.moodyvideoeditor.data.advanced.models.RoundedCropEffect(
                     cornerRadius = rCropObj.optDouble("cornerRadius", 40.0).toFloat(),
                     cropTop = rCropObj.optDouble("cropTop", 0.0).toFloat(),
                     cropBottom = rCropObj.optDouble("cropBottom", 0.0).toFloat(),
@@ -555,12 +555,12 @@ object ProjectRepository {
             } else null,
 
             fourColorGradient = if (gradObj != null) {
-                com.moody.moodyvideoeditor.data.advanced.FourColorGradientEffect(
+                com.moody.moodyvideoeditor.data.advanced.models.FourColorGradientEffect(
                     color1 = gradObj.optLong("color1", 0xFFFF0000L),
                     color2 = gradObj.optLong("color2", 0xFF00FF00L),
                     color3 = gradObj.optLong("color3", 0xFF0000FFL),
                     color4 = gradObj.optLong("color4", 0xFFFFCC00L),
-                    blendMode = com.moody.moodyvideoeditor.data.advanced.GradientBlendMode
+                    blendMode = com.moody.moodyvideoeditor.data.advanced.models.GradientBlendMode
                         .fromKey(gradObj.optString("blendMode", "normal")),
                     globalOpacity = gradObj.optDouble("globalOpacity", 100.0).toFloat(),
                     keyframes = keyframesFromJson(
@@ -570,7 +570,7 @@ object ProjectRepository {
             } else null,
 
             dropShadow = if (shadowObj != null) {
-                com.moody.moodyvideoeditor.data.advanced.DropShadowEffect(
+                com.moody.moodyvideoeditor.data.advanced.models.DropShadowEffect(
                     shadowColor = shadowObj.optLong("shadowColor", 0xFF000000L),
                     opacity = shadowObj.optDouble("opacity", 50.0).toFloat(),
                     distance = shadowObj.optDouble("distance", 5.0).toFloat(),
@@ -584,7 +584,7 @@ object ProjectRepository {
             } else null,
 
             turbulentDisplace = if (dispObj != null) {
-                com.moody.moodyvideoeditor.data.advanced.TurbulentDisplaceEffect(
+                com.moody.moodyvideoeditor.data.advanced.models.TurbulentDisplaceEffect(
                     amount = dispObj.optDouble("amount", 50.0).toFloat(),
                     size = dispObj.optDouble("size", 100.0).toFloat(),
                     offsetX = dispObj.optDouble("offsetX", 0.5).toFloat(),
@@ -598,7 +598,7 @@ object ProjectRepository {
             } else null,
 
             chromaticAberration = if (chromaObj != null) {
-                com.moody.moodyvideoeditor.data.advanced.ChromaticAberrationEffect(
+                com.moody.moodyvideoeditor.data.advanced.models.ChromaticAberrationEffect(
                     redShiftX = chromaObj.optDouble("redShiftX", 0.0).toFloat(),
                     redShiftY = chromaObj.optDouble("redShiftY", 0.0).toFloat(),
                     blueShiftX = chromaObj.optDouble("blueShiftX", 0.0).toFloat(),
@@ -613,7 +613,7 @@ object ProjectRepository {
             } else null,
 
             motionBlur = if (mBlurObj != null) {
-                com.moody.moodyvideoeditor.data.advanced.MotionBlurEffect(
+                com.moody.moodyvideoeditor.data.advanced.models.MotionBlurEffect(
                     shutterAngle = mBlurObj.optDouble("shutterAngle", 180.0)
                         .toFloat(),
                     samples = mBlurObj.optDouble("samples", 16.0).toFloat(),
@@ -625,8 +625,8 @@ object ProjectRepository {
             } else null,
 
             trackMatte = if (tMatteObj != null) {
-                com.moody.moodyvideoeditor.data.advanced.TrackMatteEffect(
-                    matteType = com.moody.moodyvideoeditor.data.advanced.TrackMatteType
+                com.moody.moodyvideoeditor.data.advanced.models.TrackMatteEffect(
+                    matteType = com.moody.moodyvideoeditor.data.advanced.models.TrackMatteType
                         .fromKey(tMatteObj.optString("matteType", "alpha")),
                     targetLayerId = if (tMatteObj.isNull("targetLayerId")) null
                     else tMatteObj.optString("targetLayerId", null),
@@ -826,16 +826,30 @@ object ProjectRepository {
                 put("color", overlay.color)
             })
         }
+
+        val edgeGlow = e.edgeGlow
+        if (edgeGlow != null) {
+            put("edgeGlow", JSONObject().apply {
+                put("color", edgeGlow.color)
+                put("color2", edgeGlow.color2)
+                put("radius", edgeGlow.radius.toDouble())
+                put("intensity", edgeGlow.intensity.toDouble())
+                put("spread", edgeGlow.spread.toDouble())
+                put("animation", edgeGlow.animation.name)
+                put("speed", edgeGlow.speed.toDouble())
+            })
+        }
     }
 
     private fun effectStateFromJson(o: JSONObject): EffectState {
         val motionObj = o.optJSONObject("motion")
         val overlayObj = o.optJSONObject("overlayCfg")
+        val edgeGlowObj = o.optJSONObject("edgeGlow")
 
         return EffectState(
             kind = o.optString("kind", EffectState.KIND_EFFECT),
-            presetKey = if (o.isNull("presetKey")) null
-            else o.optString("presetKey", null),
+            presetKey = if (o.isNull("presetKey")) ""
+            else o.optString("presetKey", ""),
             motion = if (motionObj != null) {
                 MotionConfig(
                     type = motionObj.optString("type", "shake"),
@@ -848,6 +862,22 @@ object ProjectRepository {
                     type = overlayObj.optString("type", "rain"),
                     intensity = overlayObj.optDouble("intensity", 100.0).toFloat(),
                     color = overlayObj.optLong("color", 0xFFFFFFFFL)
+                )
+            } else null,
+            edgeGlow = if (edgeGlowObj != null) {
+                EdgeGlowConfig(
+                    color = edgeGlowObj.optLong("color", 0xFFFFFFFFL),
+                    color2 = edgeGlowObj.optLong("color2", 0xFF00E5FFL),
+                    radius = edgeGlowObj.optDouble("radius", 20.0).toFloat(),
+                    intensity = edgeGlowObj.optDouble("intensity", 85.0).toFloat(),
+                    spread = edgeGlowObj.optDouble("spread", 6.0).toFloat(),
+                    animation = try {
+                        EdgeGlowAnimation
+                            .valueOf(edgeGlowObj.optString("animation", "STATIC"))
+                    } catch (_: Exception) {
+                        EdgeGlowAnimation.STATIC
+                    },
+                    speed = edgeGlowObj.optDouble("speed", 1.0).toFloat()
                 )
             } else null
         )

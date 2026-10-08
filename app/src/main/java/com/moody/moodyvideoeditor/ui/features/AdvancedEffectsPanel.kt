@@ -34,25 +34,68 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.data.Keyframe
 import com.moody.moodyvideoeditor.data.advanced.AdvancedEffectState
 import com.moody.moodyvideoeditor.data.advanced.AdvancedEffectType
-import com.moody.moodyvideoeditor.data.advanced.BlurDimension
-import com.moody.moodyvideoeditor.data.advanced.ChromaticAberrationEffect
-import com.moody.moodyvideoeditor.data.advanced.DropShadowEffect
-import com.moody.moodyvideoeditor.data.advanced.FourColorGradientEffect
-import com.moody.moodyvideoeditor.data.advanced.GaussianBlurEffect
-import com.moody.moodyvideoeditor.data.advanced.GradientBlendMode
-import com.moody.moodyvideoeditor.data.advanced.MirrorEffect
-import com.moody.moodyvideoeditor.data.advanced.MotionBlurEffect
-import com.moody.moodyvideoeditor.data.advanced.RoughenEdgesEffect
-import com.moody.moodyvideoeditor.data.advanced.RoundedCropEffect
-import com.moody.moodyvideoeditor.data.advanced.TrackMatteEffect
-import com.moody.moodyvideoeditor.data.advanced.TrackMatteType
-import com.moody.moodyvideoeditor.data.advanced.TurbulentDisplaceEffect
+import com.moody.moodyvideoeditor.data.advanced.models.BlurDimension
+import com.moody.moodyvideoeditor.data.advanced.models.ChromaticAberrationEffect
+import com.moody.moodyvideoeditor.data.advanced.models.DropShadowEffect
+import com.moody.moodyvideoeditor.data.advanced.models.FourColorGradientEffect
+import com.moody.moodyvideoeditor.data.advanced.models.GaussianBlurEffect
+import com.moody.moodyvideoeditor.data.advanced.models.GradientBlendMode
+import com.moody.moodyvideoeditor.data.advanced.models.MirrorEffect
+import com.moody.moodyvideoeditor.data.advanced.models.MotionBlurEffect
+import com.moody.moodyvideoeditor.data.advanced.models.RoughenEdgesEffect
+import com.moody.moodyvideoeditor.data.advanced.models.RoundedCropEffect
+import com.moody.moodyvideoeditor.data.advanced.models.TrackMatteEffect
+import com.moody.moodyvideoeditor.data.advanced.models.TrackMatteType
+import com.moody.moodyvideoeditor.data.advanced.models.TurbulentDisplaceEffect
 import com.moody.moodyvideoeditor.ui.components.ColorPickerField
 import com.moody.moodyvideoeditor.ui.components.EffectPropertyRow
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.KeyframeStore
+
+// ═══════════════════════════════════════════════════════════════
+//  AUTO-KEYFRAME HELPER
+//  Premiere Pro style:
+//  - No keyframes on prop       → change base value
+//  - Keyframes exist on prop    → add/update keyframe at playhead
+//  - Toggle diamond             → add/remove keyframe at playhead
+// ═══════════════════════════════════════════════════════════════
+
+private object KfOps {
+    fun hasKf(kfs: Map<String, List<Keyframe>>, prop: String, t: Float): Boolean =
+        KeyframeStore.hasKeyframeAt(kfs, prop, t)
+
+    fun hasAnyKf(kfs: Map<String, List<Keyframe>>, prop: String): Boolean =
+        KeyframeStore.getKeyframes(kfs, prop).isNotEmpty()
+
+    fun sample(kfs: Map<String, List<Keyframe>>, prop: String, t: Float, base: Float): Float =
+        KeyframeStore.sample(kfs, prop, t, base)
+
+    fun toggle(
+        kfs: Map<String, List<Keyframe>>,
+        prop: String,
+        t: Float,
+        currentValue: Float
+    ): Map<String, List<Keyframe>> = if (hasKf(kfs, prop, t)) {
+        KeyframeStore.removeKeyframe(kfs, prop, t)
+    } else {
+        KeyframeStore.setKeyframe(kfs, prop, t, currentValue)
+    }
+
+    fun autoWrite(
+        kfs: Map<String, List<Keyframe>>,
+        prop: String,
+        t: Float,
+        value: Float
+    ): Map<String, List<Keyframe>> =
+        KeyframeStore.autoKeyframeIfActive(kfs, prop, t, value)
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MAIN PANEL
+// ═══════════════════════════════════════════════════════════════
 
 @Composable
 fun AdvancedEffectsPanel(
@@ -66,28 +109,47 @@ fun AdvancedEffectsPanel(
 ) {
     var selectedType by remember { mutableStateOf(AdvancedEffectType.MIRROR) }
     var editingIndex by remember { mutableIntStateOf(-1) }
-    var workingState by remember {
-        mutableStateOf(AdvancedEffectState.withDefaults(AdvancedEffectType.MIRROR))
-    }
 
     val existingEffects = selectedClip?.advancedEffects ?: emptyList()
 
-    // Load effect when editing
+    fun defaultFor(type: AdvancedEffectType) =
+        AdvancedEffectState.withDefaults(type)
+
+    var workingState by remember {
+        mutableStateOf(defaultFor(AdvancedEffectType.MIRROR))
+    }
+    var lastCommittedState by remember {
+        mutableStateOf(defaultFor(AdvancedEffectType.MIRROR))
+    }
+
     LaunchedEffect(editingIndex, selectedClip?.id) {
         if (editingIndex in existingEffects.indices) {
             val fx = existingEffects[editingIndex]
             workingState = fx
+            lastCommittedState = fx
             selectedType = fx.type
         } else {
-            workingState = AdvancedEffectState.withDefaults(selectedType)
+            val def = defaultFor(selectedType)
+            workingState = def
+            lastCommittedState = def
+        }
+        // Clear preview when switching mode
+        onLivePreview(null)
+    }
+
+    LaunchedEffect(workingState, editingIndex) {
+        // No-op if nothing changed
+        if (workingState == lastCommittedState) return@LaunchedEffect
+
+        if (editingIndex >= 0) {
+            // EDIT MODE: directly update the actual clip (live edit)
+            onUpdateEffect(editingIndex, workingState)
+            onLivePreview(null)
+        } else {
+            // ADD MODE: just preview (append to clip)
+            onLivePreview(workingState)
         }
     }
-
-    // Fire live preview on every change
-    LaunchedEffect(workingState, currentTimeSec) {
-        onLivePreview(workingState)
-    }
-
     FeaturePanel(
         title = "✨ Advanced Effects",
         onClose = {
@@ -98,12 +160,12 @@ fun AdvancedEffectsPanel(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 480.dp)
+                .heightIn(max = 520.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
-            // ─── No clip selected ───
+            // ─── No clip ───
             if (selectedClip == null) {
                 Box(
                     modifier = Modifier
@@ -132,23 +194,25 @@ fun AdvancedEffectsPanel(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        "🎯 Target: ${selectedClip.name.take(28)}",
+                        "🎯 ${selectedClip.name.take(28)}  ·  " +
+                                "type: ${selectedClip.type}",
                         color = Color(0xFF60EFFF),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "Effects apply to this clip only",
+                        "Playhead: ${"%.2f".format(currentTimeSec)}s " +
+                                "(clip-local). Effects apply to this clip.",
                         color = Color(0xFF888888),
                         fontSize = 9.sp
                     )
                 }
             }
 
-            // ─── Applied Effects List ───
+            // ─── Applied list ───
             if (existingEffects.isNotEmpty()) {
                 Text(
-                    "APPLIED EFFECTS (${existingEffects.size})",
+                    "APPLIED (${existingEffects.size})",
                     color = Color(0xFF4F9DFF),
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Bold,
@@ -157,6 +221,7 @@ fun AdvancedEffectsPanel(
 
                 existingEffects.forEachIndexed { idx, fx ->
                     val isEditing = editingIndex == idx
+                    val kfCount = fx.keyframes().values.sumOf { it.size }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -178,21 +243,18 @@ fun AdvancedEffectsPanel(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                fx.type.category,
+                                "${fx.type.category} · $kfCount kf",
                                 color = Color(0xFF888888),
                                 fontSize = 9.sp
                             )
                         }
-                        // Edit
                         Box(
                             modifier = Modifier
                                 .height(28.dp)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(Color(0xFF7C3AED).copy(alpha = 0.25f))
                                 .pointerInput(idx) {
-                                    detectTapGestures {
-                                        editingIndex = idx
-                                    }
+                                    detectTapGestures { editingIndex = idx }
                                 }
                                 .padding(horizontal = 10.dp),
                             contentAlignment = Alignment.Center
@@ -204,7 +266,6 @@ fun AdvancedEffectsPanel(
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        // Remove
                         Box(
                             modifier = Modifier
                                 .size(28.dp)
@@ -227,11 +288,10 @@ fun AdvancedEffectsPanel(
                         }
                     }
                 }
-
                 Spacer(Modifier.height(2.dp))
             }
 
-            // ─── Back to Add ───
+            // ─── Back to add ───
             if (editingIndex >= 0) {
                 Row(
                     modifier = Modifier
@@ -241,7 +301,7 @@ fun AdvancedEffectsPanel(
                         .pointerInput(Unit) {
                             detectTapGestures {
                                 editingIndex = -1
-                                workingState = AdvancedEffectState.withDefaults(selectedType)
+                                workingState = defaultFor(selectedType)
                             }
                         }
                         .padding(10.dp),
@@ -264,7 +324,7 @@ fun AdvancedEffectsPanel(
                 )
             }
 
-            // ─── Type Selector ───
+            // ─── Type selector ───
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -285,7 +345,7 @@ fun AdvancedEffectsPanel(
                             .pointerInput(type) {
                                 detectTapGestures {
                                     selectedType = type
-                                    workingState = AdvancedEffectState.withDefaults(type)
+                                    workingState = defaultFor(type)
                                 }
                             }
                             .padding(6.dp),
@@ -307,69 +367,12 @@ fun AdvancedEffectsPanel(
 
             Spacer(Modifier.height(4.dp))
 
-            // ─── Properties by type ───
-            when (selectedType) {
-                AdvancedEffectType.MIRROR -> MirrorProperties(
-                    effect = workingState.mirror ?: MirrorEffect(),
-                    currentTimeSec = currentTimeSec,
-                    onChange = { workingState = workingState.copy(mirror = it) }
-                )
-
-                AdvancedEffectType.GAUSSIAN_BLUR -> GaussianBlurProperties(
-                    effect = workingState.gaussianBlur ?: GaussianBlurEffect(),
-                    currentTimeSec = currentTimeSec,
-                    onChange = { workingState = workingState.copy(gaussianBlur = it) }
-                )
-
-                AdvancedEffectType.ROUGHEN_EDGES -> RoughenEdgesProperties(
-                    effect = workingState.roughenEdges ?: RoughenEdgesEffect(),
-                    currentTimeSec = currentTimeSec,
-                    onChange = { workingState = workingState.copy(roughenEdges = it) }
-                )
-
-                AdvancedEffectType.ROUNDED_CROP -> RoundedCropProperties(
-                    effect = workingState.roundedCrop ?: RoundedCropEffect(),
-                    currentTimeSec = currentTimeSec,
-                    onChange = { workingState = workingState.copy(roundedCrop = it) }
-                )
-
-                AdvancedEffectType.FOUR_COLOR_GRADIENT -> FourColorGradientProperties(
-                    effect = workingState.fourColorGradient ?: FourColorGradientEffect(),
-                    currentTimeSec = currentTimeSec,
-                    onChange = { workingState = workingState.copy(fourColorGradient = it) }
-                )
-
-                AdvancedEffectType.DROP_SHADOW -> DropShadowProperties(
-                    effect = workingState.dropShadow ?: DropShadowEffect(),
-                    currentTimeSec = currentTimeSec,
-                    onChange = { workingState = workingState.copy(dropShadow = it) }
-                )
-
-                AdvancedEffectType.TURBULENT_DISPLACE -> TurbulentDisplaceProperties(
-                    effect = workingState.turbulentDisplace ?: TurbulentDisplaceEffect(),
-                    currentTimeSec = currentTimeSec,
-                    onChange = { workingState = workingState.copy(turbulentDisplace = it) }
-                )
-
-                AdvancedEffectType.CHROMATIC_ABERRATION -> ChromaticAberrationProperties(
-                    effect = workingState.chromaticAberration
-                        ?: ChromaticAberrationEffect(),
-                    currentTimeSec = currentTimeSec,
-                    onChange = { workingState = workingState.copy(chromaticAberration = it) }
-                )
-
-                AdvancedEffectType.MOTION_BLUR -> MotionBlurProperties(
-                    effect = workingState.motionBlur ?: MotionBlurEffect(),
-                    currentTimeSec = currentTimeSec,
-                    onChange = { workingState = workingState.copy(motionBlur = it) }
-                )
-
-                AdvancedEffectType.TRACK_MATTE -> TrackMatteProperties(
-                    effect = workingState.trackMatte ?: TrackMatteEffect(),
-                    currentTimeSec = currentTimeSec,
-                    onChange = { workingState = workingState.copy(trackMatte = it) }
-                )
-            }
+            // ─── Properties ───
+            AdvancedEffectPropertiesList(
+                effect = workingState,
+                currentTimeSec = currentTimeSec,
+                onChange = { workingState = it }
+            )
 
             Spacer(Modifier.height(4.dp))
 
@@ -387,11 +390,8 @@ fun AdvancedEffectsPanel(
                             .background(Color(0xFF181818))
                             .pointerInput(Unit) {
                                 detectTapGestures {
-                                    if (editingIndex in existingEffects.indices) {
-                                        workingState = existingEffects[editingIndex]
-                                    }
                                     editingIndex = -1
-                                    workingState = AdvancedEffectState.withDefaults(selectedType)
+                                    workingState = defaultFor(selectedType)
                                 }
                             },
                         contentAlignment = Alignment.Center
@@ -411,7 +411,7 @@ fun AdvancedEffectsPanel(
                         .height(44.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color(0xFF7C3AED))
-                        .pointerInput(editingIndex, workingState) {
+                        .pointerInput(editingIndex) {
                             detectTapGestures {
                                 if (editingIndex >= 0) {
                                     onUpdateEffect(editingIndex, workingState)
@@ -419,8 +419,9 @@ fun AdvancedEffectsPanel(
                                     onAddEffect(workingState)
                                 }
                                 onLivePreview(null)
+                                lastCommittedState = workingState
                                 editingIndex = -1
-                                workingState = AdvancedEffectState.withDefaults(selectedType)
+                                workingState = defaultFor(selectedType)
                             }
                         },
                     contentAlignment = Alignment.Center
@@ -436,7 +437,8 @@ fun AdvancedEffectsPanel(
             }
 
             Text(
-                "💡 Live preview is approximate. Export applies effects precisely.",
+                "💡 Diamond (◆) = keyframe at playhead. " +
+                        "Slider change → auto-keyframe if keyframes exist.",
                 color = Color(0xFF666666),
                 fontSize = 9.sp,
                 modifier = Modifier.padding(start = 4.dp)
@@ -446,16 +448,86 @@ fun AdvancedEffectsPanel(
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  REUSABLE KEYFRAME HELPERS
+//  DISPATCH
 // ═══════════════════════════════════════════════════════════════
 
-private inline fun <T> ToggleKf(
-    keyframes: Map<String, com.moody.moodyvideoeditor.data.Keyframe>,
-    prop: String,
+@Composable
+private fun AdvancedEffectPropertiesList(
+    effect: AdvancedEffectState,
     currentTimeSec: Float,
-    currentValue: Float
-): Map<String, List<com.moody.moodyvideoeditor.data.Keyframe>> {
-    return emptyMap()
+    onChange: (AdvancedEffectState) -> Unit
+) {
+    when (effect.type) {
+        AdvancedEffectType.MIRROR -> {
+            val m = effect.mirror ?: return
+            MirrorProperties(m, currentTimeSec) {
+                onChange(effect.copy(mirror = it))
+            }
+        }
+
+        AdvancedEffectType.GAUSSIAN_BLUR -> {
+            val b = effect.gaussianBlur ?: return
+            GaussianBlurProperties(b, currentTimeSec) {
+                onChange(effect.copy(gaussianBlur = it))
+            }
+        }
+
+        AdvancedEffectType.ROUGHEN_EDGES -> {
+            val r = effect.roughenEdges ?: return
+            RoughenEdgesProperties(r, currentTimeSec) {
+                onChange(effect.copy(roughenEdges = it))
+            }
+        }
+
+        AdvancedEffectType.ROUNDED_CROP -> {
+            val r = effect.roundedCrop ?: return
+            RoundedCropProperties(r, currentTimeSec) {
+                onChange(effect.copy(roundedCrop = it))
+            }
+        }
+
+        AdvancedEffectType.FOUR_COLOR_GRADIENT -> {
+            val g = effect.fourColorGradient ?: return
+            FourColorGradientProperties(g, currentTimeSec) {
+                onChange(effect.copy(fourColorGradient = it))
+            }
+        }
+
+        AdvancedEffectType.DROP_SHADOW -> {
+            val s = effect.dropShadow ?: return
+            DropShadowProperties(s, currentTimeSec) {
+                onChange(effect.copy(dropShadow = it))
+            }
+        }
+
+        AdvancedEffectType.TURBULENT_DISPLACE -> {
+            val t = effect.turbulentDisplace ?: return
+            TurbulentDisplaceProperties(t, currentTimeSec) {
+                onChange(effect.copy(turbulentDisplace = it))
+            }
+        }
+
+        AdvancedEffectType.CHROMATIC_ABERRATION -> {
+            val c = effect.chromaticAberration ?: return
+            ChromaticAberrationProperties(c, currentTimeSec) {
+                onChange(effect.copy(chromaticAberration = it))
+            }
+        }
+
+        AdvancedEffectType.MOTION_BLUR -> {
+            val m = effect.motionBlur ?: return
+            MotionBlurProperties(m, currentTimeSec) {
+                onChange(effect.copy(motionBlur = it))
+            }
+        }
+
+        AdvancedEffectType.TRACK_MATTE -> {
+            val t = effect.trackMatte ?: return
+            TrackMatteProperties(t, currentTimeSec) {
+                onChange(effect.copy(trackMatte = it))
+            }
+        }
+    }
 }
 
 @Composable
@@ -470,7 +542,7 @@ private fun SectionLabel(text: String) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  MIRROR PROPERTIES
+//  1. MIRROR
 // ═══════════════════════════════════════════════════════════════
 
 @Composable
@@ -479,52 +551,60 @@ private fun MirrorProperties(
     currentTimeSec: Float,
     onChange: (MirrorEffect) -> Unit
 ) {
-    fun hasKf(p: String) = KeyframeStore.hasKeyframeAt(effect.keyframes, p, currentTimeSec)
-    fun hasAnyKf(p: String) = KeyframeStore.getKeyframes(effect.keyframes, p).isNotEmpty()
+    val kfs = effect.keyframes
 
-    fun toggleKf(p: String, v: Float) {
-        val newKfs = if (hasKf(p)) {
-            KeyframeStore.removeKeyframe(effect.keyframes, p, currentTimeSec)
-        } else {
-            KeyframeStore.setKeyframe(effect.keyframes, p, currentTimeSec, v)
-        }
-        onChange(effect.copy(keyframes = newKfs))
+    fun hasKf(p: String) = KfOps.hasKf(kfs, p, currentTimeSec)
+    fun hasAny(p: String) = KfOps.hasAnyKf(kfs, p)
+    fun sample(p: String, base: Float) = KfOps.sample(kfs, p, currentTimeSec, base)
+
+    fun toggle(p: String, v: Float) {
+        onChange(effect.copy(keyframes = KfOps.toggle(kfs, p, currentTimeSec, v)))
+    }
+
+    fun writeBase(p: String, v: Float, baseUpdate: (MirrorEffect) -> MirrorEffect) {
+        onChange(
+            if (hasAny(p)) baseUpdate(effect)
+                .copy(keyframes = KfOps.autoWrite(kfs, p, currentTimeSec, v))
+            else baseUpdate(effect)
+        )
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionLabel("REFLECTION CENTER")
         EffectPropertyRow(
-            label = "Center X", value = effect.centerX, range = 0f..1f, decimals = 3,
-            hasKeyframe = hasKf("centerX"), hasAnyKeyframe = hasAnyKf("centerX"),
-            onValueChange = { onChange(effect.copy(centerX = it)) },
-            onToggleKeyframe = { toggleKf("centerX", effect.centerX) }
+            label = "Center X", value = sample("centerX", effect.centerX),
+            range = 0f..1f, decimals = 3,
+            hasKeyframe = hasKf("centerX"), hasAnyKeyframe = hasAny("centerX"),
+            onValueChange = { v -> writeBase("centerX", v) { it.copy(centerX = v) } },
+            onToggleKeyframe = { toggle("centerX", sample("centerX", effect.centerX)) }
         )
         EffectPropertyRow(
-            label = "Center Y", value = effect.centerY, range = 0f..1f, decimals = 3,
-            hasKeyframe = hasKf("centerY"), hasAnyKeyframe = hasAnyKf("centerY"),
-            onValueChange = { onChange(effect.copy(centerY = it)) },
-            onToggleKeyframe = { toggleKf("centerY", effect.centerY) }
+            label = "Center Y", value = sample("centerY", effect.centerY),
+            range = 0f..1f, decimals = 3,
+            hasKeyframe = hasKf("centerY"), hasAnyKeyframe = hasAny("centerY"),
+            onValueChange = { v -> writeBase("centerY", v) { it.copy(centerY = v) } },
+            onToggleKeyframe = { toggle("centerY", sample("centerY", effect.centerY)) }
         )
         SectionLabel("REFLECTION ANGLE")
         EffectPropertyRow(
-            label = "Angle", value = effect.angleDeg, range = 0f..360f, decimals = 1,
-            unit = "°",
-            hasKeyframe = hasKf("angleDeg"), hasAnyKeyframe = hasAnyKf("angleDeg"),
-            onValueChange = { onChange(effect.copy(angleDeg = it)) },
-            onToggleKeyframe = { toggleKf("angleDeg", effect.angleDeg) }
+            label = "Angle", value = sample("angleDeg", effect.angleDeg),
+            range = 0f..360f, decimals = 1, unit = "°",
+            hasKeyframe = hasKf("angleDeg"), hasAnyKeyframe = hasAny("angleDeg"),
+            onValueChange = { v -> writeBase("angleDeg", v) { it.copy(angleDeg = v) } },
+            onToggleKeyframe = { toggle("angleDeg", sample("angleDeg", effect.angleDeg)) }
         )
         EffectPropertyRow(
-            label = "Opacity", value = effect.opacity, range = 0f..100f, decimals = 1,
-            unit = "%",
-            hasKeyframe = hasKf("opacity"), hasAnyKeyframe = hasAnyKf("opacity"),
-            onValueChange = { onChange(effect.copy(opacity = it)) },
-            onToggleKeyframe = { toggleKf("opacity", effect.opacity) }
+            label = "Opacity", value = sample("opacity", effect.opacity),
+            range = 0f..100f, decimals = 1, unit = "%",
+            hasKeyframe = hasKf("opacity"), hasAnyKeyframe = hasAny("opacity"),
+            onValueChange = { v -> writeBase("opacity", v) { it.copy(opacity = v) } },
+            onToggleKeyframe = { toggle("opacity", sample("opacity", effect.opacity)) }
         )
     }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  GAUSSIAN BLUR PROPERTIES
+//  2. GAUSSIAN BLUR
 // ═══════════════════════════════════════════════════════════════
 
 @Composable
@@ -533,26 +613,28 @@ private fun GaussianBlurProperties(
     currentTimeSec: Float,
     onChange: (GaussianBlurEffect) -> Unit
 ) {
-    fun hasKf(p: String) = KeyframeStore.hasKeyframeAt(effect.keyframes, p, currentTimeSec)
-    fun hasAnyKf(p: String) = KeyframeStore.getKeyframes(effect.keyframes, p).isNotEmpty()
-
-    fun toggleKf(p: String, v: Float) {
-        val newKfs = if (hasKf(p)) {
-            KeyframeStore.removeKeyframe(effect.keyframes, p, currentTimeSec)
-        } else {
-            KeyframeStore.setKeyframe(effect.keyframes, p, currentTimeSec, v)
-        }
-        onChange(effect.copy(keyframes = newKfs))
+    val kfs = effect.keyframes
+    fun hasKf(p: String) = KfOps.hasKf(kfs, p, currentTimeSec)
+    fun hasAny(p: String) = KfOps.hasAnyKf(kfs, p)
+    fun sample(p: String, base: Float) = KfOps.sample(kfs, p, currentTimeSec, base)
+    fun toggle(p: String, v: Float) {
+        onChange(effect.copy(keyframes = KfOps.toggle(kfs, p, currentTimeSec, v)))
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionLabel("BLUR")
         EffectPropertyRow(
-            label = "Blurriness", value = effect.blurriness, range = 0f..1000f,
-            decimals = 1, unit = "px",
-            hasKeyframe = hasKf("blurriness"), hasAnyKeyframe = hasAnyKf("blurriness"),
-            onValueChange = { onChange(effect.copy(blurriness = it)) },
-            onToggleKeyframe = { toggleKf("blurriness", effect.blurriness) }
+            label = "Blurriness", value = sample("blurriness", effect.blurriness),
+            range = 0f..1000f, decimals = 1, unit = "px",
+            hasKeyframe = hasKf("blurriness"), hasAnyKeyframe = hasAny("blurriness"),
+            onValueChange = { v ->
+                onChange(
+                    if (hasAny("blurriness")) effect.copy(blurriness = v)
+                        .copy(keyframes = KfOps.autoWrite(kfs, "blurriness", currentTimeSec, v))
+                    else effect.copy(blurriness = v)
+                )
+            },
+            onToggleKeyframe = { toggle("blurriness", sample("blurriness", effect.blurriness)) }
         )
 
         SectionLabel("DIMENSION")
@@ -568,12 +650,8 @@ private fun GaussianBlurProperties(
                     modifier = Modifier
                         .height(32.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(
-                            if (isActive) Color(0xFF7C3AED) else Color(0xFF181818)
-                        )
-                        .pointerInput(dim) {
-                            detectTapGestures { onChange(effect.copy(dimension = dim)) }
-                        }
+                        .background(if (isActive) Color(0xFF7C3AED) else Color(0xFF181818))
+                        .pointerInput(dim) { detectTapGestures { onChange(effect.copy(dimension = dim)) } }
                         .padding(horizontal = 14.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -592,7 +670,7 @@ private fun GaussianBlurProperties(
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  ROUGHEN EDGES PROPERTIES
+//  3. ROUGHEN EDGES
 // ═══════════════════════════════════════════════════════════════
 
 @Composable
@@ -601,71 +679,78 @@ private fun RoughenEdgesProperties(
     currentTimeSec: Float,
     onChange: (RoughenEdgesEffect) -> Unit
 ) {
-    fun hasKf(p: String) = KeyframeStore.hasKeyframeAt(effect.keyframes, p, currentTimeSec)
-    fun hasAnyKf(p: String) = KeyframeStore.getKeyframes(effect.keyframes, p).isNotEmpty()
+    val kfs = effect.keyframes
+    fun hasKf(p: String) = KfOps.hasKf(kfs, p, currentTimeSec)
+    fun hasAny(p: String) = KfOps.hasAnyKf(kfs, p)
+    fun sample(p: String, base: Float) = KfOps.sample(kfs, p, currentTimeSec, base)
+    fun toggle(p: String, v: Float) {
+        onChange(effect.copy(keyframes = KfOps.toggle(kfs, p, currentTimeSec, v)))
+    }
 
-    fun toggleKf(p: String, v: Float) {
-        val newKfs = if (hasKf(p)) {
-            KeyframeStore.removeKeyframe(effect.keyframes, p, currentTimeSec)
-        } else {
-            KeyframeStore.setKeyframe(effect.keyframes, p, currentTimeSec, v)
-        }
-        onChange(effect.copy(keyframes = newKfs))
+    @Composable
+    fun Row1(
+        label: String, prop: String, base: Float,
+        range: ClosedFloatingPointRange<Float>, decimals: Int, unit: String = "",
+        update: (RoughenEdgesEffect, Float) -> RoughenEdgesEffect
+    ) {
+        EffectPropertyRow(
+            label = label, value = sample(prop, base), range = range,
+            decimals = decimals, unit = unit,
+            hasKeyframe = hasKf(prop), hasAnyKeyframe = hasAny(prop),
+            onValueChange = { v ->
+                val next = update(effect, v)
+                onChange(
+                    if (hasAny(prop))
+                        next.copy(keyframes = KfOps.autoWrite(kfs, prop, currentTimeSec, v))
+                    else next
+                )
+            },
+            onToggleKeyframe = { toggle(prop, sample(prop, base)) }
+        )
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionLabel("BORDER")
-        EffectPropertyRow(
-            label = "Width", value = effect.borderWidth, range = 0f..500f, decimals = 1,
-            unit = "px",
-            hasKeyframe = hasKf("borderWidth"), hasAnyKeyframe = hasAnyKf("borderWidth"),
-            onValueChange = { onChange(effect.copy(borderWidth = it)) },
-            onToggleKeyframe = { toggleKf("borderWidth", effect.borderWidth) }
-        )
-        EffectPropertyRow(
-            label = "Sharpness", value = effect.edgeSharpness, range = 0f..100f,
-            decimals = 1,
-            hasKeyframe = hasKf("edgeSharpness"),
-            hasAnyKeyframe = hasAnyKf("edgeSharpness"),
-            onValueChange = { onChange(effect.copy(edgeSharpness = it)) },
-            onToggleKeyframe = { toggleKf("edgeSharpness", effect.edgeSharpness) }
-        )
-
+        Row1("Width", "borderWidth", effect.borderWidth, 0f..500f, 1, "px") { e, v ->
+            e.copy(
+                borderWidth = v
+            )
+        }
+        Row1("Sharpness", "edgeSharpness", effect.edgeSharpness, 0f..100f, 1) { e, v ->
+            e.copy(
+                edgeSharpness = v
+            )
+        }
         SectionLabel("FRACTAL")
-        EffectPropertyRow(
-            label = "Scale", value = effect.fractalScale, range = 20f..1000f,
-            decimals = 1,
-            hasKeyframe = hasKf("fractalScale"),
-            hasAnyKeyframe = hasAnyKf("fractalScale"),
-            onValueChange = { onChange(effect.copy(fractalScale = it)) },
-            onToggleKeyframe = { toggleKf("fractalScale", effect.fractalScale) }
-        )
-        EffectPropertyRow(
-            label = "Evolution", value = effect.evolution, range = 0f..360f,
-            decimals = 1, unit = "°",
-            hasKeyframe = hasKf("evolution"), hasAnyKeyframe = hasAnyKf("evolution"),
-            onValueChange = { onChange(effect.copy(evolution = it)) },
-            onToggleKeyframe = { toggleKf("evolution", effect.evolution) }
-        )
-        EffectPropertyRow(
-            label = "Complexity", value = effect.complexity, range = 1f..10f,
-            decimals = 1,
-            hasKeyframe = hasKf("complexity"), hasAnyKeyframe = hasAnyKf("complexity"),
-            onValueChange = { onChange(effect.copy(complexity = it)) },
-            onToggleKeyframe = { toggleKf("complexity", effect.complexity) }
-        )
-        EffectPropertyRow(
-            label = "Seed", value = effect.randomSeed, range = 0f..9999f,
-            decimals = 0,
-            hasKeyframe = hasKf("randomSeed"), hasAnyKeyframe = hasAnyKf("randomSeed"),
-            onValueChange = { onChange(effect.copy(randomSeed = it)) },
-            onToggleKeyframe = { toggleKf("randomSeed", effect.randomSeed) }
-        )
+        Row1("Scale", "fractalScale", effect.fractalScale, 20f..1000f, 1) { e, v ->
+            e.copy(
+                fractalScale = v
+            )
+        }
+        Row1("Evolution", "evolution", effect.evolution, 0f..360f, 1, "°") { e, v ->
+            e.copy(
+                evolution = v
+            )
+        }
+        Row1(
+            "Complexity",
+            "complexity",
+            effect.complexity,
+            1f..10f,
+            1
+        ) { e, v -> e.copy(complexity = v) }
+        Row1(
+            "Seed",
+            "randomSeed",
+            effect.randomSeed,
+            0f..9999f,
+            0
+        ) { e, v -> e.copy(randomSeed = v) }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  ROUNDED CROP PROPERTIES
+//  4. ROUNDED CROP
 // ═══════════════════════════════════════════════════════════════
 
 @Composable
@@ -674,70 +759,59 @@ private fun RoundedCropProperties(
     currentTimeSec: Float,
     onChange: (RoundedCropEffect) -> Unit
 ) {
-    fun hasKf(p: String) = KeyframeStore.hasKeyframeAt(effect.keyframes, p, currentTimeSec)
-    fun hasAnyKf(p: String) = KeyframeStore.getKeyframes(effect.keyframes, p).isNotEmpty()
+    val kfs = effect.keyframes
+    fun hasKf(p: String) = KfOps.hasKf(kfs, p, currentTimeSec)
+    fun hasAny(p: String) = KfOps.hasAnyKf(kfs, p)
+    fun sample(p: String, base: Float) = KfOps.sample(kfs, p, currentTimeSec, base)
+    fun toggle(p: String, v: Float) {
+        onChange(effect.copy(keyframes = KfOps.toggle(kfs, p, currentTimeSec, v)))
+    }
 
-    fun toggleKf(p: String, v: Float) {
-        val newKfs = if (hasKf(p)) {
-            KeyframeStore.removeKeyframe(effect.keyframes, p, currentTimeSec)
-        } else {
-            KeyframeStore.setKeyframe(effect.keyframes, p, currentTimeSec, v)
-        }
-        onChange(effect.copy(keyframes = newKfs))
+    @Composable
+    fun R(
+        label: String, prop: String, base: Float,
+        range: ClosedFloatingPointRange<Float>, decimals: Int, unit: String = "",
+        update: (RoundedCropEffect, Float) -> RoundedCropEffect
+    ) {
+        EffectPropertyRow(
+            label = label, value = sample(prop, base), range = range,
+            decimals = decimals, unit = unit,
+            hasKeyframe = hasKf(prop), hasAnyKeyframe = hasAny(prop),
+            onValueChange = { v ->
+                val next = update(effect, v)
+                onChange(
+                    if (hasAny(prop))
+                        next.copy(keyframes = KfOps.autoWrite(kfs, prop, currentTimeSec, v))
+                    else next
+                )
+            },
+            onToggleKeyframe = { toggle(prop, sample(prop, base)) }
+        )
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionLabel("CORNER")
-        EffectPropertyRow(
-            label = "Radius", value = effect.cornerRadius, range = 0f..500f,
-            decimals = 1, unit = "px",
-            hasKeyframe = hasKf("cornerRadius"),
-            hasAnyKeyframe = hasAnyKf("cornerRadius"),
-            onValueChange = { onChange(effect.copy(cornerRadius = it)) },
-            onToggleKeyframe = { toggleKf("cornerRadius", effect.cornerRadius) }
-        )
-
+        R("Radius", "cornerRadius", effect.cornerRadius, 0f..500f, 1, "px") { e, v ->
+            e.copy(
+                cornerRadius = v
+            )
+        }
         SectionLabel("CROP (0.0 - 0.5)")
-        EffectPropertyRow(
-            label = "Top", value = effect.cropTop, range = 0f..0.5f, decimals = 3,
-            hasKeyframe = hasKf("cropTop"), hasAnyKeyframe = hasAnyKf("cropTop"),
-            onValueChange = { onChange(effect.copy(cropTop = it)) },
-            onToggleKeyframe = { toggleKf("cropTop", effect.cropTop) }
-        )
-        EffectPropertyRow(
-            label = "Bottom", value = effect.cropBottom, range = 0f..0.5f, decimals = 3,
-            hasKeyframe = hasKf("cropBottom"),
-            hasAnyKeyframe = hasAnyKf("cropBottom"),
-            onValueChange = { onChange(effect.copy(cropBottom = it)) },
-            onToggleKeyframe = { toggleKf("cropBottom", effect.cropBottom) }
-        )
-        EffectPropertyRow(
-            label = "Left", value = effect.cropLeft, range = 0f..0.5f, decimals = 3,
-            hasKeyframe = hasKf("cropLeft"), hasAnyKeyframe = hasAnyKf("cropLeft"),
-            onValueChange = { onChange(effect.copy(cropLeft = it)) },
-            onToggleKeyframe = { toggleKf("cropLeft", effect.cropLeft) }
-        )
-        EffectPropertyRow(
-            label = "Right", value = effect.cropRight, range = 0f..0.5f, decimals = 3,
-            hasKeyframe = hasKf("cropRight"), hasAnyKeyframe = hasAnyKf("cropRight"),
-            onValueChange = { onChange(effect.copy(cropRight = it)) },
-            onToggleKeyframe = { toggleKf("cropRight", effect.cropRight) }
-        )
-
+        R("Top", "cropTop", effect.cropTop, 0f..0.5f, 3) { e, v -> e.copy(cropTop = v) }
+        R("Bottom", "cropBottom", effect.cropBottom, 0f..0.5f, 3) { e, v -> e.copy(cropBottom = v) }
+        R("Left", "cropLeft", effect.cropLeft, 0f..0.5f, 3) { e, v -> e.copy(cropLeft = v) }
+        R("Right", "cropRight", effect.cropRight, 0f..0.5f, 3) { e, v -> e.copy(cropRight = v) }
         SectionLabel("EDGE")
-        EffectPropertyRow(
-            label = "Feathering", value = effect.feathering, range = 0f..200f,
-            decimals = 1, unit = "px",
-            hasKeyframe = hasKf("feathering"),
-            hasAnyKeyframe = hasAnyKf("feathering"),
-            onValueChange = { onChange(effect.copy(feathering = it)) },
-            onToggleKeyframe = { toggleKf("feathering", effect.feathering) }
-        )
+        R("Feathering", "feathering", effect.feathering, 0f..200f, 1, "px") { e, v ->
+            e.copy(
+                feathering = v
+            )
+        }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  4-COLOR GRADIENT PROPERTIES
+//  5. 4-COLOR GRADIENT
 // ═══════════════════════════════════════════════════════════════
 
 @Composable
@@ -746,36 +820,20 @@ private fun FourColorGradientProperties(
     currentTimeSec: Float,
     onChange: (FourColorGradientEffect) -> Unit
 ) {
-    fun hasKf(p: String) = KeyframeStore.hasKeyframeAt(effect.keyframes, p, currentTimeSec)
-    fun hasAnyKf(p: String) = KeyframeStore.getKeyframes(effect.keyframes, p).isNotEmpty()
-
-    fun toggleKf(p: String, v: Float) {
-        val newKfs = if (hasKf(p)) {
-            KeyframeStore.removeKeyframe(effect.keyframes, p, currentTimeSec)
-        } else {
-            KeyframeStore.setKeyframe(effect.keyframes, p, currentTimeSec, v)
-        }
-        onChange(effect.copy(keyframes = newKfs))
+    val kfs = effect.keyframes
+    fun hasKf(p: String) = KfOps.hasKf(kfs, p, currentTimeSec)
+    fun hasAny(p: String) = KfOps.hasAnyKf(kfs, p)
+    fun sample(p: String, base: Float) = KfOps.sample(kfs, p, currentTimeSec, base)
+    fun toggle(p: String, v: Float) {
+        onChange(effect.copy(keyframes = KfOps.toggle(kfs, p, currentTimeSec, v)))
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionLabel("CORNER COLORS")
-        ColorPickerField(
-            label = "Top Left", colorLong = effect.color1,
-            onChange = { onChange(effect.copy(color1 = it)) }
-        )
-        ColorPickerField(
-            label = "Top Right", colorLong = effect.color2,
-            onChange = { onChange(effect.copy(color2 = it)) }
-        )
-        ColorPickerField(
-            label = "Bot Right", colorLong = effect.color3,
-            onChange = { onChange(effect.copy(color3 = it)) }
-        )
-        ColorPickerField(
-            label = "Bot Left", colorLong = effect.color4,
-            onChange = { onChange(effect.copy(color4 = it)) }
-        )
+        ColorPickerField("Top Left", effect.color1) { onChange(effect.copy(color1 = it)) }
+        ColorPickerField("Top Right", effect.color2) { onChange(effect.copy(color2 = it)) }
+        ColorPickerField("Bot Right", effect.color3) { onChange(effect.copy(color3 = it)) }
+        ColorPickerField("Bot Left", effect.color4) { onChange(effect.copy(color4 = it)) }
 
         SectionLabel("BLEND MODE")
         Row(
@@ -790,19 +848,14 @@ private fun FourColorGradientProperties(
                     modifier = Modifier
                         .height(32.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(
-                            if (isActive) Color(0xFF7C3AED) else Color(0xFF181818)
-                        )
-                        .pointerInput(mode) {
-                            detectTapGestures { onChange(effect.copy(blendMode = mode)) }
-                        }
+                        .background(if (isActive) Color(0xFF7C3AED) else Color(0xFF181818))
+                        .pointerInput(mode) { detectTapGestures { onChange(effect.copy(blendMode = mode)) } }
                         .padding(horizontal = 14.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         mode.key.replaceFirstChar { it.uppercase() },
-                        color = Color.White, fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
+                        color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold
                     )
                 }
             }
@@ -810,18 +863,28 @@ private fun FourColorGradientProperties(
 
         SectionLabel("OPACITY")
         EffectPropertyRow(
-            label = "Global", value = effect.globalOpacity, range = 0f..100f,
-            decimals = 1, unit = "%",
-            hasKeyframe = hasKf("globalOpacity"),
-            hasAnyKeyframe = hasAnyKf("globalOpacity"),
-            onValueChange = { onChange(effect.copy(globalOpacity = it)) },
-            onToggleKeyframe = { toggleKf("globalOpacity", effect.globalOpacity) }
+            label = "Global", value = sample("globalOpacity", effect.globalOpacity),
+            range = 0f..100f, decimals = 1, unit = "%",
+            hasKeyframe = hasKf("globalOpacity"), hasAnyKeyframe = hasAny("globalOpacity"),
+            onValueChange = { v ->
+                onChange(
+                    if (hasAny("globalOpacity")) effect.copy(globalOpacity = v)
+                        .copy(keyframes = KfOps.autoWrite(kfs, "globalOpacity", currentTimeSec, v))
+                    else effect.copy(globalOpacity = v)
+                )
+            },
+            onToggleKeyframe = {
+                toggle(
+                    "globalOpacity",
+                    sample("globalOpacity", effect.globalOpacity)
+                )
+            }
         )
     }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  DROP SHADOW PROPERTIES
+//  6. DROP SHADOW
 // ═══════════════════════════════════════════════════════════════
 
 @Composable
@@ -830,59 +893,72 @@ private fun DropShadowProperties(
     currentTimeSec: Float,
     onChange: (DropShadowEffect) -> Unit
 ) {
-    fun hasKf(p: String) = KeyframeStore.hasKeyframeAt(effect.keyframes, p, currentTimeSec)
-    fun hasAnyKf(p: String) = KeyframeStore.getKeyframes(effect.keyframes, p).isNotEmpty()
+    val kfs = effect.keyframes
+    fun hasKf(p: String) = KfOps.hasKf(kfs, p, currentTimeSec)
+    fun hasAny(p: String) = KfOps.hasAnyKf(kfs, p)
+    fun sample(p: String, base: Float) = KfOps.sample(kfs, p, currentTimeSec, base)
+    fun toggle(p: String, v: Float) {
+        onChange(effect.copy(keyframes = KfOps.toggle(kfs, p, currentTimeSec, v)))
+    }
 
-    fun toggleKf(p: String, v: Float) {
-        val newKfs = if (hasKf(p)) {
-            KeyframeStore.removeKeyframe(effect.keyframes, p, currentTimeSec)
-        } else {
-            KeyframeStore.setKeyframe(effect.keyframes, p, currentTimeSec, v)
-        }
-        onChange(effect.copy(keyframes = newKfs))
+    @Composable
+    fun R(
+        label: String, prop: String, base: Float, range: ClosedFloatingPointRange<Float>,
+        decimals: Int, unit: String = "", update: (DropShadowEffect, Float) -> DropShadowEffect
+    ) {
+        EffectPropertyRow(
+            label = label,
+            value = sample(prop, base),
+            range = range,
+            decimals = decimals,
+            unit = unit,
+            hasKeyframe = hasKf(prop),
+            hasAnyKeyframe = hasAny(prop),
+            onValueChange = { v ->
+                val next = update(effect, v)
+                onChange(
+                    if (hasAny(prop)) next.copy(
+                        keyframes = KfOps.autoWrite(
+                            kfs,
+                            prop,
+                            currentTimeSec,
+                            v
+                        )
+                    )
+                    else next
+                )
+            },
+            onToggleKeyframe = { toggle(prop, sample(prop, base)) }
+        )
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionLabel("SHADOW")
-        ColorPickerField(
-            label = "Color", colorLong = effect.shadowColor,
-            onChange = { onChange(effect.copy(shadowColor = it)) }
-        )
-        EffectPropertyRow(
-            label = "Opacity", value = effect.opacity, range = 0f..100f,
-            decimals = 1, unit = "%",
-            hasKeyframe = hasKf("opacity"), hasAnyKeyframe = hasAnyKf("opacity"),
-            onValueChange = { onChange(effect.copy(opacity = it)) },
-            onToggleKeyframe = { toggleKf("opacity", effect.opacity) }
-        )
-        EffectPropertyRow(
-            label = "Distance", value = effect.distance, range = 0f..500f,
-            decimals = 1, unit = "px",
-            hasKeyframe = hasKf("distance"), hasAnyKeyframe = hasAnyKf("distance"),
-            onValueChange = { onChange(effect.copy(distance = it)) },
-            onToggleKeyframe = { toggleKf("distance", effect.distance) }
-        )
-        EffectPropertyRow(
-            label = "Direction", value = effect.directionAngle, range = 0f..360f,
-            decimals = 1, unit = "°",
-            hasKeyframe = hasKf("directionAngle"),
-            hasAnyKeyframe = hasAnyKf("directionAngle"),
-            onValueChange = { onChange(effect.copy(directionAngle = it)) },
-            onToggleKeyframe = { toggleKf("directionAngle", effect.directionAngle) }
-        )
-        EffectPropertyRow(
-            label = "Softness", value = effect.blurSoftness, range = 0f..100f,
-            decimals = 1, unit = "px",
-            hasKeyframe = hasKf("blurSoftness"),
-            hasAnyKeyframe = hasAnyKf("blurSoftness"),
-            onValueChange = { onChange(effect.copy(blurSoftness = it)) },
-            onToggleKeyframe = { toggleKf("blurSoftness", effect.blurSoftness) }
-        )
+        ColorPickerField("Color", effect.shadowColor) { onChange(effect.copy(shadowColor = it)) }
+        R("Opacity", "opacity", effect.opacity, 0f..100f, 1, "%") { e, v -> e.copy(opacity = v) }
+        R(
+            "Distance",
+            "distance",
+            effect.distance,
+            0f..500f,
+            1,
+            "px"
+        ) { e, v -> e.copy(distance = v) }
+        R("Direction", "directionAngle", effect.directionAngle, 0f..360f, 1, "°") { e, v ->
+            e.copy(
+                directionAngle = v
+            )
+        }
+        R("Softness", "blurSoftness", effect.blurSoftness, 0f..100f, 1, "px") { e, v ->
+            e.copy(
+                blurSoftness = v
+            )
+        }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  TURBULENT DISPLACE PROPERTIES
+//  7. TURBULENT DISPLACE
 // ═══════════════════════════════════════════════════════════════
 
 @Composable
@@ -891,60 +967,67 @@ private fun TurbulentDisplaceProperties(
     currentTimeSec: Float,
     onChange: (TurbulentDisplaceEffect) -> Unit
 ) {
-    fun hasKf(p: String) = KeyframeStore.hasKeyframeAt(effect.keyframes, p, currentTimeSec)
-    fun hasAnyKf(p: String) = KeyframeStore.getKeyframes(effect.keyframes, p).isNotEmpty()
+    val kfs = effect.keyframes
+    fun hasKf(p: String) = KfOps.hasKf(kfs, p, currentTimeSec)
+    fun hasAny(p: String) = KfOps.hasAnyKf(kfs, p)
+    fun sample(p: String, base: Float) = KfOps.sample(kfs, p, currentTimeSec, base)
+    fun toggle(p: String, v: Float) {
+        onChange(effect.copy(keyframes = KfOps.toggle(kfs, p, currentTimeSec, v)))
+    }
 
-    fun toggleKf(p: String, v: Float) {
-        val newKfs = if (hasKf(p)) {
-            KeyframeStore.removeKeyframe(effect.keyframes, p, currentTimeSec)
-        } else {
-            KeyframeStore.setKeyframe(effect.keyframes, p, currentTimeSec, v)
-        }
-        onChange(effect.copy(keyframes = newKfs))
+    @Composable
+    fun R(
+        label: String,
+        prop: String,
+        base: Float,
+        range: ClosedFloatingPointRange<Float>,
+        decimals: Int,
+        unit: String = "",
+        update: (TurbulentDisplaceEffect, Float) -> TurbulentDisplaceEffect
+    ) {
+        EffectPropertyRow(
+            label = label,
+            value = sample(prop, base),
+            range = range,
+            decimals = decimals,
+            unit = unit,
+            hasKeyframe = hasKf(prop),
+            hasAnyKeyframe = hasAny(prop),
+            onValueChange = { v ->
+                val next = update(effect, v)
+                onChange(
+                    if (hasAny(prop)) next.copy(
+                        keyframes = KfOps.autoWrite(
+                            kfs,
+                            prop,
+                            currentTimeSec,
+                            v
+                        )
+                    )
+                    else next
+                )
+            },
+            onToggleKeyframe = { toggle(prop, sample(prop, base)) }
+        )
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionLabel("DISPLACE")
-        EffectPropertyRow(
-            label = "Amount", value = effect.amount, range = 0f..1000f,
-            decimals = 1,
-            hasKeyframe = hasKf("amount"), hasAnyKeyframe = hasAnyKf("amount"),
-            onValueChange = { onChange(effect.copy(amount = it)) },
-            onToggleKeyframe = { toggleKf("amount", effect.amount) }
-        )
-        EffectPropertyRow(
-            label = "Size", value = effect.size, range = 0f..2000f, decimals = 1,
-            hasKeyframe = hasKf("size"), hasAnyKeyframe = hasAnyKf("size"),
-            onValueChange = { onChange(effect.copy(size = it)) },
-            onToggleKeyframe = { toggleKf("size", effect.size) }
-        )
-
+        R("Amount", "amount", effect.amount, 0f..1000f, 1) { e, v -> e.copy(amount = v) }
+        R("Size", "size", effect.size, 0f..2000f, 1) { e, v -> e.copy(size = v) }
         SectionLabel("OFFSET (0.0 - 1.0)")
-        EffectPropertyRow(
-            label = "Offset X", value = effect.offsetX, range = 0f..1f, decimals = 3,
-            hasKeyframe = hasKf("offsetX"), hasAnyKeyframe = hasAnyKf("offsetX"),
-            onValueChange = { onChange(effect.copy(offsetX = it)) },
-            onToggleKeyframe = { toggleKf("offsetX", effect.offsetX) }
-        )
-        EffectPropertyRow(
-            label = "Offset Y", value = effect.offsetY, range = 0f..1f, decimals = 3,
-            hasKeyframe = hasKf("offsetY"), hasAnyKeyframe = hasAnyKf("offsetY"),
-            onValueChange = { onChange(effect.copy(offsetY = it)) },
-            onToggleKeyframe = { toggleKf("offsetY", effect.offsetY) }
-        )
-        EffectPropertyRow(
-            label = "Speed", value = effect.evolutionSpeed, range = 0f..100f,
-            decimals = 1,
-            hasKeyframe = hasKf("evolutionSpeed"),
-            hasAnyKeyframe = hasAnyKf("evolutionSpeed"),
-            onValueChange = { onChange(effect.copy(evolutionSpeed = it)) },
-            onToggleKeyframe = { toggleKf("evolutionSpeed", effect.evolutionSpeed) }
-        )
+        R("Offset X", "offsetX", effect.offsetX, 0f..1f, 3) { e, v -> e.copy(offsetX = v) }
+        R("Offset Y", "offsetY", effect.offsetY, 0f..1f, 3) { e, v -> e.copy(offsetY = v) }
+        R("Speed", "evolutionSpeed", effect.evolutionSpeed, 0f..100f, 1) { e, v ->
+            e.copy(
+                evolutionSpeed = v
+            )
+        }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  CHROMATIC ABERRATION PROPERTIES
+//  8. CHROMATIC ABERRATION
 // ═══════════════════════════════════════════════════════════════
 
 @Composable
@@ -953,72 +1036,95 @@ private fun ChromaticAberrationProperties(
     currentTimeSec: Float,
     onChange: (ChromaticAberrationEffect) -> Unit
 ) {
-    fun hasKf(p: String) = KeyframeStore.hasKeyframeAt(effect.keyframes, p, currentTimeSec)
-    fun hasAnyKf(p: String) = KeyframeStore.getKeyframes(effect.keyframes, p).isNotEmpty()
+    val kfs = effect.keyframes
+    fun hasKf(p: String) = KfOps.hasKf(kfs, p, currentTimeSec)
+    fun hasAny(p: String) = KfOps.hasAnyKf(kfs, p)
+    fun sample(p: String, base: Float) = KfOps.sample(kfs, p, currentTimeSec, base)
+    fun toggle(p: String, v: Float) {
+        onChange(effect.copy(keyframes = KfOps.toggle(kfs, p, currentTimeSec, v)))
+    }
 
-    fun toggleKf(p: String, v: Float) {
-        val newKfs = if (hasKf(p)) {
-            KeyframeStore.removeKeyframe(effect.keyframes, p, currentTimeSec)
-        } else {
-            KeyframeStore.setKeyframe(effect.keyframes, p, currentTimeSec, v)
-        }
-        onChange(effect.copy(keyframes = newKfs))
+    @Composable
+    fun R(
+        label: String,
+        prop: String,
+        base: Float,
+        range: ClosedFloatingPointRange<Float>,
+        decimals: Int,
+        unit: String = "",
+        update: (ChromaticAberrationEffect, Float) -> ChromaticAberrationEffect
+    ) {
+        EffectPropertyRow(
+            label = label,
+            value = sample(prop, base),
+            range = range,
+            decimals = decimals,
+            unit = unit,
+            hasKeyframe = hasKf(prop),
+            hasAnyKeyframe = hasAny(prop),
+            onValueChange = { v ->
+                val next = update(effect, v)
+                onChange(
+                    if (hasAny(prop)) next.copy(
+                        keyframes = KfOps.autoWrite(
+                            kfs,
+                            prop,
+                            currentTimeSec,
+                            v
+                        )
+                    )
+                    else next
+                )
+            },
+            onToggleKeyframe = { toggle(prop, sample(prop, base)) }
+        )
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionLabel("RED SHIFT")
-        EffectPropertyRow(
-            label = "Shift X", value = effect.redShiftX, range = -50f..50f,
-            decimals = 1, unit = "px",
-            hasKeyframe = hasKf("redShiftX"), hasAnyKeyframe = hasAnyKf("redShiftX"),
-            onValueChange = { onChange(effect.copy(redShiftX = it)) },
-            onToggleKeyframe = { toggleKf("redShiftX", effect.redShiftX) }
-        )
-        EffectPropertyRow(
-            label = "Shift Y", value = effect.redShiftY, range = -50f..50f,
-            decimals = 1, unit = "px",
-            hasKeyframe = hasKf("redShiftY"), hasAnyKeyframe = hasAnyKf("redShiftY"),
-            onValueChange = { onChange(effect.copy(redShiftY = it)) },
-            onToggleKeyframe = { toggleKf("redShiftY", effect.redShiftY) }
-        )
-
+        R(
+            "Shift X",
+            "redShiftX",
+            effect.redShiftX,
+            -50f..50f,
+            1,
+            "px"
+        ) { e, v -> e.copy(redShiftX = v) }
+        R(
+            "Shift Y",
+            "redShiftY",
+            effect.redShiftY,
+            -50f..50f,
+            1,
+            "px"
+        ) { e, v -> e.copy(redShiftY = v) }
         SectionLabel("BLUE SHIFT")
-        EffectPropertyRow(
-            label = "Shift X", value = effect.blueShiftX, range = -50f..50f,
-            decimals = 1, unit = "px",
-            hasKeyframe = hasKf("blueShiftX"), hasAnyKeyframe = hasAnyKf("blueShiftX"),
-            onValueChange = { onChange(effect.copy(blueShiftX = it)) },
-            onToggleKeyframe = { toggleKf("blueShiftX", effect.blueShiftX) }
-        )
-        EffectPropertyRow(
-            label = "Shift Y", value = effect.blueShiftY, range = -50f..50f,
-            decimals = 1, unit = "px",
-            hasKeyframe = hasKf("blueShiftY"), hasAnyKeyframe = hasAnyKf("blueShiftY"),
-            onValueChange = { onChange(effect.copy(blueShiftY = it)) },
-            onToggleKeyframe = { toggleKf("blueShiftY", effect.blueShiftY) }
-        )
-
+        R("Shift X", "blueShiftX", effect.blueShiftX, -50f..50f, 1, "px") { e, v ->
+            e.copy(
+                blueShiftX = v
+            )
+        }
+        R("Shift Y", "blueShiftY", effect.blueShiftY, -50f..50f, 1, "px") { e, v ->
+            e.copy(
+                blueShiftY = v
+            )
+        }
         SectionLabel("OTHER")
-        EffectPropertyRow(
-            label = "Blur Radius", value = effect.blurRadius, range = 0f..50f,
-            decimals = 1, unit = "px",
-            hasKeyframe = hasKf("blurRadius"), hasAnyKeyframe = hasAnyKf("blurRadius"),
-            onValueChange = { onChange(effect.copy(blurRadius = it)) },
-            onToggleKeyframe = { toggleKf("blurRadius", effect.blurRadius) }
-        )
-        EffectPropertyRow(
-            label = "Falloff", value = effect.falloffThreshold, range = 0f..1f,
-            decimals = 3,
-            hasKeyframe = hasKf("falloffThreshold"),
-            hasAnyKeyframe = hasAnyKf("falloffThreshold"),
-            onValueChange = { onChange(effect.copy(falloffThreshold = it)) },
-            onToggleKeyframe = { toggleKf("falloffThreshold", effect.falloffThreshold) }
-        )
+        R("Blur Radius", "blurRadius", effect.blurRadius, 0f..50f, 1, "px") { e, v ->
+            e.copy(
+                blurRadius = v
+            )
+        }
+        R("Falloff", "falloffThreshold", effect.falloffThreshold, 0f..1f, 3) { e, v ->
+            e.copy(
+                falloffThreshold = v
+            )
+        }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  MOTION BLUR PROPERTIES
+//  9. MOTION BLUR
 // ═══════════════════════════════════════════════════════════════
 
 @Composable
@@ -1027,46 +1133,59 @@ private fun MotionBlurProperties(
     currentTimeSec: Float,
     onChange: (MotionBlurEffect) -> Unit
 ) {
-    fun hasKf(p: String) = KeyframeStore.hasKeyframeAt(effect.keyframes, p, currentTimeSec)
-    fun hasAnyKf(p: String) = KeyframeStore.getKeyframes(effect.keyframes, p).isNotEmpty()
+    val kfs = effect.keyframes
+    fun hasKf(p: String) = KfOps.hasKf(kfs, p, currentTimeSec)
+    fun hasAny(p: String) = KfOps.hasAnyKf(kfs, p)
+    fun sample(p: String, base: Float) = KfOps.sample(kfs, p, currentTimeSec, base)
+    fun toggle(p: String, v: Float) {
+        onChange(effect.copy(keyframes = KfOps.toggle(kfs, p, currentTimeSec, v)))
+    }
 
-    fun toggleKf(p: String, v: Float) {
-        val newKfs = if (hasKf(p)) {
-            KeyframeStore.removeKeyframe(effect.keyframes, p, currentTimeSec)
-        } else {
-            KeyframeStore.setKeyframe(effect.keyframes, p, currentTimeSec, v)
-        }
-        onChange(effect.copy(keyframes = newKfs))
+    @Composable
+    fun R(
+        label: String, prop: String, base: Float, range: ClosedFloatingPointRange<Float>,
+        decimals: Int, unit: String = "", update: (MotionBlurEffect, Float) -> MotionBlurEffect
+    ) {
+        EffectPropertyRow(
+            label = label,
+            value = sample(prop, base),
+            range = range,
+            decimals = decimals,
+            unit = unit,
+            hasKeyframe = hasKf(prop),
+            hasAnyKeyframe = hasAny(prop),
+            onValueChange = { v ->
+                val next = update(effect, v)
+                onChange(
+                    if (hasAny(prop)) next.copy(
+                        keyframes = KfOps.autoWrite(
+                            kfs,
+                            prop,
+                            currentTimeSec,
+                            v
+                        )
+                    )
+                    else next
+                )
+            },
+            onToggleKeyframe = { toggle(prop, sample(prop, base)) }
+        )
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionLabel("MOTION BLUR")
-        EffectPropertyRow(
-            label = "Shutter", value = effect.shutterAngle, range = 0f..720f,
-            decimals = 1, unit = "°",
-            hasKeyframe = hasKf("shutterAngle"),
-            hasAnyKeyframe = hasAnyKf("shutterAngle"),
-            onValueChange = { onChange(effect.copy(shutterAngle = it)) },
-            onToggleKeyframe = { toggleKf("shutterAngle", effect.shutterAngle) }
-        )
-        EffectPropertyRow(
-            label = "Samples", value = effect.samples, range = 1f..64f, decimals = 0,
-            hasKeyframe = hasKf("samples"), hasAnyKeyframe = hasAnyKf("samples"),
-            onValueChange = { onChange(effect.copy(samples = it)) },
-            onToggleKeyframe = { toggleKf("samples", effect.samples) }
-        )
-        EffectPropertyRow(
-            label = "Intensity", value = effect.intensity, range = 0f..2f,
-            decimals = 2,
-            hasKeyframe = hasKf("intensity"), hasAnyKeyframe = hasAnyKf("intensity"),
-            onValueChange = { onChange(effect.copy(intensity = it)) },
-            onToggleKeyframe = { toggleKf("intensity", effect.intensity) }
-        )
+        R("Shutter", "shutterAngle", effect.shutterAngle, 0f..720f, 1, "°") { e, v ->
+            e.copy(
+                shutterAngle = v
+            )
+        }
+        R("Samples", "samples", effect.samples, 1f..64f, 0) { e, v -> e.copy(samples = v) }
+        R("Intensity", "intensity", effect.intensity, 0f..2f, 2) { e, v -> e.copy(intensity = v) }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  TRACK MATTE PROPERTIES
+//  10. TRACK MATTE
 // ═══════════════════════════════════════════════════════════════
 
 @Composable
@@ -1089,12 +1208,8 @@ private fun TrackMatteProperties(
                     modifier = Modifier
                         .height(32.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(
-                            if (isActive) Color(0xFF7C3AED) else Color(0xFF181818)
-                        )
-                        .pointerInput(type) {
-                            detectTapGestures { onChange(effect.copy(matteType = type)) }
-                        }
+                        .background(if (isActive) Color(0xFF7C3AED) else Color(0xFF181818))
+                        .pointerInput(type) { detectTapGestures { onChange(effect.copy(matteType = type)) } }
                         .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1105,8 +1220,7 @@ private fun TrackMatteProperties(
                             TrackMatteType.LUMA -> "Luma"
                             TrackMatteType.LUMA_INVERTED -> "Luma Inv"
                         },
-                        color = Color.White, fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
+                        color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold
                     )
                 }
             }

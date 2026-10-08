@@ -1,7 +1,7 @@
 package com.moody.moodyvideoeditor.data
 
 // Mirrors js/features/effect.js PRESETS array.
-// Each preset has a kind: motion | color | overlay.
+// Each preset has a kind: motion | color | overlay | edge_glow | light_leak.
 data class EffectPreset(
     val key: String,
     val label: String,
@@ -9,10 +9,14 @@ data class EffectPreset(
     val kind: EffectKind,
     val motion: MotionConfig? = null,
     val filters: ColorFilterValues? = null,
-    val overlay: OverlayConfig? = null
+    val overlay: OverlayConfig? = null,
+    val edgeGlow: EdgeGlowConfig? = null,
+    val lightLeak: LightLeakConfig? = null
 )
 
-enum class EffectKind { MOTION, COLOR, OVERLAY }
+enum class EffectKind {
+    MOTION, COLOR, OVERLAY, EDGE_GLOW, LIGHT_LEAK
+}
 
 // Mirrors MOTION_MAP values from beatsEngine.js
 data class MotionConfig(
@@ -39,6 +43,75 @@ data class OverlayConfig(
     val type: String,       // rain | snow | fog | lightLeak | ...
     val intensity: Float = 100f,
     val color: Long = 0xFFFFFFFF
+)
+
+// ═══════════════════════════════════════════════════════════════
+//  EDGE GLOW — Config + Animation
+// ═══════════════════════════════════════════════════════════════
+
+enum class EdgeGlowAnimation {
+    STATIC,      // constant glow
+    PULSE,       // rhythm pulsing
+    BREATHE,     // slow in-out
+    FLICKER,     // random flicker
+    STROBE,      // fast on/off
+    RAINBOW,     // color cycling
+    WAVE,        // moving offset around edges
+    SPARK,       // quick sparkle flashes
+    FIRE,        // orange flame pulse
+    ELECTRIC,    // blue zap with jitter
+    NEON,        // sustained bright
+    AURORA,      // multi-color drift
+    GHOST,       // soft fading
+    GLITCH       // random offsets
+}
+
+data class EdgeGlowConfig(
+    val color: Long = 0xFFFFFFFF,             // primary glow color
+    val color2: Long = 0xFF00E5FF,            // secondary (rainbow/aurora)
+    val radius: Float = 20f,                  // 5-80 px
+    val intensity: Float = 85f,               // 0-100
+    val spread: Float = 6f,                   // 0-30 px
+    val animation: EdgeGlowAnimation = EdgeGlowAnimation.STATIC,
+    val speed: Float = 1f                     // 0.2-4.0
+)
+
+// ═══════════════════════════════════════════════════════════════
+//  LIGHT LEAK — Config + Animation + Preset + State
+// ═══════════════════════════════════════════════════════════════
+
+enum class LightLeakAnimation {
+    STATIC,      // constant glow
+    PULSE,       // size/alpha pulse
+    BREATHE,     // slow in-out
+    FLICKER,     // random flicker
+    DRIFT,       // slow position drift
+    SWEEP        // horizontal sweep
+}
+
+data class LightLeakConfig(
+    val color1: Long = 0xFFFFCC66,
+    val color2: Long = 0xFFFF8800,
+    val positionX: Float = 0.5f,       // 0..1
+    val positionY: Float = 0.5f,       // 0..1
+    val radius: Float = 0.6f,          // 0.1..2.0
+    val intensity: Float = 100f,       // 0..200
+    val softness: Float = 0.5f,        // 0..1
+    val animation: LightLeakAnimation = LightLeakAnimation.STATIC,
+    val speed: Float = 1.0f
+)
+
+data class LightLeakPreset(
+    val key: String,
+    val label: String,
+    val icon: String,
+    val config: LightLeakConfig
+)
+
+data class LightLeakState(
+    val presetKey: String = "goldenHour",
+    val config: LightLeakConfig = LightLeakConfig(),
+    val opacity: Float = 100f
 )
 
 object EffectLibrary {
@@ -1193,7 +1266,159 @@ object EffectLibrary {
         )
     )
 
-    val ALL: List<EffectPreset> = MOTION_EFFECTS + COLOR_EFFECTS + OVERLAY_EFFECTS
+
+    //  EDGE GLOW EFFECTS — 16 variants
+
+    val EDGE_GLOW_EFFECTS = listOf(
+        EffectPreset(
+            key = "neonGlow",
+            label = "Neon Glow",
+            icon = "💡",
+            kind = EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFF00E5FF,
+                radius = 30f,
+                intensity = 100f,
+                animation = EdgeGlowAnimation.STATIC,
+                speed = 1.0f
+            )
+        ),
+        EffectPreset(
+            key = "rainbowPulse",
+            label = "Rainbow Pulse",
+            icon = "🌈",
+            kind = EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFFFF0066,
+                color2 = 0xFF00FFCC,
+                radius = 40f,
+                intensity = 120f,
+                animation = EdgeGlowAnimation.RAINBOW,
+                speed = 1.5f
+            )
+        ),
+        EffectPreset(
+            "egGolden", "Golden Pulse", "🌟", EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFFFFD700, radius = 28f,
+                animation = EdgeGlowAnimation.PULSE, speed = 1.2f
+            )
+        ),
+        EffectPreset(
+            "egBreathe", "Breathe", "🌬️", EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFF60EFFF, radius = 40f,
+                animation = EdgeGlowAnimation.BREATHE, speed = 0.6f
+            )
+        ),
+        EffectPreset(
+            "egFlicker", "Candle Flicker", "🕯️", EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFFFFAA33, radius = 25f,
+                animation = EdgeGlowAnimation.FLICKER, speed = 3f
+            )
+        ),
+        EffectPreset(
+            "egStrobe", "Strobe", "💡", EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFFFFFFFF, radius = 30f,
+                intensity = 100f, animation = EdgeGlowAnimation.STROBE, speed = 4f
+            )
+        ),
+        EffectPreset(
+            "egRainbow", "Rainbow", "🌈", EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFFFF0000, color2 = 0xFF00E5FF,
+                radius = 25f, animation = EdgeGlowAnimation.RAINBOW, speed = 1.2f
+            )
+        ),
+        EffectPreset(
+            "egAurora", "Aurora", "🌌", EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFF00FFAA, color2 = 0xFF7C3AED,
+                radius = 45f, animation = EdgeGlowAnimation.AURORA, speed = 0.7f
+            )
+        ),
+        EffectPreset(
+            "egWave", "Wave", "🌊", EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFF00E5FF, radius = 25f,
+                animation = EdgeGlowAnimation.WAVE, speed = 2f
+            )
+        ),
+        EffectPreset(
+            "egSpark", "Spark", "⚡", EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFFFFEE66, radius = 22f,
+                animation = EdgeGlowAnimation.SPARK, speed = 4f
+            )
+        ),
+        EffectPreset(
+            "egFire", "Fire", "🔥", EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFFFF6600, radius = 35f,
+                intensity = 95f, animation = EdgeGlowAnimation.FIRE, speed = 2.5f
+            )
+        ),
+        EffectPreset(
+            "egElectric", "Electric", "⚡", EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFF66CCFF, radius = 28f,
+                animation = EdgeGlowAnimation.ELECTRIC, speed = 3.5f
+            )
+        ),
+        EffectPreset(
+            "egNeonCyan", "Neon Cyan", "💠", EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFF00FFFF, radius = 25f,
+                intensity = 100f, animation = EdgeGlowAnimation.NEON, speed = 1f
+            )
+        ),
+        EffectPreset(
+            "egNeonPink", "Neon Pink", "💗", EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFFFF00AA, radius = 25f,
+                intensity = 100f, animation = EdgeGlowAnimation.NEON, speed = 1f
+            )
+        ),
+        EffectPreset(
+            "egGhost", "Ghost", "👻", EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFFCCCCFF, radius = 45f,
+                intensity = 70f, animation = EdgeGlowAnimation.GHOST, speed = 1f
+            )
+        ),
+        EffectPreset(
+            "egGlitch", "Glitch", "📺", EffectKind.EDGE_GLOW,
+            edgeGlow = EdgeGlowConfig(
+                color = 0xFFFF0066, radius = 22f,
+                animation = EdgeGlowAnimation.GLITCH, speed = 4f
+            )
+        )
+    )
+
+
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 LIGHT LEAK EFFECTS — built from separate LightLeaks.kt file
+    //  Presets change karne ho toh sirf LightLeaks.kt edit karo
+    // ═══════════════════════════════════════════════════════════
+
+    val LIGHT_LEAK_EFFECTS: List<EffectPreset> =
+        LightLeakLibrary.PRESETS.map { p ->
+            EffectPreset(
+                key = p.key,
+                label = p.label,
+                icon = p.icon,
+                kind = EffectKind.LIGHT_LEAK,
+                lightLeak = p.config
+            )
+        }
+
+
+    //  ALL EFFECTS — combined
+
+    val ALL: List<EffectPreset> = MOTION_EFFECTS + COLOR_EFFECTS +
+            OVERLAY_EFFECTS + EDGE_GLOW_EFFECTS + LIGHT_LEAK_EFFECTS
 
     fun findByKey(key: String): EffectPreset? = ALL.firstOrNull { it.key == key }
 }

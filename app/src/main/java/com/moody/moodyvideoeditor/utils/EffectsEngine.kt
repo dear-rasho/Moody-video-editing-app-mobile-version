@@ -1,6 +1,7 @@
 package com.moody.moodyvideoeditor.utils
 
 import android.graphics.ColorMatrix
+import androidx.compose.ui.graphics.Color
 import com.moody.moodyvideoeditor.data.ColorFilterValues
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.MotionConfig
@@ -9,6 +10,7 @@ import com.moody.moodyvideoeditor.data.OverlayState
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
+
 
 // Mirrors js/workspace/effectRenderer.js
 // - Motion computation + combination
@@ -305,5 +307,179 @@ object EffectsEngine {
             }
 
         return result
+    }
+    // ═══════════════════════════════════════════════════════════════
+//  EDGE GLOW — Frame computation
+// ═══════════════════════════════════════════════════════════════
+
+    data class EdgeGlowFrame(
+        val color: Color,
+        val radiusMul: Float = 1f,      // multiplier of config.radius
+        val alpha: Float = 1f,          // 0..1
+        val offsetX: Float = 0f,
+        val offsetY: Float = 0f,
+        val intensityMul: Float = 1f
+    )
+
+    fun computeEdgeGlow(
+        config: com.moody.moodyvideoeditor.data.EdgeGlowConfig,
+        timeSec: Float
+    ): EdgeGlowFrame {
+        val t = timeSec * config.speed
+        val baseColor = Color(config.color)
+        val c2 = Color(config.color2)
+
+        return when (config.animation) {
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.STATIC ->
+                EdgeGlowFrame(color = baseColor)
+
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.PULSE -> {
+                val s = sin(t * 3.0f) * 0.5f + 0.5f
+                EdgeGlowFrame(
+                    color = baseColor,
+                    radiusMul = 0.85f + 0.35f * s,
+                    intensityMul = 0.8f + 0.4f * s
+                )
+            }
+
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.BREATHE -> {
+                val s = sin(t * 1.5f) * 0.5f + 0.5f
+                EdgeGlowFrame(
+                    color = baseColor,
+                    radiusMul = 0.7f + 0.7f * s,
+                    alpha = 0.75f + 0.25f * s,
+                    intensityMul = 0.6f + 0.6f * s
+                )
+            }
+
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.FLICKER -> {
+                val n = hash01((t * 8.0f).toDouble()).toFloat()
+                EdgeGlowFrame(
+                    color = baseColor,
+                    alpha = 0.35f + 0.65f * n,
+                    radiusMul = 0.9f + 0.3f * n
+                )
+            }
+
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.STROBE -> {
+                val on = (kotlin.math.floor((t * 6.0f).toDouble()).toInt() % 2) == 0
+                EdgeGlowFrame(
+                    color = baseColor,
+                    alpha = if (on) 1f else 0f,
+                    intensityMul = if (on) 1f else 0f
+                )
+            }
+
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.RAINBOW -> {
+                val hue = ((t * 90f) % 360f + 360f) % 360f
+                EdgeGlowFrame(
+                    color = Color.hsv(hue, 0.9f, 1f),
+                    radiusMul = 1f,
+                    intensityMul = 1f
+                )
+            }
+
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.WAVE -> {
+                val phase = t * 4.0f
+                val dx = sin(phase) * 6.0f
+                val dy = cos(phase * 0.9f) * 6.0f
+                EdgeGlowFrame(
+                    color = baseColor,
+                    offsetX = dx,
+                    offsetY = dy
+                )
+            }
+
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.SPARK -> {
+                val n = hash01((t * 14.0f).toDouble()).toFloat()
+                val spike = if (n > 0.75f) (n - 0.75f) * 4f else 0f
+                EdgeGlowFrame(
+                    color = baseColor,
+                    radiusMul = 1f + spike * 0.6f,
+                    intensityMul = 1f + spike
+                )
+            }
+
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.FIRE -> {
+                val n1 = hash01((t * 6.0f).toDouble()).toFloat()
+                val n2 = hash01((t * 11.0f).toDouble()).toFloat()
+                val flame = n1 * 0.6f + n2 * 0.4f
+                val mix = lerpColor(Color(0xFFFF6600), Color(0xFFFFCC00), flame)
+                EdgeGlowFrame(
+                    color = mix,
+                    radiusMul = 0.9f + 0.5f * flame,
+                    intensityMul = 0.85f + 0.35f * flame
+                )
+            }
+
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.ELECTRIC -> {
+                val n = hash01((t * 20.0f).toDouble()).toFloat()
+                val dx = (hash01((t * 40.0f).toDouble()).toFloat() - 0.5f) * 6f
+                val dy = (hash01((t * 38.0f).toDouble()).toFloat() - 0.5f) * 6f
+                EdgeGlowFrame(
+                    color = baseColor,
+                    radiusMul = 0.9f + 0.6f * n,
+                    intensityMul = 0.7f + 0.8f * n,
+                    offsetX = dx,
+                    offsetY = dy
+                )
+            }
+
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.NEON -> {
+                val subtle = sin(t * 1.2f) * 0.1f + 1.0f
+                EdgeGlowFrame(
+                    color = baseColor,
+                    radiusMul = subtle,
+                    intensityMul = 1f
+                )
+            }
+
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.AURORA -> {
+                val phase = (t * 0.5f) % 1f
+                val mix = lerpColor(baseColor, c2, phase)
+                val pulse = sin(t * 1.5f) * 0.15f + 1.0f
+                EdgeGlowFrame(
+                    color = mix,
+                    radiusMul = pulse,
+                    intensityMul = 0.9f + 0.2f * pulse
+                )
+            }
+
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.GHOST -> {
+                val s = sin(t * 1.2f) * 0.5f + 0.5f
+                EdgeGlowFrame(
+                    color = baseColor,
+                    alpha = 0.35f + 0.45f * s,
+                    radiusMul = 0.9f + 0.4f * s,
+                    intensityMul = 0.5f + 0.5f * s
+                )
+            }
+
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.GLITCH -> {
+                val on = hash01((t * 10.0f).toDouble()) > 0.4
+                val dx = (hash01((t * 30.0f).toDouble()).toFloat() - 0.5f) * 10f
+                EdgeGlowFrame(
+                    color = if (on) baseColor else Color(0xFF00E5FF),
+                    radiusMul = 1f,
+                    intensityMul = if (on) 1f else 0.6f,
+                    offsetX = dx,
+                    offsetY = 0f
+                )
+            }
+        }
+    }
+
+    private fun hash01(n: Double): Double {
+        val x = sin(n * 12.9898 + 78.233) * 43758.5453
+        return x - kotlin.math.floor(x)
+    }
+
+    private fun lerpColor(a: Color, b: Color, t: Float): Color {
+        val tt = t.coerceIn(0f, 1f)
+        val r = a.red + (b.red - a.red) * tt
+        val g = a.green + (b.green - a.green) * tt
+        val bl = a.blue + (b.blue - a.blue) * tt
+        val al = a.alpha + (b.alpha - a.alpha) * tt
+        return Color(r, g, bl, al)
     }
 }
