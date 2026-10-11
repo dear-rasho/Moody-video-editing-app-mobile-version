@@ -811,11 +811,17 @@ object TextBitmapRenderer {
             }
             if (st.gradientEnabled) {
                 val rad = Math.toRadians(st.gradientAngle.toDouble())
-                val dx = kotlin.math.cos(rad).toFloat() * W * 0.5f
-                val dy = kotlin.math.sin(rad).toFloat() * H * 0.5f
+                val dirX = kotlin.math.cos(rad).toFloat()
+                val dirY = kotlin.math.sin(rad).toFloat()
+
+                // ⚠️ Canvas already translated to (cx, cy).
+                // Use local (0,0) as text center — matches preview behavior.
+                // 600f extent = same as PreviewCanvas gradient.
+                val extent = 600f
+
                 fillPaint.shader = LinearGradient(
-                    cx - dx, cy - dy,
-                    cx + dx, cy + dy,
+                    -dirX * extent, -dirY * extent,
+                    dirX * extent, dirY * extent,
                     st.gradientColor1.toInt(),
                     st.gradientColor2.toInt(),
                     Shader.TileMode.CLAMP

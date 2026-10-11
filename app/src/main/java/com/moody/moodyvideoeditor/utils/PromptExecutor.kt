@@ -203,7 +203,176 @@ object PromptExecutor {
                 else -> {}
             }
         }
+        // ═══════════════════════════════════════════════════════
+        //  PRIORITY 2.5 — 🆕 TEXT MANAGEMENT
+        // ═══════════════════════════════════════════════════════
 
+        for (cmd in parsed.commands) {
+            when (cmd.type) {
+
+                CmdType.TEXT_EDIT -> {
+                    val sel = selected
+                    if (sel == null || !sel.isTextClip) {
+                        errors.add("edittext: no text clip selected")
+                        continue
+                    }
+                    val newContent = cmd.stringValue ?: ""
+                    val currentState = sel.textState ?: TextState()
+                    viewModel.updateSelectedText(
+                        currentState.copy(content = newContent)
+                    )
+                    applied.add("edit text: \"${newContent.take(20)}\"")
+                }
+
+                CmdType.TEXT_DELETE -> {
+                    val sel = selected
+                    if (sel == null || !sel.isTextClip) {
+                        errors.add("delete text: no text clip selected")
+                        continue
+                    }
+                    viewModel.removeSelectedText()
+                    applied.add("delete text")
+                }
+
+                CmdType.TEXT_DUPLICATE -> {
+                    val sel = selected
+                    if (sel == null || !sel.isTextClip) {
+                        errors.add("duplicate text: no text clip selected")
+                        continue
+                    }
+                    viewModel.duplicateCurrentClip()
+                    applied.add("duplicate text")
+                }
+
+                CmdType.STICKER_DELETE -> {
+                    val sel = selected
+                    if (sel == null || !sel.isStickerClip) {
+                        errors.add("delete sticker: no sticker selected")
+                        continue
+                    }
+                    viewModel.removeSelectedSticker()
+                    applied.add("delete sticker")
+                }
+
+                CmdType.STICKER_DUPLICATE -> {
+                    val sel = selected
+                    if (sel == null || !sel.isStickerClip) {
+                        errors.add("duplicate sticker: no sticker selected")
+                        continue
+                    }
+                    viewModel.duplicateCurrentClip()
+                    applied.add("duplicate sticker")
+                }
+
+                CmdType.TEXT_PROP -> {
+                    val sel = selected
+                    if (sel == null || !sel.isTextClip) {
+                        errors.add("${cmd.key}: no text clip selected")
+                        continue
+                    }
+                    val currentState = sel.textState ?: TextState()
+                    val v = cmd.value1 ?: continue
+                    val newState = when (cmd.key) {
+                        "maxwidth" -> currentState.copy(
+                            maxWidth = v.coerceIn(30f, 100f)
+                        )
+                        "textscale" -> currentState.copy(
+                            scale = v.coerceIn(10f, 500f)
+                        )
+                        "animduration" -> currentState.copy(
+                            animationDuration = v.coerceIn(0.2f, 5f)
+                        )
+                        else -> currentState
+                    }
+                    viewModel.updateSelectedText(newState)
+                    applied.add("${cmd.key} $v")
+                }
+
+                CmdType.TEXT_LAYER -> {
+                    val sel = selected
+                    if (sel == null || !sel.isTextClip) {
+                        errors.add("textlayer: no text clip selected")
+                        continue
+                    }
+                    val targetTrack = cmd.value1?.toInt() ?: 0
+                    if (targetTrack < 0) {
+                        errors.add("textlayer: track must be >= 0")
+                        continue
+                    }
+                    viewModel.ensureLayerExists(targetTrack, false)
+                    viewModel.moveClip(sel.id, targetTrack, false, sel.timelineStartMs)
+                    applied.add("text moved to V${targetTrack + 1}")
+                }
+
+                CmdType.TEXT_ALL -> {
+                    val textClips = state.clips.filter { it.isTextClip }
+                    if (textClips.isEmpty()) {
+                        errors.add("alltext: no text clips on timeline")
+                        continue
+                    }
+                    val valueStr = cmd.stringValue ?: ""
+                    var changed = 0
+
+                    textClips.forEach { clip ->
+                        val st = clip.textState ?: return@forEach
+                        val newState: TextState? = when (cmd.key) {
+                            "font", "fontfamily" -> {
+                                val fontName = valueStr.trim().trim('"')
+                                st.copy(fontFamily = fontName)
+                            }
+                            "color" -> {
+                                val col = parseColorForAll(valueStr) ?: return@forEach
+                                st.copy(color = col)
+                            }
+                            "size", "fontsize" -> {
+                                val n = valueStr.toIntOrNull() ?: return@forEach
+                                st.copy(fontSize = n.coerceIn(8, 300))
+                            }
+                            "opacity" -> {
+                                val n = valueStr.toFloatOrNull() ?: return@forEach
+                                st.copy(opacity = n.coerceIn(0f, 100f))
+                            }
+                            "rotation" -> {
+                                val n = valueStr.toFloatOrNull() ?: return@forEach
+                                st.copy(rotation = n)
+                            }
+                            "align" -> {
+                                st.copy(alignment = valueStr.lowercase())
+                            }
+                            "maxwidth" -> {
+                                val n = valueStr.toFloatOrNull() ?: return@forEach
+                                st.copy(maxWidth = n.coerceIn(30f, 100f))
+                            }
+                            "textscale", "scale" -> {
+                                val n = valueStr.toFloatOrNull() ?: return@forEach
+                                st.copy(scale = n.coerceIn(10f, 500f))
+                            }
+                            "animduration" -> {
+                                val n = valueStr.toFloatOrNull() ?: return@forEach
+                                st.copy(animationDuration = n.coerceIn(0.2f, 5f))
+                            }
+                            "animation" -> {
+                                st.copy(
+                                    animation = PromptEngine.animationKey(valueStr)
+                                )
+                            }
+                            else -> null
+                        }
+                        if (newState != null) {
+                            viewModel.updateClipTextState(clip.id, newState)
+                            changed++
+                        }
+                    }
+                    if (changed > 0) {
+                        applied.add("alltext ${cmd.key}: $changed clips updated")
+                    } else {
+                        errors.add("alltext: unknown property '${cmd.key}'")
+                    }
+                }
+
+                else -> {}
+            }
+        }
         // ═══════════════════════════════════════════════════════
         //  PRIORITY 3 — TEXT + STICKER (smart auto-stack)
         // ═══════════════════════════════════════════════════════
@@ -1635,7 +1804,29 @@ object PromptExecutor {
                         i += if (angle != null) 4 else 3
                     }
                 }
+                "maxwidth", "wrap" -> {
+                    val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
+                    if (v != null) {
+                        st = st.copy(maxWidth = v.coerceIn(30f, 100f))
+                    }
+                    i += 2
+                }
 
+                "textscale", "scale" -> {
+                    val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
+                    if (v != null) {
+                        st = st.copy(scale = v.coerceIn(10f, 500f))
+                    }
+                    i += 2
+                }
+
+                "animduration", "animtime", "duration" -> {
+                    val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
+                    if (v != null) {
+                        st = st.copy(animationDuration = v.coerceIn(0.2f, 5f))
+                    }
+                    i += 2
+                }
                 "nogradient", "solid" -> {
                     st = st.copy(gradientEnabled = false)
                     i += 1
@@ -1925,5 +2116,39 @@ object PromptExecutor {
         "purple" -> 280f
         "magenta" -> 300f
         else -> 0f
+    }
+}
+private fun parseColorForAll(s: String): Long? {
+    val t = s.trim()
+    if (t.startsWith("#")) {
+        return try {
+            val hex = t.removePrefix("#")
+            val rgb = when (hex.length) {
+                3 -> {
+                    val r = hex[0].toString().toInt(16) * 17
+                    val g = hex[1].toString().toInt(16) * 17
+                    val b = hex[2].toString().toInt(16) * 17
+                    (r shl 16) or (g shl 8) or b
+                }
+                6 -> hex.toInt(16)
+                else -> return null
+            }
+            0xFF000000L or rgb.toLong()
+        } catch (_: Exception) {
+            null
+        }
+    }
+    return when (t.lowercase()) {
+        "red" -> 0xFFFF0000L
+        "orange" -> 0xFFFF6B00L
+        "yellow" -> 0xFFFFCC00L
+        "green" -> 0xFF00FF00L
+        "cyan" -> 0xFF00E5FFL
+        "blue" -> 0xFF0066FFL
+        "purple" -> 0xFF7C3AEDL
+        "magenta", "pink" -> 0xFFFF00FFL
+        "white" -> 0xFFFFFFFFL
+        "black" -> 0xFF000000L
+        else -> null
     }
 }

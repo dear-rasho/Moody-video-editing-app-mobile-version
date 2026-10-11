@@ -93,7 +93,6 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
             )
         }
 
-        // 🆕 Settings route
         composable(AppRoutes.SETTINGS) {
             SettingsScreen(
                 onBack = { navController.popBackStack() }

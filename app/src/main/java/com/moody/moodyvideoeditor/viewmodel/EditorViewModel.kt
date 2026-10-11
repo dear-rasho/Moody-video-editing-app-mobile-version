@@ -31,7 +31,6 @@ import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.data.TransitionLibrary
 import com.moody.moodyvideoeditor.data.TransitionState
 import com.moody.moodyvideoeditor.data.VisualizerState
-import com.moody.moodyvideoeditor.data.advanced.AdvancedEffectState
 import com.moody.moodyvideoeditor.service.ExportService
 import com.moody.moodyvideoeditor.service.ExportServiceConfig
 import com.moody.moodyvideoeditor.service.ExportStateHolder
@@ -1761,6 +1760,17 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
+    // 🆕 Bulk update text clip by ID (used by alltext command)
+    fun updateClipTextState(clipId: String, newState: TextState) {
+        updateClipDirect(clipId) { clip ->
+            if (clip.isTextClip) {
+                clip.copy(
+                    textState = newState,
+                    name = "📝 ${newState.content.take(18).ifBlank { "Text" }}"
+                )
+            } else clip
+        }
+    }
     fun updateSelectedText(newState: TextState) {
         forEachSelectedClip { clip ->
             if (clip.isTextClip) {
@@ -2916,61 +2926,7 @@ class EditorViewModel : ViewModel() {
         }
         updateHistoryFlags()
     }
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 ADVANCED EFFECTS — stored on the SELECTED clip itself
-    //  No new layer is created. Effects modify the selected clip's
-    //  own rendering.
-    // ═══════════════════════════════════════════════════════════
 
-    // Add a new advanced effect to the currently selected clip
-    fun addAdvancedEffectToSelected(effectState: AdvancedEffectState) {
-        val s = _state.value
-        val targetId = s.selectedClipId ?: return
-        pushHistory()
-        updateClipDirect(targetId) { clip ->
-            clip.copy(advancedEffects = clip.advancedEffects + effectState)
-        }
-        updateHistoryFlags()
-    }
-
-    // Update an existing advanced effect (by index) on the selected clip
-    fun updateAdvancedEffectAt(
-        selectedClipId: String,
-        index: Int,
-        effectState: AdvancedEffectState
-    ) {
-        updateClipDirect(selectedClipId) { clip ->
-            if (index !in clip.advancedEffects.indices) clip
-            else {
-                val newList = clip.advancedEffects.toMutableList()
-                newList[index] = effectState
-                clip.copy(advancedEffects = newList)
-            }
-        }
-    }
-
-    // Remove an advanced effect (by index) from the selected clip
-    fun removeAdvancedEffectAt(selectedClipId: String, index: Int) {
-        pushHistory()
-        updateClipDirect(selectedClipId) { clip ->
-            if (index !in clip.advancedEffects.indices) clip
-            else {
-                val newList = clip.advancedEffects.toMutableList()
-                newList.removeAt(index)
-                clip.copy(advancedEffects = newList)
-            }
-        }
-        updateHistoryFlags()
-    }
-
-    // 🆕 Live preview state for advanced effects (before Apply)
-    fun setPreviewAdvancedEffect(effectState: AdvancedEffectState?) {
-        _state.update { it.copy(previewAdvancedEffect = effectState) }
-    }
-
-    fun clearPreviewAdvancedEffect() {
-        _state.update { it.copy(previewAdvancedEffect = null) }
-    }
 
     fun removeFilterLayer(layerId: String) {
         val clip = _state.value.clips.firstOrNull { it.id == layerId } ?: return

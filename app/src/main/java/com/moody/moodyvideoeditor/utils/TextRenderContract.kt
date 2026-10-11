@@ -77,9 +77,10 @@ object TextRenderContract {
     )
 
     fun glowLayers(): List<GlowLayer> = listOf(
-        GlowLayer(1.00f, 0.55f, 0.60f),
-        GlowLayer(1.06f, 1.00f, 0.40f),
-        GlowLayer(1.15f, 1.60f, 0.25f),
+        GlowLayer(1.00f, 0.45f, 1.00f),   // Inner core - full opacity
+        GlowLayer(1.06f, 0.90f, 0.85f),   // Tight bloom
+        GlowLayer(1.18f, 1.50f, 0.65f),   // Mid bloom
+        GlowLayer(1.35f, 2.40f, 0.40f),   // Outer bloom
     )
 
     // ─── HELPERS ─────────────────────────────────────────────────

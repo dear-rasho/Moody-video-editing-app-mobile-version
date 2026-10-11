@@ -1,6 +1,8 @@
 package com.moody.moodyvideoeditor.ui.features
-
+import androidx.compose.runtime.rememberUpdatedState
+import com.moody.moodyvideoeditor.ui.components.FontPreviewRow
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -47,7 +49,6 @@ import com.moody.moodyvideoeditor.ui.components.ColorPickerField
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.AnimationsEngine
 import com.moody.moodyvideoeditor.utils.FontLibrary
-
 @Composable
 fun TextPanel(
     currentText: TextState,
@@ -346,27 +347,26 @@ private fun AddTextSub(
 
 @Composable
 private fun FontsSub(current: String, onPick: (String) -> Unit, onBack: () -> Unit) {
-    var activeCategory by remember { mutableStateOf("all") }
+    var activeCategory by remember { mutableStateOf("arabic") }
 
     val fontList = remember(activeCategory) {
-        if (activeCategory == "all") FontLibrary.allFonts()
-        else FontLibrary.FONT_CATEGORIES[activeCategory] ?: emptyList()
+        FontLibrary.FONT_CATEGORIES[activeCategory] ?: emptyList()
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        BackHeader("Fonts (${fontList.size})", onBack)
+        BackHeader("Fonts (${FontLibrary.allFonts().size})", onBack)
 
+        // ─── Category chips ───
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            val cats = listOf("all" to "All") +
-                    FontLibrary.categories()
-                        .map { it to it.replaceFirstChar { c -> c.uppercase() } }
-            cats.forEach { (key, label) ->
+            FontLibrary.categories().forEach { key ->
+                val label = FontLibrary.categoryLabel(key)
                 val isActive = activeCategory == key
+
                 Box(
                     modifier = Modifier
                         .height(28.dp)
@@ -384,56 +384,31 @@ private fun FontsSub(current: String, onPick: (String) -> Unit, onBack: () -> Un
                         label,
                         color = Color.White,
                         fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                 }
             }
         }
 
+        // ─── Font list with previews ───
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 180.dp)
+                .heightIn(max = 220.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             fontList.forEach { font ->
-                val isActive = current == font
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(
-                            if (isActive) Color(0xFF2A1F4D) else Color(0xFF181818)
-                        )
-                        .pointerInput(font) {
-                            detectTapGestures { onPick(font) }
-                        }
-                        .padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = font,
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontLibrary.familyFor(font),
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (isActive) {
-                        Text(
-                            "✓",
-                            color = Color(0xFF7C3AED),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
+                FontPreviewRow(
+                    fontName = font,
+                    isActive = current == font,
+                    onPick = { onPick(font) }
+                )
             }
         }
     }
 }
-
 @Composable
 private fun StrokeSub(
     enabled: Boolean,
@@ -474,6 +449,17 @@ private fun GlowSub(
     onRadius: (Float) -> Unit,
     onBack: () -> Unit
 ) {
+    val latestOnEnabled by rememberUpdatedState(onEnabled)
+    val latestOnColor by rememberUpdatedState(onColor)
+    val latestOnRadius by rememberUpdatedState(onRadius)
+
+    var radiusText by remember { mutableStateOf(String.format("%.0f", radius)) }
+    var isFocused by remember { mutableStateOf(false) }
+
+    LaunchedEffect(radius, isFocused) {
+        if (!isFocused) radiusText = String.format("%.0f", radius)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -482,18 +468,142 @@ private fun GlowSub(
     ) {
         BackHeader("Glow / Neon", onBack)
 
-        ToggleRow("Enabled", enabled, onEnabled)
+        ToggleRow("Enabled", enabled) { latestOnEnabled(it) }
 
-        SliderRow("Radius", radius, 0f..80f, onRadius)
+        Text(
+            "Radius — drag slider or type exact value (max 500)",
+            color = Color(0xFF888888),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 4.dp)
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                "Radius",
+                color = Color(0xFF888888),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.width(60.dp)
+            )
+
+            androidx.compose.material3.Slider(
+                value = radius.coerceIn(0f, 500f),
+                onValueChange = {
+                    latestOnRadius(it)
+                    radiusText = String.format("%.0f", it)
+                },
+                valueRange = 0f..500f,
+                modifier = Modifier.weight(1f),
+                colors = androidx.compose.material3.SliderDefaults.colors(
+                    thumbColor = Color(0xFF7C3AED),
+                    activeTrackColor = Color(0xFF7C3AED),
+                    inactiveTrackColor = Color(0xFF303030)
+                )
+            )
+
+            Box(
+                modifier = Modifier
+                    .width(72.dp)
+                    .height(32.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFF181818))
+                    .padding(horizontal = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                androidx.compose.foundation.text.BasicTextField(
+                    value = radiusText,
+                    onValueChange = { input ->
+                        val filtered = input.filter {
+                            it.isDigit() || it == '.' || it == '-'
+                        }
+                        radiusText = filtered
+                        filtered.toFloatOrNull()?.takeIf { it.isFinite() }?.let {
+                            latestOnRadius(it.coerceIn(0f, 500f))
+                        }
+                    },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    ),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(
+                        Color(0xFF7C3AED)
+                    ),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { state ->
+                            isFocused = state.isFocused
+                            if (!state.isFocused) {
+                                radiusText.toFloatOrNull()
+                                    ?.takeIf { it.isFinite() }
+                                    ?.let { latestOnRadius(it.coerceIn(0f, 500f)) }
+                            }
+                        }
+                )
+            }
+        }
+
+        // Quick presets
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf(
+                15f to "Soft",
+                40f to "Normal",
+                100f to "Strong",
+                250f to "Extreme"
+            ).forEach { (presetVal, presetLabel) ->
+                val isActive = kotlin.math.abs(radius - presetVal) < 8f
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(
+                            if (isActive) Color(0xFF7C3AED)
+                            else Color(0xFF181818)
+                        )
+                        .clickable {
+                            latestOnRadius(presetVal)
+                            radiusText = String.format("%.0f", presetVal)
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        presetLabel,
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
 
         ColorPickerField(
             label = "Color",
             colorLong = color,
-            onChange = onColor
+            onChange = { latestOnColor(it) }
+        )
+
+        Text(
+            "💡 Radius 0-500. Higher = bigger bloom. Try Extreme (250) for epic neon.",
+            color = Color(0xFF666666),
+            fontSize = 9.sp,
+            modifier = Modifier.padding(start = 4.dp)
         )
     }
 }
-
 @Composable
 private fun ColorSub(color: Long, onPick: (Long) -> Unit, onBack: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -512,6 +622,9 @@ private fun GradientSub(
     onChange: (TextState) -> Unit,
     onBack: () -> Unit
 ) {
+    val latestState by rememberUpdatedState(state)
+    val latestOnChange by rememberUpdatedState(onChange)
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -521,10 +634,9 @@ private fun GradientSub(
         BackHeader("Gradient Ramp", onBack)
 
         ToggleRow("Enabled", state.gradientEnabled) {
-            onChange(state.copy(gradientEnabled = it))
+            latestOnChange(latestState.copy(gradientEnabled = it))
         }
 
-        // Live preview bar
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -540,13 +652,17 @@ private fun GradientSub(
                 )
         )
 
-        // 🔒 key() ensures the two pickers keep SEPARATE internal state
         key("gradA") {
             ColorPickerField(
                 label = "Color A",
                 colorLong = state.gradientColor1,
-                onChange = {
-                    onChange(state.copy(gradientColor1 = it, gradientEnabled = true))
+                onChange = { newColor ->
+                    latestOnChange(
+                        latestState.copy(
+                            gradientColor1 = newColor,
+                            gradientEnabled = true
+                        )
+                    )
                 }
             )
         }
@@ -554,18 +670,22 @@ private fun GradientSub(
             ColorPickerField(
                 label = "Color B",
                 colorLong = state.gradientColor2,
-                onChange = {
-                    onChange(state.copy(gradientColor2 = it, gradientEnabled = true))
+                onChange = { newColor ->
+                    latestOnChange(
+                        latestState.copy(
+                            gradientColor2 = newColor,
+                            gradientEnabled = true
+                        )
+                    )
                 }
             )
         }
 
         SliderRow("Angle", state.gradientAngle, 0f..360f) {
-            onChange(state.copy(gradientAngle = it))
+            latestOnChange(latestState.copy(gradientAngle = it))
         }
     }
 }
-
 @Composable
 private fun ShadowsSub(
     state: TextState,

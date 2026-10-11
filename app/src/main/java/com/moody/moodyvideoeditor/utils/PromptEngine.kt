@@ -12,13 +12,20 @@ enum class CmdType {
     COLOR_WHEEL, FONT, ALIGN, ANCHOR, KEYFRAME,
     RATIO, TIGHTEN, GRAPH, CLEAR_KEYFRAMES,
     TEMPLATE,
-    BRUSH_GRADIENT,
-    BRUSH_TYPE,
-    BRUSH_DRAW,
-    BRUSH_CLEAR,
+    BRUSH_GRADIENT, BRUSH_TYPE, BRUSH_DRAW, BRUSH_CLEAR,
     BEAT_ANIMATION,
     VISUALIZER,
-    COLOR_MATTE,          // 🆕
+    COLOR_MATTE,
+    // 🆕 TEXT MANAGEMENT
+    TEXT_EDIT,       // edittext / settext
+    TEXT_DELETE,     // delete text
+    TEXT_DUPLICATE,  // duplicate text
+    TEXT_PROP,       // maxwidth / textscale / animduration
+    TEXT_LAYER,      // textlayer N
+    TEXT_ALL,        // alltext PROP VALUE
+    // 🆕 STICKER MANAGEMENT
+    STICKER_DELETE,
+    STICKER_DUPLICATE,
     UNKNOWN
 }
 
@@ -523,6 +530,90 @@ object PromptEngine {
                     raw = text
                 )
             }
+        }
+        // ═══════════════════════════════════════════════════════
+        //  🆕 TEXT MANAGEMENT
+        // ═══════════════════════════════════════════════════════
+
+        // edittext "new content" or settext "new content"
+        Regex("""^(?:edittext|settext)\s+"([^"]+)"$""", RegexOption.IGNORE_CASE)
+            .find(text)?.let { m ->
+                return ParsedCommand(
+                    CmdType.TEXT_EDIT,
+                    "content",
+                    stringValue = m.groupValues[1],
+                    raw = text
+                )
+            }
+
+        // delete text / remove text
+        if (lower == "delete text" || lower == "remove text") {
+            return ParsedCommand(CmdType.TEXT_DELETE, "delete", raw = text)
+        }
+
+        // duplicate text
+        if (lower == "duplicate text") {
+            return ParsedCommand(CmdType.TEXT_DUPLICATE, "duplicate", raw = text)
+        }
+
+        // delete sticker
+        if (lower == "deletesticker" || lower == "delete sticker" ||
+            lower == "remove sticker"
+        ) {
+            return ParsedCommand(CmdType.STICKER_DELETE, "delete", raw = text)
+        }
+
+        // duplicate sticker
+        if (lower == "duplicatesticker" || lower == "duplicate sticker") {
+            return ParsedCommand(CmdType.STICKER_DUPLICATE, "duplicate", raw = text)
+        }
+
+        // maxwidth N (standalone)
+        Regex("""^maxwidth\s+([\d.]+)$""").find(lower)?.let { m ->
+            return ParsedCommand(
+                CmdType.TEXT_PROP, "maxwidth",
+                value1 = m.groupValues[1].toFloatOrNull(),
+                raw = text
+            )
+        }
+
+        // textscale N (standalone)
+        Regex("""^textscale\s+([\d.]+)$""").find(lower)?.let { m ->
+            return ParsedCommand(
+                CmdType.TEXT_PROP, "textscale",
+                value1 = m.groupValues[1].toFloatOrNull(),
+                raw = text
+            )
+        }
+
+        // animduration N (standalone)
+        Regex("""^animduration\s+([\d.]+)$""").find(lower)?.let { m ->
+            return ParsedCommand(
+                CmdType.TEXT_PROP, "animduration",
+                value1 = m.groupValues[1].toFloatOrNull(),
+                raw = text
+            )
+        }
+
+        // textlayer N
+        Regex("""^textlayer\s+(\d+)$""").find(lower)?.let { m ->
+            return ParsedCommand(
+                CmdType.TEXT_LAYER, "layer",
+                value1 = m.groupValues[1].toFloatOrNull(),
+                raw = text
+            )
+        }
+
+        // alltext PROP VALUE
+        Regex("""^alltext\s+([a-z_]+)\s+(.+)$""").find(lower)?.let { m ->
+            val prop = m.groupValues[1]
+            val valStr = m.groupValues[2].trim()
+            return ParsedCommand(
+                CmdType.TEXT_ALL,
+                prop,
+                stringValue = valStr,
+                raw = text
+            )
         }
         // ── TEXT ──
         val textFull =

@@ -52,7 +52,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size       // ← YE ADD
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -95,7 +95,6 @@ import com.moody.moodyvideoeditor.data.FilterState
 import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.OverlayState
-import com.moody.moodyvideoeditor.data.advanced.AdvancedEffectState
 import com.moody.moodyvideoeditor.utils.BrushEngine
 import com.moody.moodyvideoeditor.utils.ColorMatrixBuilder
 import com.moody.moodyvideoeditor.utils.ColorWheelEngine
@@ -209,403 +208,6 @@ private fun fittedBoundsFractions(
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  ADVANCED EFFECTS — Full Preview Renderers
-// ═══════════════════════════════════════════════════════════════
-
-@Composable
-private fun MirrorRenderedContent(
-    mirror: com.moody.moodyvideoeditor.data.advanced.models.MirrorEffect,
-    localTimeSec: Float,
-    content: @Composable () -> Unit
-) {
-    val cX = KeyframeStore.sample(mirror.keyframes, "centerX", localTimeSec, mirror.centerX)
-    val cY = KeyframeStore.sample(mirror.keyframes, "centerY", localTimeSec, mirror.centerY)
-    val angle = KeyframeStore.sample(mirror.keyframes, "angleDeg", localTimeSec, mirror.angleDeg)
-    val op = KeyframeStore.sample(mirror.keyframes, "opacity", localTimeSec, mirror.opacity)
-
-    val angleNorm = ((angle % 360f) + 360f) % 360f
-    val isHorizontal = angleNorm in 45f..135f || angleNorm in 225f..315f
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    alpha = 1f - (op / 200f).coerceIn(0f, 0.5f)
-                }
-        ) { content() }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    if (isHorizontal) scaleX = -1f else scaleY = -1f
-                    alpha = (op / 100f).coerceIn(0f, 1f)
-                    transformOrigin = TransformOrigin(
-                        pivotFractionX = cX.coerceIn(0f, 1f),
-                        pivotFractionY = cY.coerceIn(0f, 1f)
-                    )
-                }
-        ) { content() }
-    }
-}
-
-@Composable
-private fun RoundedCropWrapper(
-    crop: com.moody.moodyvideoeditor.data.advanced.models.RoundedCropEffect,
-    localTimeSec: Float,
-    content: @Composable () -> Unit
-) {
-    val cr = KeyframeStore.sample(crop.keyframes, "cornerRadius", localTimeSec, crop.cornerRadius)
-    val ct = KeyframeStore.sample(crop.keyframes, "cropTop", localTimeSec, crop.cropTop)
-    val cb = KeyframeStore.sample(crop.keyframes, "cropBottom", localTimeSec, crop.cropBottom)
-    val cl = KeyframeStore.sample(crop.keyframes, "cropLeft", localTimeSec, crop.cropLeft)
-    val crR = KeyframeStore.sample(crop.keyframes, "cropRight", localTimeSec, crop.cropRight)
-    val feather = KeyframeStore.sample(crop.keyframes, "feathering", localTimeSec, crop.feathering)
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .clip(RoundedCornerShape(cr.dp))
-            .padding(
-                top = (ct * 100f).dp,
-                bottom = (cb * 100f).dp,
-                start = (cl * 100f).dp,
-                end = (crR * 100f).dp
-            )
-            .then(
-                if (feather > 0.5f) Modifier.blur(
-                    radius = (feather / 10f).dp,
-                    edgeTreatment = BlurredEdgeTreatment.Unbounded
-                ) else Modifier
-            )
-    ) { content() }
-}
-
-@Composable
-private fun FourColorGradientOverlay(
-    grad: com.moody.moodyvideoeditor.data.advanced.models.FourColorGradientEffect,
-    localTimeSec: Float
-) {
-    val opacity = KeyframeStore.sample(
-        grad.keyframes, "globalOpacity", localTimeSec, grad.globalOpacity
-    )
-    if (opacity < 0.5f) return
-
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val tlR = ((grad.color1 shr 16) and 0xFF) / 255f
-            val tlG = ((grad.color1 shr 8) and 0xFF) / 255f
-            val tlB = (grad.color1 and 0xFF) / 255f
-            val trR = ((grad.color2 shr 16) and 0xFF) / 255f
-            val trG = ((grad.color2 shr 8) and 0xFF) / 255f
-            val trB = (grad.color2 and 0xFF) / 255f
-            val brR = ((grad.color3 shr 16) and 0xFF) / 255f
-            val brG = ((grad.color3 shr 8) and 0xFF) / 255f
-            val brB = (grad.color3 and 0xFF) / 255f
-            val blR = ((grad.color4 shr 16) and 0xFF) / 255f
-            val blG = ((grad.color4 shr 8) and 0xFF) / 255f
-            val blB = (grad.color4 and 0xFF) / 255f
-
-            val stepX = (size.width / 96f).coerceAtLeast(1f)
-            val stepY = (size.height / 96f).coerceAtLeast(1f)
-            val alphaVal = (opacity / 100f).coerceIn(0f, 1f)
-
-            var y = 0f
-            while (y < size.height) {
-                var x = 0f
-                while (x < size.width) {
-                    val fx = (x / size.width).coerceIn(0f, 1f)
-                    val fy = (y / size.height).coerceIn(0f, 1f)
-                    val wTL = (1f - fx) * (1f - fy)
-                    val wTR = fx * (1f - fy)
-                    val wBL = (1f - fx) * fy
-                    val wBR = fx * fy
-                    val r = tlR * wTL + trR * wTR + blR * wBL + brR * wBR
-                    val g = tlG * wTL + trG * wTR + blG * wBL + brG * wBR
-                    val b = tlB * wTL + trB * wTR + blB * wBL + brB * wBR
-                    drawRect(
-                        color = Color(r, g, b, alphaVal),
-                        topLeft = Offset(x, y),
-                        size = Size(stepX, stepY)
-                    )
-                    x += stepX
-                }
-                y += stepY
-            }
-        }
-    }
-}
-
-@Composable
-private fun ChromaticAberrationWrapper(
-    ca: com.moody.moodyvideoeditor.data.advanced.models.ChromaticAberrationEffect,
-    localTimeSec: Float,
-    content: @Composable () -> Unit
-) {
-    val rx = KeyframeStore.sample(ca.keyframes, "redShiftX", localTimeSec, ca.redShiftX)
-    val ry = KeyframeStore.sample(ca.keyframes, "redShiftY", localTimeSec, ca.redShiftY)
-    val bx = KeyframeStore.sample(ca.keyframes, "blueShiftX", localTimeSec, ca.blueShiftX)
-    val by = KeyframeStore.sample(ca.keyframes, "blueShiftY", localTimeSec, ca.blueShiftY)
-
-    val hasShift = kotlin.math.abs(rx) > 0.1f || kotlin.math.abs(ry) > 0.1f ||
-            kotlin.math.abs(bx) > 0.1f || kotlin.math.abs(by) > 0.1f
-    if (!hasShift) {
-        content()
-        return
-    }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        content()
-
-        if (kotlin.math.abs(rx) > 0.1f || kotlin.math.abs(ry) > 0.1f) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        translationX = rx * 3f
-                        translationY = ry * 3f
-                        alpha = 0.25f
-                        blendMode = BlendMode.Screen
-                    }
-            ) { content() }
-        }
-
-        if (kotlin.math.abs(bx) > 0.1f || kotlin.math.abs(by) > 0.1f) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        translationX = -bx * 3f
-                        translationY = -by * 3f
-                        alpha = 0.25f
-                        blendMode = BlendMode.Screen
-                    }
-            ) { content() }
-        }
-    }
-}
-
-@Composable
-private fun RoughenEdgesOverlay(
-    r: com.moody.moodyvideoeditor.data.advanced.models.RoughenEdgesEffect,
-    localTimeSec: Float,
-    content: @Composable () -> Unit
-) {
-    val bw = KeyframeStore.sample(r.keyframes, "borderWidth", localTimeSec, r.borderWidth)
-    if (bw < 0.5f) {
-        content()
-        return
-    }
-
-    val evolution = KeyframeStore.sample(r.keyframes, "evolution", localTimeSec, r.evolution)
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        content()
-
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val steps = 60
-            val seed = (evolution * 10f).toInt()
-            val rnd = java.util.Random(seed.toLong())
-            val barWidth = (bw / 2f).coerceIn(1f, 40f)
-
-            for (i in 0..steps) {
-                val x = (i.toFloat() / steps) * size.width
-                val noise = (rnd.nextFloat() - 0.5f) * (bw * 0.5f)
-                drawRect(
-                    color = Color.Black.copy(alpha = 0.6f),
-                    topLeft = Offset(x, 0f),
-                    size = Size(
-                        size.width / steps + 1f, barWidth + noise
-                    )
-                )
-            }
-            for (i in 0..steps) {
-                val x = (i.toFloat() / steps) * size.width
-                val noise = (rnd.nextFloat() - 0.5f) * (bw * 0.5f)
-                drawRect(
-                    color = Color.Black.copy(alpha = 0.6f),
-                    topLeft = Offset(x, size.height - barWidth - noise),
-                    size = Size(
-                        size.width / steps + 1f, barWidth + noise
-                    )
-                )
-            }
-            for (i in 0..steps) {
-                val y = (i.toFloat() / steps) * size.height
-                val noise = (rnd.nextFloat() - 0.5f) * (bw * 0.5f)
-                drawRect(
-                    color = Color.Black.copy(alpha = 0.6f),
-                    topLeft = Offset(0f, y),
-                    size = Size(
-                        barWidth + noise, size.height / steps + 1f
-                    )
-                )
-            }
-            for (i in 0..steps) {
-                val y = (i.toFloat() / steps) * size.height
-                val noise = (rnd.nextFloat() - 0.5f) * (bw * 0.5f)
-                drawRect(
-                    color = Color.Black.copy(alpha = 0.6f),
-                    topLeft = Offset(size.width - barWidth - noise, y),
-                    size = Size(
-                        barWidth + noise, size.height / steps + 1f
-                    )
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun MotionBlurOverlay(
-    m: com.moody.moodyvideoeditor.data.advanced.models.MotionBlurEffect,
-    localTimeSec: Float,
-    content: @Composable () -> Unit
-) {
-    val shutter = KeyframeStore.sample(
-        m.keyframes, "shutterAngle", localTimeSec, m.shutterAngle
-    )
-    val intensity = KeyframeStore.sample(
-        m.keyframes, "intensity", localTimeSec, m.intensity
-    )
-
-    if (shutter < 10f || intensity < 0.1f) {
-        content()
-        return
-    }
-
-    val blurAmount = ((shutter / 720f) * 6f * intensity).coerceIn(0f, 12f)
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        repeat(3) { i ->
-            val factor = (i + 1) / 4f
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        alpha = 0.15f * (1f - factor)
-                        scaleX = 1f + 0.03f * factor * intensity
-                        scaleY = 1f + 0.03f * factor * intensity
-                    }
-                    .blur(
-                        radius = (blurAmount * factor).dp,
-                        edgeTreatment = BlurredEdgeTreatment.Unbounded
-                    )
-            ) { content() }
-        }
-
-        Box(modifier = Modifier.fillMaxSize()) { content() }
-    }
-}
-
-@Composable
-private fun TurbulentDisplaceWrapper(
-    t: com.moody.moodyvideoeditor.data.advanced.models.TurbulentDisplaceEffect,
-    localTimeSec: Float,
-    content: @Composable () -> Unit
-) {
-    val amount = KeyframeStore.sample(t.keyframes, "amount", localTimeSec, t.amount)
-    val speed = KeyframeStore.sample(
-        t.keyframes, "evolutionSpeed", localTimeSec, t.evolutionSpeed
-    )
-    val offX = KeyframeStore.sample(t.keyframes, "offsetX", localTimeSec, t.offsetX)
-    val offY = KeyframeStore.sample(t.keyframes, "offsetY", localTimeSec, t.offsetY)
-
-    if (amount < 1f) {
-        content()
-        return
-    }
-
-    val time = localTimeSec * speed
-    Box(modifier = Modifier.fillMaxSize()) {
-        content()
-
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val bands = (amount / 5f).toInt().coerceIn(2, 40)
-            val amp = amount * 0.05f
-            repeat(bands) { i ->
-                val yBase = (i.toFloat() / bands) * size.height
-                val phase = offX * 6f + offY * 6f + time * 3f + i * 0.5f
-                val offset = kotlin.math.sin(phase.toDouble()).toFloat() * amp
-                drawRect(
-                    color = Color.Transparent,
-                    topLeft = Offset(offset, yBase),
-                    size = Size(size.width, 1f)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun DropShadowBehind(
-    effect: com.moody.moodyvideoeditor.data.advanced.models.DropShadowEffect,
-    localTimeSec: Float,
-    content: @Composable () -> Unit
-) {
-    val op = KeyframeStore.sample(effect.keyframes, "opacity", localTimeSec, effect.opacity)
-    val dist = KeyframeStore.sample(effect.keyframes, "distance", localTimeSec, effect.distance)
-    val angle = KeyframeStore.sample(
-        effect.keyframes, "directionAngle", localTimeSec, effect.directionAngle
-    )
-    val soft = KeyframeStore.sample(
-        effect.keyframes, "blurSoftness", localTimeSec, effect.blurSoftness
-    )
-
-    val rad = Math.toRadians(angle.toDouble())
-    val dx = (kotlin.math.cos(rad) * dist).toFloat()
-    val dy = (kotlin.math.sin(rad) * dist).toFloat()
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    translationX = dx
-                    translationY = dy
-                    alpha = (op / 100f).coerceIn(0f, 1f)
-                }
-                .blur(
-                    radius = soft.dp.coerceAtLeast(0.dp),
-                    edgeTreatment = BlurredEdgeTreatment.Unbounded
-                )
-        ) { content() }
-
-        content()
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  APPLY ADVANCED EFFECTS
-// ═══════════════════════════════════════════════════════════════
-
-@Composable
-private fun RenderAdvancedEffects(
-    clip: EditorClip,
-    localTimeSec: Float,
-    content: @Composable () -> Unit
-) {
-    if (clip.advancedEffects.isEmpty()) {
-        content()
-        return
-    }
-
-    var wrapped: @Composable () -> Unit = content
-    val fxList = clip.advancedEffects
-    for (idx in fxList.indices.reversed()) {
-        val fx = fxList[idx]
-        val renderer = com.moody.moodyvideoeditor.advanced.AdvancedEffectRegistry
-            .get(fx.type)
-            ?: continue
-        val prev = wrapped
-        wrapped = {
-            renderer.RenderPreview(clip, fx, localTimeSec) { prev() }
-        }
-    }
-    wrapped()
-}
-// ═══════════════════════════════════════════════════════════════
 //  MAIN PREVIEW CANVAS
 // ═══════════════════════════════════════════════════════════════
 
@@ -625,7 +227,6 @@ fun PreviewCanvas(
     multiSelectedIds: Set<String> = emptySet(),
     previewFilters: FilterState? = null,
     previewEffectState: EffectState? = null,
-    previewAdvancedEffect: AdvancedEffectState? = null,
     isDrawingMode: Boolean = false,
     activeBrushType: BrushType = BrushType.PEN,
     activeBrushColor: Long = 0xFFFF0000,
@@ -661,7 +262,7 @@ fun PreviewCanvas(
 ) {
     val context = LocalContext.current
 
-    val baseActiveClips = clips
+    val activeClips = clips
         .filter {
             !it.isAudio &&
                     !it.isAdjustmentClip &&
@@ -672,16 +273,6 @@ fun PreviewCanvas(
                     !hiddenVisualTracks.contains(it.trackIndex)
         }
         .sortedWith(compareBy({ it.trackIndex }, { it.timelineStartMs }))
-
-    val activeClips = if (previewAdvancedEffect != null) {
-        baseActiveClips.map { clip ->
-            if (clip.id == selectedClipId) {
-                clip.copy(
-                    advancedEffects = clip.advancedEffects + previewAdvancedEffect
-                )
-            } else clip
-        }
-    } else baseActiveClips
 
     val topVideoClip = activeClips
         .filter { it.isVisualClip && !it.type.startsWith("image/") }
@@ -933,152 +524,150 @@ fun PreviewCanvas(
                         }
 
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
-                            RenderAdvancedEffects(clip, videoLocalSec) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .graphicsLayer {
-                                            val w = size.width
-                                            val h = size.height
-                                            val cropSx = 1f /
-                                                    (1f - videoTransform2.cropL -
-                                                            videoTransform2.cropR)
-                                                        .coerceAtLeast(0.05f)
-                                            val cropSy = 1f /
-                                                    (1f - videoTransform2.cropT -
-                                                            videoTransform2.cropB)
-                                                        .coerceAtLeast(0.05f)
-                                            val cropTx =
-                                                -(videoTransform2.cropL -
-                                                        videoTransform2.cropR) / 2f * w
-                                            val cropTy =
-                                                -(videoTransform2.cropT -
-                                                        videoTransform2.cropB) / 2f * h
-                                            val posTx =
-                                                (videoTransform2.x - 50f) / 100f * w
-                                            val posTy =
-                                                (videoTransform2.y - 50f) / 100f * h
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        val w = size.width
+                                        val h = size.height
+                                        val cropSx = 1f /
+                                                (1f - videoTransform2.cropL -
+                                                        videoTransform2.cropR)
+                                                    .coerceAtLeast(0.05f)
+                                        val cropSy = 1f /
+                                                (1f - videoTransform2.cropT -
+                                                        videoTransform2.cropB)
+                                                    .coerceAtLeast(0.05f)
+                                        val cropTx =
+                                            -(videoTransform2.cropL -
+                                                    videoTransform2.cropR) / 2f * w
+                                        val cropTy =
+                                            -(videoTransform2.cropT -
+                                                    videoTransform2.cropB) / 2f * h
+                                        val posTx =
+                                            (videoTransform2.x - 50f) / 100f * w
+                                        val posTy =
+                                            (videoTransform2.y - 50f) / 100f * h
 
-                                            val transT: Transform2D =
-                                                if (activeTransitionClip != null) {
-                                                    val st =
-                                                        activeTransitionClip.transition!!
-                                                    val prog = (
-                                                            (currentPosMs -
-                                                                    activeTransitionClip
-                                                                        .timelineStartMs)
-                                                                .toFloat() /
-                                                                    st.durationMs
-                                                                        .coerceAtLeast(1L)
-                                                            ).coerceIn(0f, 1f)
-                                                    TransitionRenderer
-                                                        .getIncomingTransform(
-                                                            st.key, prog, w, h
-                                                        )
-                                                } else Transform2D()
+                                        val transT: Transform2D =
+                                            if (activeTransitionClip != null) {
+                                                val st =
+                                                    activeTransitionClip.transition!!
+                                                val prog = (
+                                                        (currentPosMs -
+                                                                activeTransitionClip
+                                                                    .timelineStartMs)
+                                                            .toFloat() /
+                                                                st.durationMs
+                                                                    .coerceAtLeast(1L)
+                                                        ).coerceIn(0f, 1f)
+                                                TransitionRenderer
+                                                    .getIncomingTransform(
+                                                        st.key, prog, w, h
+                                                    )
+                                            } else Transform2D()
 
-                                            translationX = posTx + cropTx +
-                                                    combinedMotion.tx + transT.tx
-                                            translationY = posTy + cropTy +
-                                                    combinedMotion.ty + transT.ty
-                                            scaleX = (videoTransform2.scale / 100f) *
-                                                    cropSx * combinedMotion.scale *
-                                                    transT.scaleX
-                                            scaleY = (videoTransform2.scale / 100f) *
-                                                    cropSy * combinedMotion.scale *
-                                                    transT.scaleY
-                                            rotationZ = videoTransform2.rotation +
-                                                    combinedMotion.rotation +
-                                                    transT.rotZ
-                                            transformOrigin = TransformOrigin(
-                                                pivotFractionX =
-                                                    videoTransform2.anchorX / 100f,
-                                                pivotFractionY =
-                                                    videoTransform2.anchorY / 100f
-                                            )
-                                            alpha = opacityAlpha * transT.alpha
-                                            this.clip = true
-                                        }
-                                ) {
-                                    AndroidView(
-                                        factory = { ctx ->
-                                            LayoutInflater.from(ctx)
-                                                .inflate(
-                                                    com.moody.moodyvideoeditor.R.layout
-                                                        .view_player,
-                                                    null
-                                                ) as PlayerView
-                                        },
-                                        update = { view ->
-                                            view.player = exoPlayer
-                                            view.resizeMode =
-                                                AspectRatioFrameLayout.RESIZE_MODE_FIT
-                                            view.rotation = rotation.toFloat()
-                                            val sv = view.videoSurfaceView
-                                            if (sv is TextureView) {
-                                                val videoCm = buildClipMatrix(
-                                                    clip,
-                                                    combinedMatrix,
-                                                    applyMatrix,
-                                                    videoWheelMatrix,
-                                                    useExactVideoColorWheels
-                                                )
-                                                if (videoCm != null) {
-                                                    val paint = Paint().apply {
-                                                        colorFilter =
-                                                            android.graphics.ColorMatrixColorFilter(
-                                                                videoCm
-                                                            )
-                                                    }
-                                                    sv.setLayerType(
-                                                        View.LAYER_TYPE_HARDWARE, paint
-                                                    )
-                                                } else {
-                                                    sv.setLayerType(
-                                                        View.LAYER_TYPE_HARDWARE, null
-                                                    )
-                                                }
-                                                if (Build.VERSION.SDK_INT >= 31) {
-                                                    view.setRenderEffect(
-                                                        if (Build.VERSION.SDK_INT >= 33)
-                                                            videoWheelEffect
-                                                        else null
-                                                    )
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                    if (clip.id == selectedClipId && !isDrawingMode) {
-                                        LayerTransformHandles(
-                                            clipId = clip.id,
-                                            scale = videoTransform2.scale,
-                                            rotation = videoTransform2.rotation,
-                                            widthFraction = videoBounds.first,
-                                            heightFraction = videoBounds.second,
-                                            positionX = videoTransform2.x,
-                                            positionY = videoTransform2.y,
-                                            onPositionChanged = { x, y ->
-                                                onGroupGesture(
-                                                    clip.id, x, y,
-                                                    videoTransform2.scale,
-                                                    videoTransform2.rotation
-                                                )
-                                            },
-                                            onGestureStart = onGroupGestureStart,
-                                            onGestureEnd = onGroupGestureEnd,
-                                            onTransformChanged = { scale, rotation ->
-                                                onGroupGesture(
-                                                    clip.id,
-                                                    videoTransform2.x,
-                                                    videoTransform2.y,
-                                                    scale,
-                                                    rotation
-                                                )
-                                            },
-                                            onDelete = { onDeleteLayer(clip.id) },
+                                        translationX = posTx + cropTx +
+                                                combinedMotion.tx + transT.tx
+                                        translationY = posTy + cropTy +
+                                                combinedMotion.ty + transT.ty
+                                        scaleX = (videoTransform2.scale / 100f) *
+                                                cropSx * combinedMotion.scale *
+                                                transT.scaleX
+                                        scaleY = (videoTransform2.scale / 100f) *
+                                                cropSy * combinedMotion.scale *
+                                                transT.scaleY
+                                        rotationZ = videoTransform2.rotation +
+                                                combinedMotion.rotation +
+                                                transT.rotZ
+                                        transformOrigin = TransformOrigin(
+                                            pivotFractionX =
+                                                videoTransform2.anchorX / 100f,
+                                            pivotFractionY =
+                                                videoTransform2.anchorY / 100f
                                         )
+                                        alpha = opacityAlpha * transT.alpha
+                                        this.clip = true
                                     }
+                            ) {
+                                AndroidView(
+                                    factory = { ctx ->
+                                        LayoutInflater.from(ctx)
+                                            .inflate(
+                                                com.moody.moodyvideoeditor.R.layout
+                                                    .view_player,
+                                                null
+                                            ) as PlayerView
+                                    },
+                                    update = { view ->
+                                        view.player = exoPlayer
+                                        view.resizeMode =
+                                            AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                        view.rotation = rotation.toFloat()
+                                        val sv = view.videoSurfaceView
+                                        if (sv is TextureView) {
+                                            val videoCm = buildClipMatrix(
+                                                clip,
+                                                combinedMatrix,
+                                                applyMatrix,
+                                                videoWheelMatrix,
+                                                useExactVideoColorWheels
+                                            )
+                                            if (videoCm != null) {
+                                                val paint = Paint().apply {
+                                                    colorFilter =
+                                                        android.graphics.ColorMatrixColorFilter(
+                                                            videoCm
+                                                        )
+                                                }
+                                                sv.setLayerType(
+                                                    View.LAYER_TYPE_HARDWARE, paint
+                                                )
+                                            } else {
+                                                sv.setLayerType(
+                                                    View.LAYER_TYPE_HARDWARE, null
+                                                )
+                                            }
+                                            if (Build.VERSION.SDK_INT >= 31) {
+                                                view.setRenderEffect(
+                                                    if (Build.VERSION.SDK_INT >= 33)
+                                                        videoWheelEffect
+                                                    else null
+                                                )
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                                if (clip.id == selectedClipId && !isDrawingMode) {
+                                    LayerTransformHandles(
+                                        clipId = clip.id,
+                                        scale = videoTransform2.scale,
+                                        rotation = videoTransform2.rotation,
+                                        widthFraction = videoBounds.first,
+                                        heightFraction = videoBounds.second,
+                                        positionX = videoTransform2.x,
+                                        positionY = videoTransform2.y,
+                                        onPositionChanged = { x, y ->
+                                            onGroupGesture(
+                                                clip.id, x, y,
+                                                videoTransform2.scale,
+                                                videoTransform2.rotation
+                                            )
+                                        },
+                                        onGestureStart = onGroupGestureStart,
+                                        onGestureEnd = onGroupGestureEnd,
+                                        onTransformChanged = { scale, rotation ->
+                                            onGroupGesture(
+                                                clip.id,
+                                                videoTransform2.x,
+                                                videoTransform2.y,
+                                                scale,
+                                                rotation
+                                            )
+                                        },
+                                        onDelete = { onDeleteLayer(clip.id) },
+                                    )
                                 }
                             }
                         }
@@ -1100,255 +689,253 @@ fun PreviewCanvas(
                         }
 
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
-                            RenderAdvancedEffects(clip, imgLocalSec) {
-                                Box(
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .graphicsLayer {
-                                            val w = size.width
-                                            val h = size.height
-                                            val cropSx = 1f /
-                                                    (1f - imgTransform.cropL -
-                                                            imgTransform.cropR)
-                                                        .coerceAtLeast(0.05f)
-                                            val cropSy = 1f /
-                                                    (1f - imgTransform.cropT -
-                                                            imgTransform.cropB)
-                                                        .coerceAtLeast(0.05f)
-                                            val cropTx =
-                                                -(imgTransform.cropL -
-                                                        imgTransform.cropR) / 2f * w
-                                            val cropTy =
-                                                -(imgTransform.cropT -
-                                                        imgTransform.cropB) / 2f * h
-                                            val posTx =
-                                                (imgTransform.x - 50f) / 100f * w
-                                            val posTy =
-                                                (imgTransform.y - 50f) / 100f * h
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .graphicsLayer {
+                                        val w = size.width
+                                        val h = size.height
+                                        val cropSx = 1f /
+                                                (1f - imgTransform.cropL -
+                                                        imgTransform.cropR)
+                                                    .coerceAtLeast(0.05f)
+                                        val cropSy = 1f /
+                                                (1f - imgTransform.cropT -
+                                                        imgTransform.cropB)
+                                                    .coerceAtLeast(0.05f)
+                                        val cropTx =
+                                            -(imgTransform.cropL -
+                                                    imgTransform.cropR) / 2f * w
+                                        val cropTy =
+                                            -(imgTransform.cropT -
+                                                    imgTransform.cropB) / 2f * h
+                                        val posTx =
+                                            (imgTransform.x - 50f) / 100f * w
+                                        val posTy =
+                                            (imgTransform.y - 50f) / 100f * h
 
-                                            val transT: Transform2D =
-                                                if (activeTransitionClip != null &&
-                                                    activeTransitionClip.id == clip.id
-                                                ) {
-                                                    val st = activeTransitionClip.transition!!
-                                                    val prog = (
-                                                            (currentPosMs -
-                                                                    activeTransitionClip
-                                                                        .timelineStartMs)
-                                                                .toFloat() /
-                                                                    st.durationMs
-                                                                        .coerceAtLeast(1L)
-                                                            ).coerceIn(0f, 1f)
-                                                    TransitionRenderer
-                                                        .getIncomingTransform(
-                                                            st.key, prog, w, h
-                                                        )
-                                                } else Transform2D()
+                                        val transT: Transform2D =
+                                            if (activeTransitionClip != null &&
+                                                activeTransitionClip.id == clip.id
+                                            ) {
+                                                val st = activeTransitionClip.transition!!
+                                                val prog = (
+                                                        (currentPosMs -
+                                                                activeTransitionClip
+                                                                    .timelineStartMs)
+                                                            .toFloat() /
+                                                                st.durationMs
+                                                                    .coerceAtLeast(1L)
+                                                        ).coerceIn(0f, 1f)
+                                                TransitionRenderer
+                                                    .getIncomingTransform(
+                                                        st.key, prog, w, h
+                                                    )
+                                            } else Transform2D()
 
-                                            translationX = posTx + cropTx +
-                                                    combinedMotion.tx + transT.tx
-                                            translationY = posTy + cropTy +
-                                                    combinedMotion.ty + transT.ty
-                                            scaleX = (imgTransform.scale / 100f) *
-                                                    cropSx * combinedMotion.scale *
-                                                    transT.scaleX
-                                            scaleY = (imgTransform.scale / 100f) *
-                                                    cropSy * combinedMotion.scale *
-                                                    transT.scaleY
-                                            rotationZ = imgTransform.rotation +
-                                                    combinedMotion.rotation +
-                                                    transT.rotZ
-                                            transformOrigin = TransformOrigin(
-                                                pivotFractionX = imgTransform.anchorX / 100f,
-                                                pivotFractionY = imgTransform.anchorY / 100f
-                                            )
-                                            alpha = opacityAlpha * transT.alpha
-                                            this.clip = true
-                                        }
-                                        .then(
-                                            if (isMulti) Modifier.border(
-                                                width = 1.dp, color = borderColor,
-                                                shape = RoundedCornerShape(4.dp)
-                                            ) else Modifier
+                                        translationX = posTx + cropTx +
+                                                combinedMotion.tx + transT.tx
+                                        translationY = posTy + cropTy +
+                                                combinedMotion.ty + transT.ty
+                                        scaleX = (imgTransform.scale / 100f) *
+                                                cropSx * combinedMotion.scale *
+                                                transT.scaleX
+                                        scaleY = (imgTransform.scale / 100f) *
+                                                cropSy * combinedMotion.scale *
+                                                transT.scaleY
+                                        rotationZ = imgTransform.rotation +
+                                                combinedMotion.rotation +
+                                                transT.rotZ
+                                        transformOrigin = TransformOrigin(
+                                            pivotFractionX = imgTransform.anchorX / 100f,
+                                            pivotFractionY = imgTransform.anchorY / 100f
                                         )
-                                        .pointerInput(clip.id, isSelected, isMulti, isDrawingMode) {
-                                            if (isDrawingMode) return@pointerInput
-                                            awaitEachGesture {
-                                                awaitFirstDown(requireUnconsumed = true)
-                                                onGroupGestureStart()
+                                        alpha = opacityAlpha * transT.alpha
+                                        this.clip = true
+                                    }
+                                    .then(
+                                        if (isMulti) Modifier.border(
+                                            width = 1.dp, color = borderColor,
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) else Modifier
+                                    )
+                                    .pointerInput(clip.id, isSelected, isMulti, isDrawingMode) {
+                                        if (isDrawingMode) return@pointerInput
+                                        awaitEachGesture {
+                                            awaitFirstDown(requireUnconsumed = true)
+                                            onGroupGestureStart()
 
-                                                val baseX = imgTransform.x
-                                                val baseY = imgTransform.y
-                                                val baseScale = imgTransform.scale
-                                                val baseRot = imgTransform.rotation
-                                                var accumPanX = 0f
-                                                var accumPanY = 0f
-                                                var accumZoom = 1f
-                                                var accumRot = 0f
-                                                var lastDist = 0f
-                                                var lastAngle = 0f
-                                                var hasMulti = false
+                                            val baseX = imgTransform.x
+                                            val baseY = imgTransform.y
+                                            val baseScale = imgTransform.scale
+                                            val baseRot = imgTransform.rotation
+                                            var accumPanX = 0f
+                                            var accumPanY = 0f
+                                            var accumZoom = 1f
+                                            var accumRot = 0f
+                                            var lastDist = 0f
+                                            var lastAngle = 0f
+                                            var hasMulti = false
 
-                                                if (!isSelected && !isMulti) onClipSelected(clip.id)
+                                            if (!isSelected && !isMulti) onClipSelected(clip.id)
 
-                                                var continueGesture = true
-                                                while (continueGesture) {
-                                                    val event = awaitPointerEvent()
-                                                    val pressed =
-                                                        event.changes.filter { it.pressed }
-                                                    if (pressed.isEmpty()) {
-                                                        continueGesture = false
-                                                    } else {
-                                                        if (pressed.size == 1) {
-                                                            val ch = pressed.first()
-                                                            val pan =
-                                                                ch.position - ch.previousPosition
-                                                            accumPanX += pan.x
-                                                            accumPanY += pan.y
-                                                            ch.consume()
-                                                        } else if (pressed.size >= 2) {
-                                                            val c1 = pressed[0]
-                                                            val c2 = pressed[1]
-                                                            val d = c1.position - c2.position
-                                                            val dist =
-                                                                kotlin.math.sqrt(d.x * d.x + d.y * d.y)
-                                                            val angle = kotlin.math.atan2(d.y, d.x)
-                                                            if (hasMulti && lastDist > 1f) {
-                                                                accumZoom *= dist / lastDist
-                                                                accumRot += Math.toDegrees(
-                                                                    normalizeAngle(angle - lastAngle)
-                                                                        .toDouble()
-                                                                ).toFloat()
-                                                            }
-                                                            lastDist = dist
-                                                            lastAngle = angle
-                                                            hasMulti = true
-                                                            c1.consume()
-                                                            c2.consume()
+                                            var continueGesture = true
+                                            while (continueGesture) {
+                                                val event = awaitPointerEvent()
+                                                val pressed =
+                                                    event.changes.filter { it.pressed }
+                                                if (pressed.isEmpty()) {
+                                                    continueGesture = false
+                                                } else {
+                                                    if (pressed.size == 1) {
+                                                        val ch = pressed.first()
+                                                        val pan =
+                                                            ch.position - ch.previousPosition
+                                                        accumPanX += pan.x
+                                                        accumPanY += pan.y
+                                                        ch.consume()
+                                                    } else if (pressed.size >= 2) {
+                                                        val c1 = pressed[0]
+                                                        val c2 = pressed[1]
+                                                        val d = c1.position - c2.position
+                                                        val dist =
+                                                            kotlin.math.sqrt(d.x * d.x + d.y * d.y)
+                                                        val angle = kotlin.math.atan2(d.y, d.x)
+                                                        if (hasMulti && lastDist > 1f) {
+                                                            accumZoom *= dist / lastDist
+                                                            accumRot += Math.toDegrees(
+                                                                normalizeAngle(angle - lastAngle)
+                                                                    .toDouble()
+                                                            ).toFloat()
                                                         }
-                                                        val newX =
-                                                            (baseX + accumPanX / size.width * 100f)
-                                                                .coerceIn(0f, 100f)
-                                                        val newY =
-                                                            (baseY + accumPanY / size.height * 100f)
-                                                                .coerceIn(0f, 100f)
-                                                        val newScale = (baseScale * accumZoom)
-                                                            .coerceIn(10f, 500f)
-                                                        val newRot = baseRot + accumRot
-
-                                                        onGroupGesture(
-                                                            clip.id, newX, newY,
-                                                            newScale, newRot
-                                                        )
+                                                        lastDist = dist
+                                                        lastAngle = angle
+                                                        hasMulti = true
+                                                        c1.consume()
+                                                        c2.consume()
                                                     }
+                                                    val newX =
+                                                        (baseX + accumPanX / size.width * 100f)
+                                                            .coerceIn(0f, 100f)
+                                                    val newY =
+                                                        (baseY + accumPanY / size.height * 100f)
+                                                            .coerceIn(0f, 100f)
+                                                    val newScale = (baseScale * accumZoom)
+                                                        .coerceIn(10f, 500f)
+                                                    val newRot = baseRot + accumRot
+
+                                                    onGroupGesture(
+                                                        clip.id, newX, newY,
+                                                        newScale, newRot
+                                                    )
                                                 }
-                                                onGroupGestureEnd()
                                             }
+                                            onGroupGestureEnd()
                                         }
-                                        .pointerInput(clip.id, isMulti, isDrawingMode) {
-                                            if (isDrawingMode) return@pointerInput
-                                            detectTapGestures {
-                                                if (!isMulti) onClipSelected(clip.id)
-                                            }
+                                    }
+                                    .pointerInput(clip.id, isMulti, isDrawingMode) {
+                                        if (isDrawingMode) return@pointerInput
+                                        detectTapGestures {
+                                            if (!isMulti) onClipSelected(clip.id)
                                         }
+                                    }
+                            ) {
+                                val imageRequest = remember(clip.uri) {
+                                    ImageRequest.Builder(context)
+                                        .data(clip.uri)
+                                        .decoderFactory(BitmapFactoryDecoder.Factory())
+                                        .allowHardware(false)
+                                        .crossfade(false)
+                                        .build()
+                                }
+                                val imgPainter = rememberAsyncImagePainter(imageRequest)
+                                val imageIntrinsicSize = imgPainter.intrinsicSize
+                                val imageAspect = if (
+                                    imageIntrinsicSize.width > 0f &&
+                                    imageIntrinsicSize.height > 0f
                                 ) {
-                                    val imageRequest = remember(clip.uri) {
-                                        ImageRequest.Builder(context)
-                                            .data(clip.uri)
-                                            .decoderFactory(BitmapFactoryDecoder.Factory())
-                                            .allowHardware(false)
-                                            .crossfade(false)
-                                            .build()
-                                    }
-                                    val imgPainter = rememberAsyncImagePainter(imageRequest)
-                                    val imageIntrinsicSize = imgPainter.intrinsicSize
-                                    val imageAspect = if (
-                                        imageIntrinsicSize.width > 0f &&
-                                        imageIntrinsicSize.height > 0f
-                                    ) {
-                                        imageIntrinsicSize.width / imageIntrinsicSize.height
-                                    } else {
-                                        canvasW / canvasH
-                                    }
-                                    val imageBounds = fittedBoundsFractions(
-                                        canvasW, canvasH, imageAspect
-                                    )
-                                    val useExactImageColorWheels = Build.VERSION.SDK_INT >= 33
-                                    val imageWheelStates = remember(
-                                        clip.colorWheel, activeColorWheels
-                                    ) {
-                                        colorWheelStatesForClip(clip, activeColorWheels)
-                                    }
-                                    val imageWheelEffect = remember(imageWheelStates) {
-                                        if (useExactImageColorWheels) {
-                                            ColorWheelPreviewFilter.createRenderEffect(
-                                                imageWheelStates
-                                            )?.asComposeRenderEffect()
-                                        } else null
-                                    }
-                                    val useExactImageWheels =
-                                        useExactImageColorWheels &&
-                                                (imageWheelStates.isEmpty() ||
-                                                        imageWheelEffect != null)
-                                    val imgColorFilter = remember(
-                                        clip.filters, clip.adjustments,
-                                        combinedMatrix, applyMatrix, activeColorWheels, clip.id,
+                                    imageIntrinsicSize.width / imageIntrinsicSize.height
+                                } else {
+                                    canvasW / canvasH
+                                }
+                                val imageBounds = fittedBoundsFractions(
+                                    canvasW, canvasH, imageAspect
+                                )
+                                val useExactImageColorWheels = Build.VERSION.SDK_INT >= 33
+                                val imageWheelStates = remember(
+                                    clip.colorWheel, activeColorWheels
+                                ) {
+                                    colorWheelStatesForClip(clip, activeColorWheels)
+                                }
+                                val imageWheelEffect = remember(imageWheelStates) {
+                                    if (useExactImageColorWheels) {
+                                        ColorWheelPreviewFilter.createRenderEffect(
+                                            imageWheelStates
+                                        )?.asComposeRenderEffect()
+                                    } else null
+                                }
+                                val useExactImageWheels =
+                                    useExactImageColorWheels &&
+                                            (imageWheelStates.isEmpty() ||
+                                                    imageWheelEffect != null)
+                                val imgColorFilter = remember(
+                                    clip.filters, clip.adjustments,
+                                    combinedMatrix, applyMatrix, activeColorWheels, clip.id,
+                                    useExactImageWheels
+                                ) {
+                                    val cm = buildClipMatrix(
+                                        clip,
+                                        combinedMatrix,
+                                        applyMatrix,
+                                        if (useExactImageWheels) null
+                                        else colorWheelMatrixForClip(clip, activeColorWheels),
                                         useExactImageWheels
-                                    ) {
-                                        val cm = buildClipMatrix(
-                                            clip,
-                                            combinedMatrix,
-                                            applyMatrix,
-                                            if (useExactImageWheels) null
-                                            else colorWheelMatrixForClip(clip, activeColorWheels),
-                                            useExactImageWheels
-                                        )
-                                        if (cm == null) null
-                                        else androidx.compose.ui.graphics.ColorFilter.colorMatrix(
-                                            androidx.compose.ui.graphics.ColorMatrix(cm.array)
-                                        )
-                                    }
-                                    Image(
-                                        painter = imgPainter,
-                                        contentDescription = null,
-                                        contentScale = ContentScale.Fit,
-                                        colorFilter = imgColorFilter,
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .graphicsLayer {
-                                                renderEffect = imageWheelEffect
-                                            }
                                     )
-                                    if (isSelected && !isDrawingMode) {
-                                        LayerTransformHandles(
-                                            clipId = clip.id,
-                                            scale = imgTransform.scale,
-                                            rotation = imgTransform.rotation,
-                                            widthFraction = imageBounds.first,
-                                            heightFraction = imageBounds.second,
-                                            positionX = imgTransform.x,
-                                            positionY = imgTransform.y,
-                                            onPositionChanged = { x, y ->
-                                                onGroupGesture(
-                                                    clip.id, x, y,
-                                                    imgTransform.scale,
-                                                    imgTransform.rotation
-                                                )
-                                            },
-                                            onGestureStart = onGroupGestureStart,
-                                            onGestureEnd = onGroupGestureEnd,
-                                            onTransformChanged = { scale, rotation ->
-                                                onGroupGesture(
-                                                    clip.id,
-                                                    imgTransform.x,
-                                                    imgTransform.y,
-                                                    scale,
-                                                    rotation
-                                                )
-                                            },
-                                            onDelete = { onDeleteLayer(clip.id) },
-                                        )
-                                    }
+                                    if (cm == null) null
+                                    else androidx.compose.ui.graphics.ColorFilter.colorMatrix(
+                                        androidx.compose.ui.graphics.ColorMatrix(cm.array)
+                                    )
+                                }
+                                Image(
+                                    painter = imgPainter,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Fit,
+                                    colorFilter = imgColorFilter,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .graphicsLayer {
+                                            renderEffect = imageWheelEffect
+                                        }
+                                )
+                                if (isSelected && !isDrawingMode) {
+                                    LayerTransformHandles(
+                                        clipId = clip.id,
+                                        scale = imgTransform.scale,
+                                        rotation = imgTransform.rotation,
+                                        widthFraction = imageBounds.first,
+                                        heightFraction = imageBounds.second,
+                                        positionX = imgTransform.x,
+                                        positionY = imgTransform.y,
+                                        onPositionChanged = { x, y ->
+                                            onGroupGesture(
+                                                clip.id, x, y,
+                                                imgTransform.scale,
+                                                imgTransform.rotation
+                                            )
+                                        },
+                                        onGestureStart = onGroupGestureStart,
+                                        onGestureEnd = onGroupGestureEnd,
+                                        onTransformChanged = { scale, rotation ->
+                                            onGroupGesture(
+                                                clip.id,
+                                                imgTransform.x,
+                                                imgTransform.y,
+                                                scale,
+                                                rotation
+                                            )
+                                        },
+                                        onDelete = { onDeleteLayer(clip.id) },
+                                    )
                                 }
                             }
                         }
@@ -1372,170 +959,168 @@ fun PreviewCanvas(
                         }
 
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
-                            RenderAdvancedEffects(clip, localSec) {
-                                Box(
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .graphicsLayer {
-                                            val w = size.width
-                                            val h = size.height
-                                            val cropSx = 1f /
-                                                    (1f - matteTransform.cropL -
-                                                            matteTransform.cropR)
-                                                        .coerceAtLeast(0.05f)
-                                            val cropSy = 1f /
-                                                    (1f - matteTransform.cropT -
-                                                            matteTransform.cropB)
-                                                        .coerceAtLeast(0.05f)
-                                            val cropTx =
-                                                -(matteTransform.cropL -
-                                                        matteTransform.cropR) / 2f * w
-                                            val cropTy =
-                                                -(matteTransform.cropT -
-                                                        matteTransform.cropB) / 2f * h
-                                            val posTx =
-                                                (matteTransform.x - 50f) / 100f * w
-                                            val posTy =
-                                                (matteTransform.y - 50f) / 100f * h
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .graphicsLayer {
+                                        val w = size.width
+                                        val h = size.height
+                                        val cropSx = 1f /
+                                                (1f - matteTransform.cropL -
+                                                        matteTransform.cropR)
+                                                    .coerceAtLeast(0.05f)
+                                        val cropSy = 1f /
+                                                (1f - matteTransform.cropT -
+                                                        matteTransform.cropB)
+                                                    .coerceAtLeast(0.05f)
+                                        val cropTx =
+                                            -(matteTransform.cropL -
+                                                    matteTransform.cropR) / 2f * w
+                                        val cropTy =
+                                            -(matteTransform.cropT -
+                                                    matteTransform.cropB) / 2f * h
+                                        val posTx =
+                                            (matteTransform.x - 50f) / 100f * w
+                                        val posTy =
+                                            (matteTransform.y - 50f) / 100f * h
 
-                                            translationX = posTx + cropTx +
-                                                    combinedMotion.tx
-                                            translationY = posTy + cropTy +
-                                                    combinedMotion.ty
-                                            scaleX = (matteTransform.scale / 100f) *
-                                                    cropSx * combinedMotion.scale
-                                            scaleY = (matteTransform.scale / 100f) *
-                                                    cropSy * combinedMotion.scale
-                                            rotationZ = matteTransform.rotation +
-                                                    combinedMotion.rotation
-                                            transformOrigin = TransformOrigin(
-                                                pivotFractionX =
-                                                    matteTransform.anchorX / 100f,
-                                                pivotFractionY =
-                                                    matteTransform.anchorY / 100f
-                                            )
-                                            alpha = matteAlpha * opacityAlpha
-                                        }
-                                        .then(
-                                            if (isSel || isMulti) Modifier.border(
-                                                width = if (isSel) 1.5.dp else 1.dp,
-                                                color = borderColor,
-                                                shape = RoundedCornerShape(4.dp)
-                                            ) else Modifier
+                                        translationX = posTx + cropTx +
+                                                combinedMotion.tx
+                                        translationY = posTy + cropTy +
+                                                combinedMotion.ty
+                                        scaleX = (matteTransform.scale / 100f) *
+                                                cropSx * combinedMotion.scale
+                                        scaleY = (matteTransform.scale / 100f) *
+                                                cropSy * combinedMotion.scale
+                                        rotationZ = matteTransform.rotation +
+                                                combinedMotion.rotation
+                                        transformOrigin = TransformOrigin(
+                                            pivotFractionX =
+                                                matteTransform.anchorX / 100f,
+                                            pivotFractionY =
+                                                matteTransform.anchorY / 100f
                                         )
-                                        .pointerInput(clip.id, isSel, isMulti, isDrawingMode) {
-                                            if (isDrawingMode) return@pointerInput
-                                            awaitEachGesture {
-                                                awaitFirstDown(requireUnconsumed = true)
-                                                onGroupGestureStart()
+                                        alpha = matteAlpha * opacityAlpha
+                                    }
+                                    .then(
+                                        if (isSel || isMulti) Modifier.border(
+                                            width = if (isSel) 1.5.dp else 1.dp,
+                                            color = borderColor,
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) else Modifier
+                                    )
+                                    .pointerInput(clip.id, isSel, isMulti, isDrawingMode) {
+                                        if (isDrawingMode) return@pointerInput
+                                        awaitEachGesture {
+                                            awaitFirstDown(requireUnconsumed = true)
+                                            onGroupGestureStart()
 
-                                                val baseX = matteTransform.x
-                                                val baseY = matteTransform.y
-                                                val baseScale = matteTransform.scale
-                                                val baseRot = matteTransform.rotation
-                                                var accumPanX = 0f
-                                                var accumPanY = 0f
-                                                var accumZoom = 1f
-                                                var accumRot = 0f
-                                                var lastDist = 0f
-                                                var lastAngle = 0f
-                                                var hasMulti = false
+                                            val baseX = matteTransform.x
+                                            val baseY = matteTransform.y
+                                            val baseScale = matteTransform.scale
+                                            val baseRot = matteTransform.rotation
+                                            var accumPanX = 0f
+                                            var accumPanY = 0f
+                                            var accumZoom = 1f
+                                            var accumRot = 0f
+                                            var lastDist = 0f
+                                            var lastAngle = 0f
+                                            var hasMulti = false
 
-                                                if (!isSel && !isMulti) onClipSelected(clip.id)
+                                            if (!isSel && !isMulti) onClipSelected(clip.id)
 
-                                                var continueGesture = true
-                                                while (continueGesture) {
-                                                    val event = awaitPointerEvent()
-                                                    val pressed =
-                                                        event.changes.filter { it.pressed }
-                                                    if (pressed.isEmpty()) {
-                                                        continueGesture = false
+                                            var continueGesture = true
+                                            while (continueGesture) {
+                                                val event = awaitPointerEvent()
+                                                val pressed =
+                                                    event.changes.filter { it.pressed }
+                                                if (pressed.isEmpty()) {
+                                                    continueGesture = false
+                                                } else {
+                                                    if (pressed.size == 1) {
+                                                        val ch = pressed.first()
+                                                        val pan =
+                                                            ch.position - ch.previousPosition
+                                                        accumPanX += pan.x
+                                                        accumPanY += pan.y
+                                                        ch.consume()
+                                                    } else if (pressed.size >= 2) {
+                                                        val c1 = pressed[0]
+                                                        val c2 = pressed[1]
+                                                        val d = c1.position - c2.position
+                                                        val dist =
+                                                            kotlin.math.sqrt(d.x * d.x + d.y * d.y)
+                                                        val angle = kotlin.math.atan2(d.y, d.x)
+                                                        if (hasMulti && lastDist > 1f) {
+                                                            accumZoom *= dist / lastDist
+                                                            accumRot += Math.toDegrees(
+                                                                normalizeAngle(angle - lastAngle)
+                                                                    .toDouble()
+                                                            ).toFloat()
+                                                        }
+                                                        lastDist = dist
+                                                        lastAngle = angle
+                                                        hasMulti = true
+                                                        c1.consume()
+                                                        c2.consume()
+                                                    }
+                                                    val newX =
+                                                        (baseX + accumPanX / size.width * 100f)
+                                                            .coerceIn(0f, 100f)
+                                                    val newY =
+                                                        (baseY + accumPanY / size.height * 100f)
+                                                            .coerceIn(0f, 100f)
+                                                    val newScale = (baseScale * accumZoom)
+                                                        .coerceIn(10f, 500f)
+                                                    val newRot = baseRot + accumRot
+
+                                                    if (isMulti) {
+                                                        onGroupGesture(
+                                                            clip.id, newX, newY,
+                                                            newScale, newRot
+                                                        )
                                                     } else {
-                                                        if (pressed.size == 1) {
-                                                            val ch = pressed.first()
-                                                            val pan =
-                                                                ch.position - ch.previousPosition
-                                                            accumPanX += pan.x
-                                                            accumPanY += pan.y
-                                                            ch.consume()
-                                                        } else if (pressed.size >= 2) {
-                                                            val c1 = pressed[0]
-                                                            val c2 = pressed[1]
-                                                            val d = c1.position - c2.position
-                                                            val dist =
-                                                                kotlin.math.sqrt(d.x * d.x + d.y * d.y)
-                                                            val angle = kotlin.math.atan2(d.y, d.x)
-                                                            if (hasMulti && lastDist > 1f) {
-                                                                accumZoom *= dist / lastDist
-                                                                accumRot += Math.toDegrees(
-                                                                    normalizeAngle(angle - lastAngle)
-                                                                        .toDouble()
-                                                                ).toFloat()
-                                                            }
-                                                            lastDist = dist
-                                                            lastAngle = angle
-                                                            hasMulti = true
-                                                            c1.consume()
-                                                            c2.consume()
-                                                        }
-                                                        val newX =
-                                                            (baseX + accumPanX / size.width * 100f)
-                                                                .coerceIn(0f, 100f)
-                                                        val newY =
-                                                            (baseY + accumPanY / size.height * 100f)
-                                                                .coerceIn(0f, 100f)
-                                                        val newScale = (baseScale * accumZoom)
-                                                            .coerceIn(10f, 500f)
-                                                        val newRot = baseRot + accumRot
-
-                                                        if (isMulti) {
-                                                            onGroupGesture(
-                                                                clip.id, newX, newY,
-                                                                newScale, newRot
-                                                            )
-                                                        } else {
-                                                            onBrushPositionChanged(
-                                                                clip.id, newX, newY
-                                                            )
-                                                            onBrushTransformChanged(
-                                                                clip.id, newScale, newRot
-                                                            )
-                                                        }
+                                                        onBrushPositionChanged(
+                                                            clip.id, newX, newY
+                                                        )
+                                                        onBrushTransformChanged(
+                                                            clip.id, newScale, newRot
+                                                        )
                                                     }
                                                 }
-                                                onGroupGestureEnd()
                                             }
+                                            onGroupGestureEnd()
                                         }
-                                        .pointerInput(clip.id, isMulti, isDrawingMode) {
-                                            if (isDrawingMode) return@pointerInput
-                                            detectTapGestures {
-                                                if (!isMulti) onClipSelected(clip.id)
-                                            }
-                                        }
-                                ) {
-                                    ColorMatteRenderer(
-                                        style = clip.matteStyle,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-
-                                    if (isSel && !isDrawingMode) {
-                                        LayerTransformHandles(
-                                            clipId = clip.id,
-                                            scale = matteTransform.scale,
-                                            rotation = matteTransform.rotation,
-                                            positionX = matteTransform.x,
-                                            positionY = matteTransform.y,
-                                            onPositionChanged = { x, y ->
-                                                onBrushPositionChanged(clip.id, x, y)
-                                            },
-                                            onGestureStart = onGroupGestureStart,
-                                            onGestureEnd = onGroupGestureEnd,
-                                            onTransformChanged = { s, r ->
-                                                onBrushTransformChanged(clip.id, s, r)
-                                            },
-                                            onDelete = { onDeleteLayer(clip.id) },
-                                        )
                                     }
+                                    .pointerInput(clip.id, isMulti, isDrawingMode) {
+                                        if (isDrawingMode) return@pointerInput
+                                        detectTapGestures {
+                                            if (!isMulti) onClipSelected(clip.id)
+                                        }
+                                    }
+                            ) {
+                                ColorMatteRenderer(
+                                    style = clip.matteStyle,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+
+                                if (isSel && !isDrawingMode) {
+                                    LayerTransformHandles(
+                                        clipId = clip.id,
+                                        scale = matteTransform.scale,
+                                        rotation = matteTransform.rotation,
+                                        positionX = matteTransform.x,
+                                        positionY = matteTransform.y,
+                                        onPositionChanged = { x, y ->
+                                            onBrushPositionChanged(clip.id, x, y)
+                                        },
+                                        onGestureStart = onGroupGestureStart,
+                                        onGestureEnd = onGroupGestureEnd,
+                                        onTransformChanged = { s, r ->
+                                            onBrushTransformChanged(clip.id, s, r)
+                                        },
+                                        onDelete = { onDeleteLayer(clip.id) },
+                                    )
                                 }
                             }
                         }
@@ -1547,30 +1132,28 @@ fun PreviewCanvas(
                         val textLocalSec = ((currentPosMs - clip.timelineStartMs) / 1000f)
                             .coerceAtLeast(0f)
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
-                            RenderAdvancedEffects(clip, textLocalSec) {
-                                Box(modifier = Modifier.fillMaxSize()) {
-                                    InteractiveTextOverlay(
-                                        clip = clip,
-                                        textState = st,
-                                        canvasW = canvasW,
-                                        canvasH = canvasH,
-                                        currentPosMs = currentPosMs,
-                                        isSelected = clip.id == selectedClipId,
-                                        isMulti = clip.id in multiSelectedIds,
-                                        isDrawingMode = isDrawingMode,
-                                        onSelect = { onClipSelected(clip.id) },
-                                        onGroupGestureStart = onGroupGestureStart,
-                                        onGroupGestureEnd = onGroupGestureEnd,
-                                        onGroupGesture = onGroupGesture,
-                                        onPositionChanged = { x, y ->
-                                            onTextPositionChanged(clip.id, x, y)
-                                        },
-                                        onTransformChanged = { s, r ->
-                                            onTextTransformChanged(clip.id, s, r)
-                                        },
-                                        onDeleteLayer = { onDeleteLayer(clip.id) },
-                                    )
-                                }
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                InteractiveTextOverlay(
+                                    clip = clip,
+                                    textState = st,
+                                    canvasW = canvasW,
+                                    canvasH = canvasH,
+                                    currentPosMs = currentPosMs,
+                                    isSelected = clip.id == selectedClipId,
+                                    isMulti = clip.id in multiSelectedIds,
+                                    isDrawingMode = isDrawingMode,
+                                    onSelect = { onClipSelected(clip.id) },
+                                    onGroupGestureStart = onGroupGestureStart,
+                                    onGroupGestureEnd = onGroupGestureEnd,
+                                    onGroupGesture = onGroupGesture,
+                                    onPositionChanged = { x, y ->
+                                        onTextPositionChanged(clip.id, x, y)
+                                    },
+                                    onTransformChanged = { s, r ->
+                                        onTextTransformChanged(clip.id, s, r)
+                                    },
+                                    onDeleteLayer = { onDeleteLayer(clip.id) },
+                                )
                             }
                         }
                     }
@@ -1581,30 +1164,28 @@ fun PreviewCanvas(
                         val stickerLocalSec = ((currentPosMs - clip.timelineStartMs) / 1000f)
                             .coerceAtLeast(0f)
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
-                            RenderAdvancedEffects(clip, stickerLocalSec) {
-                                Box(modifier = Modifier.fillMaxSize()) {
-                                    InteractiveStickerOverlay(
-                                        clip = clip,
-                                        stickerState = ss,
-                                        canvasW = canvasW,
-                                        canvasH = canvasH,
-                                        currentPosMs = currentPosMs,
-                                        isSelected = clip.id == selectedClipId,
-                                        isMulti = clip.id in multiSelectedIds,
-                                        isDrawingMode = isDrawingMode,
-                                        onSelect = { onClipSelected(clip.id) },
-                                        onGroupGestureStart = onGroupGestureStart,
-                                        onGroupGestureEnd = onGroupGestureEnd,
-                                        onGroupGesture = onGroupGesture,
-                                        onPositionChanged = { x, y ->
-                                            onStickerPositionChanged(clip.id, x, y)
-                                        },
-                                        onTransformChanged = { s, r ->
-                                            onStickerTransformChanged(clip.id, s, r)
-                                        },
-                                        onDeleteLayer = { onDeleteLayer(clip.id) },
-                                    )
-                                }
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                InteractiveStickerOverlay(
+                                    clip = clip,
+                                    stickerState = ss,
+                                    canvasW = canvasW,
+                                    canvasH = canvasH,
+                                    currentPosMs = currentPosMs,
+                                    isSelected = clip.id == selectedClipId,
+                                    isMulti = clip.id in multiSelectedIds,
+                                    isDrawingMode = isDrawingMode,
+                                    onSelect = { onClipSelected(clip.id) },
+                                    onGroupGestureStart = onGroupGestureStart,
+                                    onGroupGestureEnd = onGroupGestureEnd,
+                                    onGroupGesture = onGroupGesture,
+                                    onPositionChanged = { x, y ->
+                                        onStickerPositionChanged(clip.id, x, y)
+                                    },
+                                    onTransformChanged = { s, r ->
+                                        onStickerTransformChanged(clip.id, s, r)
+                                    },
+                                    onDeleteLayer = { onDeleteLayer(clip.id) },
+                                )
                             }
                         }
                     }
@@ -1628,18 +1209,16 @@ fun PreviewCanvas(
                             MaskedClipContent(
                                 mask = maskAtClipTime(clip, currentPosMs)
                             ) {
-                                RenderAdvancedEffects(clip, vizLocalSec) {
-                                    Box(modifier = Modifier.fillMaxSize()) {
-                                        VisualizerOverlay(
-                                            state = vs,
-                                            visualizerClip = clip,
-                                            allClips = clips,
-                                            currentPosMs = currentPosMs,
-                                            isPlaying = isPlaying,
-                                            enabled = true,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    }
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    VisualizerOverlay(
+                                        state = vs,
+                                        visualizerClip = clip,
+                                        allClips = clips,
+                                        currentPosMs = currentPosMs,
+                                        isPlaying = isPlaying,
+                                        enabled = true,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
                                 }
                             }
 
@@ -1767,7 +1346,6 @@ fun PreviewCanvas(
                         }
                     }
 
-
                     // ─── BRUSH ───
                     clip.isBrushClip -> {
                         val brushLocalSec =
@@ -1821,165 +1399,163 @@ fun PreviewCanvas(
                         }
 
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
-                            RenderAdvancedEffects(clip, brushLocalSec) {
-                                Box(
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .graphicsLayer {
-                                            val w = size.width
-                                            val h = size.height
-                                            translationX =
-                                                (brushTransform.x - 50f) / 100f * w +
-                                                        combinedMotion.tx
-                                            translationY =
-                                                (brushTransform.y - 50f) / 100f * h +
-                                                        combinedMotion.ty
-                                            scaleX = (brushTransform.scale / 100f) *
-                                                    combinedMotion.scale
-                                            scaleY = (brushTransform.scale / 100f) *
-                                                    combinedMotion.scale
-                                            rotationZ = brushTransform.rotation +
-                                                    combinedMotion.rotation
-                                            alpha = opacityAlpha
-                                            transformOrigin = TransformOrigin(
-                                                pivotFractionX =
-                                                    brushTransform.anchorX / 100f,
-                                                pivotFractionY =
-                                                    brushTransform.anchorY / 100f
-                                            )
-                                        }
-                                        .then(
-                                            if (isSelected || isMulti) Modifier.border(
-                                                width = if (isSelected) 1.5.dp else 1.dp,
-                                                color = borderColor,
-                                                shape = RoundedCornerShape(4.dp)
-                                            ) else Modifier
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .graphicsLayer {
+                                        val w = size.width
+                                        val h = size.height
+                                        translationX =
+                                            (brushTransform.x - 50f) / 100f * w +
+                                                    combinedMotion.tx
+                                        translationY =
+                                            (brushTransform.y - 50f) / 100f * h +
+                                                    combinedMotion.ty
+                                        scaleX = (brushTransform.scale / 100f) *
+                                                combinedMotion.scale
+                                        scaleY = (brushTransform.scale / 100f) *
+                                                combinedMotion.scale
+                                        rotationZ = brushTransform.rotation +
+                                                combinedMotion.rotation
+                                        alpha = opacityAlpha
+                                        transformOrigin = TransformOrigin(
+                                            pivotFractionX =
+                                                brushTransform.anchorX / 100f,
+                                            pivotFractionY =
+                                                brushTransform.anchorY / 100f
                                         )
-                                        .pointerInput(
-                                            clip.id, isSelected, isMulti, isDrawingMode
-                                        ) {
-                                            if (isDrawingMode) return@pointerInput
-                                            awaitEachGesture {
-                                                awaitFirstDown(requireUnconsumed = true)
-                                                onGroupGestureStart()
+                                    }
+                                    .then(
+                                        if (isSelected || isMulti) Modifier.border(
+                                            width = if (isSelected) 1.5.dp else 1.dp,
+                                            color = borderColor,
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) else Modifier
+                                    )
+                                    .pointerInput(
+                                        clip.id, isSelected, isMulti, isDrawingMode
+                                    ) {
+                                        if (isDrawingMode) return@pointerInput
+                                        awaitEachGesture {
+                                            awaitFirstDown(requireUnconsumed = true)
+                                            onGroupGestureStart()
 
-                                                val baseX = brushTransform.x
-                                                val baseY = brushTransform.y
-                                                val baseScale = brushTransform.scale
-                                                val baseRot = brushTransform.rotation
-                                                var accumPanX = 0f
-                                                var accumPanY = 0f
-                                                var accumZoom = 1f
-                                                var accumRot = 0f
-                                                var lastDist = 0f
-                                                var lastAngle = 0f
-                                                var hasMulti = false
+                                            val baseX = brushTransform.x
+                                            val baseY = brushTransform.y
+                                            val baseScale = brushTransform.scale
+                                            val baseRot = brushTransform.rotation
+                                            var accumPanX = 0f
+                                            var accumPanY = 0f
+                                            var accumZoom = 1f
+                                            var accumRot = 0f
+                                            var lastDist = 0f
+                                            var lastAngle = 0f
+                                            var hasMulti = false
 
-                                                if (!isSelected && !isMulti) onClipSelected(clip.id)
+                                            if (!isSelected && !isMulti) onClipSelected(clip.id)
 
-                                                var continueGesture = true
-                                                while (continueGesture) {
-                                                    val event = awaitPointerEvent()
-                                                    val pressed =
-                                                        event.changes.filter { it.pressed }
-                                                    if (pressed.isEmpty()) {
-                                                        continueGesture = false
+                                            var continueGesture = true
+                                            while (continueGesture) {
+                                                val event = awaitPointerEvent()
+                                                val pressed =
+                                                    event.changes.filter { it.pressed }
+                                                if (pressed.isEmpty()) {
+                                                    continueGesture = false
+                                                } else {
+                                                    if (pressed.size == 1) {
+                                                        val ch = pressed.first()
+                                                        val pan =
+                                                            ch.position - ch.previousPosition
+                                                        accumPanX += pan.x
+                                                        accumPanY += pan.y
+                                                        ch.consume()
+                                                    } else if (pressed.size >= 2) {
+                                                        val c1 = pressed[0]
+                                                        val c2 = pressed[1]
+                                                        val d = c1.position - c2.position
+                                                        val dist =
+                                                            kotlin.math.sqrt(d.x * d.x + d.y * d.y)
+                                                        val angle = kotlin.math.atan2(d.y, d.x)
+                                                        if (hasMulti && lastDist > 1f) {
+                                                            accumZoom *= dist / lastDist
+                                                            accumRot += Math.toDegrees(
+                                                                normalizeAngle(angle - lastAngle)
+                                                                    .toDouble()
+                                                            ).toFloat()
+                                                        }
+                                                        lastDist = dist
+                                                        lastAngle = angle
+                                                        hasMulti = true
+                                                        c1.consume()
+                                                        c2.consume()
+                                                    }
+                                                    val newX =
+                                                        (baseX + accumPanX / size.width * 100f)
+                                                            .coerceIn(0f, 100f)
+                                                    val newY =
+                                                        (baseY + accumPanY / size.height * 100f)
+                                                            .coerceIn(0f, 100f)
+                                                    val newScale = (baseScale * accumZoom)
+                                                        .coerceIn(10f, 500f)
+                                                    val newRot = baseRot + accumRot
+
+                                                    if (isMulti) {
+                                                        onGroupGesture(
+                                                            clip.id, newX, newY,
+                                                            newScale, newRot
+                                                        )
                                                     } else {
-                                                        if (pressed.size == 1) {
-                                                            val ch = pressed.first()
-                                                            val pan =
-                                                                ch.position - ch.previousPosition
-                                                            accumPanX += pan.x
-                                                            accumPanY += pan.y
-                                                            ch.consume()
-                                                        } else if (pressed.size >= 2) {
-                                                            val c1 = pressed[0]
-                                                            val c2 = pressed[1]
-                                                            val d = c1.position - c2.position
-                                                            val dist =
-                                                                kotlin.math.sqrt(d.x * d.x + d.y * d.y)
-                                                            val angle = kotlin.math.atan2(d.y, d.x)
-                                                            if (hasMulti && lastDist > 1f) {
-                                                                accumZoom *= dist / lastDist
-                                                                accumRot += Math.toDegrees(
-                                                                    normalizeAngle(angle - lastAngle)
-                                                                        .toDouble()
-                                                                ).toFloat()
-                                                            }
-                                                            lastDist = dist
-                                                            lastAngle = angle
-                                                            hasMulti = true
-                                                            c1.consume()
-                                                            c2.consume()
-                                                        }
-                                                        val newX =
-                                                            (baseX + accumPanX / size.width * 100f)
-                                                                .coerceIn(0f, 100f)
-                                                        val newY =
-                                                            (baseY + accumPanY / size.height * 100f)
-                                                                .coerceIn(0f, 100f)
-                                                        val newScale = (baseScale * accumZoom)
-                                                            .coerceIn(10f, 500f)
-                                                        val newRot = baseRot + accumRot
-
-                                                        if (isMulti) {
-                                                            onGroupGesture(
-                                                                clip.id, newX, newY,
-                                                                newScale, newRot
-                                                            )
-                                                        } else {
-                                                            onBrushPositionChanged(
-                                                                clip.id, newX, newY
-                                                            )
-                                                            onBrushTransformChanged(
-                                                                clip.id, newScale, newRot
-                                                            )
-                                                        }
+                                                        onBrushPositionChanged(
+                                                            clip.id, newX, newY
+                                                        )
+                                                        onBrushTransformChanged(
+                                                            clip.id, newScale, newRot
+                                                        )
                                                     }
                                                 }
-                                                onGroupGestureEnd()
                                             }
-                                        }
-                                        .pointerInput(clip.id, isMulti, isDrawingMode) {
-                                            if (isDrawingMode) return@pointerInput
-                                            detectTapGestures {
-                                                if (!isMulti) onClipSelected(clip.id)
-                                            }
-                                        }
-                                ) {
-                                    Canvas(modifier = Modifier.fillMaxSize()) {
-                                        clip.brush.strokes.forEach { stroke ->
-                                            BrushEngine.drawStroke(
-                                                scope = this,
-                                                stroke = stroke,
-                                                viewW = size.width,
-                                                viewH = size.height,
-                                                currentTimeMs =
-                                                    (currentPosMs - clip.timelineStartMs)
-                                                        .coerceAtLeast(0L)
-                                            )
+                                            onGroupGestureEnd()
                                         }
                                     }
-                                    if (isSelected && !isDrawingMode) {
-                                        LayerTransformHandles(
-                                            clipId = clip.id,
-                                            scale = brushTransform.scale,
-                                            rotation = brushTransform.rotation,
-                                            positionX = brushTransform.x,
-                                            positionY = brushTransform.y,
-                                            onPositionChanged = { x, y ->
-                                                onBrushPositionChanged(clip.id, x, y)
-                                            },
-                                            onGestureStart = onGroupGestureStart,
-                                            onGestureEnd = onGroupGestureEnd,
-                                            onTransformChanged = { scale, rotation ->
-                                                onBrushTransformChanged(
-                                                    clip.id, scale, rotation
-                                                )
-                                            },
-                                            onDelete = { onDeleteLayer(clip.id) },
+                                    .pointerInput(clip.id, isMulti, isDrawingMode) {
+                                        if (isDrawingMode) return@pointerInput
+                                        detectTapGestures {
+                                            if (!isMulti) onClipSelected(clip.id)
+                                        }
+                                    }
+                            ) {
+                                Canvas(modifier = Modifier.fillMaxSize()) {
+                                    clip.brush.strokes.forEach { stroke ->
+                                        BrushEngine.drawStroke(
+                                            scope = this,
+                                            stroke = stroke,
+                                            viewW = size.width,
+                                            viewH = size.height,
+                                            currentTimeMs =
+                                                (currentPosMs - clip.timelineStartMs)
+                                                    .coerceAtLeast(0L)
                                         )
                                     }
+                                }
+                                if (isSelected && !isDrawingMode) {
+                                    LayerTransformHandles(
+                                        clipId = clip.id,
+                                        scale = brushTransform.scale,
+                                        rotation = brushTransform.rotation,
+                                        positionX = brushTransform.x,
+                                        positionY = brushTransform.y,
+                                        onPositionChanged = { x, y ->
+                                            onBrushPositionChanged(clip.id, x, y)
+                                        },
+                                        onGestureStart = onGroupGestureStart,
+                                        onGestureEnd = onGroupGestureEnd,
+                                        onTransformChanged = { scale, rotation ->
+                                            onBrushTransformChanged(
+                                                clip.id, scale, rotation
+                                            )
+                                        },
+                                        onDelete = { onDeleteLayer(clip.id) },
+                                    )
                                 }
                             }
                         }
@@ -1993,9 +1569,7 @@ fun PreviewCanvas(
                 }
             }
 
-            // ═══════════════════════════════════════════════════════
-            //  🆕 EDGE GLOW — render glowing border around canvas
-            // ═══════════════════════════════════════════════════════
+            // EDGE GLOW — render glowing border around canvas
             val activeEdgeGlows = clips
                 .filter { c ->
                     c.isEffectClip &&
@@ -2084,7 +1658,8 @@ fun PreviewCanvas(
                     }
                 }
             }
-            // 🆕 LIGHT LEAKS — from effect state above video
+
+            // LIGHT LEAKS — from effect state above video
             val activeLightLeaks = clips
                 .filter { c ->
                     c.isEffectClip &&
@@ -2136,6 +1711,7 @@ fun PreviewCanvas(
                     }
                 }
             }
+
             activeAdjustment?.let { adj ->
                 if (adj.vignette > 0f) {
                     val alpha = (adj.vignette / 100f).coerceIn(0f, 1f)
@@ -3263,6 +2839,13 @@ private fun InteractiveTextOverlay(
     val glowLetterSpacingEm = if (finalFontSizePx <= 0f) 0f
     else (effLetterSpacingPx / finalFontSizePx).coerceIn(-0.3f, 0.3f)
 
+    // Extra padding so glow doesn't get clipped
+    val glowPadDp = if (textState.glowEnabled && textState.glowRadius > 0f) {
+        val glowPadPx = textState.glowRadius *
+                (canvasWpx / 720f) * 3.0f  // 3x radius safety margin
+        with(density) { glowPadPx.toDp().value }
+    } else 0f
+
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -3280,8 +2863,8 @@ private fun InteractiveTextOverlay(
                     alpha = (textState.opacity / 100f) * frame.alpha
                     transformOrigin = TransformOrigin.Center
                 }
-                .width((textWidthDp + 16f).coerceAtLeast(26f).dp)
-                .height((textHeightDp + 16f).coerceAtLeast(26f).dp)
+                .width((textWidthDp + 16f + glowPadDp * 2).coerceAtLeast(26f).dp)
+                .height((textHeightDp + 16f + glowPadDp * 2).coerceAtLeast(26f).dp)
                 .then(
                     if (isSelected || isMulti) Modifier.border(
                         width = if (isSelected) 1.5.dp else 1.dp,
@@ -3385,8 +2968,9 @@ private fun InteractiveTextOverlay(
                         "right" -> Paint.Align.RIGHT
                         else -> Paint.Align.CENTER
                     }
-                    val textSizePx = glowSizePx
-                    val letterSpacingEm = glowLetterSpacingEm
+                    val textSizePx = finalFontSizePx
+                    val letterSpacingEm = if (finalFontSizePx <= 0f) 0f
+                    else (effLetterSpacingPx / finalFontSizePx).coerceIn(-0.3f, 0.3f)
                     val glowRadiusPx = textState.glowRadius * (canvasWpx / 720f)
 
                     Canvas(modifier = Modifier.matchParentSize()) {
@@ -3401,9 +2985,10 @@ private fun InteractiveTextOverlay(
                                 this.typeface = textTypeface
                                 this.letterSpacing = letterSpacingEm
                                 alpha = (layer.alpha * 255).toInt().coerceIn(0, 255)
-                                setShadowLayer(
-                                    glowRadiusPx * layer.blurScale * glowDensity,
-                                    0f, 0f, glowColorInt
+                                // ✅ maskFilter — matches export behavior, works reliably
+                                maskFilter = android.graphics.BlurMaskFilter(
+                                    (glowRadiusPx * layer.blurScale).coerceIn(1f, 250f),
+                                    android.graphics.BlurMaskFilter.Blur.NORMAL
                                 )
                             }
                             val fm = paint.fontMetrics

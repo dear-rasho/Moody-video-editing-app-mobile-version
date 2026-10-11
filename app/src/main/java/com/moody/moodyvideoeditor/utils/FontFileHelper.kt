@@ -4,16 +4,31 @@ import android.content.Context
 import android.graphics.Typeface
 import java.io.File
 
-// Extracts a system font to cache dir for FFmpeg drawtext filter.
-// FFmpeg drawtext on Android needs a real font file path.
 object FontFileHelper {
 
     private var cachedFontPath: String? = null
 
-    fun getFontPath(context: Context): String? {
+    /**
+     * Get FFmpeg-compatible font file path.
+     * @param fontName Optional — agar diya, asset font extract karega
+     */
+    fun getFontPath(context: Context, fontName: String? = null): String? {
+
+        // 1) Agar specific fontName diya, asset se extract karo
+        if (!fontName.isNullOrBlank()) {
+            FontLibrary.exportAssetFontToCache(fontName)?.let { return it }
+        }
+
+        // 2) Cached fallback
         cachedFontPath?.let { if (File(it).exists()) return it }
 
         val candidates = listOf(
+            // Urdu system fonts (Android 7+)
+            "/system/fonts/NotoNastaliqUrdu-Regular.ttf",
+            "/system/fonts/NotoNastaliqUrdu-VariableFont_wght.ttf",
+            "/system/fonts/NotoNaskhArabic-Regular.ttf",
+            "/system/fonts/NotoSansArabic-Regular.ttf",
+            // Standard Latin
             "/system/fonts/Roboto-Regular.ttf",
             "/system/fonts/Roboto.ttf",
             "/system/fonts/DroidSans.ttf",
@@ -30,14 +45,18 @@ object FontFileHelper {
             }
         }
 
-        // Fallback: copy from Typeface asset
+        // 3) Bundled default
         return try {
             val outFile = File(context.cacheDir, "default_font.ttf")
             if (!outFile.exists() || outFile.length() < 100) {
-                context.assets.open("default_font.ttf").use { input ->
-                    outFile.outputStream().use { output ->
-                        input.copyTo(output)
+                try {
+                    context.assets.open("default_font.ttf").use { input ->
+                        outFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
                     }
+                } catch (_: Throwable) {
+                    // Not bundled — ignore
                 }
             }
             if (outFile.exists() && outFile.length() > 100) {
@@ -45,9 +64,8 @@ object FontFileHelper {
                 outFile.absolutePath
             } else null
         } catch (e: Exception) {
-            // Try system font from Typeface default
             try {
-                val tf = Typeface.DEFAULT
+                Typeface.DEFAULT
                 val outFile = File(context.cacheDir, "fallback_font.ttf")
                 if (outFile.exists() && outFile.length() > 100) {
                     cachedFontPath = outFile.absolutePath
@@ -58,6 +76,9 @@ object FontFileHelper {
             null
         }
     }
+
+    /** Backward-compat overload (koi fontName nahi) */
+    fun getFontPath(context: Context): String? = getFontPath(context, null)
 
     fun escapeFontPath(path: String): String =
         path.replace("\\", "/").replace(":", "\\:")

@@ -26,8 +26,9 @@ data class EditorClip(
     val adjustments: AdjustmentData = AdjustmentData(),
     val sourceTotalMs: Long = Long.MAX_VALUE,
     val linkedId: String? = null,
-    val linkGroupId: String? = null,   // 🆕 user-defined multi-clip link
+    val linkGroupId: String? = null,
     val isMuted: Boolean = false,
+
     // 🆕 PER-CLIP AUDIO EFFECTS
     val audioFx: String = "none",
     val audioFxIntensity: Float = 100f,
@@ -50,10 +51,9 @@ data class EditorClip(
     val brush: BrushState = BrushState(),
     val lightLeak: LightLeakState? = null,
 
-    // 🆕 Color Matte — full style (solid / ramp / 4-color)
+    // Color Matte — full style (solid / ramp / 4-color)
     val matteStyle: ColorMatteStyle = ColorMatteStyle(),
-    // 🆕 Advanced Effects — stored on the clip itself (no separate layer)
-    val advancedEffects: List<com.moody.moodyvideoeditor.data.advanced.AdvancedEffectState> = emptyList(),
+
     val visualizer: VisualizerState? = null,
 
     val keyframes: Map<String, List<Keyframe>> = emptyMap()
@@ -76,17 +76,16 @@ data class EditorClip(
     val isVisualizerClip: Boolean get() = type == "visualizer/plain"
     val isColorMatteClip: Boolean get() = type == "matte/plain"
 
-
     // Backward-compat accessor — returns solid color if legacy code refers
     val matteColor: Long get() = matteStyle.solidColor
 
-    // 🆕 Link anchor priority (higher = anchor)
+    // Link anchor priority (higher = anchor)
     val linkAnchorPriority: Int
         get() = when {
-            !isAudio && isVisualClip && trackIndex == 0 -> 100  // V1 video
-            !isAudio && isVisualClip -> 90                       // higher video
-            isAudio && !isAudioEffectClip -> 80                  // source audio
-            isColorMatteClip -> 70                               // 🆕 color matte
+            !isAudio && isVisualClip && trackIndex == 0 -> 100
+            !isAudio && isVisualClip -> 90
+            isAudio && !isAudioEffectClip -> 80
+            isColorMatteClip -> 70
             isTextClip -> 60
             isStickerClip -> 55
             isVisualizerClip -> 50
@@ -98,12 +97,12 @@ data class EditorClip(
             else -> 10
         }
 
-    // 🆕 Audio effect layers
+    // Audio effect layers
     val isAudioFxClip: Boolean get() = type == "audiofx/plain"
     val isSoundFxClip: Boolean get() = type == "soundfx/plain"
     val isAudioEffectClip: Boolean get() = isAudioFxClip || isSoundFxClip
 
-    // 🆕 Filter layer (adjustment-like visual layer)
+    // Filter layer (adjustment-like visual layer)
     val isFilterLayerClip: Boolean get() = type == "filter/plain"
 
     companion object {
@@ -163,7 +162,7 @@ data class EditorState(
     val beatsCount: Int = 0,
     val beatsFilter: String = "all",
     val beatTimesMs: List<Long> = emptyList(),
-    val beatStrengths: List<Float> = emptyList(),   // 🆕
+    val beatStrengths: List<Float> = emptyList(),
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
     val timelineZoom: Float = 0f,
@@ -176,14 +175,11 @@ data class EditorState(
     val exportFormat: String = "mp4",
     val exportFolderUri: String? = null,
 
-    // 🆕 Live preview filters (temporary, not committed)
+    // Live preview filters (temporary, not committed)
     val previewFilters: FilterState? = null,
 
-    // 🆕 Live preview effect (temporary, not committed)
-    val previewEffectState: EffectState? = null,
-
-    // 🆕 Live preview advanced effect (before Apply)
-    val previewAdvancedEffect: com.moody.moodyvideoeditor.data.advanced.AdvancedEffectState? = null
+    // Live preview effect (temporary, not committed)
+    val previewEffectState: EffectState? = null
 ) {
     val totalDurationMs: Long
         get() = clips.maxOfOrNull { it.timelineEndMs } ?: 10000L

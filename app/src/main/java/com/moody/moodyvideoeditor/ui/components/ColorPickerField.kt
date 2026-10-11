@@ -22,6 +22,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,30 +41,34 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
+// ═══════════════════════════════════════════════════════════════
+//  FULLY CONTROLLED COLOR PICKER
+//  HSV is derived from colorLong (parent) — no internal cache races
+//  Local `draggingHsv` only used during active gesture
+// ═══════════════════════════════════════════════════════════════
 @Composable
 fun ColorPickerField(
     label: String,
     colorLong: Long,
     onChange: (Long) -> Unit
 ) {
-    // Internal state — initialized once from parent
-    var hsv by remember { mutableStateOf(argbToHsv(colorLong)) }
+    val currentOnChange by rememberUpdatedState(onChange)
+
+    // Only set during active drag — cleared on release
+    var draggingHsv by remember { mutableStateOf<FloatArray?>(null) }
+
+    // HSV from parent (used when not dragging)
+    val parentHsv = remember(colorLong) { argbToHsv(colorLong) }
+    val hsv = draggingHsv ?: parentHsv
+
+    // Hex text — local to allow typing
     var hexText by remember { mutableStateOf(longToHex(colorLong)) }
-    var lastSeenParent by remember { mutableStateOf(colorLong) }
+    var hexFocused by remember { mutableStateOf(false) }
 
-    // Sync ONLY when parent changes externally (not from our own onChange)
     LaunchedEffect(colorLong) {
-        if (colorLong != lastSeenParent) {
-            hsv = argbToHsv(colorLong)
+        if (!hexFocused) {
             hexText = longToHex(colorLong)
-            lastSeenParent = colorLong
         }
-    }
-
-    // Wrap onChange to remember our own changes
-    fun push(newColor: Long) {
-        lastSeenParent = newColor
-        onChange(newColor)
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -88,15 +93,15 @@ fun ColorPickerField(
             OutlinedTextField(
                 value = hexText,
                 onValueChange = { newHex ->
-                    val filtered = newHex.filter { it.isLetterOrDigit() || it == '#' }.take(7)
+                    val filtered = newHex
+                        .filter { it.isLetterOrDigit() || it == '#' }
+                        .take(7)
                     hexText = filtered
-                    val parsed = hexToLong(filtered)
-                    if (parsed != null) {
-                        hsv = argbToHsv(parsed)
-                        push(parsed)
-                    }
+                    hexToLong(filtered)?.let { currentOnChange(it) }
                 },
-                placeholder = { Text("#RRGGBB", color = Color(0xFF666666), fontSize = 10.sp) },
+                placeholder = {
+                    Text("#RRGGBB", color = Color(0xFF666666), fontSize = 10.sp)
+                },
                 modifier = Modifier.weight(1f).height(46.dp),
                 singleLine = true,
                 colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
@@ -112,37 +117,43 @@ fun ColorPickerField(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            // ─── Wheel ───
             Box(
                 modifier = Modifier
                     .size(110.dp)
                     .pointerInput(Unit) {
                         detectDragGestures(
                             onDragStart = { offset ->
-                                val newHsv =
-                                    computeHsvFromWheel(offset, size.width.toFloat(), hsv[2])
-                                hsv = newHsv
-                                val argb = hsvToArgb(newHsv[0], newHsv[1], newHsv[2])
-                                hexText = longToHex(argb)
-                                push(argb)
+                                val newHsv = computeHsvFromWheel(
+                                    offset, size.width.toFloat(), hsv[2]
+                                )
+                                draggingHsv = newHsv
+                                currentOnChange(
+                                    hsvToArgb(newHsv[0], newHsv[1], newHsv[2])
+                                )
                             },
                             onDrag = { change, _ ->
                                 change.consume()
-                                val pos = change.position
-                                val newHsv = computeHsvFromWheel(pos, size.width.toFloat(), hsv[2])
-                                hsv = newHsv
-                                val argb = hsvToArgb(newHsv[0], newHsv[1], newHsv[2])
-                                hexText = longToHex(argb)
-                                push(argb)
-                            }
+                                val newHsv = computeHsvFromWheel(
+                                    change.position, size.width.toFloat(), hsv[2]
+                                )
+                                draggingHsv = newHsv
+                                currentOnChange(
+                                    hsvToArgb(newHsv[0], newHsv[1], newHsv[2])
+                                )
+                            },
+                            onDragEnd = { draggingHsv = null },
+                            onDragCancel = { draggingHsv = null }
                         )
                     }
                     .pointerInput(Unit) {
                         detectTapGestures { offset ->
-                            val newHsv = computeHsvFromWheel(offset, size.width.toFloat(), hsv[2])
-                            hsv = newHsv
-                            val argb = hsvToArgb(newHsv[0], newHsv[1], newHsv[2])
-                            hexText = longToHex(argb)
-                            push(argb)
+                            val newHsv = computeHsvFromWheel(
+                                offset, size.width.toFloat(), hsv[2]
+                            )
+                            currentOnChange(
+                                hsvToArgb(newHsv[0], newHsv[1], newHsv[2])
+                            )
                         }
                     }
             ) {
@@ -150,9 +161,13 @@ fun ColorPickerField(
                     val radius = size.minDimension / 2f
                     val center = Offset(size.width / 2f, size.height / 2f)
 
-                    val hueColors = (0..360 step 15).map { h -> Color.hsv(h.toFloat(), 1f, 1f) }
+                    val hueColors = (0..360 step 15).map {
+                        Color.hsv(it.toFloat(), 1f, 1f)
+                    }
                     drawCircle(
-                        brush = Brush.sweepGradient(colors = hueColors, center = center),
+                        brush = Brush.sweepGradient(
+                            colors = hueColors, center = center
+                        ),
                         radius = radius,
                         center = center
                     )
@@ -176,26 +191,31 @@ fun ColorPickerField(
                         center = Offset(px, py), style = Stroke(width = 3f)
                     )
                     drawCircle(
-                        color = Color.Black.copy(alpha = 0.5f), radius = 9f,
-                        center = Offset(px, py), style = Stroke(width = 1f)
+                        color = Color.Black.copy(alpha = 0.5f),
+                        radius = 9f, center = Offset(px, py),
+                        style = Stroke(width = 1f)
                     )
                 }
             }
 
+            // ─── Brightness Slider ───
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     "Brightness  ${(hsv[2] * 100).toInt()}%",
-                    color = Color(0xFF888888), fontSize = 9.sp, fontWeight = FontWeight.Bold
+                    color = Color(0xFF888888),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold
                 )
                 Slider(
                     value = hsv[2],
                     onValueChange = { newV ->
                         val newHsv = floatArrayOf(hsv[0], hsv[1], newV)
-                        hsv = newHsv
-                        val argb = hsvToArgb(newHsv[0], newHsv[1], newHsv[2])
-                        hexText = longToHex(argb)
-                        push(argb)
+                        draggingHsv = newHsv
+                        currentOnChange(
+                            hsvToArgb(newHsv[0], newHsv[1], newHsv[2])
+                        )
                     },
+                    onValueChangeFinished = { draggingHsv = null },
                     valueRange = 0f..1f,
                     colors = SliderDefaults.colors(
                         thumbColor = Color(0xFF7C3AED),
@@ -208,8 +228,13 @@ fun ColorPickerField(
     }
 }
 
-// Helpers
-private fun computeHsvFromWheel(offset: Offset, sizeW: Float, currentV: Float): FloatArray {
+// ═══════════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+private fun computeHsvFromWheel(
+    offset: Offset, sizeW: Float, currentV: Float
+): FloatArray {
     val radius = sizeW / 2f
     val cx = radius
     val cy = radius
@@ -217,7 +242,9 @@ private fun computeHsvFromWheel(offset: Offset, sizeW: Float, currentV: Float): 
     val dy = offset.y - cy
     val dist = sqrt(dx * dx + dy * dy)
     val sat = (dist / radius).coerceIn(0f, 1f)
-    var angle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
+    var angle = Math.toDegrees(
+        atan2(dy.toDouble(), dx.toDouble())
+    ).toFloat()
     if (angle < 0f) angle += 360f
     val v = if (currentV < 0.05f) 1f else currentV
     return floatArrayOf(angle, sat, v)
@@ -280,7 +307,6 @@ fun hexToLong(hex: String): Long? {
         } catch (_: Exception) {
             null
         }
-
         3 -> try {
             val r = h[0].toString().toInt(16) * 17
             val g = h[1].toString().toInt(16) * 17
@@ -289,7 +315,6 @@ fun hexToLong(hex: String): Long? {
         } catch (_: Exception) {
             null
         }
-
         else -> null
     }
 }

@@ -847,7 +847,6 @@ fun EditorScreen(
                 onVisualizerTransformChanged = { clipId: String, s: Float, r: Float ->
                     viewModel.updateSelectedTransformBulk(clipId, s, r)
                 },
-                previewAdvancedEffect = state.previewAdvancedEffect   // 🆕
             )
         }
 
@@ -1143,38 +1142,6 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
 
-                "advfx" -> {
-                    val selected = state.selectedClip
-                    val currentTimeSec = selected?.let {
-                        ((state.currentPosMs - it.timelineStartMs).toFloat() / 1000f)
-                            .coerceAtLeast(0f)
-                    } ?: 0f
-
-                    com.moody.moodyvideoeditor.ui.features.AdvancedEffectsPanel(
-                        selectedClip = selected,
-                        currentTimeSec = currentTimeSec,
-                        onAddEffect = { effectState ->
-                            viewModel.addAdvancedEffectToSelected(effectState)
-                        },
-                        onUpdateEffect = { index, effectState ->
-                            selected?.let {
-                                viewModel.updateAdvancedEffectAt(it.id, index, effectState)
-                            }
-                        },
-                        onRemoveEffect = { index ->
-                            selected?.let {
-                                viewModel.removeAdvancedEffectAt(it.id, index)
-                            }
-                        },
-                        onLivePreview = { effectState ->
-                            viewModel.setPreviewAdvancedEffect(effectState)
-                        },
-                        onClose = {
-                            viewModel.clearPreviewAdvancedEffect()
-                            activePanel = null
-                        }
-                    )
-                }
 
                 "matte" -> {
                     val editLayer = matteEditLayerId?.let { id ->

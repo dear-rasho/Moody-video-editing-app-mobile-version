@@ -1,5 +1,5 @@
 package com.moody.moodyvideoeditor
-
+import com.moody.moodyvideoeditor.utils.FontLibrary
 import android.app.Application
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
@@ -14,6 +14,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+
 // ═══════════════════════════════════════════════════════════════
 //  APPLICATION CLASS
 //  Runs once when app process starts.
@@ -25,7 +26,7 @@ class MoodyApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-
+        FontLibrary.init(this)
         // 1. Ensure empty LocaleList initially (system default)
         AppCompatDelegate.setApplicationLocales(
             LocaleListCompat.getEmptyLocaleList()
