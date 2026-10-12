@@ -1,5 +1,5 @@
 package com.moody.moodyvideoeditor.utils
-
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -27,7 +27,6 @@ object OverlayEngine {
 
 
     //  MAIN DISPATCH
-
     fun draw(
         scope: DrawScope,
         time: Float,
@@ -37,75 +36,166 @@ object OverlayEngine {
         val W = scope.size.width
         val H = scope.size.height
         val I = (overlay.intensity / 100f).coerceIn(0f, 2f)
+        val opacityM = overlay.opacity.coerceIn(0f, 1f)
+        val sizeM = overlay.size.coerceIn(0.2f, 20.0f)
+        val speedM = overlay.speed.coerceIn(0.2f, 20.0f)
         val color = Color(overlay.color.toULong().toLong())
+        val color2 = Color(overlay.color2.toULong().toLong())
+        val glowCol = Color(overlay.glowColor.toULong().toLong())
+
+        val t = time * speedM
+        val effectiveI = I * opacityM
+        val effectiveSize = sizeM
 
         when (overlay.type) {
-            // Particles
-            "rain" -> drawRain(scope, W, H, time, I, color)
-            "snow" -> drawSnow(scope, W, H, time, I, color)
-            "dust" -> drawDust(scope, W, H, time, I, color)
-            "sparks" -> drawSparks(scope, W, H, time, I, color)
-            "embers" -> drawEmbers(scope, W, H, time, I)
-            "stars" -> drawStars(scope, W, H, time, I, color)
-            "bokeh" -> drawBokeh(scope, W, H, time, I, color)
-            "fireFlies" -> drawFireFlies(scope, W, H, time, I)
+            "rain" -> drawRain(
+                scope, W, H, t, effectiveI, color,
+                overlay.glowEnabled, overlay.glowRadius, glowCol
+            )
+            "snow" -> drawSnow(
+                scope, W, H, t, effectiveI, color, color2,
+                overlay.shape, effectiveSize,
+                overlay.glowEnabled, overlay.glowRadius, glowCol
+            )
+            "dust" -> drawDust(
+                scope, W, H, t, effectiveI, color, color2,
+                overlay.shape, effectiveSize,
+                overlay.glowEnabled, overlay.glowRadius, glowCol
+            )
+            "sparks" -> drawSparks(
+                scope, W, H, t, effectiveI, color,
+                overlay.shape, effectiveSize,
+                overlay.glowEnabled, overlay.glowRadius, glowCol
+            )
+            "embers" -> drawEmbers(
+                scope, W, H, t, effectiveI,
+                overlay.shape, effectiveSize,
+                overlay.glowEnabled, overlay.glowRadius, glowCol
+            )
+            "stars" -> drawStars(
+                scope, W, H, t, effectiveI, color,
+                overlay.shape, effectiveSize,
+                overlay.glowEnabled, overlay.glowRadius, glowCol
+            )
+            "bokeh" -> drawBokeh(
+                scope, W, H, t, effectiveI, color, color2, effectiveSize
+            )
+            "fireFlies" -> drawFireFlies(
+                scope, W, H, t, effectiveI, color, effectiveSize,
+                overlay.glowEnabled, overlay.glowRadius, glowCol
+            )
 
             // Atmosphere
-            "fog" -> drawFog(scope, W, H, time, I, color)
-            "smoke" -> drawSmoke(scope, W, H, time, I)
-            "haze" -> drawHaze(scope, W, H, I, color)
-            "mist" -> drawMist(scope, W, H, time, I, color)
+            "fog" -> drawFog(scope, W, H, t, effectiveI, color)
+            "smoke" -> drawSmoke(scope, W, H, t, effectiveI)
+            "haze" -> drawHaze(scope, W, H, effectiveI, color)
+            "mist" -> drawMist(scope, W, H, t, effectiveI, color)
 
             // Noise
-            "noise" -> drawNoise(scope, W, H, time, I, blackOnly = false)
-            "filmGrain" -> drawNoise(scope, W, H, time, I * 0.6f, blackOnly = false)
-            "blackNoise" -> drawNoise(scope, W, H, time, I, blackOnly = true)
-            "whiteNoise" -> drawWhiteNoise(scope, W, H, time, I)
-            "scanlines" -> drawScanlines(scope, W, H, I)
-            "staticTV" -> drawStaticTV(scope, W, H, time, I)
+            "noise" -> drawNoise(scope, W, H, t, effectiveI, blackOnly = false)
+            "filmGrain" -> drawNoise(scope, W, H, t, effectiveI * 0.6f, blackOnly = false)
+            "blackNoise" -> drawNoise(scope, W, H, t, effectiveI, blackOnly = true)
+            "whiteNoise" -> drawWhiteNoise(scope, W, H, t, effectiveI)
+            "scanlines" -> drawScanlines(scope, W, H, effectiveI)
+            "staticTV" -> drawStaticTV(scope, W, H, t, effectiveI)
 
             // Light
-            "lightLeak" -> drawLightLeak(scope, W, H, time, I)
-            "lensFlare" -> drawLensFlare(scope, W, H, I)
-            "bloom" -> drawBloom(scope, W, H, I, color)
-            "sunburst" -> drawSunburst(scope, W, H, time, I)
-            "godRays" -> drawGodRays(scope, W, H, time, I)
+            "lightLeak" -> drawLightLeak(scope, W, H, t, effectiveI)
+            "lensFlare" -> drawLensFlare(scope, W, H, effectiveI)
+            "bloom" -> drawBloom(scope, W, H, effectiveI, color)
+            "sunburst" -> drawSunburst(scope, W, H, t, effectiveI)
+            "godRays" -> drawGodRays(scope, W, H, t, effectiveI)
 
             // Flicker
-            "flicker" -> drawFlicker(scope, W, H, time, I, 0.5f, 15f)
-            "strobe" -> drawFlicker(scope, W, H, time, I, 0.85f, 8f)
-            "pulseFx" -> drawPulseFx(scope, W, H, time, I)
-            "blink" -> drawFlicker(scope, W, H, time, I, 0.95f, 4f)
+            "flicker" -> drawFlicker(scope, W, H, t, effectiveI, 0.5f, 15f)
+            "strobe" -> drawFlicker(scope, W, H, t, effectiveI, 0.85f, 8f)
+            "pulseFx" -> drawPulseFx(scope, W, H, t, effectiveI)
+            "blink" -> drawFlicker(scope, W, H, t, effectiveI, 0.95f, 4f)
 
             // Tone wash
-            "blueLake" -> drawToneWash(scope, W, H, I, 0xFF0A4A8A, 0.55f)
-            "warmWash" -> drawToneWash(scope, W, H, I, 0xFFFF8A3A, 0.35f)
-            "coolWash" -> drawToneWash(scope, W, H, I, 0xFF3A8AFF, 0.35f)
-            "tealWash" -> drawToneWash(scope, W, H, I, 0xFF00D4A0, 0.4f)
-            "roseWash" -> drawToneWash(scope, W, H, I, 0xFFFF3A80, 0.4f)
+            "blueLake" -> drawToneWash(scope, W, H, effectiveI, 0xFF0A4A8A, 0.55f)
+            "warmWash" -> drawToneWash(scope, W, H, effectiveI, 0xFFFF8A3A, 0.35f)
+            "coolWash" -> drawToneWash(scope, W, H, effectiveI, 0xFF3A8AFF, 0.35f)
+            "tealWash" -> drawToneWash(scope, W, H, effectiveI, 0xFF00D4A0, 0.4f)
+            "roseWash" -> drawToneWash(scope, W, H, effectiveI, 0xFFFF3A80, 0.4f)
 
             // Edges
-            "sharpenEdges" -> drawSharpenEdges(scope, W, H, I)
-            "edgeGlow" -> drawEdgeGlow(scope, W, H, I, color)
+            "sharpenEdges" -> drawSharpenEdges(scope, W, H, effectiveI)
+            "edgeGlow" -> drawEdgeGlow(scope, W, H, effectiveI, color)
 
             // Misc
-            "vignette" -> drawVignette(scope, W, H, I)
-            "blackBars" -> drawBlackBars(scope, W, H, I)
-            "vhsLines" -> drawVhsLines(scope, W, H, time, I)
-            "glitchBars" -> drawGlitchBars(scope, W, H, time, I)
+            "vignette" -> drawVignette(scope, W, H, effectiveI)
+            "blackBars" -> drawBlackBars(scope, W, H, effectiveI)
+            "vhsLines" -> drawVhsLines(scope, W, H, t, effectiveI)
+            "glitchBars" -> drawGlitchBars(scope, W, H, t, effectiveI)
         }
     }
 
+// ═══════════════════════════════════════════════════════════════
+//  PARTICLE HELPERS
+// ═══════════════════════════════════════════════════════════════
 
-    //  PARTICLES
+    private fun DrawScope.drawParticle(
+        shape: String,
+        center: Offset,
+        radius: Float,
+        color: Color,
+        glowEnabled: Boolean = false,
+        glowRadius: Float = 1.8f,
+        glowColor: Color = color
+    ) {
+        if (glowEnabled) {
+            val glowR = radius * glowRadius.coerceIn(1.2f, 15f)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        glowColor.copy(alpha = color.alpha * 0.6f),
+                        glowColor.copy(alpha = color.alpha * 0.15f),
+                        Color.Transparent
+                    ),
+                    center = center,
+                    radius = glowR
+                ),
+                radius = glowR,
+                center = center
+            )
+        }
+
+        when (shape) {
+            "square" -> drawRect(
+                color = color,
+                topLeft = Offset(center.x - radius, center.y - radius),
+                size = Size(radius * 2f, radius * 2f)
+            )
+            "star" -> {
+                val path = Path()
+                val spikes = 5
+                val outerR = radius
+                val innerR = radius * 0.5f
+                for (i in 0 until spikes * 2) {
+                    val angle = (i * Math.PI / spikes).toFloat() -
+                            (Math.PI / 2f).toFloat()
+                    val r = if (i % 2 == 0) outerR else innerR
+                    val x = center.x + kotlin.math.cos(angle) * r
+                    val y = center.y + kotlin.math.sin(angle) * r
+                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                }
+                path.close()
+                drawPath(path, color)
+            }
+            "line" -> drawLine(
+                color = color,
+                start = Offset(center.x, center.y - radius * 2f),
+                end = Offset(center.x, center.y + radius * 2f),
+                strokeWidth = radius
+            )
+            else -> drawCircle(color = color, radius = radius, center = center)
+        }
+    }
 
     private fun drawRain(
-        scope: DrawScope,
-        W: Float,
-        H: Float,
-        time: Float,
-        I: Float,
-        color: Color
+        scope: DrawScope, W: Float, H: Float, time: Float, I: Float,
+        color: Color, glowOn: Boolean, glowRad: Float, glowCol: Color
     ) {
         val count = (180 * I).toInt().coerceAtLeast(0)
         for (i in 0 until count) {
@@ -114,47 +204,59 @@ object OverlayEngine {
             val x = (a * W + time * 180f) % W
             val y = (b * H + time * 850f + i * 37f) % H
             val len = 12f + b * 18f
+            val alpha = 0.55f
+
+            if (glowOn) {
+                scope.drawLine(
+                    color = glowCol.copy(alpha = alpha * 0.3f),
+                    start = Offset(x, y),
+                    end = Offset(x - 3f, y + len),
+                    strokeWidth = 1.4f * glowRad.coerceIn(1.5f, 4f),
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round
+                )
+            }
+
             scope.drawLine(
-                color = color.copy(alpha = 0.55f),
+                color = color.copy(alpha = alpha),
                 start = Offset(x, y),
                 end = Offset(x - 3f, y + len),
-                strokeWidth = 1.4f
+                strokeWidth = 1.4f,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round
             )
         }
     }
 
     private fun drawSnow(
-        scope: DrawScope,
-        W: Float,
-        H: Float,
-        time: Float,
-        I: Float,
-        color: Color
+        scope: DrawScope, W: Float, H: Float, time: Float, I: Float,
+        color: Color, color2: Color, shape: String, sizeMul: Float,
+        glowOn: Boolean, glowRad: Float, glowCol: Color
     ) {
         val count = (140 * I).toInt().coerceAtLeast(0)
         for (i in 0 until count) {
             val a = hash(i.toDouble()).toFloat()
             val b = hash((i + 202).toDouble()).toFloat()
             val c = hash((i + 303).toDouble()).toFloat()
-            val size = 1.5f + a * 2.5f
+            val particleSize = (1.5f + a * 2.5f) * sizeMul
             val drift = sin((time * 0.8f + i).toDouble()).toFloat() * 20f
             val x = (b * W + drift + W) % W
             val y = (c * H + time * (60f + a * 40f) + i * 13f) % H
-            scope.drawCircle(
-                color = color.copy(alpha = (0.55f + a * 0.4f).coerceIn(0f, 1f)),
-                radius = size,
-                center = Offset(x, y)
+            val mixed = if (i % 2 == 0) color else color2
+            scope.drawParticle(
+                shape = shape,
+                center = Offset(x, y),
+                radius = particleSize,
+                color = mixed.copy(alpha = (0.55f + a * 0.4f).coerceIn(0f, 1f)),
+                glowEnabled = glowOn,
+                glowRadius = glowRad,
+                glowColor = glowCol
             )
         }
     }
 
     private fun drawDust(
-        scope: DrawScope,
-        W: Float,
-        H: Float,
-        time: Float,
-        I: Float,
-        color: Color
+        scope: DrawScope, W: Float, H: Float, time: Float, I: Float,
+        color: Color, color2: Color, shape: String, sizeMul: Float,
+        glowOn: Boolean, glowRad: Float, glowCol: Color
     ) {
         val count = (120 * I).toInt().coerceAtLeast(0)
         for (i in 0 until count) {
@@ -165,22 +267,24 @@ object OverlayEngine {
             val driftY = cos((time * 0.9f + i * 0.5f).toDouble()).toFloat() * 15f
             val x = (a * W + drift + W) % W
             val y = (b * H + driftY + H) % H
-            val size = 0.6f + c * 1.4f
-            scope.drawCircle(
-                color = color.copy(alpha = (0.35f + c * 0.5f).coerceIn(0f, 1f)),
+            val size = (0.6f + c * 1.4f) * sizeMul
+            val mixed = if (i % 2 == 0) color else color2
+            scope.drawParticle(
+                shape = shape,
+                center = Offset(x, y),
                 radius = size,
-                center = Offset(x, y)
+                color = mixed.copy(alpha = (0.35f + c * 0.5f).coerceIn(0f, 1f)),
+                glowEnabled = glowOn,
+                glowRadius = glowRad,
+                glowColor = glowCol
             )
         }
     }
 
     private fun drawSparks(
-        scope: DrawScope,
-        W: Float,
-        H: Float,
-        time: Float,
-        I: Float,
-        color: Color
+        scope: DrawScope, W: Float, H: Float, time: Float, I: Float,
+        color: Color, shape: String, sizeMul: Float,
+        glowOn: Boolean, glowRad: Float, glowCol: Color
     ) {
         val count = (70 * I).toInt().coerceAtLeast(0)
         for (i in 0 until count) {
@@ -191,16 +295,24 @@ object OverlayEngine {
             val yRaw = (b * H - time * speed) % H
             val y = (yRaw + H) % H
             if (y < -20f) continue
-            val size = 1f + a * 2f
-            scope.drawCircle(
-                color = color.copy(alpha = (0.6f + b * 0.4f).coerceIn(0f, 1f)),
+            val size = (1f + a * 2f) * sizeMul
+            scope.drawParticle(
+                shape = shape,
+                center = Offset(x, y),
                 radius = size,
-                center = Offset(x, y)
+                color = color.copy(alpha = (0.6f + b * 0.4f).coerceIn(0f, 1f)),
+                glowEnabled = glowOn,
+                glowRadius = glowRad,
+                glowColor = glowCol
             )
         }
     }
 
-    private fun drawEmbers(scope: DrawScope, W: Float, H: Float, time: Float, I: Float) {
+    private fun drawEmbers(
+        scope: DrawScope, W: Float, H: Float, time: Float, I: Float,
+        shape: String, sizeMul: Float,
+        glowOn: Boolean, glowRad: Float, glowCol: Color
+    ) {
         val count = (80 * I).toInt().coerceAtLeast(0)
         for (i in 0 until count) {
             val a = hash((i + 1100).toDouble()).toFloat()
@@ -208,53 +320,54 @@ object OverlayEngine {
             val speed = 40f + a * 80f
             val x = a * W + sin((time * 2f + i).toDouble()).toFloat() * 20f
             val y = H - ((b * H + time * speed) % H)
-            val size = 1f + b * 2f
+            val size = (1f + b * 2f) * sizeMul
             val col = if (a > 0.5f) Color(0xFFFF6B1A) else Color(0xFFFFCC00)
-            scope.drawCircle(
-                color = col.copy(alpha = (0.5f + a * 0.4f).coerceIn(0f, 1f)),
+            scope.drawParticle(
+                shape = shape,
+                center = Offset(x, y),
                 radius = size,
-                center = Offset(x, y)
+                color = col.copy(alpha = (0.5f + a * 0.4f).coerceIn(0f, 1f)),
+                glowEnabled = glowOn,
+                glowRadius = glowRad,
+                glowColor = glowCol
             )
         }
     }
 
     private fun drawStars(
-        scope: DrawScope,
-        W: Float,
-        H: Float,
-        time: Float,
-        I: Float,
-        color: Color
+        scope: DrawScope, W: Float, H: Float, time: Float, I: Float,
+        color: Color, shape: String, sizeMul: Float,
+        glowOn: Boolean, glowRad: Float, glowCol: Color
     ) {
         val count = (200 * I).toInt().coerceAtLeast(0)
         for (i in 0 until count) {
             val a = hash((i + 1300).toDouble()).toFloat()
             val b = hash((i + 1400).toDouble()).toFloat()
             val c = hash((i + 1500).toDouble()).toFloat()
-            val twinkle = 0.5f + abs(sin((time * 3f + i * 0.7f).toDouble()).toFloat()) * 0.5f
+            val twinkle = 0.5f +
+                    abs(sin((time * 3f + i * 0.7f).toDouble()).toFloat()) * 0.5f
             val x = a * W
             val y = b * H
-            val size = 0.5f + c * 1.5f
-            scope.drawCircle(
-                color = color.copy(alpha = (twinkle * (0.4f + c * 0.6f)).coerceIn(0f, 1f)),
+            val size = (0.5f + c * 1.5f) * sizeMul
+            scope.drawParticle(
+                shape = shape,
+                center = Offset(x, y),
                 radius = size,
-                center = Offset(x, y)
+                color = color.copy(
+                    alpha = (twinkle * (0.4f + c * 0.6f)).coerceIn(0f, 1f)
+                ),
+                glowEnabled = glowOn,
+                glowRadius = glowRad,
+                glowColor = glowCol
             )
         }
     }
 
     private fun drawBokeh(
-        scope: DrawScope,
-        W: Float,
-        H: Float,
-        time: Float,
-        I: Float,
-        color: Color
+        scope: DrawScope, W: Float, H: Float, time: Float, I: Float,
+        color: Color, color2: Color, sizeMul: Float
     ) {
         val count = (30 * I).toInt().coerceAtLeast(0)
-        val r = fI(color.red * 255f)
-        val g = fI(color.green * 255f)
-        val b = fI(color.blue * 255f)
         for (i in 0 until count) {
             val a = hash((i + 1600).toDouble()).toFloat()
             val bb = hash((i + 1700).toDouble()).toFloat()
@@ -262,7 +375,11 @@ object OverlayEngine {
             val drift = sin((time * 0.4f + i * 0.8f).toDouble()).toFloat() * 40f
             val x = (a * W + drift + W) % W
             val y = (bb * H + cos((time * 0.3f + i).toDouble()).toFloat() * 30f + H) % H
-            val size = 15f + c * 40f
+            val size = (15f + c * 40f) * sizeMul
+            val baseCol = if (i % 2 == 0) color else color2
+            val r = (baseCol.red * 255f).toInt()
+            val g = (baseCol.green * 255f).toInt()
+            val b = (baseCol.blue * 255f).toInt()
             scope.drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
@@ -278,7 +395,11 @@ object OverlayEngine {
         }
     }
 
-    private fun drawFireFlies(scope: DrawScope, W: Float, H: Float, time: Float, I: Float) {
+    private fun drawFireFlies(
+        scope: DrawScope, W: Float, H: Float, time: Float, I: Float,
+        color: Color, sizeMul: Float,
+        glowOn: Boolean, glowRad: Float, glowCol: Color
+    ) {
         val count = (25 * I).toInt().coerceAtLeast(0)
         for (i in 0 until count) {
             val a = hash((i + 1900).toDouble()).toFloat()
@@ -288,17 +409,20 @@ object OverlayEngine {
             val driftY = cos((time * 1.2f + i * 0.9f).toDouble()).toFloat() * 40f
             val x = (a * W + drift + W) % W
             val y = (b * H + driftY + H) % H
-            val size = 2f + c * 3f
-            val pulse = 0.4f + abs(sin((time * 4f + i).toDouble()).toFloat()) * 0.6f
-            scope.drawCircle(
-                color = Color(1f, 0.94f, 0.47f, pulse * 0.9f),
+            val size = (2f + c * 3f) * sizeMul
+            val pulse = 0.4f +
+                    abs(sin((time * 4f + i).toDouble()).toFloat()) * 0.6f
+            scope.drawParticle(
+                shape = "circle",
+                center = Offset(x, y),
                 radius = size,
-                center = Offset(x, y)
+                color = color.copy(alpha = pulse * 0.9f),
+                glowEnabled = glowOn,
+                glowRadius = glowRad,
+                glowColor = glowCol
             )
         }
     }
-
-
     //  ATMOSPHERE
 
     private fun drawFog(scope: DrawScope, W: Float, H: Float, time: Float, I: Float, color: Color) {

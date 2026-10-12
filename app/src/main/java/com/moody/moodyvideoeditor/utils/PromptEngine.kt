@@ -83,87 +83,41 @@ object PromptEngine {
     )
 
     // All 89 animations from AnimationsEngine.CATEGORIES
-    private val ANIMATIONS: Set<String> = buildSet {
-        // BASIC
-        addAll(
-            listOf(
-                "none", "typewriter", "decoder", "fadein", "fadeup", "fadedown",
-                "slideleft", "slideright", "slideup", "slidedown",
-                "popin", "bouncein", "flicker", "cinematicblur"
-            )
-        )
-
-        // REVEALS
-        addAll(
-            listOf(
-                "wordreveal", "characterrise", "maskvertical", "maskhorizontal",
-                "centerout", "linedraw", "blurryreveal", "smokedissolve", "trailfade"
-            )
-        )
-
-        // GLITCH
-        addAll(
-            listOf(
-                "glitch", "rgbsplit", "sliceglitch", "blockglitch", "staticnoise",
-                "vcrdistort", "shakejitter", "cyberpunk", "matrixrain", "interlaced"
-            )
-        )
-
-        // WAVES
-        addAll(
-            listOf(
-                "wave", "bouncewave", "sinewave", "liquidmelt", "flagwave",
-                "waterripple", "heatwave", "elasticwave", "pulsingwave",
-                "turbulent", "circularwave"
-            )
-        )
-
-        // BOUNCES
-        addAll(
-            listOf(
-                "overshootpop", "elasticdrop", "jellybounce", "microbounce",
-                "stompbounce", "squeezestretch", "float", "diagonaljump",
-                "gravityfall", "heavylanding", "doublebounce", "bouncyspin",
-                "snapback", "springstring", "sidekick"
-            )
-        )
-
-        // SLIDERS
-        addAll(
-            listOf(
-                "flydiagonaltl", "flydiagonalbr", "crossslide", "accelslide",
-                "decelslide", "splitslide", "zigzagslide", "smoothglide",
-                "infinitescroll", "pushslide"
-            )
-        )
-
-        // ROTATIONS
-        addAll(
-            listOf(
-                "flip3dx", "flip3dy", "rotate3d", "yaxisflip", "xaxisflip",
-                "vortexspin", "zaxisspin", "spiralin", "tornado", "skewspin",
-                "pendulum", "propeller", "barrelroll", "cuberoll",
-                "gentletilt", "twister"
-            )
-        )
-
-        // ZOOMS
-        addAll(
-            listOf(
-                "zoomin", "zoomout", "cinematiczoom", "hyperzoomout", "pulsescale",
-                "elasticzoom", "lensflarezoom", "shrinkreveal", "popscale",
-                "depthzoom", "snapzoom"
-            )
-        )
-
-        // SPECIAL
-        addAll(
-            listOf(
-                "scribble", "neonglow", "gradientshift", "ghosttrail",
-                "silhouette", "explosion", "implosion", "pulse", "shake"
-            )
-        )
-    }
+    private val ANIMATIONS: Set<String> = setOf(
+        // basic
+        "none", "typewriter", "decoder",
+        "fadein", "fadeup", "fadedown",
+        "slideleft", "slideright", "slideup", "slidedown",
+        "popin", "bouncein", "flicker", "cinematicblur",
+        // reveals
+        "blurryreveal", "smokedissolve", "trailfade",
+        // glitch
+        "shakejitter", "matrixrain", "interlaced",
+        // waves
+        "wave", "bouncewave", "sinewave", "liquidmelt", "flagwave",
+        "waterripple", "heatwave", "elasticwave", "pulsingwave",
+        "turbulent", "circularwave",
+        // bounces
+        "overshootpop", "elasticdrop", "jellybounce", "microbounce",
+        "stompbounce", "squeezestretch", "float", "diagonaljump",
+        "gravityfall", "heavylanding", "doublebounce", "bouncyspin",
+        "snapback", "springstring", "sidekick",
+        // sliders
+        "flydiagonaltl", "flydiagonalbr", "crossslide", "accelslide",
+        "decelslide", "splitslide", "zigzagslide", "smoothglide",
+        "infinitescroll", "pushslide",
+        // rotations
+        "flip3dx", "flip3dy", "rotate3d", "yaxisflip", "xaxisflip",
+        "vortexspin", "zaxisspin", "spiralin", "tornado", "skewspin",
+        "pendulum", "propeller", "barrelroll", "cuberoll",
+        "gentletilt", "twister",
+        // zooms
+        "zoomin", "zoomout", "cinematiczoom", "hyperzoomout", "pulsescale",
+        "elasticzoom", "shrinkreveal", "popscale", "depthzoom", "snapzoom",
+        // special
+        "scribble", "ghosttrail", "silhouette",
+        "explosion", "implosion", "pulse", "shake"
+    )
     private val EFFECT_NAMES = EffectLibrary.ALL.associateBy { it.key.lowercase() }
 
     // ═══════════════════════════════════════════════════════════
@@ -621,7 +575,9 @@ object PromptEngine {
         if (textFull != null) {
             return ParsedCommand(
                 CmdType.TEXT, "content",
-                stringValue = textFull.groupValues[1],
+                stringValue = textFull.groupValues[1]
+                    .replace("\\n", "\n")
+                    .replace("\\t", "\t"),
                 extra = textFull.groupValues[2].ifBlank { null },
                 raw = text
             )
@@ -1085,26 +1041,21 @@ object PromptEngine {
     }
 
     fun animationKey(input: String): String {
-        return when (val n = input.lowercase().replace(" ", "")) {
-            "fadein" -> "fadeIn"
-            "fadeup" -> "fadeUp"
-            "fadedown" -> "fadeDown"
-            "slideleft" -> "slideLeft"
-            "slideright" -> "slideRight"
-            "slideup" -> "slideUp"
-            "slidedown" -> "slideDown"
-            "popin" -> "popIn"
-            "bouncein" -> "bounceIn"
-            "cinematicblur" -> "cinematicBlur"
-            "flip3dx" -> "flip3DX"
-            "flip3dy" -> "flip3DY"
-            "rotate3d" -> "rotate3D"
-            "bouncewave" -> "bounceWave"
-            "zoomin" -> "zoomIn"
-            "zoomout" -> "zoomOut"
-            "vortexspin" -> "vortexSpin"
-            "spiralin" -> "spiralIn"
-            else -> n
-        }
+        val n = input.lowercase()
+            .replace(" ", "")
+            .replace("_", "")
+            .replace("-", "")
+
+        // ✅ Source of truth: AnimationsEngine.ALL_ANIMATIONS
+        // Yeh automatically saari 89 animations ko handle karta hai
+        AnimationsEngine.ALL_ANIMATIONS.firstOrNull { anim ->
+            anim.key.lowercase()
+                .replace(" ", "")
+                .replace("_", "")
+                .replace("-", "") == n
+        }?.let { return it.key }
+
+        // Safety fallback
+        return "none"
     }
 }

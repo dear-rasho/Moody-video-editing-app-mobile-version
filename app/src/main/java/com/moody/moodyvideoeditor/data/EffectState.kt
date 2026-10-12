@@ -4,6 +4,7 @@ data class EffectState(
     val kind: String = KIND_EFFECT,
     val presetKey: String = "",
     val filters: ColorFilterValues? = null,
+    val animatedColor: com.moody.moodyvideoeditor.utils.AnimatedColorConfig? = null,
     val motion: MotionConfig? = null,
     val overlay: OverlayConfig? = null,
     val edgeGlow: EdgeGlowConfig? = null,

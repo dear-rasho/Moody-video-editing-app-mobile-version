@@ -29,12 +29,36 @@ You will output ONLY the editor commands. No explanations, no markdown, no extra
 - If unsure, make a reasonable creative choice
 - Timestamped blocks can be MIXED with trailing linear commands (transitions, ratio, filters)
 """.trimIndent()
+    val STICKERS = """
+## 😀 STICKERS
+Syntax: sticker EMOJI [properties]
+
+Properties:
+  position X Y              0..100 %
+  scale N                   10..500 (default 100)
+  rotation DEG              -180 to +180
+  opacity 0..100
+  animation NAME            see TEXT_MASTER section C
+  duration SEC              animation duration 0.2..5
+
+Timed placement:
+  [00:01 - 00:05] sticker 🔥 position 85 18 scale 90 animation popIn duration 0.6
+
+Management:
+  deletesticker             delete selected sticker
+  duplicate sticker         duplicate selected sticker
+
+Examples:
+  sticker 🔥
+  sticker ⚡ position 15 22 animation popIn duration 0.6
+  sticker ✨ position 88 80 scale 120 animation bounceIn
+""".trimIndent()
 
     // ═══════════════════════════════════════════════════════════
     //  2. TEXT — MASTER BLOCK (everything about text)
     // ═══════════════════════════════════════════════════════════
     val TEXT_MASTER = """
-## 📝 TEXT — COMPLETE GUIDE (create + edit + animate + fonts)
+## 📝 TEXT — COMPLETE GUIDE (create + edit + animate + fonts + background)
 
 ═══════════════════════════════════════════════════════════════
   A. CREATE TEXT
@@ -53,11 +77,12 @@ Properties (chain with spaces):
   rotation DEG               -180 to +180
   opacity 0..100
   tracking N                 letter spacing -10..30
-  lineheight N               line spacing 1.0..3.0
-  maxwidth N                 wrap width 30..100 %
+  lineheight N               line spacing 0.8..10.0 (default 1.2)
+  maxwidth N                 wrap width 30..100 % (auto-wraps text)
   textscale N                scale 10..500
   animduration SECONDS       animation duration 0.2..5.0
   animation NAME             see section C
+  \n inside quotes           creates new line (multi-line text)
 
   ▸ STROKE:    stroke WIDTH COLOR          e.g. stroke 3 black
   ▸ GLOW:      glow COLOR RADIUS           e.g. glow cyan 40
@@ -65,7 +90,16 @@ Properties (chain with spaces):
   ▸ GRADIENT:  gradient COLOR1 COLOR2 [ANGLE]
                gradient red blue
                gradient #ff0066 #00ffcc 90
-  ▸ RESET:     nostroke, noglow, noshadow, solid
+
+  ▸ 🆕 BACKGROUND (see section F):
+    bg COLOR                solid bg (hex or name)
+    bgtype TYPE             rounded | character | outline
+    bgopacity N             0..100 % opacity
+    bggradient C1 C2 [ANGLE]  gradient background
+    bgsolid                 switch back to solid
+    bgpad X Y               padding (0..60)
+    bgcorner N              corner radius 0..50 (rounded/outline only)
+    nobg                    disable background
 
 Multiple text commands on ONE line stack vertically (auto-positioned).
 
@@ -74,7 +108,10 @@ Creation Examples:
   text "TITLE" size 84 font "Impact" stroke 3 black animation popIn
   text "GRADIENT" gradient #ff0066 #00ffcc 90
   text "WRAPPED" maxwidth 70 textscale 120
-  text "WHEN" size 60 color white animation fadeUp, text "YOU" size 80 color #ffcc00 animation popIn
+  text "LINE 1\nLINE 2" size 60 color white   ← multi-line
+  text "BG TITLE" size 70 color white bg black bgtype rounded
+  text "LABEL" size 40 color white bg #FF0066 bgtype character
+  text "OUTLINE" size 60 bg cyan bgtype outline bgpad 20 12
 
 ═══════════════════════════════════════════════════════════════
   B. EDIT / DELETE / DUPLICATE / BULK (existing clips)
@@ -116,7 +153,7 @@ Bulk Examples:
   textlayer 2
 
 ═══════════════════════════════════════════════════════════════
-  C. ANIMATIONS (89 total) — use with: animation NAME
+  C. ANIMATIONS (89) — use with: animation NAME
 ═══════════════════════════════════════════════════════════════
 BASIC:
   none, typewriter, decoder, fadeIn, fadeUp, fadeDown,
@@ -227,6 +264,21 @@ SPECIAL:
 Full styled title:
   text "NEW EPISODE" size 84 color #ffcc00 font "Bangers" align center position 50 45 animation popIn glow cyan 40 stroke 3 black
 
+Title with rounded background:
+  text "GRIND MODE" size 72 color white font "Anton" bg black bgtype rounded bgpad 24 14 bgcorner 20 animation popIn
+
+Neon label with character background:
+  text "LIVE NOW" size 48 color white bold bg #FF0066 bgtype character bgopacity 90 animation bounceIn
+
+Outline-only background:
+  text "COMING SOON" size 56 color white bg cyan bgtype outline bgcorner 16 animation fadeUp
+
+Gradient background title:
+  text "MOODY" size 80 color white font "Lobster" bggradient #FF0066 #FFCC00 45 animation popIn
+
+Multi-line caption (auto-wrapped):
+  text "This is a long caption\nsplit into two lines" size 44 color white maxwidth 70 bg black bgtype rounded animation fadeIn
+
 Multi-line stacked (one line):
   text "WHEN" size 60 color white animation fadeUp, text "YOU" size 80 color #ffcc00 animation popIn, text "GRIND" size 100 color #ff0066 animation overshootPop
 
@@ -240,34 +292,72 @@ Bulk restyle all texts:
 
 Edit existing selection:
   edittext "NEW TITLE", textscale 150, animduration 1.5, textlayer 2
-""".trimIndent()
 
-    // ═══════════════════════════════════════════════════════════
-    //  3. STICKERS
-    // ═══════════════════════════════════════════════════════════
-    val STICKERS = """
-## 😀 STICKERS
-Syntax: sticker EMOJI [properties]
+═══════════════════════════════════════════════════════════════
+  F. 🆕 TEXT BACKGROUND — 3 types
+═══════════════════════════════════════════════════════════════
 
-Properties:
-  position X Y              0..100 %
-  scale N                   10..500 (default 100)
-  rotation DEG              -180 to +180
-  opacity 0..100
-  animation NAME            see TEXT_MASTER section C
-  duration SEC              animation duration 0.2..5
+STYLE TYPES:
 
-Timed placement:
-  [00:01 - 00:05] sticker 🔥 position 85 18 scale 90 animation popIn duration 0.6
+  rounded     ▢ Rounded rectangle (classic label)
+              use bgcorner N for corner radius (0..50)
 
-Management:
-  deletesticker             delete selected sticker
-  duplicate sticker         duplicate selected sticker
+  character   🅰️ Tight to characters
+              (minimal padding, wraps only text)
 
-Examples:
-  sticker 🔥
-  sticker ⚡ position 15 22 animation popIn duration 0.6
-  sticker ✨ position 88 80 scale 120 animation bounceIn
+  outline     ◯ Border only (transparent inside)
+              use bgcorner N for corner radius
+
+FILL MODES:
+
+  Solid:      bg COLOR
+              bg black
+              bg #FF0066
+              bg red
+
+  Gradient:   bggradient C1 C2 [ANGLE]
+              bggradient red blue
+              bggradient #FF0066 #00E5FF 90
+              bggradient cyan magenta 45
+
+PROPERTIES:
+
+  bgopacity N       0..100 % opacity of background
+  bgpad X Y         padding in px (X horizontal, Y vertical)
+                    default: 14 8
+  bgcorner N        corner radius 0..50 (rounded/outline only)
+  bgsolid           switch back to solid color
+  nobg              remove background completely
+
+EXAMPLES:
+
+  Solid black rounded:
+    text "TITLE" size 60 color white bg black bgtype rounded
+
+  Solid with custom corners:
+    text "TAG" size 40 color white bg red bgtype rounded bgcorner 24 bgpad 20 10
+
+  Character (tight) with color:
+    text "LIVE" size 44 color white bold bg #FF0066 bgtype character
+
+  Outline only:
+    text "COMING" size 50 color white bg cyan bgtype outline bgcorner 12
+
+  Gradient background:
+    text "MOODY" size 80 color white bggradient #FF0066 #FFCC00 45
+
+  Half-transparent:
+    text "SUB" size 36 color white bg black bgtype rounded bgopacity 70
+
+  Full combo:
+    text "FINAL" size 72 color #FFCC00 bold bggradient red blue 90 bgtype rounded bgcorner 20 bgpad 30 18 bgopacity 90 animation popIn
+
+NOTES:
+  - Background automatically sizes to the TEXT content (wraps multi-line)
+  - Works in both Preview and Export
+  - Corner radius only applies to "rounded" and "outline" types
+  - Opacity 0-100 controls transparency
+  - Gradient angle 0..360 (0=top→bottom, 90=left→right)
 """.trimIndent()
 
     // ═══════════════════════════════════════════════════════════

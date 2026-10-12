@@ -13,6 +13,7 @@ import com.arthenica.ffmpegkit.ReturnCode
 import com.moody.moodyvideoeditor.data.ColorFilterValues
 import com.moody.moodyvideoeditor.data.ColorWheelState
 import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.data.MaskKeyframe
 import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.MotionConfig
 import kotlinx.coroutines.CancellationException
@@ -701,12 +702,434 @@ class FFmpegExecutor(
                 val newSourceEnd = (clip.sourceEndMs - sourceRightCut)
                     .coerceAtLeast(newSourceStart + 33L)
                 val newTimelineStart = (clipStart - rangeStart).coerceAtLeast(0L)
+                val trimmedMask = if (leftCut > 0L && clip.mask.keyframes.isNotEmpty()) {
+                    val sampled = MaskEngine.sampleAt(clip.mask, leftCut / 1000f)
+                    val startKeyframe = sampled.toMaskKeyframe(timeMs = 0L)
+                    val remainingKeyframes = clip.mask.keyframes
+                        .filter { it.timeMs > leftCut }
+                        .map { it.copy(timeMs = it.timeMs - leftCut) }
+                    sampled.copy(
+                        keyframes = (listOf(startKeyframe) + remainingKeyframes)
+                            .distinctBy { it.timeMs }
+                            .sortedBy { it.timeMs }
+                    )
+                } else {
+                    clip.mask
+                }
                 clip.copy(
                     sourceStartMs = newSourceStart,
                     sourceEndMs = newSourceEnd,
-                    timelineStartMs = newTimelineStart
+                    timelineStartMs = newTimelineStart,
+                    mask = trimmedMask
                 )
             }
+    }
+
+    private fun com.moody.moodyvideoeditor.data.MaskState.toMaskKeyframe(
+        timeMs: Long
+    ) = MaskKeyframe(
+        timeMs = timeMs,
+        centerX = centerX,
+        centerY = centerY,
+        radius = radius,
+        width = width,
+        height = height,
+        rotation = rotation,
+        cornerRadius = cornerRadius,
+        scale = scale,
+        positionY = positionY,
+        feather = feather,
+        expansion = expansion,
+        opacity = opacity,
+        customPoints = customPoints
+    )
+
+    private suspend fun exportSyntheticFull(
+        allClips: List<EditorClip>,
+        textClips: List<EditorClip>,
+        overlayImageClips: List<EditorClip>,
+        overlayClips: List<EditorClip>,
+        vizClips: List<EditorClip>,
+        matteClips: List<EditorClip> = emptyList(),
+        audioOnlyClips: List<EditorClip>,
+        rangeStart: Long,
+        rangeEnd: Long,
+        fileName: String,
+        targetW: Int,
+        targetH: Int,
+        fps: Int,
+        bitrateKbps: Int,
+        customFolderUri: String?,
+        imageFormat: String,
+        jpegQuality: Int
+    ) {
+        val durationMs = (rangeEnd - rangeStart).coerceAtLeast(500L)
+
+        onProgress(0.01f)
+
+        val vizSequences = if (vizClips.isNotEmpty()) {
+            try {
+                VisualizerBitmapRenderer.renderCombinedOverlays(
+                    context = context,
+                    visualizerClips = vizClips,
+                    allClips = allClips,
+                    rangeStart = rangeStart,
+                    W = targetW, H = targetH, fps = fps,
+                    totalDurationMs = durationMs,
+                    onProgress = { p -> onProgress(p * 0.25f) },
+                    shouldCancel = { isCancelled },
+                    imageFormat = imageFormat,
+                    jpegQuality = jpegQuality
+                )
+            } catch (e: CancellationException) {
+                if (isCancelled) {
+                    onError("cancelled")
+                    return
+                }
+                throw e
+            } catch (e: Exception) {
+                Log.e("EXPORT", "Visualizer render failed", e)
+                onError("Visualizer render failed: ${e.message}")
+                return
+            }
+        } else emptyList()
+
+        val textSequences = if (
+            textClips.isNotEmpty() ||
+            overlayImageClips.isNotEmpty() ||
+            overlayClips.isNotEmpty()
+        ) {
+            try {
+                TextBitmapRenderer.renderCombinedOverlays(
+                    context = context,
+                    textClips = textClips,
+                    imageClips = overlayImageClips,
+                    overlayClips = overlayClips,
+                    W = targetW, H = targetH, fps = fps,
+                    totalDurationMs = durationMs,
+                    onProgress = { p -> onProgress(0.25f + p * 0.25f) },
+                    shouldCancel = { isCancelled },
+                    imageFormat = imageFormat,
+                    jpegQuality = jpegQuality
+                )
+            } catch (e: CancellationException) {
+                cleanupSequences(vizSequences)
+                if (isCancelled) {
+                    onError("cancelled")
+                    return
+                }
+                throw e
+            } catch (e: Exception) {
+                Log.e("EXPORT", "Text render failed", e)
+                cleanupSequences(vizSequences)
+                onError("Text render failed: ${e.message}")
+                return
+            }
+        } else emptyList()
+
+        val allSequences = (vizSequences + textSequences)
+            .sortedBy { it.trackIndex }
+
+        onProgress(0.50f)
+
+        val audioToMix = mutableListOf<EditorClip>()
+        audioToMix.addAll(audioOnlyClips)
+
+        vizClips.forEach { viz ->
+            val linkedId = viz.visualizer?.linkedAudioClipId ?: return@forEach
+            val linkedAudio = allClips.firstOrNull {
+                it.id == linkedId && it.isAudio && !it.isAudioEffectClip &&
+                        it.uri.toString().isNotBlank() && it.uri != Uri.EMPTY
+            }
+            if (linkedAudio != null && audioToMix.none { it.id == linkedAudio.id }) {
+                val clipStart = linkedAudio.timelineStartMs
+                val clipEnd = linkedAudio.timelineEndMs
+                if (clipEnd > rangeStart && clipStart < rangeEnd) {
+                    val leftCut = (rangeStart - clipStart).coerceAtLeast(0L)
+                    val rightCut = (clipEnd - rangeEnd).coerceAtLeast(0L)
+                    val speed = linkedAudio.speed.coerceAtLeast(0.01f)
+                    val newSourceStart = linkedAudio.sourceStartMs +
+                            (leftCut * speed).toLong()
+                    val newSourceEnd = (linkedAudio.sourceEndMs -
+                            (rightCut * speed).toLong())
+                        .coerceAtLeast(newSourceStart + 100L)
+                    val newTimelineStart = (clipStart - rangeStart)
+                        .coerceAtLeast(0L)
+                    audioToMix.add(
+                        linkedAudio.copy(
+                            sourceStartMs = newSourceStart,
+                            sourceEndMs = newSourceEnd,
+                            timelineStartMs = newTimelineStart
+                        )
+                    )
+                }
+            }
+        }
+
+        val (audioLocalFiles, audioLocalClips) = try {
+            withContext(Dispatchers.IO) {
+                val files = mutableListOf<File>()
+                val localClips = mutableListOf<EditorClip>()
+                audioToMix.forEach { clip ->
+                    if (isCancelled) throw CancellationException("cancelled")
+                    val file = copyUriToCache(clip.uri, "audio_${clip.id}.mp3")
+                        ?: throw java.io.IOException("Could not read: ${clip.name}")
+                    files.add(file)
+                    localClips.add(clip)
+                }
+                files to localClips
+            }
+        } catch (e: CancellationException) {
+            cleanupSequences(allSequences)
+            throw e
+        } catch (e: Exception) {
+            cleanupSequences(allSequences)
+            onError("Could not prepare audio: ${e.message}")
+            return
+        }
+
+        val outputFile = createOutputFile(fileName, "mp4")
+        val durSec = (durationMs / 1000.0).coerceAtLeast(0.5)
+
+        val args = mutableListOf<String>()
+        args.add("-y")
+        args.add("-f"); args.add("lavfi")
+        args.add("-t"); args.add(durSec.toString())
+        args.add("-i"); args.add("color=c=black:s=${targetW}x${targetH}:r=$fps")
+
+        args.add("-f"); args.add("lavfi")
+        args.add("-t"); args.add(durSec.toString())
+        args.add("-i"); args.add("anullsrc=r=44100:cl=stereo")
+
+        audioLocalFiles.forEach { f ->
+            args.add("-i"); args.add(f.absolutePath)
+        }
+
+        val seqStartIdx = 2 + audioLocalFiles.size
+        allSequences.forEach { seq ->
+            if (seq.startSec > 0.0001) {
+                args.add("-itsoffset"); args.add("%.4f".format(seq.startSec))
+            }
+            args.add("-framerate"); args.add(seq.fps.toString())
+            args.add("-start_number"); args.add(seq.startNumber.toString())
+            args.add("-i"); args.add(seq.pattern)
+        }
+
+        val filterParts = mutableListOf<String>()
+        filterParts.add("[0:v]format=yuva420p[base]")
+
+        var lastLabel = "base"
+        allSequences.forEachIndexed { idx, seq ->
+            val inIdx = seqStartIdx + idx
+            val srcLabel = "seqsrc$idx"
+            val outLabel = "ov$idx"
+            filterParts.add("[$inIdx:v]format=rgba[$srcLabel]")
+            val startS = "%.4f".format(seq.startSec)
+            val endS = "%.4f".format(seq.endSec)
+            filterParts.add(
+                "[$lastLabel][$srcLabel]overlay=0:0:" +
+                        "enable='between(t,$startS,$endS)'[$outLabel]"
+            )
+            lastLabel = outLabel
+        }
+        filterParts.add("[$lastLabel]format=yuv420p[outv]")
+
+        if (audioLocalFiles.isEmpty()) {
+            filterParts.add("[1:a]anull[outa]")
+        } else {
+            val audioLabels = mutableListOf<String>()
+            audioLocalClips.forEachIndexed { idx, clip ->
+                val inputIdx = 2 + idx
+                val durSecClip = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
+                    .coerceAtLeast(0.1)
+                val delayMs = clip.timelineStartMs.toInt().coerceAtLeast(0)
+                val speed = clip.speed.coerceAtLeast(0.01f)
+
+                val chain = mutableListOf<String>()
+                chain.add(
+                    "atrim=start=${clip.sourceStartMs / 1000.0}:duration=$durSecClip"
+                )
+                chain.add("asetpts=PTS-STARTPTS")
+                if (delayMs > 0) chain.add("adelay=$delayMs|$delayMs")
+                if (speed != 1.0f) chain.add("atempo=${speed.coerceIn(0.5f, 2.0f)}")
+                if (clip.volume != 1.0f) chain.add("volume=${clip.volume}")
+                chain.add("aresample=44100")
+
+                val label = "audio$idx"
+                filterParts.add("[$inputIdx:a]${chain.joinToString(",")}[$label]")
+                audioLabels.add("[$label]")
+            }
+            filterParts.add(
+                "${audioLabels.joinToString("")}amix=" +
+                        "inputs=${audioLabels.size}:duration=longest[outa]"
+            )
+        }
+
+        args.add("-filter_complex")
+        args.add(filterParts.joinToString(";"))
+        args.add("-map"); args.add("[outv]")
+        args.add("-map"); args.add("[outa]")
+
+        args.addAll(
+            listOf(
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-tune", "fastdecode",
+                "-b:v", "${bitrateKbps}k",
+                "-pix_fmt", "yuv420p",
+                "-r", fps.toString(),
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-movflags", "+faststart",
+                "-threads", "0",
+                "-t", durSec.toString(),
+                outputFile.absolutePath
+            )
+        )
+
+        try {
+            val argsArray = args.toTypedArray()
+            val session = FFmpegKit.executeWithArgumentsAsync(
+                argsArray,
+                { s ->
+                    if (isCancelled) {
+                        cleanupSequences(allSequences)
+                        onError("cancelled")
+                    } else if (ReturnCode.isSuccess(s.returnCode)) {
+                        completeExport(outputFile, customFolderUri, allSequences)
+                    } else {
+                        val logs = s.allLogsAsString ?: "Unknown error"
+                        cleanupSequences(allSequences)
+                        onError("Export failed:\n${logs.takeLast(1500)}")
+                    }
+                },
+                { _ -> },
+                { stats ->
+                    if (!isCancelled) {
+                        try {
+                            val t = stats.time
+                            if (t > 0) {
+                                val p = ((t / (durationMs.toDouble() * 1.2))
+                                    .coerceIn(0.0, 0.95)).toFloat()
+                                onProgress(0.50f + p * 0.50f)
+                            }
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
+            )
+            currentSession = session
+        } catch (e: Exception) {
+            cleanupSequences(allSequences)
+            onError("FFmpeg error: ${e.message}")
+        }
+    }
+
+    private fun createOutputFile(fileName: String, format: String): File {
+        val dir = File(context.cacheDir, "MoodyExports")
+        if (!dir.exists()) dir.mkdirs()
+        val ext = when (format.lowercase()) {
+            "mov" -> "mov"
+            "mp3" -> "mp3"
+            "m4a" -> "m4a"
+            "png" -> "png"
+            "jpg", "jpeg" -> "jpg"
+            else -> "mp4"
+        }
+        return File(dir, "$fileName.$ext")
+    }
+
+    private fun completeExport(
+        file: File,
+        customFolderUri: String?,
+        sequences: List<TextOverlaySequence>
+    ) {
+        try {
+            Log.e("EXPORT_SAVE", "Complete export: ${file.absolutePath}")
+            Log.e("EXPORT_SAVE", "Custom folder: $customFolderUri")
+
+            val galleryUri = saveToGallery(file, customFolderUri)
+            Log.e("EXPORT_SAVE", "Result URI: $galleryUri")
+
+            onSuccess(file)
+        } catch (e: Exception) {
+            Log.e("EXPORT_SAVE", "Complete export failed", e)
+            onError("Could not save export: ${e.message}")
+        } finally {
+            cleanupSequences(sequences)
+        }
+    }
+
+    private fun cleanupSequences(sequences: List<TextOverlaySequence>) {
+        sequences.mapNotNull { it.workingDirectory }.distinct().forEach { directory ->
+            if (directory.exists() && !directory.deleteRecursively()) {
+                Log.w("EXPORT", "Could not remove: ${directory.name}")
+            }
+        }
+    }
+
+    private fun saveToGallery(sourceFile: File, customFolderUri: String? = null): Uri? {
+        if (customFolderUri != null && customFolderUri.isNotBlank()) {
+            val uri = saveToCustomFolder(sourceFile, customFolderUri)
+            if (uri != null) return uri
+        }
+
+        return try {
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, sourceFile.name)
+                put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(
+                        android.provider.MediaStore.Video.Media.RELATIVE_PATH,
+                        "Movies/MoodyEditor"
+                    )
+                }
+            }
+            val uri = context.contentResolver.insert(
+                android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values
+            ) ?: return null
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                sourceFile.inputStream().use { it.copyTo(out) }
+            }
+            uri
+        } catch (e: Exception) {
+            Log.e("EXPORT_SAVE", "MediaStore save failed", e)
+            null
+        }
+    }
+
+    private fun saveToCustomFolder(sourceFile: File, folderUriString: String): Uri? {
+        return try {
+            val treeUri = Uri.parse(folderUriString)
+            val parentDocId = android.provider.DocumentsContract
+                .getTreeDocumentId(treeUri)
+            val parentDocUri = android.provider.DocumentsContract
+                .buildDocumentUriUsingTree(treeUri, parentDocId)
+
+            val mimeType = when {
+                sourceFile.name.endsWith(".mov") -> "video/quicktime"
+                sourceFile.name.endsWith(".mp4") -> "video/mp4"
+                sourceFile.name.endsWith(".mp3") -> "audio/mpeg"
+                sourceFile.name.endsWith(".m4a") -> "audio/mp4"
+                sourceFile.name.endsWith(".png") -> "image/png"
+                sourceFile.name.endsWith(".jpg") ||
+                        sourceFile.name.endsWith(".jpeg") -> "image/jpeg"
+
+                else -> "application/octet-stream"
+            }
+
+            val docUri = android.provider.DocumentsContract.createDocument(
+                context.contentResolver, parentDocUri, mimeType, sourceFile.name
+            ) ?: return null
+
+            context.contentResolver.openOutputStream(docUri)?.use { out ->
+                sourceFile.inputStream().use { it.copyTo(out) }
+            }
+            docUri
+        } catch (e: Exception) {
+            Log.e("EXPORT_SAVE", "saveToCustomFolder FAILED", e)
+            null
+        }
     }
 
     private fun copyUriToCache(uri: Uri, fileName: String): File? {
@@ -716,13 +1139,8 @@ class FFmpegExecutor(
             } catch (_: Throwable) {
                 ""
             }
+
             val ext = when {
-                mime.startsWith("image/jpeg") -> "jpg"
-                mime.startsWith("image/png") -> "png"
-                mime.startsWith("image/webp") -> "webp"
-                mime.startsWith("image/gif") -> "gif"
-                mime.startsWith("image/bmp") -> "bmp"
-                mime.startsWith("image/heic") -> "heic"
                 mime.startsWith("audio/mpeg") -> "mp3"
                 mime.startsWith("audio/wav") -> "wav"
                 mime.startsWith("audio/aac") -> "aac"
@@ -730,6 +1148,9 @@ class FFmpegExecutor(
                 mime.startsWith("audio/ogg") -> "ogg"
                 mime.startsWith("video/quicktime") -> "mov"
                 mime.startsWith("video/webm") -> "webm"
+                mime.startsWith("image/png") -> "png"
+                mime.startsWith("image/jpeg") -> "jpg"
+                mime.startsWith("image/webp") -> "webp"
                 else -> "mp4"
             }
 
@@ -744,18 +1165,18 @@ class FFmpegExecutor(
             )
             try {
                 val input = context.contentResolver.openInputStream(uri)
-                    ?: throw java.io.IOException("Could not open media URI: $uri")
+                    ?: throw java.io.IOException("Could not open media URI")
                 input.use {
                     tempFile.outputStream().use { output -> it.copyTo(output) }
                 }
                 if (tempFile.length() <= 0L) {
-                    throw java.io.IOException("Media URI produced an empty file: $uri")
+                    throw java.io.IOException("Media URI produced empty file")
                 }
                 if (file.exists() && !file.delete()) {
-                    throw java.io.IOException("Could not replace cached media file")
+                    throw java.io.IOException("Could not replace cached file")
                 }
                 if (!tempFile.renameTo(file)) {
-                    throw java.io.IOException("Could not finalize cached media file")
+                    throw java.io.IOException("Could not finalize cached file")
                 }
             } finally {
                 tempFile.delete()
@@ -969,6 +1390,136 @@ class FFmpegExecutor(
         return true
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 ANIMATED COLOR → FFmpeg time expressions
+    //  NOTE: No single quotes, no commas in expressions.
+    // ═══════════════════════════════════════════════════════════
+    /**
+     * Converts an AnimatedColorConfig into a LIST of FFmpeg filter strings.
+     * Each string is a valid filter. Caller joins/attaches enable as needed.
+     *
+     * All time-based filters use `t` (PTS seconds). `hue` and `eq` filters
+     * both support `:enable='between(t,a,b)'` timeline gating.
+     */
+    private fun animatedColorToFfmpeg(
+        cfg: com.moody.moodyvideoeditor.utils.AnimatedColorConfig
+    ): List<String> {
+        val I = (cfg.intensity / 100f).coerceIn(0f, 2f)
+        val sp = cfg.speed.coerceIn(0.2f, 5f)
+        val loc = Locale.US
+        fun f(v: Float) = String.format(loc, "%.4f", v)
+
+        return when (cfg.type) {
+
+            // ═══ HUE ROTATIONS ═══
+            "hueCycle" -> listOf("hue=h=${f(60f * I * sp)}*t")
+            "hueFast" -> listOf("hue=h=${f(200f * I * sp)}*t")
+            "hueReverse" -> listOf("hue=h=-${f(60f * I * sp)}*t")
+            "sunsetShift" -> listOf("hue=h=${f(300f * sp)}*t")
+
+            "rainbowFlow" -> listOf(
+                "hue=h=${f(90f * sp)}*t",
+                "eq=saturation=1+${f(0.4f * I)}*sin(t*${f(2f * sp)}):eval=frame"
+            )
+
+            // ═══ WARM ↔ COOL ═══
+            "warmCool" -> listOf(
+                "hue=h=${f(45f * I)}*sin(t*${f(1.5f * sp)})",
+                "eq=saturation=1+${f(0.3f * I)}*abs(sin(t*${f(1.5f * sp)})):eval=frame"
+            )
+
+            // ═══ SATURATION ═══
+            "satPulse" -> listOf(
+                "eq=saturation=1+${f(0.6f * I)}*sin(t*${f(3f * sp)}):eval=frame"
+            )
+            "satFade" -> listOf(
+                "eq=saturation=1-${f(0.7f * I)}*abs(sin(t*${f(2f * sp)})):eval=frame"
+            )
+
+            // ═══ BRIGHTNESS ═══
+            "brightPulse" -> listOf(
+                "eq=brightness=${f(0.30f * I)}*sin(t*${f(3f * sp)}):eval=frame"
+            )
+            "brightFlicker" -> listOf(
+                "eq=brightness=${f(0.30f * I)}*sin(t*${f(20f * sp)}):eval=frame"
+            )
+
+            // ═══ HUE OSCILLATIONS ═══
+            "chromaWave" -> listOf(
+                "hue=h=${f(90f * I)}*sin(t*${f(2f * sp)})",
+                "eq=brightness=${f(0.15f * I)}*cos(t*${f(3f * sp)}):eval=frame"
+            )
+            "cyberShift" -> listOf(
+                "hue=h=${f(120f * I)}*sin(t*${f(1.5f * sp)})",
+                "eq=saturation=1.5:eval=frame",
+                "eq=contrast=1.2:eval=frame"
+            )
+            "oceanWave" -> listOf(
+                "hue=h=${f(40f * I)}*sin(t*${f(0.8f * sp)})",
+                "eq=saturation=1+${f(0.4f * I)}*sin(t*${f(0.8f * sp)}):eval=frame",
+                "eq=brightness=${f(0.15f * I)}*sin(t*${f(0.8f * sp)}):eval=frame"
+            )
+            "icePulse" -> listOf(
+                "hue=h=${f(40f * I)}*sin(t*${f(2f * sp)})",
+                "eq=brightness=${f(0.20f * I)}*sin(t*${f(2f * sp)}):eval=frame",
+                "eq=saturation=1+${f(0.5f * I)}*sin(t*${f(2f * sp)}):eval=frame"
+            )
+            "purpleHaze" -> listOf(
+                "hue=h=${f(40f * I)}*sin(t*${f(0.7f * sp)})",
+                "eq=saturation=1+${f(0.3f * I)}*sin(t*${f(0.7f * sp)}):eval=frame"
+            )
+            "toxicGreen" -> listOf(
+                "hue=h=${f(30f * I)}*sin(t*${f(2.5f * sp)})",
+                "eq=saturation=1+${f(0.4f * I)}*sin(t*${f(2.5f * sp)}):eval=frame",
+                "eq=contrast=1.15:eval=frame"
+            )
+            "goldShimmer" -> listOf(
+                "hue=h=${f(20f * I)}*sin(t*${f(3f * sp)})",
+                "eq=brightness=${f(0.15f * I)}*sin(t*${f(3f * sp)}):eval=frame",
+                "eq=saturation=1+${f(0.4f * I)}*sin(t*${f(3f * sp)}):eval=frame"
+            )
+            "neonPulse" -> listOf(
+                "eq=saturation=1+${f(0.5f * I)}*sin(t*${f(4f * sp)}):eval=frame",
+                "eq=brightness=${f(0.20f * I)}*sin(t*${f(4f * sp)}):eval=frame"
+            )
+            "fireFlicker" -> listOf(
+                "hue=h=-${f(20f * I)}*sin(t*${f(10f * sp)})",
+                "eq=brightness=${f(0.20f * I)}*sin(t*${f(15f * sp)}):eval=frame"
+            )
+            "heartbeatColor" -> listOf(
+                "eq=saturation=1+${f(0.8f * I)}*abs(sin(t*${f(3f * sp)})):eval=frame",
+                "eq=brightness=${f(0.15f * I)}*abs(sin(t*${f(3f * sp)})):eval=frame",
+                "eq=contrast=1.1:eval=frame"
+            )
+            "bloodPulse" -> listOf(
+                "eq=saturation=1+${f(0.6f * I)}*sin(t*${f(2f * sp)}):eval=frame",
+                "eq=contrast=1+${f(0.2f * I)}*sin(t*${f(2f * sp)}):eval=frame"
+            )
+            "vividBreath" -> listOf(
+                "eq=saturation=1+${f(0.8f * I)}*sin(t*${f(1.2f * sp)}):eval=frame",
+                "eq=contrast=1+${f(0.2f * I)}*sin(t*${f(1.2f * sp)}):eval=frame"
+            )
+
+            // ═══ FLASHES & STROBE ═══
+            "colorStrobe" -> listOf(
+                "eq=saturation=1.4+${f(0.4f * I)}*sin(t*${f(24f * sp)}):eval=frame",
+                "eq=brightness=${f(0.20f * I)}*sin(t*${f(24f * sp)}):eval=frame"
+            )
+            "invertFlash" -> listOf(
+                "hue=h=${f(180f * I)}*abs(sin(t*${f(2f * sp)}))"
+            )
+            "disco" -> listOf(
+                "hue=h=${f(90f * sp)}*t",
+                "eq=saturation=1.4:eval=frame"
+            )
+            "sepiaPulse" -> listOf(
+                "hue=h=${f(20f * I)}*sin(t*${f(2f * sp)})",
+                "eq=saturation=1-${f(0.30f * I)}*sin(t*${f(2f * sp)}):eval=frame"
+            )
+
+            else -> emptyList()
+        }
+    }
     // ═══════════════════════════════════════════════════════════
     //  LAYERED TRACK EXPORT — MAIN PATH
     // ═══════════════════════════════════════════════════════════
@@ -1988,23 +2539,67 @@ class FFmpegExecutor(
         }.sortedBy { it.trackIndex }
 
         effectClipsAbove.forEach { effClip ->
+            // Compute this effect's own time range, RELATIVE to the source clip.
+            // enableExpr uses single quotes so embedded commas are safe.
+            val relStartSec = ((effClip.timelineStartMs - clip.timelineStartMs)
+                .coerceAtLeast(0L)) / 1000.0
+            val relEndSec = ((effClip.timelineEndMs - clip.timelineStartMs)
+                .coerceAtMost(clip.durationMs)) / 1000.0
+
+            // Skip if the effect range is fully outside the source clip
+            if (relEndSec <= relStartSec) return@forEach
+
+            val enableExpr = String.format(
+                Locale.US,
+                ":enable='between(t,%.4f,%.4f)'",
+                relStartSec,
+                relEndSec
+            )
+
+            // Helper — splits a comma chain, tags each filter with enable
+            fun addChain(chain: String) {
+                if (chain.isBlank()) return
+                chain.split(",").forEach { part ->
+                    val t = part.trim()
+                    if (t.isNotEmpty()) filters.add("$t$enableExpr")
+                }
+            }
+
+            // ── Motion ──
             val m = effClip.effectState?.motion
-            if (m != null) {
-                val f = motionToFfmpeg(m)
-                if (f.isNotBlank()) filters.add(f)
-            }
+            if (m != null) addChain(motionToFfmpeg(m))
 
+            // ── Static color filters ──
             val cf = effClip.effectState?.filters
-            if (cf != null) {
-                val f = colorFilterValuesToFfmpeg(cf)
-                if (f.isNotBlank()) filters.add(f)
+            if (cf != null) addChain(colorFilterValuesToFfmpeg(cf))
+
+            // ── Animated color (time expressions) ──
+            val acCfg = effClip.effectState?.animatedColor
+            if (acCfg != null) {
+                val list = animatedColorToFfmpeg(acCfg)
+                if (list.isNotEmpty()) {
+                    list.forEach { filters.add("$it$enableExpr") }
+                    Log.e(
+                        "FFMPEG_AC",
+                        "Animated color [${acCfg.type}] → ${list.size} filters: $list"
+                    )
+                } else {
+                    // Fallback: static snapshot at midpoint (rare)
+                    val midSec = (relStartSec + relEndSec) / 2.0
+                    val dyn = com.moody.moodyvideoeditor.utils.AnimatedColorEngine
+                        .compute(acCfg, midSec.toFloat())
+                    addChain(colorFilterValuesToFfmpeg(dyn))
+                    Log.e(
+                        "FFMPEG_AC",
+                        "Fallback static [${acCfg.type}] @${midSec}s"
+                    )
+                }
             }
 
-            // 🆕 EDGE GLOW
+            // ── Edge glow ──
             val glow = effClip.effectState?.edgeGlow
             if (glow != null && glow.intensity > 1f) {
-                val edgeFilter = buildEdgeGlowDrawboxFilter(glow)
-                if (edgeFilter.isNotBlank()) filters.add(edgeFilter)
+                addChain(buildEdgeGlowDrawboxFilter(glow))
             }
         }
 
@@ -2049,7 +2644,7 @@ class FFmpegExecutor(
                 .coerceAtLeast(0L) / 1000.0) / clip.speed.coerceAtLeast(0.01f)
             filters.add(buildColorWheelFilter(wheel.colorWheel, startSec, endSec))
         }
-        // 🆕 LIGHT LEAK layers above this clip
+
         val lightLeakLayers = allClips.filter { e ->
             e.isEffectClip &&
                     e.effectState?.lightLeak != null &&
@@ -2082,16 +2677,14 @@ class FFmpegExecutor(
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 EDGE GLOW — 4 colored borders around frame
+    //  EDGE GLOW
     // ═══════════════════════════════════════════════════════════
     private fun buildEdgeGlowDrawboxFilter(
         glow: com.moody.moodyvideoeditor.data.EdgeGlowConfig
     ): String {
         return try {
             val (r, g, b) = ChromaEngine.toRgb(glow.color)
-            val hex = String.format(
-                Locale.US, "0x%02X%02X%02X", r, g, b
-            )
+            val hex = String.format(Locale.US, "0x%02X%02X%02X", r, g, b)
             val thickness = glow.radius.coerceIn(2f, 80f).toInt()
             val alpha = (glow.intensity / 100f).coerceIn(0f, 1f)
             val alphaStr = String.format(Locale.US, "%.3f", alpha)
@@ -2168,10 +2761,7 @@ class FFmpegExecutor(
         return Triple(
             (values[0] * red + values[1] * green + values[2] * blue + values[4]).coerceIn(0f, 255f),
             (values[5] * red + values[6] * green + values[7] * blue + values[9]).coerceIn(0f, 255f),
-            (values[10] * red + values[11] * green + values[12] * blue + values[14]).coerceIn(
-                0f,
-                255f
-            )
+            (values[10] * red + values[11] * green + values[12] * blue + values[14]).coerceIn(0f, 255f)
         )
     }
 

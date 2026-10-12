@@ -486,6 +486,14 @@ object ProjectRepository {
         put("type", o.type)
         put("intensity", o.intensity.toDouble())
         put("color", o.color)
+        put("color2", o.color2)
+        put("size", o.size.toDouble())
+        put("opacity", o.opacity.toDouble())
+        put("speed", o.speed.toDouble())
+        put("shape", o.shape)
+        put("glowEnabled", o.glowEnabled)
+        put("glowRadius", o.glowRadius.toDouble())
+        put("glowColor", o.glowColor)
     }
 
     private fun overlayFromJson(o: JSONObject?): OverlayState {
@@ -493,7 +501,15 @@ object ProjectRepository {
         return OverlayState(
             type = o.optString("type", "none"),
             intensity = o.optDouble("intensity", 100.0).toFloat(),
-            color = o.optLong("color", 0xFFFFFFFFL)
+            color = o.optLong("color", 0xFFFFFFFFL),
+            color2 = o.optLong("color2", 0xFFFFFFFFL),
+            size = o.optDouble("size", 1.0).toFloat(),
+            opacity = o.optDouble("opacity", 1.0).toFloat(),
+            speed = o.optDouble("speed", 1.0).toFloat(),
+            shape = o.optString("shape", "circle"),
+            glowEnabled = o.optBoolean("glowEnabled", false),
+            glowRadius = o.optDouble("glowRadius", 1.8).toFloat(),
+            glowColor = o.optLong("glowColor", 0xFFFFFFFFL)
         )
     }
 
@@ -504,6 +520,7 @@ object ProjectRepository {
     private fun effectStateToJson(e: EffectState) = JSONObject().apply {
         put("kind", e.kind)
         put("presetKey", e.presetKey ?: JSONObject.NULL)
+
         val motion = e.motion
         if (motion != null) {
             put("motion", JSONObject().apply {
@@ -512,12 +529,31 @@ object ProjectRepository {
                 put("speed", motion.speed.toDouble())
             })
         }
+
+        // 🆕 Animated color
+        val acCfg = e.animatedColor
+        if (acCfg != null) {
+            put("animatedColor", JSONObject().apply {
+                put("type", acCfg.type)
+                put("speed", acCfg.speed.toDouble())
+                put("intensity", acCfg.intensity.toDouble())
+            })
+        }
+
         val overlay = e.overlay
         if (overlay != null) {
             put("overlayCfg", JSONObject().apply {
                 put("type", overlay.type)
                 put("intensity", overlay.intensity.toDouble())
                 put("color", overlay.color)
+                put("color2", overlay.color2)
+                put("size", overlay.size.toDouble())
+                put("opacity", overlay.opacity.toDouble())
+                put("speed", overlay.speed.toDouble())
+                put("shape", overlay.shape)
+                put("glowEnabled", overlay.glowEnabled)
+                put("glowRadius", overlay.glowRadius.toDouble())
+                put("glowColor", overlay.glowColor)
             })
         }
 
@@ -537,6 +573,7 @@ object ProjectRepository {
 
     private fun effectStateFromJson(o: JSONObject): EffectState {
         val motionObj = o.optJSONObject("motion")
+        val acObj = o.optJSONObject("animatedColor")
         val overlayObj = o.optJSONObject("overlayCfg")
         val edgeGlowObj = o.optJSONObject("edgeGlow")
 
@@ -544,6 +581,7 @@ object ProjectRepository {
             kind = o.optString("kind", EffectState.KIND_EFFECT),
             presetKey = if (o.isNull("presetKey")) ""
             else o.optString("presetKey", ""),
+
             motion = if (motionObj != null) {
                 MotionConfig(
                     type = motionObj.optString("type", "shake"),
@@ -551,13 +589,32 @@ object ProjectRepository {
                     speed = motionObj.optDouble("speed", 1.0).toFloat()
                 )
             } else null,
+
+            // 🆕 Animated color
+            animatedColor = if (acObj != null) {
+                com.moody.moodyvideoeditor.utils.AnimatedColorConfig(
+                    type = acObj.optString("type", "hueCycle"),
+                    speed = acObj.optDouble("speed", 1.0).toFloat(),
+                    intensity = acObj.optDouble("intensity", 100.0).toFloat()
+                )
+            } else null,
+
             overlay = if (overlayObj != null) {
                 OverlayConfig(
                     type = overlayObj.optString("type", "rain"),
                     intensity = overlayObj.optDouble("intensity", 100.0).toFloat(),
-                    color = overlayObj.optLong("color", 0xFFFFFFFFL)
+                    color = overlayObj.optLong("color", 0xFFFFFFFFL),
+                    color2 = overlayObj.optLong("color2", 0xFFFFFFFFL),
+                    size = overlayObj.optDouble("size", 1.0).toFloat(),
+                    opacity = overlayObj.optDouble("opacity", 1.0).toFloat(),
+                    speed = overlayObj.optDouble("speed", 1.0).toFloat(),
+                    shape = overlayObj.optString("shape", "circle"),
+                    glowEnabled = overlayObj.optBoolean("glowEnabled", false),
+                    glowRadius = overlayObj.optDouble("glowRadius", 1.8).toFloat(),
+                    glowColor = overlayObj.optLong("glowColor", 0xFFFFFFFFL)
                 )
             } else null,
+
             edgeGlow = if (edgeGlowObj != null) {
                 EdgeGlowConfig(
                     color = edgeGlowObj.optLong("color", 0xFFFFFFFFL),
@@ -642,6 +699,19 @@ object ProjectRepository {
         put("animationDuration", t.animationDuration.toDouble())
         t.templateId?.let { put("templateId", it) }
 
+        // 🆕 BACKGROUND
+        put("backgroundEnabled", t.backgroundEnabled)
+        put("backgroundType", t.backgroundType)
+        put("backgroundColor1", t.backgroundColor1)
+        put("backgroundColor2", t.backgroundColor2)
+        put("backgroundGradientEnabled", t.backgroundGradientEnabled)
+        put("backgroundGradientAngle", t.backgroundGradientAngle.toDouble())
+        put("backgroundOpacity", t.backgroundOpacity.toDouble())
+        put("backgroundPaddingX", t.backgroundPaddingX.toDouble())
+        put("backgroundPaddingY", t.backgroundPaddingY.toDouble())
+        put("backgroundCornerRadius", t.backgroundCornerRadius.toDouble())
+        put("backgroundBrushSeed", t.backgroundBrushSeed)
+
         val segArr = JSONArray()
         t.segments.forEach { segArr.put(textSegmentToJson(it)) }
         put("segments", segArr)
@@ -694,6 +764,20 @@ object ProjectRepository {
             animationDuration = o.optDouble("animationDuration", 0.6).toFloat(),
             templateId = if (o.isNull("templateId")) null
             else o.optString("templateId", null),
+
+            // 🆕 BACKGROUND
+            backgroundEnabled = o.optBoolean("backgroundEnabled", false),
+            backgroundType = o.optString("backgroundType", "rounded"),
+            backgroundColor1 = o.optLong("backgroundColor1", 0xFF000000L),
+            backgroundColor2 = o.optLong("backgroundColor2", 0xFF000000L),
+            backgroundGradientEnabled = o.optBoolean("backgroundGradientEnabled", false),
+            backgroundGradientAngle = o.optDouble("backgroundGradientAngle", 90.0).toFloat(),
+            backgroundOpacity = o.optDouble("backgroundOpacity", 100.0).toFloat(),
+            backgroundPaddingX = o.optDouble("backgroundPaddingX", 14.0).toFloat(),
+            backgroundPaddingY = o.optDouble("backgroundPaddingY", 8.0).toFloat(),
+            backgroundCornerRadius = o.optDouble("backgroundCornerRadius", 12.0).toFloat(),
+            backgroundBrushSeed = o.optInt("backgroundBrushSeed", 42),
+
             segments = segments
         )
     }

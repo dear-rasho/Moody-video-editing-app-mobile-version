@@ -58,16 +58,16 @@ data class TextState(
 
     // Typography
     val alignment: String = "center",      // left | center | right
-    val letterSpacing: Float = 0f,         // 🆕 char gap in sp
-    val lineHeight: Float = 1.2f,          // 🆕 multiplier (1.0 = normal, 2.0 = double)
-    val tracking: Float = 0f,              // 🆕 overall line stretch (advanced)
+    val letterSpacing: Float = 0f,         // char gap in sp
+    val lineHeight: Float = 1.2f,          // multiplier (1.0 = normal, 2.0 = double)
+    val tracking: Float = 0f,              // overall line stretch (advanced)
 
     // Position (relative 0-100%)
     val positionX: Float = 50f,
     val positionY: Float = 50f,
     val anchorX: Float = 50f,
     val anchorY: Float = 50f,
-    val maxWidth: Float = 90f,             // 🆕 wrap at this % of canvas width
+    val maxWidth: Float = 90f,             // wrap at this % of canvas width
 
     // Transform
     val scale: Float = 100f,
@@ -79,15 +79,28 @@ data class TextState(
     val animationDuration: Float = 0.6f,
 
     // Template
-    val templateId: String? = null,        // 🆕 which template this came from
+    val templateId: String? = null,        // which template this came from
+
+    // 🆕 BACKGROUND
+    val backgroundEnabled: Boolean = false,
+    val backgroundType: String = "rounded",   // rounded | brush | character | shadow | outline
+    val backgroundColor1: Long = 0xFF000000,
+    val backgroundColor2: Long = 0xFF000000,
+    val backgroundGradientEnabled: Boolean = false,
+    val backgroundGradientAngle: Float = 90f,
+    val backgroundOpacity: Float = 100f,
+    val backgroundPaddingX: Float = 14f,
+    val backgroundPaddingY: Float = 8f,
+    val backgroundCornerRadius: Float = 12f,
+    val backgroundBrushSeed: Int = 42,
 
     // Segments (mixed typography)
     val segments: List<TextSegment> = emptyList()
 ) {
 
-
+    // ═══════════════════════════════════════════════════════════
     //  SEGMENT HELPERS
-
+    // ═══════════════════════════════════════════════════════════
 
     // Find segment that contains a given char index
     fun segmentAt(charIndex: Int): TextSegment? =
@@ -114,9 +127,9 @@ data class TextState(
     val styledCharCount: Int
         get() = segments.sumOf { it.length }
 
-
+    // ═══════════════════════════════════════════════════════════
     //  VALIDATION
-
+    // ═══════════════════════════════════════════════════════════
 
     // Clamp segments so they don't exceed content bounds
     fun clampedSegments(): TextState {

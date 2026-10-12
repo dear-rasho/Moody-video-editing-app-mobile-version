@@ -8,6 +8,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -55,7 +56,6 @@ private data class OverlayRenderBuffer(
 
 object TextBitmapRenderer {
 
-    // ✅ SAME reference as TextScaler (720)
     private const val REFERENCE_WIDTH_PX = 720f
 
     private const val TAG = "TEXT_RENDER"
@@ -113,7 +113,6 @@ object TextBitmapRenderer {
         val imageBitmaps = mutableMapOf<String, Bitmap>()
 
         try {
-            // Decode image clips once (used for higher-track images)
             sortedImageClips.forEach { clip ->
                 imageBitmaps[clip.id] = withContext(Dispatchers.IO) {
                     decodeImage(context, clip, W, H)
@@ -549,7 +548,15 @@ object TextBitmapRenderer {
             return OverlayState(
                 type = effOv.type,
                 intensity = effOv.intensity,
-                color = effOv.color
+                color = effOv.color,
+                color2 = effOv.color2,
+                size = effOv.size,
+                opacity = effOv.opacity,
+                speed = effOv.speed,
+                shape = effOv.shape,
+                glowEnabled = effOv.glowEnabled,
+                glowRadius = effOv.glowRadius,
+                glowColor = effOv.glowColor
             )
         }
         return null
@@ -643,11 +650,110 @@ object TextBitmapRenderer {
         if (alphaInt <= 0) return
         paint.alpha = alphaInt
 
+        if (frame.blurRadiusPx > 0.5f) {
+            paint.maskFilter = BlurMaskFilter(
+                frame.blurRadiusPx.coerceIn(0.5f, 40f),
+                BlurMaskFilter.Blur.NORMAL
+            )
+        }
+
         canvas.save()
         canvas.translate(cx + frame.translateX, cy + frame.translateY)
         canvas.rotate(sampled.rotation + frame.rotationZ)
         canvas.drawText(ss.emoji, 0f, baseline - cy, paint)
         canvas.restore()
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  TEXT BACKGROUND — 3 types (rounded, character, outline)
+    // ═══════════════════════════════════════════════════════════
+
+    private fun drawTextBackground(
+        canvas: Canvas,
+        state: com.moody.moodyvideoeditor.data.TextState,
+        lines: List<String>,
+        basePaint: Paint,
+        scale: Float,
+        alphaInt: Int
+    ) {
+        if (!state.backgroundEnabled) return
+        if (lines.isEmpty()) return
+
+        val padX = state.backgroundPaddingX * scale * 1.5f
+        val padY = state.backgroundPaddingY * scale * 1.5f
+
+        var measuredW = 0f
+        lines.forEach { line ->
+            val w = basePaint.measureText(line)
+            if (w > measuredW) measuredW = w
+        }
+        val metrics = basePaint.fontMetrics
+        val lineHeightPx = (metrics.descent - metrics.ascent) * state.lineHeight
+        val measuredH = lineHeightPx * lines.size
+
+        val boxW = measuredW + padX * 2
+        val boxH = measuredH + padY * 2
+
+        val boxLeft = -boxW / 2f
+        val boxTop = -boxH / 2f
+
+        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            alpha = alphaInt
+        }
+
+        if (state.backgroundGradientEnabled) {
+            val rad = Math.toRadians(state.backgroundGradientAngle.toDouble())
+            val dx = kotlin.math.cos(rad).toFloat()
+            val dy = kotlin.math.sin(rad).toFloat()
+            val ext = maxOf(boxW, boxH)
+            bgPaint.shader = LinearGradient(
+                -dx * ext, -dy * ext,
+                dx * ext, dy * ext,
+                state.backgroundColor1.toInt(),
+                state.backgroundColor2.toInt(),
+                Shader.TileMode.CLAMP
+            )
+        } else {
+            bgPaint.color = state.backgroundColor1.toInt()
+        }
+
+        when (state.backgroundType) {
+            "rounded" -> {
+                val rect = android.graphics.RectF(
+                    boxLeft, boxTop, boxLeft + boxW, boxTop + boxH
+                )
+                val radiusPx = state.backgroundCornerRadius * scale * 1.5f
+                canvas.drawRoundRect(rect, radiusPx, radiusPx, bgPaint)
+            }
+
+            "character" -> {
+                val tightBoxW = measuredW + 4f * scale
+                val tightBoxH = measuredH + 4f * scale
+                val rect = android.graphics.RectF(
+                    -tightBoxW / 2f,
+                    -tightBoxH / 2f,
+                    tightBoxW / 2f,
+                    tightBoxH / 2f
+                )
+                canvas.drawRect(rect, bgPaint)
+            }
+
+            "outline" -> {
+                val rect = android.graphics.RectF(
+                    boxLeft, boxTop, boxLeft + boxW, boxTop + boxH
+                )
+                val radiusPx = state.backgroundCornerRadius * scale * 1.5f
+                val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = 3f * scale * 1.5f
+                    alpha = alphaInt
+                    if (bgPaint.shader != null) shader = bgPaint.shader
+                    else color = state.backgroundColor1.toInt()
+                }
+                canvas.drawRoundRect(rect, radiusPx, radiusPx, outlinePaint)
+            }
+        }
     }
 
     private fun drawTextWithFrame(
@@ -678,6 +784,7 @@ object TextBitmapRenderer {
                 Typeface.DEFAULT
             }
 
+            val lines = content.split('\n')
             val scale = W.toFloat() / REFERENCE_WIDTH_PX
             val fontSize = TextRenderContract.fittedFontSizePx(
                 content = content,
@@ -694,7 +801,6 @@ object TextBitmapRenderer {
             val basePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 this.typeface = typeface
                 this.textSize = fontSize
-                // Preview positions the intrinsically-sized text box by its center.
                 textAlign = Paint.Align.CENTER
                 letterSpacing = spacingEm
                 color = st.color.toInt()
@@ -707,18 +813,32 @@ object TextBitmapRenderer {
             val cy = clampedY / 100f * H
 
             val fm = basePaint.fontMetrics
-            val baseline = cy - (fm.ascent + fm.descent) / 2f
+            val lineHeightPx = (fm.descent - fm.ascent) * st.lineHeight
+            val lineCount = lines.size
+
+            val firstBaseline = -(lineCount - 1) * lineHeightPx / 2f -
+                    (fm.ascent + fm.descent) / 2f
+
+            // 3D flip approximation
+            val flipScaleY = if (frame.rotationX != 0f) {
+                kotlin.math.abs(
+                    kotlin.math.cos(Math.toRadians(frame.rotationX.toDouble()))
+                ).toFloat().coerceAtLeast(0.05f)
+            } else 1f
+
+            val flipScaleX = if (frame.rotationY != 0f) {
+                kotlin.math.abs(
+                    kotlin.math.cos(Math.toRadians(frame.rotationY.toDouble()))
+                ).toFloat().coerceAtLeast(0.05f)
+            } else 1f
 
             canvas.save()
             canvas.translate(cx + frame.translateX, cy + frame.translateY)
             canvas.rotate(sampled.rotation + frame.rotationZ)
             canvas.scale(
-                (sampled.scale / 100f) * frame.scaleX,
-                (sampled.scale / 100f) * frame.scaleY
+                (sampled.scale / 100f) * frame.scaleX * flipScaleX,
+                (sampled.scale / 100f) * frame.scaleY * flipScaleY
             )
-
-            val tx = 0f
-            val ty = baseline - cy
 
             val alphaTotal = (st.opacity / 100f * frame.alpha).coerceIn(0f, 1f)
             val alphaInt = (alphaTotal * 255).toInt().coerceIn(0, 255)
@@ -728,6 +848,19 @@ object TextBitmapRenderer {
                 return
             }
 
+            // BACKGROUND — before text
+            if (st.backgroundEnabled) {
+                drawTextBackground(
+                    canvas = canvas,
+                    state = st,
+                    lines = lines,
+                    basePaint = basePaint,
+                    scale = scale,
+                    alphaInt = alphaInt
+                )
+            }
+
+            // GLOW — per line
             if (st.glowEnabled && st.glowRadius > 0f) {
                 val glowColorInt = st.glowColor.toInt()
                 val glowR = (st.glowRadius * scale).coerceIn(2f, 100f)
@@ -744,10 +877,14 @@ object TextBitmapRenderer {
                             BlurMaskFilter.Blur.NORMAL
                         )
                     }
-                    canvas.drawText(content, tx, ty, glowPaint)
+                    lines.forEachIndexed { i, line ->
+                        val lineY = firstBaseline + i * lineHeightPx
+                        canvas.drawText(line, 0f, lineY, glowPaint)
+                    }
                 }
             }
 
+            // SHADOW — per line
             if (st.shadowEnabled) {
                 val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     this.typeface = typeface
@@ -764,9 +901,13 @@ object TextBitmapRenderer {
                         st.shadowColor.toInt()
                     )
                 }
-                canvas.drawText(content, tx, ty, shadowPaint)
+                lines.forEachIndexed { i, line ->
+                    val lineY = firstBaseline + i * lineHeightPx
+                    canvas.drawText(line, 0f, lineY, shadowPaint)
+                }
             }
 
+            // STROKE — per line
             if (st.strokeEnabled && st.strokeWidth > 0f) {
                 val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     this.typeface = typeface
@@ -782,7 +923,6 @@ object TextBitmapRenderer {
                     alpha = alphaInt
                     setShadowLayer(0f, 0f, 0f, 0)
 
-                    // 🆕 Apply animation blur to stroke too
                     if (frame.blurRadiusPx > 0.5f) {
                         maskFilter = BlurMaskFilter(
                             frame.blurRadiusPx.coerceIn(0.5f, 40f),
@@ -790,9 +930,13 @@ object TextBitmapRenderer {
                         )
                     }
                 }
-                canvas.drawText(content, tx, ty, strokePaint)
+                lines.forEachIndexed { i, line ->
+                    val lineY = firstBaseline + i * lineHeightPx
+                    canvas.drawText(line, 0f, lineY, strokePaint)
+                }
             }
 
+            // FILL — per line
             val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 this.typeface = typeface
                 this.textSize = fontSize
@@ -801,7 +945,6 @@ object TextBitmapRenderer {
                 alpha = alphaInt
                 setShadowLayer(0f, 0f, 0f, 0)
 
-                // 🆕 Apply animation blur (cinematicBlur, blurryReveal, etc.)
                 if (frame.blurRadiusPx > 0.5f) {
                     maskFilter = BlurMaskFilter(
                         frame.blurRadiusPx.coerceIn(0.5f, 40f),
@@ -809,16 +952,12 @@ object TextBitmapRenderer {
                     )
                 }
             }
+
             if (st.gradientEnabled) {
                 val rad = Math.toRadians(st.gradientAngle.toDouble())
                 val dirX = kotlin.math.cos(rad).toFloat()
                 val dirY = kotlin.math.sin(rad).toFloat()
-
-                // ⚠️ Canvas already translated to (cx, cy).
-                // Use local (0,0) as text center — matches preview behavior.
-                // 600f extent = same as PreviewCanvas gradient.
                 val extent = 600f
-
                 fillPaint.shader = LinearGradient(
                     -dirX * extent, -dirY * extent,
                     dirX * extent, dirY * extent,
@@ -830,9 +969,12 @@ object TextBitmapRenderer {
                 fillPaint.color = st.color.toInt()
             }
 
-            canvas.drawText(content, tx, ty, fillPaint)
-            canvas.restore()
+            lines.forEachIndexed { i, line ->
+                val lineY = firstBaseline + i * lineHeightPx
+                canvas.drawText(line, 0f, lineY, fillPaint)
+            }
 
+            canvas.restore()
         } catch (e: Throwable) {
             Log.e(TAG, "drawTextWithFrame failed", e)
         }

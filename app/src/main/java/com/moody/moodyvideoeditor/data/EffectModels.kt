@@ -9,13 +9,14 @@ data class EffectPreset(
     val kind: EffectKind,
     val motion: MotionConfig? = null,
     val filters: ColorFilterValues? = null,
+    val animatedColor: com.moody.moodyvideoeditor.utils.AnimatedColorConfig? = null,
     val overlay: OverlayConfig? = null,
     val edgeGlow: EdgeGlowConfig? = null,
     val lightLeak: LightLeakConfig? = null
 )
 
 enum class EffectKind {
-    MOTION, COLOR, OVERLAY, EDGE_GLOW, LIGHT_LEAK
+    MOTION, ANIMATED_COLOR, OVERLAY, EDGE_GLOW, LIGHT_LEAK
 }
 
 // Mirrors MOTION_MAP values from beatsEngine.js
@@ -40,9 +41,17 @@ data class ColorFilterValues(
 
 // Mirrors OVERLAY presets in effect.js
 data class OverlayConfig(
-    val type: String,       // rain | snow | fog | lightLeak | ...
+    val type: String,
     val intensity: Float = 100f,
-    val color: Long = 0xFFFFFFFF
+    val color: Long = 0xFFFFFFFF,
+    val color2: Long = 0xFFFFFFFF,
+    val size: Float = 1.0f,
+    val opacity: Float = 1.0f,
+    val speed: Float = 1.0f,
+    val shape: String = "circle",
+    val glowEnabled: Boolean = false,
+    val glowRadius: Float = 1.8f,
+    val glowColor: Long = 0xFFFFFFFF
 )
 
 // ═══════════════════════════════════════════════════════════════
@@ -325,727 +334,110 @@ object EffectLibrary {
     )
 
 
-    //  COLOR EFFECTS — mirrors effect.js color presets
-
-    val COLOR_EFFECTS: List<EffectPreset> = listOf(
-        // Original
+    val ANIMATED_COLOR_EFFECTS: List<EffectPreset> = listOf(
         EffectPreset(
-            "warm",
-            "Warm Glow",
-            "🌅",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 108f, contrast = 105f, saturation = 115f)
+            "acHueCycle", "Hue Cycle", "🌈", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("hueCycle", 1.0f, 100f)
         ),
         EffectPreset(
-            "cool",
-            "Cool Blue",
-            "❄️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 100f, contrast = 108f, saturation = 95f)
+            "acHueFast", "Hue Fast", "⚡", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("hueFast", 1.0f, 100f)
         ),
         EffectPreset(
-            "vintage",
-            "Vintage",
-            "📼",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 98f,
-                contrast = 92f,
-                saturation = 80f,
-                sepia = 25f
-            )
+            "acHueReverse", "Hue Reverse", "🔄", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("hueReverse", 1.0f, 100f)
         ),
         EffectPreset(
-            "cinematic",
-            "Cinematic",
-            "🎬",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 98f, contrast = 118f, saturation = 90f)
+            "acRainbowFlow", "Rainbow Flow", "🌈", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("rainbowFlow", 1.0f, 100f)
         ),
         EffectPreset(
-            "bw",
-            "Black & White",
-            "⚫",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(grayscale = 100f, contrast = 110f)
+            "acSatPulse", "Sat Pulse", "🎨", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("satPulse", 1.0f, 100f)
         ),
         EffectPreset(
-            "dreamy",
-            "Dreamy",
-            "💭",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 105f,
-                contrast = 92f,
-                saturation = 105f,
-                blur = 0.6f
-            )
+            "acSatFade", "Sat Fade", "🌫️", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("satFade", 1.0f, 100f)
         ),
         EffectPreset(
-            "vivid",
-            "Vivid",
-            "🎨",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 102f, contrast = 112f, saturation = 145f)
+            "acBrightPulse", "Bright Pulse", "☀️", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("brightPulse", 1.0f, 100f)
         ),
         EffectPreset(
-            "faded",
-            "Faded",
-            "🌫️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 108f, contrast = 82f, saturation = 75f)
+            "acBrightFlicker", "Bright Flicker", "🕯️", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("brightFlicker", 1.0f, 80f)
         ),
         EffectPreset(
-            "dramatic",
-            "Dramatic",
-            "🎭",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(contrast = 130f, saturation = 110f)
+            "acWarmCool", "Warm ↔ Cool", "🌡️", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("warmCool", 1.0f, 100f)
         ),
         EffectPreset(
-            "negative",
-            "Negative",
-            "🔄",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(invert = 100f)
+            "acSunsetShift", "Sunset Shift", "🌅", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("sunsetShift", 1.0f, 100f)
         ),
         EffectPreset(
-            "softGlow",
-            "Soft Glow",
-            "💫",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 112f,
-                contrast = 95f,
-                saturation = 108f,
-                blur = 0.4f
-            )
+            "acColorStrobe", "Color Strobe", "💡", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("colorStrobe", 1.5f, 100f)
         ),
         EffectPreset(
-            "noir",
-            "Noir",
-            "🖤",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(grayscale = 100f, contrast = 135f, brightness = 92f)
+            "acDisco", "Disco", "🕺", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("disco", 1.0f, 100f)
         ),
-
-        // Cinematic
         EffectPreset(
-            "tealOrange",
-            "Teal & Orange",
-            "🟠",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 100f, contrast = 115f, saturation = 110f)
+            "acNeonPulse", "Neon Pulse", "💫", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("neonPulse", 1.5f, 100f)
         ),
         EffectPreset(
-            "hollywood",
-            "Hollywood",
-            "🌟",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 98f, contrast = 120f, saturation = 105f)
+            "acChromaWave", "Chroma Wave", "🌊", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("chromaWave", 1.0f, 100f)
         ),
         EffectPreset(
-            "blockbuster",
-            "Blockbuster",
-            "🎥",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 102f, contrast = 118f, saturation = 115f)
+            "acFireFlicker", "Fire Flicker", "🔥", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("fireFlicker", 2.0f, 100f)
         ),
         EffectPreset(
-            "filmLook",
-            "Film Look",
-            "🎞️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 96f, contrast = 116f, saturation = 92f)
+            "acIcePulse", "Ice Pulse", "🧊", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("icePulse", 1.0f, 100f)
         ),
         EffectPreset(
-            "drama",
-            "Drama",
-            "🎭",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 92f, contrast = 128f, saturation = 88f)
+            "acCyberShift", "Cyber Shift", "🤖", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("cyberShift", 1.0f, 100f)
         ),
         EffectPreset(
-            "epic",
-            "Epic",
-            "⚔️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 100f, contrast = 125f, saturation = 110f)
+            "acOceanWave", "Ocean Wave", "🌊", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("oceanWave", 0.8f, 100f)
         ),
         EffectPreset(
-            "thriller",
-            "Thriller",
-            "🔪",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 88f, contrast = 135f, saturation = 85f)
+            "acHeartbeatColor", "Heartbeat", "❤️", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("heartbeatColor", 1.0f, 100f)
         ),
-
-        // Film / Vintage
         EffectPreset(
-            "bleach",
-            "Bleach",
-            "🧴",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 105f, contrast = 140f, saturation = 55f)
+            "acSepiaPulse", "Sepia Pulse", "📼", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("sepiaPulse", 1.0f, 100f)
         ),
         EffectPreset(
-            "bleachBypass",
-            "Bleach Bypass",
-            "⚪",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 102f, contrast = 145f, saturation = 50f)
+            "acInvertFlash", "Invert Flash", "◐", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("invertFlash", 1.0f, 100f)
         ),
         EffectPreset(
-            "sepiaMem",
-            "Sepia Memory",
-            "🟤",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 100f,
-                contrast = 100f,
-                saturation = 65f,
-                sepia = 55f
-            )
+            "acVividBreath", "Vivid Breath", "🎆", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("vividBreath", 1.0f, 100f)
         ),
         EffectPreset(
-            "sepiaDeep",
-            "Sepia Deep",
-            "🟫",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 95f,
-                contrast = 105f,
-                saturation = 60f,
-                sepia = 75f
-            )
+            "acGoldShimmer", "Gold Shimmer", "✨", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("goldShimmer", 1.5f, 100f)
         ),
         EffectPreset(
-            "retro8mm",
-            "Retro 8mm",
-            "📽️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 102f,
-                contrast = 108f,
-                saturation = 75f,
-                sepia = 30f
-            )
+            "acBloodPulse", "Blood Pulse", "🩸", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("bloodPulse", 1.0f, 100f)
         ),
         EffectPreset(
-            "kodak",
-            "Kodak Film",
-            "📷",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 102f,
-                contrast = 110f,
-                saturation = 118f,
-                sepia = 8f
-            )
+            "acPurpleHaze", "Purple Haze", "🟣", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("purpleHaze", 1.0f, 100f)
         ),
         EffectPreset(
-            "polaroid",
-            "Polaroid",
-            "🖼️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 105f,
-                contrast = 95f,
-                saturation = 90f,
-                sepia = 15f
-            )
-        ),
-        EffectPreset(
-            "oldFilm",
-            "Old Film",
-            "🎞️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 95f,
-                contrast = 108f,
-                saturation = 70f,
-                sepia = 40f
-            )
-        ),
-        EffectPreset(
-            "antique",
-            "Antique",
-            "🏛️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 92f,
-                contrast = 105f,
-                saturation = 75f,
-                sepia = 60f
-            )
-        ),
-
-        // Monochrome
-        EffectPreset(
-            "monochrome",
-            "Monochrome",
-            "⬛",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(grayscale = 100f, contrast = 120f)
-        ),
-        EffectPreset(
-            "graySoft",
-            "Gray Soft",
-            "🌫️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(grayscale = 100f, contrast = 90f, brightness = 105f)
-        ),
-        EffectPreset(
-            "grayHard",
-            "Gray Hard",
-            "⬜",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(grayscale = 100f, contrast = 145f)
-        ),
-        EffectPreset(
-            "inkwell",
-            "Inkwell",
-            "🖋️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(grayscale = 100f, contrast = 160f, brightness = 90f)
-        ),
-        EffectPreset(
-            "filmNoir",
-            "Film Noir",
-            "🌑",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(grayscale = 100f, contrast = 155f, brightness = 88f)
-        ),
-
-        // Neon / Cyberpunk
-        EffectPreset(
-            "cyberpunk",
-            "Cyberpunk",
-            "🤖",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 105f, contrast = 120f, saturation = 170f)
-        ),
-        EffectPreset(
-            "vaporwave",
-            "Vaporwave",
-            "🌆",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 102f, contrast = 108f, saturation = 165f)
-        ),
-        EffectPreset(
-            "synthwave",
-            "Synthwave",
-            "🎹",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 100f, contrast = 125f, saturation = 155f)
-        ),
-        EffectPreset(
-            "plasma",
-            "Plasma",
-            "🔥",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 108f, contrast = 115f, saturation = 175f)
-        ),
-        EffectPreset(
-            "electric",
-            "Electric",
-            "⚡",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 105f, contrast = 122f, saturation = 180f)
-        ),
-        EffectPreset(
-            "techno",
-            "Techno",
-            "🎛️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 100f, contrast = 130f, saturation = 165f)
-        ),
-        EffectPreset(
-            "neonCity",
-            "Neon City",
-            "🌃",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 102f, contrast = 118f, saturation = 175f)
-        ),
-        EffectPreset(
-            "retrowave",
-            "Retrowave",
-            "🕹️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 100f, contrast = 112f, saturation = 160f)
-        ),
-
-        // Warm
-        EffectPreset(
-            "gold",
-            "Gold",
-            "🟡",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 108f, contrast = 108f, saturation = 130f)
-        ),
-        EffectPreset(
-            "sunrise",
-            "Sunrise",
-            "🌅",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 110f, contrast = 100f, saturation = 125f)
-        ),
-        EffectPreset(
-            "sunset",
-            "Sunset",
-            "🌇",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 105f, contrast = 105f, saturation = 140f)
-        ),
-        EffectPreset(
-            "goldenHour",
-            "Golden Hour",
-            "⏰",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 112f, contrast = 102f, saturation = 135f)
-        ),
-        EffectPreset(
-            "amber",
-            "Amber",
-            "🟠",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 105f, contrast = 105f, saturation = 125f)
-        ),
-        EffectPreset(
-            "ember",
-            "Ember",
-            "🔥",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 100f, contrast = 115f, saturation = 135f)
-        ),
-        EffectPreset(
-            "copper",
-            "Copper",
-            "🟤",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 102f, contrast = 108f, saturation = 128f)
-        ),
-        EffectPreset(
-            "autumn",
-            "Autumn",
-            "🍂",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 100f, contrast = 105f, saturation = 140f)
-        ),
-
-        // Cool
-        EffectPreset(
-            "moonlight",
-            "Moonlight",
-            "🌙",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 95f, contrast = 110f, saturation = 90f)
-        ),
-        EffectPreset(
-            "midnight",
-            "Midnight",
-            "🌌",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 85f, contrast = 120f, saturation = 95f)
-        ),
-        EffectPreset(
-            "ice",
-            "Ice",
-            "🧊",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 110f, contrast = 105f, saturation = 100f)
-        ),
-        EffectPreset(
-            "frost",
-            "Frost",
-            "❄️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 108f, contrast = 108f, saturation = 95f)
-        ),
-        EffectPreset(
-            "ocean",
-            "Ocean",
-            "🌊",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 100f, contrast = 110f, saturation = 120f)
-        ),
-        EffectPreset(
-            "sky",
-            "Sky",
-            "☁️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 105f, contrast = 100f, saturation = 115f)
-        ),
-        EffectPreset(
-            "deepBlue",
-            "Deep Blue",
-            "🔵",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 90f, contrast = 115f, saturation = 130f)
-        ),
-
-        // Moody
-        EffectPreset(
-            "moody",
-            "Moody",
-            "🌑",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 90f, contrast = 118f, saturation = 85f)
-        ),
-        EffectPreset(
-            "darkDrama",
-            "Dark Drama",
-            "🎬",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 85f, contrast = 130f, saturation = 80f)
-        ),
-        EffectPreset(
-            "grunge",
-            "Grunge",
-            "🖤",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 95f, contrast = 135f, saturation = 70f)
-        ),
-        EffectPreset(
-            "gritty",
-            "Gritty",
-            "⚫",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 92f, contrast = 132f, saturation = 88f)
-        ),
-        EffectPreset(
-            "somber",
-            "Somber",
-            "🌧️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 88f, contrast = 115f, saturation = 75f)
-        ),
-
-        // Special FX
-        EffectPreset(
-            "infrared",
-            "Infrared",
-            "🟥",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 105f,
-                contrast = 115f,
-                saturation = 160f,
-                invert = 20f
-            )
-        ),
-        EffectPreset(
-            "matrix",
-            "Matrix",
-            "🟢",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 95f, contrast = 120f, saturation = 130f)
-        ),
-        EffectPreset(
-            "thermal",
-            "Thermal",
-            "🌡️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 108f, contrast = 125f, saturation = 180f)
-        ),
-        EffectPreset(
-            "xray",
-            "X-Ray",
-            "🩻",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 100f,
-                contrast = 150f,
-                saturation = 10f,
-                invert = 30f
-            )
-        ),
-        EffectPreset(
-            "duotone",
-            "Duotone",
-            "🎨",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 100f, contrast = 125f, saturation = 110f)
-        ),
-        EffectPreset(
-            "spectrum",
-            "Spectrum",
-            "🌈",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 105f, contrast = 115f, saturation = 175f)
-        ),
-        EffectPreset(
-            "hyperSat",
-            "Hyper Sat",
-            "🎆",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 102f, contrast = 108f, saturation = 190f)
-        ),
-
-        // Soft / Dreamy
-        EffectPreset(
-            "softFocus",
-            "Soft Focus",
-            "💫",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 108f,
-                contrast = 95f,
-                saturation = 108f,
-                blur = 0.8f
-            )
-        ),
-        EffectPreset(
-            "pastel",
-            "Pastel",
-            "🌸",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 112f, contrast = 88f, saturation = 95f)
-        ),
-        EffectPreset(
-            "creamy",
-            "Creamy",
-            "🍦",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 108f,
-                contrast = 92f,
-                saturation = 100f,
-                sepia = 10f
-            )
-        ),
-        EffectPreset(
-            "haze",
-            "Haze",
-            "🌁",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 110f,
-                contrast = 85f,
-                saturation = 100f,
-                blur = 0.7f
-            )
-        ),
-        EffectPreset(
-            "bloom",
-            "Bloom",
-            "🌺",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 118f,
-                contrast = 95f,
-                saturation = 115f,
-                blur = 0.4f
-            )
-        ),
-        EffectPreset(
-            "ethereal",
-            "Ethereal",
-            "👻",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(
-                brightness = 112f,
-                contrast = 90f,
-                saturation = 115f,
-                blur = 0.8f
-            )
-        ),
-
-        // HDR
-        EffectPreset(
-            "hdr",
-            "HDR",
-            "🔆",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 105f, contrast = 135f, saturation = 125f)
-        ),
-        EffectPreset(
-            "punchy",
-            "Punchy",
-            "👊",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 100f, contrast = 130f, saturation = 140f)
-        ),
-        EffectPreset(
-            "dynamic",
-            "Dynamic",
-            "💥",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 105f, contrast = 128f, saturation = 130f)
-        ),
-        EffectPreset(
-            "vividHard",
-            "Vivid Hard",
-            "🎨",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 102f, contrast = 120f, saturation = 170f)
-        ),
-        EffectPreset(
-            "contrastMax",
-            "Contrast Max",
-            "◐",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 95f, contrast = 155f, saturation = 120f)
-        ),
-
-        // Sepia
-        EffectPreset(
-            "sepia",
-            "Sepia",
-            "🟫",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(sepia = 100f)
-        ),
-        EffectPreset(
-            "sepiaWarm",
-            "Sepia Warm",
-            "🟤",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(sepia = 75f, brightness = 103f, contrast = 105f)
-        ),
-        EffectPreset(
-            "brownTone",
-            "Brown Tone",
-            "🍫",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(sepia = 85f, brightness = 98f, contrast = 108f)
-        ),
-        EffectPreset(
-            "coffee",
-            "Coffee",
-            "☕",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(sepia = 60f, brightness = 95f, contrast = 110f)
-        ),
-
-        // Flash / Light
-        EffectPreset(
-            "flashWhite",
-            "Flash White",
-            "⚪",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 200f, contrast = 100f, saturation = 100f)
-        ),
-        EffectPreset(
-            "flashSoft",
-            "Flash Soft",
-            "🔆",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 150f, contrast = 108f, saturation = 110f)
-        ),
-        EffectPreset(
-            "lightBurst",
-            "Light Burst",
-            "💡",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 175f, contrast = 105f, saturation = 120f)
-        ),
-        EffectPreset(
-            "overexpose",
-            "Overexpose",
-            "☀️",
-            EffectKind.COLOR,
-            filters = ColorFilterValues(brightness = 165f, contrast = 95f, saturation = 105f)
+            "acToxicGreen", "Toxic Green", "☢️", EffectKind.ANIMATED_COLOR,
+            animatedColor = com.moody.moodyvideoeditor.utils.AnimatedColorConfig("toxicGreen", 1.5f, 100f)
         )
     )
 
@@ -1417,7 +809,7 @@ object EffectLibrary {
 
     //  ALL EFFECTS — combined
 
-    val ALL: List<EffectPreset> = MOTION_EFFECTS + COLOR_EFFECTS +
+    val ALL: List<EffectPreset> = MOTION_EFFECTS + ANIMATED_COLOR_EFFECTS +
             OVERLAY_EFFECTS + EDGE_GLOW_EFFECTS + LIGHT_LEAK_EFFECTS
 
     fun findByKey(key: String): EffectPreset? = ALL.firstOrNull { it.key == key }

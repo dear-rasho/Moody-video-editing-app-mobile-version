@@ -369,13 +369,45 @@ fun PreviewCanvas(
     val combinedMotion = EffectsEngine.combineMotions(motionFrames)
 
     val filterList = activeEffects.mapNotNull { it.effectState?.filters }.toMutableList()
+
+// Animated colors from active effect clips (only once!)
+    activeEffects.forEach { clip ->
+        val acCfg = clip.effectState?.animatedColor
+        if (acCfg != null) {
+            val dyn = com.moody.moodyvideoeditor.utils.AnimatedColorEngine
+                .compute(acCfg, timeSec)
+            filterList.add(dyn)
+        }
+    }
+
     previewEffectState?.filters?.let { filterList.add(it) }
+
+// Animated color from preview effect
+    previewEffectState?.animatedColor?.let { acCfg ->
+        val dyn = com.moody.moodyvideoeditor.utils.AnimatedColorEngine
+            .compute(acCfg, timeSec)
+        filterList.add(dyn)
+    }
 
     val combinedFilter = if (filterList.isNotEmpty())
         EffectsEngine.combineFilters(filterList) else null
 
     val previewOverlays = previewEffectState?.overlay?.let {
-        listOf(OverlayState(type = it.type, intensity = it.intensity, color = it.color))
+        listOf(
+            OverlayState(
+                type = it.type,
+                intensity = it.intensity,
+                color = it.color,
+                color2 = it.color2,
+                size = it.size,
+                opacity = it.opacity,
+                speed = it.speed,
+                shape = it.shape,
+                glowEnabled = it.glowEnabled,
+                glowRadius = it.glowRadius,
+                glowColor = it.glowColor
+            )
+        )
     } ?: emptyList()
     val allOverlays = EffectsEngine.collectActiveOverlays(clips, currentPosMs, videoTrackIdx)
         .toMutableList()
@@ -2749,14 +2781,12 @@ private fun InteractiveTextOverlay(
     )
     val effLineHeightPx = TextScaler.lineHeight(effFontSizePx, textState.lineHeight)
     val family = FontLibrary.familyFor(textState.fontFamily)
-    val weight = if (textState.fontWeight == "bold") FontWeight.Bold
-    else FontWeight.Normal
+    val weight = if (textState.fontWeight == "bold") FontWeight.Bold else FontWeight.Normal
     val fontSty = if (textState.fontStyle == "italic")
         androidx.compose.ui.text.font.FontStyle.Italic
     else androidx.compose.ui.text.font.FontStyle.Normal
 
-    val userStrokePx = textState.strokeWidth.coerceAtLeast(0f) *
-            2f * (canvasWpx / 720f)
+    val userStrokePx = textState.strokeWidth.coerceAtLeast(0f) * 2f * (canvasWpx / 720f)
 
     val finalFontSizePx = TextRenderContract.fittedFontSizePx(
         content = displayContent,
@@ -2773,7 +2803,7 @@ private fun InteractiveTextOverlay(
 
     val finalMeasure = remember(
         displayContent, finalFontSizeSp, finalLetterSpacingSp,
-        finalLineHeightSp, family, weight, fontSty
+        finalLineHeightSp, family, weight, fontSty, canvasWpx, textState.maxWidth
     ) {
         measurer.measure(
             text = displayContent,
@@ -2786,14 +2816,16 @@ private fun InteractiveTextOverlay(
                 fontStyle = fontSty
             ),
             constraints = androidx.compose.ui.unit.Constraints(
-                maxWidth = Int.MAX_VALUE
+                maxWidth = (canvasWpx * (textState.maxWidth / 100f))
+                    .toInt().coerceAtLeast(50)
             ),
-            softWrap = false
+            softWrap = true
         )
     }
 
     val textWidthDp = with(density) { finalMeasure.size.width.toDp().value }
     val textHeightDp = with(density) { finalMeasure.size.height.toDp().value }
+    val textWidthConstraintDp = with(density) { finalMeasure.size.width.toDp() }
 
     val solidColor = Color(textState.color)
     val gradient: Brush? = if (textState.gradientEnabled) {
@@ -2828,23 +2860,34 @@ private fun InteractiveTextOverlay(
         else -> androidx.compose.ui.text.style.TextAlign.Center
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  DIMENSIONS
+    // ═══════════════════════════════════════════════════════════
+
+    val bgPadX = if (textState.backgroundEnabled) textState.backgroundPaddingX else 4f
+    val bgPadY = if (textState.backgroundEnabled) textState.backgroundPaddingY else 4f
+
+    val glowPadDp = if (textState.glowEnabled && textState.glowRadius > 0f) {
+        val glowPadPx = textState.glowRadius * (canvasWpx / 720f) * 3.0f
+        with(density) { glowPadPx.toDp().value }
+    } else 0f
+
+    // ✅ Selection box = text + bg padding ONLY (no glow)
+    val selectionWidthDp = (textWidthDp + bgPadX * 2f).coerceAtLeast(20f)
+    val selectionHeightDp = (textHeightDp + bgPadY * 2f).coerceAtLeast(20f)
+
+    // Outer box has glow padding for glow not to clip
+    val outerWidthDp = selectionWidthDp + glowPadDp * 2f
+    val outerHeightDp = selectionHeightDp + glowPadDp * 2f
+
+    val blurDp = with(density) { frame.blurRadiusPx.toDp() }
+        .coerceAtLeast(0.dp).coerceAtMost(20.dp)
+
     val borderColor = when {
         isSelected -> Color(0xFF60EFFF)
         isMulti -> Color(0xFFFFD166)
         else -> Color.Transparent
     }
-
-    val glowDensity = density.density
-    val glowSizePx = finalFontSizePx
-    val glowLetterSpacingEm = if (finalFontSizePx <= 0f) 0f
-    else (effLetterSpacingPx / finalFontSizePx).coerceIn(-0.3f, 0.3f)
-
-    // Extra padding so glow doesn't get clipped
-    val glowPadDp = if (textState.glowEnabled && textState.glowRadius > 0f) {
-        val glowPadPx = textState.glowRadius *
-                (canvasWpx / 720f) * 3.0f  // 3x radius safety margin
-        with(density) { glowPadPx.toDp().value }
-    } else 0f
 
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -2860,17 +2903,18 @@ private fun InteractiveTextOverlay(
                     scaleX = (sampled.scale / 100f) * frame.scaleX
                     scaleY = (sampled.scale / 100f) * frame.scaleY
                     rotationZ = sampled.rotation + frame.rotationZ
+                    rotationX = frame.rotationX
+                    rotationY = frame.rotationY
+                    cameraDistance = 16f * density.density
                     alpha = (textState.opacity / 100f) * frame.alpha
                     transformOrigin = TransformOrigin.Center
                 }
-                .width((textWidthDp + 16f + glowPadDp * 2).coerceAtLeast(26f).dp)
-                .height((textHeightDp + 16f + glowPadDp * 2).coerceAtLeast(26f).dp)
+                .width(outerWidthDp.dp)
+                .height(outerHeightDp.dp)
                 .then(
-                    if (isSelected || isMulti) Modifier.border(
-                        width = if (isSelected) 1.5.dp else 1.dp,
-                        color = borderColor,
-                        shape = RoundedCornerShape(4.dp)
-                    ) else Modifier
+                    if (blurDp > 0.dp) {
+                        Modifier.blur(blurDp, BlurredEdgeTreatment.Unbounded)
+                    } else Modifier
                 )
                 .pointerInput(clip.id, canvasW, canvasH, isDrawingMode) {
                     if (isDrawingMode) return@pointerInput
@@ -2936,13 +2980,10 @@ private fun InteractiveTextOverlay(
                                     c1.consume()
                                     c2.consume()
                                 }
-
                                 val rawX = baseX + accumPanX / canvasWpx * 100f
                                 val rawY = baseY + accumPanY / canvasHpx * 100f
-                                val newScale = (baseScale * accumZoom)
-                                    .coerceIn(10f, 500f)
+                                val newScale = (baseScale * accumZoom).coerceIn(10f, 500f)
                                 val newRot = baseRot + accumRot
-
                                 if (isMulti) {
                                     onGroupGesture(clip.id, rawX, rawY, newScale, newRot)
                                 } else {
@@ -2960,8 +3001,19 @@ private fun InteractiveTextOverlay(
                 },
             contentAlignment = Alignment.Center
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                if (textState.glowEnabled && textState.glowRadius > 0f) {
+            // 1. BACKGROUND
+            if (textState.backgroundEnabled) {
+                TextBackgroundRenderer(
+                    state = textState,
+                    textWidthDp = textWidthDp,
+                    textHeightDp = textHeightDp
+                )
+            }
+
+            // 2. GLOW — per-line
+            if (textState.glowEnabled && textState.glowRadius > 0f) {
+                Canvas(modifier = Modifier.matchParentSize()) {
+                    val nativeCanvas = drawContext.canvas.nativeCanvas
                     val glowColorInt = textState.glowColor.toInt()
                     val glowAlign = when (textState.alignment) {
                         "left" -> Paint.Align.LEFT
@@ -2973,81 +3025,109 @@ private fun InteractiveTextOverlay(
                     else (effLetterSpacingPx / finalFontSizePx).coerceIn(-0.3f, 0.3f)
                     val glowRadiusPx = textState.glowRadius * (canvasWpx / 720f)
 
-                    Canvas(modifier = Modifier.matchParentSize()) {
-                        val nativeCanvas = drawContext.canvas.nativeCanvas
-                        val layers = TextRenderContract.glowLayers()
-                        layers.forEach { layer ->
-                            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                                isAntiAlias = true
-                                color = glowColorInt
-                                textSize = textSizePx * layer.fontScale
-                                textAlign = glowAlign
-                                this.typeface = textTypeface
-                                this.letterSpacing = letterSpacingEm
-                                alpha = (layer.alpha * 255).toInt().coerceIn(0, 255)
-                                // ✅ maskFilter — matches export behavior, works reliably
-                                maskFilter = android.graphics.BlurMaskFilter(
-                                    (glowRadiusPx * layer.blurScale).coerceIn(1f, 250f),
-                                    android.graphics.BlurMaskFilter.Blur.NORMAL
-                                )
-                            }
-                            val fm = paint.fontMetrics
-                            val baseline = size.height / 2f -
-                                    (fm.ascent + fm.descent) / 2f
-                            val x = when (glowAlign) {
-                                Paint.Align.LEFT -> 0f
-                                Paint.Align.RIGHT -> size.width
-                                else -> size.width / 2f
-                            }
-                            nativeCanvas.drawText(displayContent, x, baseline, paint)
+                    val lines = displayContent.split('\n')
+                    val lineCount = lines.size
+                    val lineHeightPx = effLineHeightPx.coerceAtLeast(1f)
+
+                    val measurePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        textSize = textSizePx
+                        this.typeface = textTypeface
+                    }
+                    val fm = measurePaint.fontMetrics
+
+                    // ✅ Baseline: centered for multi-line
+                    val totalTextH = lineHeightPx * lineCount
+                    val firstBaseline = (size.height - totalTextH) / 2f +
+                            lineHeightPx / 2f - (fm.ascent + fm.descent) / 2f
+
+                    val textW = finalMeasure.size.width.toFloat()
+                    val textLeft = (size.width - textW) / 2f
+                    val textRight = (size.width + textW) / 2f
+
+                    val x = when (glowAlign) {
+                        Paint.Align.LEFT -> textLeft
+                        Paint.Align.RIGHT -> textRight
+                        else -> size.width / 2f
+                    }
+
+                    TextRenderContract.glowLayers().forEach { layer ->
+                        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            isAntiAlias = true
+                            color = glowColorInt
+                            textSize = textSizePx * layer.fontScale
+                            textAlign = glowAlign
+                            this.typeface = textTypeface
+                            this.letterSpacing = letterSpacingEm
+                            alpha = (layer.alpha * 255).toInt().coerceIn(0, 255)
+                            maskFilter = android.graphics.BlurMaskFilter(
+                                (glowRadiusPx * layer.blurScale).coerceIn(1f, 250f),
+                                android.graphics.BlurMaskFilter.Blur.NORMAL
+                            )
+                        }
+                        lines.forEachIndexed { i, line ->
+                            val y = firstBaseline + i * lineHeightPx
+                            nativeCanvas.drawText(line, x, y, paint)
                         }
                     }
                 }
+            }
 
-                if (textState.strokeEnabled && userStrokePx > 0f) {
-                    Text(
-                        text = displayContent,
-                        color = Color(textState.strokeColor),
-                        fontSize = finalFontSizeSp,
-                        fontWeight = weight,
-                        fontStyle = fontSty,
-                        fontFamily = family,
-                        textAlign = textAlignValue,
-                        softWrap = false,
-                        maxLines = 1,
-                        overflow = TextOverflow.Visible,
-                        style = androidx.compose.ui.text.TextStyle(
-                            drawStyle = Stroke(
-                                userStrokePx,
-                                join = androidx.compose.ui.graphics.StrokeJoin.Round,
-                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                                miter = 4f
-                            ),
-                            letterSpacing = finalLetterSpacingSp,
-                            lineHeight = finalLineHeightSp
-                        )
-                    )
-                }
-
+            // 3. STROKE
+            if (textState.strokeEnabled && userStrokePx > 0f) {
                 Text(
                     text = displayContent,
-                    color = if (gradient != null) Color.Unspecified else solidColor,
+                    color = Color(textState.strokeColor),
                     fontSize = finalFontSizeSp,
                     fontWeight = weight,
                     fontStyle = fontSty,
                     fontFamily = family,
                     textAlign = textAlignValue,
-                    softWrap = false,
-                    maxLines = 1,
+                    softWrap = true,
+                    maxLines = Int.MAX_VALUE,
                     overflow = TextOverflow.Visible,
+                    modifier = Modifier.width(textWidthConstraintDp),
                     style = androidx.compose.ui.text.TextStyle(
-                        brush = gradient,
-                        shadow = shadowStyle,
+                        drawStyle = Stroke(
+                            userStrokePx,
+                            join = androidx.compose.ui.graphics.StrokeJoin.Round,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                            miter = 4f
+                        ),
                         letterSpacing = finalLetterSpacingSp,
                         lineHeight = finalLineHeightSp
                     )
                 )
-                if (isSelected && !isDrawingMode) {
+            }
+
+            // 4. FILL
+            Text(
+                text = displayContent,
+                color = if (gradient != null) Color.Unspecified else solidColor,
+                fontSize = finalFontSizeSp,
+                fontWeight = weight,
+                fontStyle = fontSty,
+                fontFamily = family,
+                textAlign = textAlignValue,
+                softWrap = true,
+                maxLines = Int.MAX_VALUE,
+                overflow = TextOverflow.Visible,
+                modifier = Modifier.width(textWidthConstraintDp),
+                style = androidx.compose.ui.text.TextStyle(
+                    brush = gradient,
+                    shadow = shadowStyle,
+                    letterSpacing = finalLetterSpacingSp,
+                    lineHeight = finalLineHeightSp
+                )
+            )
+
+            // 5. SELECTION BOX — sized to content, not glow
+            if (isSelected && !isDrawingMode) {
+                Box(
+                    modifier = Modifier
+                        .width(selectionWidthDp.dp)
+                        .height(selectionHeightDp.dp),
+                    contentAlignment = Alignment.Center
+                ) {
                     LayerTransformHandles(
                         clipId = clip.id,
                         scale = sampled.scale,
@@ -3441,4 +3521,77 @@ private fun normalizeAngle(radians: Float): Float {
     while (normalized > Math.PI) normalized -= twoPi
     while (normalized < -Math.PI) normalized += twoPi
     return normalized
+}
+// ═══════════════════════════════════════════════════════════════
+//  🆕 TEXT BACKGROUND RENDERER — 5 types
+// ═══════════════════════════════════════════════════════════════
+
+
+@Composable
+private fun TextBackgroundRenderer(
+    state: com.moody.moodyvideoeditor.data.TextState,
+    textWidthDp: Float,
+    textHeightDp: Float
+) {
+    val padX = state.backgroundPaddingX
+    val padY = state.backgroundPaddingY
+    val alpha = (state.backgroundOpacity / 100f).coerceIn(0f, 1f)
+
+    val brush: Brush = if (state.backgroundGradientEnabled) {
+        val rad = Math.toRadians(state.backgroundGradientAngle.toDouble())
+        val dx = kotlin.math.cos(rad).toFloat()
+        val dy = kotlin.math.sin(rad).toFloat()
+        val ext = 500f
+        Brush.linearGradient(
+            colors = listOf(
+                Color(state.backgroundColor1).copy(alpha = alpha),
+                Color(state.backgroundColor2).copy(alpha = alpha)
+            ),
+            start = Offset(-dx * ext, -dy * ext),
+            end = Offset(dx * ext, dy * ext)
+        )
+    } else {
+        Brush.linearGradient(
+            colors = listOf(
+                Color(state.backgroundColor1).copy(alpha = alpha),
+                Color(state.backgroundColor1).copy(alpha = alpha)
+            )
+        )
+    }
+
+    when (state.backgroundType) {
+        "rounded" -> {
+            Box(
+                modifier = Modifier
+                    .width((textWidthDp + padX * 2).coerceAtLeast(20f).dp)
+                    .height((textHeightDp + padY * 2).coerceAtLeast(20f).dp)
+                    .clip(RoundedCornerShape(state.backgroundCornerRadius.dp))
+                    .background(brush)
+            )
+        }
+
+        "character" -> {
+            Box(
+                modifier = Modifier
+                    .width((textWidthDp + 4f).coerceAtLeast(20f).dp)
+                    .height((textHeightDp + 4f).coerceAtLeast(20f).dp)
+                    .background(brush)
+            )
+        }
+
+        "outline" -> {
+            Box(
+                modifier = Modifier
+                    .width((textWidthDp + padX * 2).coerceAtLeast(20f).dp)
+                    .height((textHeightDp + padY * 2).coerceAtLeast(20f).dp)
+                    .clip(RoundedCornerShape(state.backgroundCornerRadius.dp))
+                    .background(Color.Transparent)
+                    .border(
+                        width = 3.dp,
+                        brush = brush,
+                        shape = RoundedCornerShape(state.backgroundCornerRadius.dp)
+                    )
+            )
+        }
+    }
 }

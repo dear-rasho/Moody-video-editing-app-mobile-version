@@ -2,12 +2,21 @@ package com.moody.moodyvideoeditor.data
 
 // Mirrors js/features/overlayRenderer.js — 35+ overlays, categorized.
 data class OverlayState(
-    val type: String = "none",       // e.g. "rain", "snow", "fog"
-    val intensity: Float = 100f,     // 0..200
-    val color: Long = 0xFFFFFFFF     // tint / particle color
+    val type: String = "none",
+    val intensity: Float = 100f,
+    val color: Long = 0xFFFFFFFF,
+    val color2: Long = 0xFFFFFFFF,
+    val size: Float = 1.0f,
+    val opacity: Float = 1.0f,
+    val speed: Float = 1.0f,
+    val shape: String = "circle",
+    val glowEnabled: Boolean = false,
+    val glowRadius: Float = 1.8f,
+    val glowColor: Long = 0xFFFFFFFF
 ) {
     val isActive: Boolean get() = type != "none"
 }
+
 
 object OverlayLibrary {
 

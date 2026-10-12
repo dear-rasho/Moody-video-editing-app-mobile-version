@@ -103,7 +103,6 @@ object EffectsEngine {
             .sortedBy { it.trackIndex }
     }
 
-
     //  FILTER COMBINING — accumulate multiple effect filters
 
     fun combineFilters(list: List<ColorFilterValues>): ColorFilterValues {
@@ -290,7 +289,12 @@ object EffectsEngine {
                         OverlayState(
                             type = cfg.type,
                             intensity = cfg.intensity,
-                            color = cfg.color
+                            color = cfg.color,
+                            color2 = cfg.color2,
+                            size = cfg.size,
+                            opacity = cfg.opacity,
+                            speed = cfg.speed,
+                            shape = cfg.shape
                         )
                     )
                 }

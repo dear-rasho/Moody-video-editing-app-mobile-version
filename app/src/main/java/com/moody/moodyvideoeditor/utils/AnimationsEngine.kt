@@ -20,157 +20,114 @@ object AnimationsEngine {
     data class Anim(val key: String, val label: String)
 
     val CATEGORIES: List<Category> = listOf(
-        Category(
-            "basic", "Basic", listOf(
-                Anim("none", "None"),
-                Anim("typewriter", "Typewriter"),
-                Anim("decoder", "Decoder"),
-                Anim("fadeIn", "Fade In"),
-                Anim("fadeUp", "Fade Up"),
-                Anim("fadeDown", "Fade Down"),
-                Anim("slideLeft", "Slide Left"),
-                Anim("slideRight", "Slide Right"),
-                Anim("slideUp", "Slide Up"),
-                Anim("slideDown", "Slide Down"),
-                Anim("popIn", "Pop In"),
-                Anim("bounceIn", "Bounce In"),
-                Anim("flicker", "Flicker"),
-                Anim("cinematicBlur", "Cinematic Blur")
-            )
-        ),
-
-        Category(
-            "reveals", "Reveals", listOf(
-                Anim("wordReveal", "Word Reveal"),
-                Anim("characterRise", "Character Rise"),
-                Anim("maskVertical", "Mask Vertical"),
-                Anim("maskHorizontal", "Mask Horizontal"),
-                Anim("centerOut", "Center Out"),
-                Anim("lineDraw", "Line Draw"),
-                Anim("blurryReveal", "Blurry Reveal"),
-                Anim("smokeDissolve", "Smoke Dissolve"),
-                Anim("trailFade", "Trail Fade")
-            )
-        ),
-
-        Category(
-            "glitch", "Glitch", listOf(
-                Anim("glitch", "Glitch"),
-                Anim("rgbSplit", "RGB Split"),
-                Anim("sliceGlitch", "Slice Glitch"),
-                Anim("blockGlitch", "Block Glitch"),
-                Anim("staticNoise", "Static Noise"),
-                Anim("vcrDistort", "VCR Distort"),
-                Anim("shakeJitter", "Shake Jitter"),
-                Anim("cyberpunk", "Cyberpunk"),
-                Anim("matrixRain", "Matrix Rain"),
-                Anim("interlaced", "Interlaced")
-            )
-        ),
-
-        Category(
-            "waves", "Waves", listOf(
-                Anim("wave", "Wave"),
-                Anim("bounceWave", "Bounce Wave"),
-                Anim("sineWave", "Sine Wave"),
-                Anim("liquidMelt", "Liquid Melt"),
-                Anim("flagWave", "Flag Wave"),
-                Anim("waterRipple", "Water Ripple"),
-                Anim("heatWave", "Heat Wave"),
-                Anim("elasticWave", "Elastic Wave"),
-                Anim("pulsingWave", "Pulsing Wave"),
-                Anim("turbulent", "Turbulent"),
-                Anim("circularWave", "Circular Wave")
-            )
-        ),
-
-        Category(
-            "bounces", "Bounces", listOf(
-                Anim("overshootPop", "Overshoot Pop"),
-                Anim("elasticDrop", "Elastic Drop"),
-                Anim("jellyBounce", "Jelly Bounce"),
-                Anim("microBounce", "Micro Bounce"),
-                Anim("stompBounce", "Stomp Bounce"),
-                Anim("squeezeStretch", "Squeeze Stretch"),
-                Anim("float", "Float"),
-                Anim("diagonalJump", "Diagonal Jump"),
-                Anim("gravityFall", "Gravity Fall"),
-                Anim("heavyLanding", "Heavy Landing"),
-                Anim("doubleBounce", "Double Bounce"),
-                Anim("bouncySpin", "Bouncy Spin"),
-                Anim("snapBack", "Snap Back"),
-                Anim("springString", "Spring String"),
-                Anim("sideKick", "Side Kick")
-            )
-        ),
-
-        Category(
-            "sliders", "Sliders", listOf(
-                Anim("flyDiagonalTL", "Fly In Top-Left"),
-                Anim("flyDiagonalBR", "Fly In Bottom-Right"),
-                Anim("crossSlide", "Cross Slide"),
-                Anim("accelSlide", "Accel Slide"),
-                Anim("decelSlide", "Decel Slide"),
-                Anim("splitSlide", "Split Slide"),
-                Anim("zigzagSlide", "Zig-Zag Slide"),
-                Anim("smoothGlide", "Smooth Glide"),
-                Anim("infiniteScroll", "Infinite Scroll"),
-                Anim("pushSlide", "Push Slide")
-            )
-        ),
-
-        Category(
-            "rotations", "Rotations", listOf(
-                Anim("flip3DX", "3D Flip X"),
-                Anim("flip3DY", "3D Flip Y"),
-                Anim("rotate3D", "3D Rotate"),
-                Anim("yAxisFlip", "Y-Axis Flip"),
-                Anim("xAxisFlip", "X-Axis Flip"),
-                Anim("vortexSpin", "Vortex Spin"),
-                Anim("zAxisSpin", "Z-Axis Spin"),
-                Anim("spiralIn", "Spiral In"),
-                Anim("tornado", "Tornado"),
-                Anim("skewSpin", "Skew Spin"),
-                Anim("pendulum", "Pendulum"),
-                Anim("propeller", "Propeller"),
-                Anim("barrelRoll", "Barrel Roll"),
-                Anim("cubeRoll", "Cube Roll"),
-                Anim("gentleTilt", "Gentle Tilt"),
-                Anim("twister", "Twister")
-            )
-        ),
-
-        Category(
-            "zooms", "Zooms", listOf(
-                Anim("zoomIn", "Zoom In"),
-                Anim("zoomOut", "Zoom Out"),
-                Anim("cinematicZoom", "Cinematic Zoom"),
-                Anim("hyperZoomOut", "Hyper Zoom Out"),
-                Anim("pulseScale", "Pulse Scale"),
-                Anim("elasticZoom", "Elastic Zoom"),
-                Anim("lensFlareZoom", "Lens Flare Zoom"),
-                Anim("shrinkReveal", "Shrink Reveal"),
-                Anim("popScale", "Pop Scale"),
-                Anim("depthZoom", "Depth Zoom"),
-                Anim("snapZoom", "Snap Zoom")
-            )
-        ),
-
-        Category(
-            "special", "Special", listOf(
-                Anim("scribble", "Scribble"),
-                Anim("neonGlow", "Neon Glow"),
-                Anim("gradientShift", "Gradient Shift"),
-                Anim("ghostTrail", "Ghost Trail"),
-                Anim("silhouette", "Silhouette"),
-                Anim("explosion", "Explosion"),
-                Anim("implosion", "Implosion"),
-                Anim("pulse", "Pulse"),
-                Anim("shake", "Shake")
-            )
-        )
+        Category("basic", "Basic", listOf(
+            Anim("none", "None"),
+            Anim("typewriter", "Typewriter"),
+            Anim("decoder", "Decoder"),
+            Anim("fadeIn", "Fade In"),
+            Anim("fadeUp", "Fade Up"),
+            Anim("fadeDown", "Fade Down"),
+            Anim("slideLeft", "Slide Left"),
+            Anim("slideRight", "Slide Right"),
+            Anim("slideUp", "Slide Up"),
+            Anim("slideDown", "Slide Down"),
+            Anim("popIn", "Pop In"),
+            Anim("bounceIn", "Bounce In"),
+            Anim("flicker", "Flicker"),
+            Anim("cinematicBlur", "Cinematic Blur")
+        )),
+        Category("reveals", "Reveals", listOf(
+            Anim("blurryReveal", "Blurry Reveal"),
+            Anim("smokeDissolve", "Smoke Dissolve"),
+            Anim("trailFade", "Trail Fade")
+        )),
+        Category("glitch", "Glitch", listOf(
+            Anim("shakeJitter", "Shake Jitter"),
+            Anim("matrixRain", "Matrix Rain"),
+            Anim("interlaced", "Interlaced")
+        )),
+        Category("waves", "Waves", listOf(
+            Anim("wave", "Wave"),
+            Anim("bounceWave", "Bounce Wave"),
+            Anim("sineWave", "Sine Wave"),
+            Anim("liquidMelt", "Liquid Melt"),
+            Anim("flagWave", "Flag Wave"),
+            Anim("waterRipple", "Water Ripple"),
+            Anim("heatWave", "Heat Wave"),
+            Anim("elasticWave", "Elastic Wave"),
+            Anim("pulsingWave", "Pulsing Wave"),
+            Anim("turbulent", "Turbulent"),
+            Anim("circularWave", "Circular Wave")
+        )),
+        Category("bounces", "Bounces", listOf(
+            Anim("overshootPop", "Overshoot Pop"),
+            Anim("elasticDrop", "Elastic Drop"),
+            Anim("jellyBounce", "Jelly Bounce"),
+            Anim("microBounce", "Micro Bounce"),
+            Anim("stompBounce", "Stomp Bounce"),
+            Anim("squeezeStretch", "Squeeze Stretch"),
+            Anim("float", "Float"),
+            Anim("diagonalJump", "Diagonal Jump"),
+            Anim("gravityFall", "Gravity Fall"),
+            Anim("heavyLanding", "Heavy Landing"),
+            Anim("doubleBounce", "Double Bounce"),
+            Anim("bouncySpin", "Bouncy Spin"),
+            Anim("snapBack", "Snap Back"),
+            Anim("springString", "Spring String"),
+            Anim("sideKick", "Side Kick")
+        )),
+        Category("sliders", "Sliders", listOf(
+            Anim("flyDiagonalTL", "Fly In Top-Left"),
+            Anim("flyDiagonalBR", "Fly In Bottom-Right"),
+            Anim("crossSlide", "Cross Slide"),
+            Anim("accelSlide", "Accel Slide"),
+            Anim("decelSlide", "Decel Slide"),
+            Anim("splitSlide", "Split Slide"),
+            Anim("zigzagSlide", "Zig-Zag Slide"),
+            Anim("smoothGlide", "Smooth Glide"),
+            Anim("infiniteScroll", "Infinite Scroll"),
+            Anim("pushSlide", "Push Slide")
+        )),
+        Category("rotations", "Rotations", listOf(
+            Anim("flip3DX", "3D Flip X"),
+            Anim("flip3DY", "3D Flip Y"),
+            Anim("rotate3D", "3D Rotate"),
+            Anim("yAxisFlip", "Y-Axis Flip"),
+            Anim("xAxisFlip", "X-Axis Flip"),
+            Anim("vortexSpin", "Vortex Spin"),
+            Anim("zAxisSpin", "Z-Axis Spin"),
+            Anim("spiralIn", "Spiral In"),
+            Anim("tornado", "Tornado"),
+            Anim("skewSpin", "Skew Spin"),
+            Anim("pendulum", "Pendulum"),
+            Anim("propeller", "Propeller"),
+            Anim("barrelRoll", "Barrel Roll"),
+            Anim("cubeRoll", "Cube Roll"),
+            Anim("gentleTilt", "Gentle Tilt"),
+            Anim("twister", "Twister")
+        )),
+        Category("zooms", "Zooms", listOf(
+            Anim("zoomIn", "Zoom In"),
+            Anim("zoomOut", "Zoom Out"),
+            Anim("cinematicZoom", "Cinematic Zoom"),
+            Anim("hyperZoomOut", "Hyper Zoom Out"),
+            Anim("pulseScale", "Pulse Scale"),
+            Anim("elasticZoom", "Elastic Zoom"),
+            Anim("shrinkReveal", "Shrink Reveal"),
+            Anim("popScale", "Pop Scale"),
+            Anim("depthZoom", "Depth Zoom"),
+            Anim("snapZoom", "Snap Zoom")
+        )),
+        Category("special", "Special", listOf(
+            Anim("scribble", "Scribble"),
+            Anim("ghostTrail", "Ghost Trail"),
+            Anim("silhouette", "Silhouette"),
+            Anim("explosion", "Explosion"),
+            Anim("implosion", "Implosion"),
+            Anim("pulse", "Pulse"),
+            Anim("shake", "Shake")
+        ))
     )
-
     val ALL_ANIMATIONS: List<Anim> = CATEGORIES.flatMap { it.animations }
 
 

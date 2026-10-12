@@ -1,7 +1,7 @@
 package com.moody.moodyvideoeditor.ui.features
-import androidx.compose.runtime.rememberUpdatedState
-import com.moody.moodyvideoeditor.ui.components.FontPreviewRow
+
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -31,13 +31,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -47,8 +49,13 @@ import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.ui.components.ColorPickerField
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
-import com.moody.moodyvideoeditor.utils.AnimationsEngine
+import com.moody.moodyvideoeditor.ui.components.FontPreviewRow
 import com.moody.moodyvideoeditor.utils.FontLibrary
+
+// ═══════════════════════════════════════════════════════════════
+//  MAIN TEXT PANEL
+// ═══════════════════════════════════════════════════════════════
+
 @Composable
 fun TextPanel(
     currentText: TextState,
@@ -58,7 +65,7 @@ fun TextPanel(
     onDraftTextChanged: (String) -> Unit = {},
     onCreateNew: () -> Unit,
     onRemove: () -> Unit,
-    onApplyTemplate: (String) -> Unit = {},   // 🆕
+    onApplyTemplate: (String) -> Unit = {},
     onClose: () -> Unit
 ) {
     var subView by remember(startInEdit) {
@@ -108,7 +115,6 @@ fun TextPanel(
                 onBack = { subView = "options" }
             )
 
-
             "fonts" -> FontsSub(
                 current = currentText.fontFamily,
                 onPick = { onTextChanged(currentText.copy(fontFamily = it)) },
@@ -136,7 +142,7 @@ fun TextPanel(
             "lineHeight" -> SliderSub(
                 title = "Line Height",
                 value = currentText.lineHeight,
-                range = 0.8f..200f,
+                range = 0.8f..10f,
                 suffix = "x",
                 decimals = 2,
                 onChange = {
@@ -185,10 +191,7 @@ fun TextPanel(
 
             "color" -> ColorSub(
                 color = currentText.color,
-                onPick = {
-                    // Don't touch gradientEnabled — user might want both
-                    onTextChanged(currentText.copy(color = it))
-                },
+                onPick = { onTextChanged(currentText.copy(color = it)) },
                 onBack = { subView = "options" }
             )
 
@@ -199,6 +202,12 @@ fun TextPanel(
             )
 
             "shadows" -> ShadowsSub(
+                state = currentText,
+                onChange = { onTextChanged(it) },
+                onBack = { subView = "options" }
+            )
+
+            "background" -> BackgroundSub(
                 state = currentText,
                 onChange = { onTextChanged(it) },
                 onBack = { subView = "options" }
@@ -218,40 +227,33 @@ fun TextPanel(
                 onChange = { onTextChanged(currentText.copy(opacity = it)) },
                 onBack = { subView = "options" }
             )
-
-            "animations" -> AnimationsSub(
-                current = currentText.animation,
-                duration = currentText.animationDuration,
-                onPick = { onTextChanged(currentText.copy(animation = it)) },
-                onDuration = { onTextChanged(currentText.copy(animationDuration = it)) },
-                onBack = { subView = "options" }
-            )
         }
     }
 }
 
-
-//  OPTIONS SHELF — now with new options
+// ═══════════════════════════════════════════════════════════════
+//  OPTIONS SHELF
+// ═══════════════════════════════════════════════════════════════
 
 @Composable
 private fun OptionsShelf(hasText: Boolean, onSelect: (String) -> Unit) {
     val options = listOf(
         Triple("addText", "➕", "Add"),
-        Triple("templates", "🎭", "Templates"),   // 🆕
+        Triple("templates", "🎭", "Templates"),
         Triple("fonts", "🔤", "Fonts"),
-        Triple("size", "🅰", "Size"),
-        Triple("letterSpacing", "↔", "Gaps"),
-        Triple("lineHeight", "↕", "Lines"),
-        Triple("tracking", "⇿", "Track"),
+        Triple("size", "🅰️", "Size"),
+        Triple("letterSpacing", "⇔", "Spacing"),
+        Triple("lineHeight", "↕️", "Lines"),
+        Triple("tracking", "⇿", "Tracking"),
         Triple("maxWidth", "⬌", "Width"),
-        Triple("stroke", "✏️", "Stroke"),
+        Triple("stroke", "🖊️", "Stroke"),
         Triple("glow", "💡", "Glow"),
         Triple("color", "🎨", "Color"),
         Triple("gradient", "🌈", "Gradient"),
         Triple("shadows", "🌑", "Shadow"),
+        Triple("background", "🟦", "BG"),
         Triple("alignment", "🔀", "Align"),
-        Triple("opacity", "👁", "Opacity"),
-        Triple("animations", "✨", "Anims"),
+        Triple("opacity", "👁️", "Opacity"),
         Triple("removeText", "🗑️", "Remove")
     )
 
@@ -286,8 +288,9 @@ private fun OptionsShelf(hasText: Boolean, onSelect: (String) -> Unit) {
     }
 }
 
-
-//  SUB-VIEWS
+// ═══════════════════════════════════════════════════════════════
+//  ADD TEXT SUB
+// ═══════════════════════════════════════════════════════════════
 
 @Composable
 private fun AddTextSub(
@@ -345,6 +348,10 @@ private fun AddTextSub(
     }
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  FONTS SUB
+// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun FontsSub(current: String, onPick: (String) -> Unit, onBack: () -> Unit) {
     var activeCategory by remember { mutableStateOf("arabic") }
@@ -356,7 +363,6 @@ private fun FontsSub(current: String, onPick: (String) -> Unit, onBack: () -> Un
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         BackHeader("Fonts (${FontLibrary.allFonts().size})", onBack)
 
-        // ─── Category chips ───
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -391,7 +397,6 @@ private fun FontsSub(current: String, onPick: (String) -> Unit, onBack: () -> Un
             }
         }
 
-        // ─── Font list with previews ───
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -409,6 +414,11 @@ private fun FontsSub(current: String, onPick: (String) -> Unit, onBack: () -> Un
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  STROKE SUB
+// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun StrokeSub(
     enabled: Boolean,
@@ -426,11 +436,8 @@ private fun StrokeSub(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         BackHeader("Stroke / Outline", onBack)
-
         ToggleRow("Enabled", enabled, onEnabled)
-
         SliderRow("Width", width, 0f..20f, onWidth)
-
         ColorPickerField(
             label = "Color",
             colorLong = color,
@@ -438,6 +445,10 @@ private fun StrokeSub(
         )
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  GLOW SUB
+// ═══════════════════════════════════════════════════════════════
 
 @Composable
 private fun GlowSub(
@@ -467,7 +478,6 @@ private fun GlowSub(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         BackHeader("Glow / Neon", onBack)
-
         ToggleRow("Enabled", enabled) { latestOnEnabled(it) }
 
         Text(
@@ -491,7 +501,7 @@ private fun GlowSub(
                 modifier = Modifier.width(60.dp)
             )
 
-            androidx.compose.material3.Slider(
+            Slider(
                 value = radius.coerceIn(0f, 500f),
                 onValueChange = {
                     latestOnRadius(it)
@@ -499,7 +509,7 @@ private fun GlowSub(
                 },
                 valueRange = 0f..500f,
                 modifier = Modifier.weight(1f),
-                colors = androidx.compose.material3.SliderDefaults.colors(
+                colors = SliderDefaults.colors(
                     thumbColor = Color(0xFF7C3AED),
                     activeTrackColor = Color(0xFF7C3AED),
                     inactiveTrackColor = Color(0xFF303030)
@@ -515,7 +525,7 @@ private fun GlowSub(
                     .padding(horizontal = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
-                androidx.compose.foundation.text.BasicTextField(
+                BasicTextField(
                     value = radiusText,
                     onValueChange = { input ->
                         val filtered = input.filter {
@@ -531,13 +541,11 @@ private fun GlowSub(
                         color = Color.White,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        textAlign = TextAlign.Center
                     ),
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(
-                        Color(0xFF7C3AED)
-                    ),
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
+                    cursorBrush = SolidColor(Color(0xFF7C3AED)),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Decimal
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -553,7 +561,6 @@ private fun GlowSub(
             }
         }
 
-        // Quick presets
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -604,6 +611,11 @@ private fun GlowSub(
         )
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  COLOR SUB
+// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun ColorSub(color: Long, onPick: (Long) -> Unit, onBack: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -615,6 +627,10 @@ private fun ColorSub(color: Long, onPick: (Long) -> Unit, onBack: () -> Unit) {
         )
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  GRADIENT SUB
+// ═══════════════════════════════════════════════════════════════
 
 @Composable
 private fun GradientSub(
@@ -643,7 +659,7 @@ private fun GradientSub(
                 .height(28.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(
-                    androidx.compose.ui.graphics.Brush.linearGradient(
+                    Brush.linearGradient(
                         colors = listOf(
                             Color(state.gradientColor1),
                             Color(state.gradientColor2)
@@ -686,6 +702,11 @@ private fun GradientSub(
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  SHADOWS SUB
+// ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun ShadowsSub(
     state: TextState,
@@ -720,6 +741,10 @@ private fun ShadowsSub(
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  ALIGNMENT SUB
+// ═══════════════════════════════════════════════════════════════
 
 @Composable
 private fun AlignmentSub(current: String, onPick: (String) -> Unit, onBack: () -> Unit) {
@@ -757,19 +782,48 @@ private fun AlignmentSub(current: String, onPick: (String) -> Unit, onBack: () -
     }
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  🆕 BACKGROUND SUB — 5 types + solid/gradient
+// ═══════════════════════════════════════════════════════════════
+
 @Composable
-private fun AnimationsSub(
-    current: String,
-    duration: Float,
-    onPick: (String) -> Unit,
-    onDuration: (Float) -> Unit,
+private fun BackgroundSub(
+    state: TextState,
+    onChange: (TextState) -> Unit,
     onBack: () -> Unit
 ) {
-    var activeCategory by remember { mutableStateOf("basic") }
-    val categories = AnimationsEngine.CATEGORIES
+    val latest by rememberUpdatedState(state)
+    val latestOnChange by rememberUpdatedState(onChange)
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        BackHeader("Animations (${AnimationsEngine.ALL_ANIMATIONS.size})", onBack)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 340.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        BackHeader("🟦 Text Background", onBack)
+
+        ToggleRow("Enable Background", state.backgroundEnabled) {
+            latestOnChange(latest.copy(backgroundEnabled = it))
+        }
+
+        if (!state.backgroundEnabled) {
+            Text(
+                "Enable to see background styles",
+                color = Color(0xFF888888),
+                fontSize = 10.sp,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+            return@Column
+        }
+
+        Text(
+            "Style",
+            color = Color(0xFF888888), fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+        )
 
         Row(
             modifier = Modifier
@@ -777,84 +831,175 @@ private fun AnimationsSub(
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            categories.forEach { cat ->
-                val isActive = activeCategory == cat.key
+            listOf(
+                "rounded" to "▢ Rounded",
+                "character" to "🅰️ Char",
+                "outline" to "◯ Outline"
+            ).forEach { (key, label) ->
+                val active = state.backgroundType == key
                 Box(
                     modifier = Modifier
-                        .height(30.dp)
+                        .height(34.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(
-                            if (isActive) Color(0xFF7C3AED) else Color(0xFF181818)
+                            if (active) Color(0xFF7C3AED) else Color(0xFF181818)
                         )
-                        .pointerInput(cat.key) {
-                            detectTapGestures { activeCategory = cat.key }
+                        .pointerInput(key) {
+                            detectTapGestures {
+                                latestOnChange(latest.copy(backgroundType = key))
+                            }
                         }
                         .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "${cat.label} (${cat.animations.size})",
-                        color = Color.White,
-                        fontSize = 10.sp,
+                        label, color = Color.White, fontSize = 10.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
             }
         }
 
-        val cat = categories.firstOrNull { it.key == activeCategory } ?: categories[0]
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 140.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            cat.animations.chunked(3).forEach { row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    row.forEach { anim ->
-                        val isActive = current == anim.key
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(36.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    if (isActive) Color(0xFF7C3AED)
-                                    else Color(0xFF181818)
-                                )
-                                .pointerInput(anim.key) {
-                                    detectTapGestures { onPick(anim.key) }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                anim.label,
-                                color = Color.White,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                textAlign = TextAlign.Center,
-                                maxLines = 2
+            Text(
+                "Fill",
+                color = Color(0xFF888888), fontSize = 10.sp,
+                fontWeight = FontWeight.Bold, modifier = Modifier.width(50.dp)
+            )
+            Box(
+                modifier = Modifier
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(
+                        if (!state.backgroundGradientEnabled) Color(0xFF7C3AED)
+                        else Color(0xFF181818)
+                    )
+                    .pointerInput(Unit) {
+                        detectTapGestures {
+                            latestOnChange(
+                                latest.copy(backgroundGradientEnabled = false)
                             )
                         }
                     }
-                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
-                }
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "Solid", color = Color.White, fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(
+                        if (state.backgroundGradientEnabled) Color(0xFF7C3AED)
+                        else Color(0xFF181818)
+                    )
+                    .pointerInput(Unit) {
+                        detectTapGestures {
+                            latestOnChange(
+                                latest.copy(backgroundGradientEnabled = true)
+                            )
+                        }
+                    }
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "Gradient", color = Color.White, fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
 
-        SliderRow("Duration", duration, 0.2f..3f, onDuration)
+        ColorPickerField(
+            label = if (state.backgroundGradientEnabled) "Color A" else "Color",
+            colorLong = state.backgroundColor1,
+            onChange = { latestOnChange(latest.copy(backgroundColor1 = it)) }
+        )
+
+        if (state.backgroundGradientEnabled) {
+            ColorPickerField(
+                label = "Color B",
+                colorLong = state.backgroundColor2,
+                onChange = { latestOnChange(latest.copy(backgroundColor2 = it)) }
+            )
+
+            SliderRow(
+                "Angle",
+                state.backgroundGradientAngle,
+                0f..360f
+            ) { latestOnChange(latest.copy(backgroundGradientAngle = it)) }
+        }
+
+        SliderRow("Pad X", state.backgroundPaddingX, 0f..60f) {
+            latestOnChange(latest.copy(backgroundPaddingX = it))
+        }
+        SliderRow("Pad Y", state.backgroundPaddingY, 0f..60f) {
+            latestOnChange(latest.copy(backgroundPaddingY = it))
+        }
+
+        if (state.backgroundType in listOf("rounded", "outline")) {
+            SliderRow("Corner", state.backgroundCornerRadius, 0f..50f) {
+                latestOnChange(latest.copy(backgroundCornerRadius = it))
+            }
+        }
+        SliderRow("Opacity", state.backgroundOpacity, 0f..100f) {
+            latestOnChange(latest.copy(backgroundOpacity = it))
+        }
+
+        Text(
+            "Quick Colors",
+            color = Color(0xFF888888), fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf(
+                0xFF000000, 0xFFFFFFFF, 0xFFFF0066, 0xFF00E5FF,
+                0xFFFFCC00, 0xFF22C55E, 0xFF7C3AED, 0xFFFF6B00
+            ).forEach { c ->
+                val active = state.backgroundColor1 == c
+                Box(
+                    modifier = Modifier
+                        .size(if (active) 34.dp else 30.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(c))
+                        .then(
+                            if (active) {
+                                Modifier.border(
+                                    width = 2.dp,
+                                    color = Color.White,
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                            } else Modifier
+                        )
+                        .pointerInput(c) {
+                            detectTapGestures {
+                                latestOnChange(latest.copy(backgroundColor1 = c))
+                            }
+                        }
+                )
+            }
+        }
     }
 }
 
-
+// ═══════════════════════════════════════════════════════════════
 //  SHARED COMPONENTS
+// ═══════════════════════════════════════════════════════════════
 
-
-// 🆕 Generic slider sub-view (used for size, gaps, line-height, etc.)
 @Composable
 private fun SliderSub(
     title: String,
@@ -1095,6 +1240,10 @@ private fun SliderRow(
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  TEMPLATES SUB
+// ═══════════════════════════════════════════════════════════════
 
 @Composable
 private fun TemplatesSub(

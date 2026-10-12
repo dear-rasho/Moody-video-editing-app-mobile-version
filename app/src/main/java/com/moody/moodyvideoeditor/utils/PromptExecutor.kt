@@ -644,11 +644,22 @@ object PromptExecutor {
 
                     CmdType.ANIMATION -> {
                         val sel = selected ?: continue
-                        if (sel.isTextClip) {
-                            viewModel.setTextAnimation(
-                                PromptEngine.animationKey(cmd.key)
-                            )
-                            applied.add("animation ${cmd.key}")
+                        val animKey = PromptEngine.animationKey(cmd.key)
+                        when {
+                            sel.isTextClip -> {
+                                viewModel.setTextAnimation(animKey)
+                                applied.add("text animation ${cmd.key}")
+                            }
+                            sel.isStickerClip -> {
+                                val ss = sel.stickerState ?: StickerState()
+                                viewModel.updateSelectedSticker(ss.copy(animation = animKey))
+                                applied.add("sticker animation ${cmd.key}")
+                            }
+                            else -> {
+                                errors.add(
+                                    "animation: select a text or sticker clip first"
+                                )
+                            }
                         }
                     }
 
@@ -1731,7 +1742,6 @@ object PromptExecutor {
                             val b = hex[2].toString().toInt(16) * 17
                             (r shl 16) or (g shl 8) or b
                         }
-
                         6 -> hex.toInt(16)
                         else -> return null
                     }
@@ -1804,6 +1814,7 @@ object PromptExecutor {
                         i += if (angle != null) 4 else 3
                     }
                 }
+
                 "maxwidth", "wrap" -> {
                     val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
                     if (v != null) {
@@ -1827,6 +1838,98 @@ object PromptExecutor {
                     }
                     i += 2
                 }
+
+                // ═══════════════════════════════════════════════════
+                //  🆕 BACKGROUND COMMANDS
+                // ═══════════════════════════════════════════════════
+
+                // bg COLOR  — solid background
+                "bg" -> {
+                    val c = tokens.getOrNull(i + 1)
+                    val col = c?.let { parseColor(it) }
+                    if (col != null) {
+                        st = st.copy(
+                            backgroundEnabled = true,
+                            backgroundColor1 = col
+                        )
+                    }
+                    i += 2
+                }
+
+                // bgtype rounded|character|outline
+                "bgtype" -> {
+                    val type = tokens.getOrNull(i + 1)?.lowercase()
+                    if (type != null &&
+                        type in listOf("rounded", "character", "outline")
+                    ) {
+                        st = st.copy(
+                            backgroundEnabled = true,
+                            backgroundType = type
+                        )
+                    }
+                    i += 2
+                }
+
+                // bgopacity 0..100
+                "bgopacity" -> {
+                    val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
+                    if (v != null) {
+                        st = st.copy(backgroundOpacity = v.coerceIn(0f, 100f))
+                    }
+                    i += 2
+                }
+
+                // 🆕 bggradient COLOR1 COLOR2 [ANGLE]
+                "bggradient" -> {
+                    val c1 = tokens.getOrNull(i + 1)
+                    val c2 = tokens.getOrNull(i + 2)
+                    val angle = tokens.getOrNull(i + 3)?.toFloatOrNull()
+                    val col1 = c1?.let { parseColor(it) }
+                    val col2 = c2?.let { parseColor(it) }
+                    if (col1 != null && col2 != null) {
+                        st = st.copy(
+                            backgroundEnabled = true,
+                            backgroundGradientEnabled = true,
+                            backgroundColor1 = col1,
+                            backgroundColor2 = col2,
+                            backgroundGradientAngle = angle ?: 90f
+                        )
+                    }
+                    i += if (angle != null) 4 else 3
+                }
+
+                // 🆕 bgsolid — switch to solid
+                "bgsolid" -> {
+                    st = st.copy(backgroundGradientEnabled = false)
+                    i += 1
+                }
+
+                // 🆕 bgpad X Y
+                "bgpad" -> {
+                    val x = tokens.getOrNull(i + 1)?.toFloatOrNull()
+                    val y = tokens.getOrNull(i + 2)?.toFloatOrNull()
+                    if (x != null) st = st.copy(backgroundPaddingX = x.coerceIn(0f, 60f))
+                    if (y != null) st = st.copy(backgroundPaddingY = y.coerceIn(0f, 60f))
+                    i += 3
+                }
+
+                // 🆕 bgcorner N
+                "bgcorner" -> {
+                    val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
+                    if (v != null) {
+                        st = st.copy(backgroundCornerRadius = v.coerceIn(0f, 50f))
+                    }
+                    i += 2
+                }
+
+                // nobg
+                "nobg" -> {
+                    st = st.copy(backgroundEnabled = false)
+                    i += 1
+                }
+
+                // ═══════════════════════════════════════════════════
+
                 "nogradient", "solid" -> {
                     st = st.copy(gradientEnabled = false)
                     i += 1
@@ -1899,7 +2002,7 @@ object PromptExecutor {
                     }
                 }
 
-                "noshedow", "noshadow" -> {
+                "noshadow", "noshedow" -> {
                     st = st.copy(shadowEnabled = false)
                     i += 1
                 }
@@ -1925,9 +2028,7 @@ object PromptExecutor {
                 "animation", "anim" -> {
                     val a = tokens.getOrNull(i + 1)
                     if (a != null) {
-                        st = st.copy(
-                            animation = PromptEngine.animationKey(a)
-                        )
+                        st = st.copy(animation = PromptEngine.animationKey(a))
                     }
                     i += 2
                 }
@@ -1956,28 +2057,20 @@ object PromptExecutor {
                 "position", "pos" -> {
                     val x = tokens.getOrNull(i + 1)?.toFloatOrNull()
                     val y = tokens.getOrNull(i + 2)?.toFloatOrNull()
-                    if (x != null) {
-                        st = st.copy(positionX = x.coerceIn(0f, 100f))
-                    }
-                    if (y != null) {
-                        st = st.copy(positionY = y.coerceIn(0f, 100f))
-                    }
+                    if (x != null) st = st.copy(positionX = x.coerceIn(0f, 100f))
+                    if (y != null) st = st.copy(positionY = y.coerceIn(0f, 100f))
                     i += 3
                 }
 
                 "posx", "x" -> {
                     val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
-                    if (v != null) {
-                        st = st.copy(positionX = v.coerceIn(0f, 100f))
-                    }
+                    if (v != null) st = st.copy(positionX = v.coerceIn(0f, 100f))
                     i += 2
                 }
 
                 "posy", "y" -> {
                     val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
-                    if (v != null) {
-                        st = st.copy(positionY = v.coerceIn(0f, 100f))
-                    }
+                    if (v != null) st = st.copy(positionY = v.coerceIn(0f, 100f))
                     i += 2
                 }
 

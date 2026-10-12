@@ -1,5 +1,5 @@
 package com.moody.moodyvideoeditor.viewmodel
-
+import com.moody.moodyvideoeditor.data.OverlayConfig
 import android.content.Context
 import android.net.Uri
 import androidx.core.content.ContextCompat
@@ -2438,6 +2438,7 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
+
     fun setPreviewEffect(presetKey: String?, intensity: Float) {
         if (presetKey == null) {
             _state.update { it.copy(previewEffectState = null) }
@@ -2448,6 +2449,9 @@ class EditorViewModel : ViewModel() {
         _state.update { it.copy(previewEffectState = scaled) }
     }
 
+    fun setPreviewEffectFull(state: EffectState?) {
+        _state.update { it.copy(previewEffectState = state) }
+    }
     fun clearPreviewEffect() {
         _state.update { it.copy(previewEffectState = null) }
     }
@@ -2473,7 +2477,32 @@ class EditorViewModel : ViewModel() {
         addClipOnNewLayer(clip, baseTrack + 1)
         updateHistoryFlags()
     }
+    fun createEffectLayerAtWithConfig(
+        presetKey: String,
+        intensity: Float,
+        overlayConfig: OverlayConfig
+    ) {
+        val preset = EffectLibrary.findByKey(presetKey) ?: return
+        val s = _state.value
+        val baseClip = s.selectedClip
+        val startMs = baseClip?.timelineStartMs ?: s.currentPosMs
+        val durMs = baseClip?.durationMs ?: 3000L
+        val baseTrack = baseClip?.trackIndex ?: 0
+        val scaled = buildScaledEffectState(preset, intensity)
+            .copy(overlay = overlayConfig)
 
+        val clip = EditorClip(
+            id = UUID.randomUUID().toString(), uri = Uri.EMPTY,
+            name = "✨ ${preset.label}", type = "effect/plain",
+            sourceStartMs = 0L, sourceEndMs = durMs,
+            timelineStartMs = startMs, trackIndex = 0, isAudio = false,
+            sourceTotalMs = Long.MAX_VALUE, effectKeys = listOf(presetKey),
+            effectState = scaled
+        )
+        pushHistory()
+        addClipOnNewLayer(clip, baseTrack + 1)
+        updateHistoryFlags()
+    }
     fun updateEffectLayerIntensity(layerId: String, intensity: Float) {
         val clip = _state.value.clips.firstOrNull { it.id == layerId } ?: return
         if (!clip.isEffectClip) return
@@ -2509,12 +2538,10 @@ class EditorViewModel : ViewModel() {
     ): EffectState {
         val t = (intensity / 100f).coerceIn(0f, 2f)
 
-        // ─── Motion ─────────────────────────────────────────
         val scaledMotion = preset.motion?.let { m ->
             m.copy(intensity = (m.intensity * t).coerceIn(0f, 500f))
         }
 
-        // ─── Filters ────────────────────────────────────────
         val scaledFilters: com.moody.moodyvideoeditor.data.ColorFilterValues? =
             preset.filters?.let { f ->
                 val s100: (Float) -> Float = { v ->
@@ -2536,28 +2563,31 @@ class EditorViewModel : ViewModel() {
                 )
             }
 
-        // ─── Overlay ────────────────────────────────────────
+        // 🆕 Animated color — scale intensity
+        val scaledAnimatedColor = preset.animatedColor?.let { ac ->
+            ac.copy(intensity = (ac.intensity * t).coerceIn(0f, 200f))
+        }
+
         val scaledOverlay = preset.overlay?.let { o ->
             o.copy(intensity = (o.intensity * t).coerceIn(0f, 300f))
         }
 
-        // ─── Edge Glow (🆕) ─────────────────────────────────
         val scaledEdgeGlow = preset.edgeGlow?.let { g ->
             g.copy(intensity = (g.intensity * t).coerceIn(0f, 300f))
         }
 
-        // 🆕 Light Leak scale
         val scaledLightLeak = preset.lightLeak?.let { l ->
             l.copy(
                 intensity = (l.intensity * t).coerceIn(0f, 300f),
                 radius = (l.radius * (0.85f + 0.15f * t)).coerceIn(0.1f, 2f)
             )
         }
-        // ─── Final EffectState ─────────────────────────────
+
         return EffectState(
             kind = EffectState.KIND_EFFECT,
             presetKey = preset.key,
             filters = scaledFilters,
+            animatedColor = scaledAnimatedColor,   // 🆕
             motion = scaledMotion,
             overlay = scaledOverlay,
             edgeGlow = scaledEdgeGlow,
@@ -2565,7 +2595,6 @@ class EditorViewModel : ViewModel() {
             masterIntensity = intensity
         )
     }
-
     fun removeSelectedEffect() {
         val sel = _state.value.selectedClip ?: return
         if (!sel.isEffectClip) return

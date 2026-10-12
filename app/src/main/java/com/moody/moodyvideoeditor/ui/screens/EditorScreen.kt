@@ -1238,12 +1238,41 @@ fun EditorScreen(
                             viewModel.createEffectLayerAt(key, intensity)
                             effectEditLayerId = null
                         },
-
+                        onApplyOverlayLayer = { key, intensity, config ->
+                            viewModel.createEffectLayerAtWithConfig(key, intensity, config)
+                            effectEditLayerId = null
+                        },
                         onUpdateIntensity = { intensity ->
                             editLayer?.let {
                                 viewModel.updateEffectLayerIntensity(
                                     it.id, intensity
                                 )
+                            }
+                        },
+                        onOverlayPropertyChange = { key, config ->
+                            // 🆕 Build preview effect with updated overlay config
+                            val preset = com.moody.moodyvideoeditor.data.EffectLibrary
+                                .findByKey(key)
+                            if (preset != null) {
+                                val currentPreview = viewModel.state.value.previewEffectState
+                                val updated = if (
+                                    currentPreview != null &&
+                                    currentPreview.presetKey == key
+                                ) {
+                                    currentPreview.copy(overlay = config)
+                                } else {
+                                    com.moody.moodyvideoeditor.data.EffectState(
+                                        kind = com.moody.moodyvideoeditor.data.EffectState.KIND_EFFECT,
+                                        presetKey = key,
+                                        overlay = config,
+                                        motion = preset.motion,
+                                        filters = preset.filters,
+                                        edgeGlow = preset.edgeGlow,
+                                        lightLeak = preset.lightLeak,
+                                        masterIntensity = 100f
+                                    )
+                                }
+                                viewModel.setPreviewEffectFull(updated)
                             }
                         },
                         onDeleteLayer = {
@@ -1260,7 +1289,6 @@ fun EditorScreen(
                         }
                     )
                 }
-
                 "adjustments" -> AdjustmentsPanel(
                     adj = selected?.adjustments ?: AdjustmentData(),
                     onAdjChanged = { viewModel.updateSelectedAdjustment(it) },
