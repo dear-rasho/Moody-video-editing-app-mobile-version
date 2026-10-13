@@ -1294,6 +1294,60 @@ fun EditorScreen(
                                 )
                             }
                         },
+                        onParticlePropertyChange = { key, config ->
+                            val currentPreview = viewModel.state.value.previewEffectState
+                            if (currentPreview != null &&
+                                currentPreview.presetKey == key &&
+                                currentPreview.particle != null
+                            ) {
+                                viewModel.setPreviewEffectFull(
+                                    currentPreview.copy(particle = config)
+                                )
+                            }
+                            if (editLayer != null) {
+                                viewModel.updateClipEffectParticle(editLayer.id, config)
+                            }
+                        },
+                        onApplyParticleLayer = { key, intensity, config ->
+                            viewModel.createEffectLayerAt(key, intensity)
+                            // Immediately apply custom config to the new layer
+                            val newLayer = viewModel.state.value.selectedClip
+                            if (newLayer != null && newLayer.isEffectClip) {
+                                viewModel.updateClipEffectParticle(newLayer.id, config)
+                            }
+                            effectEditLayerId = null
+                        },
+                        onApplyLightningLayer = { key, intensity, config ->
+                            viewModel.createEffectLayerAt(key, intensity)
+                            // Immediately apply custom config to the new layer
+                            val newLayer = viewModel.state.value.selectedClip
+                            if (newLayer != null && newLayer.isEffectClip) {
+                                viewModel.updateClipEffectLightning(newLayer.id, config)
+                            }
+                            effectEditLayerId = null
+                        },
+                        onFirePropertyChange = { key, config ->
+                            val currentPreview = viewModel.state.value.previewEffectState
+                            if (currentPreview != null &&
+                                currentPreview.presetKey == key &&
+                                currentPreview.fire != null
+                            ) {
+                                viewModel.setPreviewEffectFull(
+                                    currentPreview.copy(fire = config)
+                                )
+                            }
+                            if (editLayer != null) {
+                                viewModel.updateClipEffectFire(editLayer.id, config)
+                            }
+                        },
+                        onApplyFireLayer = { key, intensity, config ->
+                            viewModel.createEffectLayerAt(key, intensity)
+                            val newLayer = viewModel.state.value.selectedClip
+                            if (newLayer != null && newLayer.isEffectClip) {
+                                viewModel.updateClipEffectFire(newLayer.id, config)
+                            }
+                            effectEditLayerId = null
+                        },
                         onDeleteLayer = {
                             editLayer?.let {
                                 viewModel.removeEffectLayer(it.id)

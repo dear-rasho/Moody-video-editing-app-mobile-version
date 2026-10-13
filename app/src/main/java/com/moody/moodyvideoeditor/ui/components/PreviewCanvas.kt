@@ -1,7 +1,8 @@
 @file:OptIn(UnstableApi::class)
 
 package com.moody.moodyvideoeditor.ui.components
-
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import android.graphics.Bitmap
 import android.graphics.BlurMaskFilter
 import android.graphics.Paint
@@ -1594,7 +1595,53 @@ fun PreviewCanvas(
                     }
                 }
             }
+            // ═══════════════════════════════════════════════════════
+            //  🔥 FIRE PREVIEW
+            // ═══════════════════════════════════════════════════════
+            val activeFire = clips
+                .filter { c ->
+                    c.isEffectClip &&
+                            c.trackIndex > videoTrackIdx &&
+                            currentPosMs >= c.timelineStartMs &&
+                            currentPosMs < c.timelineEndMs &&
+                            c.effectState?.fire != null
+                }
+                .sortedBy { it.trackIndex }
+                .mapNotNull { c ->
+                    val cfg = c.effectState?.fire ?: return@mapNotNull null
+                    val localSec = ((currentPosMs - c.timelineStartMs) / 1000f)
+                        .coerceAtLeast(0f)
+                    cfg to localSec
+                }
 
+            val previewFire = previewEffectState?.fire?.let { cfg ->
+                val localSec = currentPosMs / 1000f
+                cfg to localSec
+            }
+
+            val allFire = if (previewFire != null)
+                activeFire + previewFire
+            else activeFire
+
+            if (allFire.isNotEmpty()) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    allFire.forEach { (cfg, localSec) ->
+                        try {
+                            drawIntoCanvas { canvas ->
+                                com.moody.moodyvideoeditor.utils.FireEngine
+                                    .drawOnCanvas(
+                                        canvas = canvas.nativeCanvas,
+                                        cfg = cfg,
+                                        localTimeSec = localSec,
+                                        W = size.width.toInt(),
+                                        H = size.height.toInt()
+                                    )
+                            }
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            }
             val activeLightLeaks = clips
                 .filter { c ->
                     c.isEffectClip &&
@@ -1637,6 +1684,49 @@ fun PreviewCanvas(
                                 radius = r,
                                 center = Offset(cx, cy),
                                 blendMode = BlendMode.Screen
+                            )
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            }
+            // ═══════════════════════════════════════════════════════
+            //  ✨💥 PARTICLE / BLAST PREVIEW
+            // ═══════════════════════════════════════════════════════
+            val activeParticles = clips
+                .filter { c ->
+                    c.isEffectClip &&
+                            c.trackIndex > videoTrackIdx &&
+                            currentPosMs >= c.timelineStartMs &&
+                            currentPosMs < c.timelineEndMs &&
+                            c.effectState?.particle != null
+                }
+                .sortedBy { it.trackIndex }
+                .mapNotNull { c ->
+                    val cfg = c.effectState?.particle ?: return@mapNotNull null
+                    val localSec = ((currentPosMs - c.timelineStartMs) / 1000f)
+                        .coerceAtLeast(0f)
+                    cfg to localSec
+                }
+
+            val previewParticle = previewEffectState?.particle?.let { cfg ->
+                val localSec = currentPosMs / 1000f
+                cfg to localSec
+            }
+
+            val allParticles = if (previewParticle != null)
+                activeParticles + previewParticle
+            else activeParticles
+
+            if (allParticles.isNotEmpty()) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    allParticles.forEach { (cfg, localSec) ->
+                        try {
+                            drawParticlePreview(
+                                cfg = cfg,
+                                localSec = localSec,
+                                W = size.width,
+                                H = size.height
                             )
                         } catch (_: Throwable) {
                         }
@@ -3589,4 +3679,99 @@ private fun normalizeAngle(radians: Float): Float {
     while (normalized > Math.PI) normalized -= twoPi
     while (normalized < -Math.PI) normalized += twoPi
     return normalized
+}
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawParticlePreview(
+    cfg: com.moody.moodyvideoeditor.data.ParticleConfig,
+    localSec: Float,
+    W: Float,
+    H: Float
+) {
+    if (localSec < 0f) return
+
+    val cycleSec = cfg.triggerEverySec
+    val cycleIdx: Int
+    val localT: Float
+    if (cycleSec <= 0.01f) {
+        if (localSec * 1000f > cfg.burstDurationMs + cfg.lifetimeMs) return
+        cycleIdx = 0
+        localT = localSec
+    } else {
+        cycleIdx = kotlin.math.floor(localSec / cycleSec).toInt()
+        localT = localSec - cycleIdx * cycleSec
+    }
+
+    val localMs = (localT * 1000f).toLong()
+
+    // Shockwave ring
+    if (cfg.shockwave) {
+        val waveFrac = (localMs.toFloat() / 800f).coerceIn(0f, 1f)
+        if (waveFrac < 1f) {
+            val ringRadius = waveFrac * W * 0.7f
+            val ringAlpha = (1f - waveFrac).coerceIn(0f, 1f)
+            val c1 = Color(cfg.color1)
+            drawCircle(
+                color = c1.copy(alpha = ringAlpha * 0.8f),
+                radius = ringRadius,
+                center = Offset(cfg.triggerX * W, cfg.triggerY * H),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(
+                    width = W * cfg.shockwaveThickness
+                )
+            )
+        }
+    }
+
+    // Flash
+    if (cfg.flashOnTrigger) {
+        val flashFrac = (localMs / 150f).coerceIn(0f, 1f)
+        if (flashFrac < 1f) {
+            val c1 = Color(cfg.color1)
+            drawRect(
+                color = c1.copy(alpha = (1f - flashFrac) * 0.7f),
+                size = androidx.compose.ui.geometry.Size(W, H)
+            )
+        }
+    }
+
+    // Particles
+    val particles = com.moody.moodyvideoeditor.utils.ParticleEngine
+        .generateParticles(cfg, cycleIdx)
+    val intensityMul = (cfg.masterIntensity / 100f).coerceIn(0f, 2f)
+
+    particles.forEach { p ->
+        val age = localMs - p.birthMs
+        if (age < 0L || age > cfg.lifetimeMs) return@forEach
+
+        val st = com.moody.moodyvideoeditor.utils.ParticleEngine
+            .computeState(cfg, p, age, W, H) ?: return@forEach
+
+        val c1 = Color(cfg.color1)
+        val c2 = Color(cfg.color2)
+        val mix = p.colorMix
+        val finalColor = Color(
+            red = c1.red * (1f - mix) + c2.red * mix,
+            green = c1.green * (1f - mix) + c2.green * mix,
+            blue = c1.blue * (1f - mix) + c2.blue * mix,
+            alpha = (st.alpha * intensityMul).coerceIn(0f, 1f)
+        )
+
+        if (cfg.glow) {
+            drawCircle(
+                brush = androidx.compose.ui.graphics.Brush.radialGradient(
+                    colors = listOf(
+                        finalColor,
+                        finalColor.copy(alpha = 0f)
+                    ),
+                    center = Offset(st.x, st.y),
+                    radius = st.size * 2.5f
+                ),
+                radius = st.size * 2.5f,
+                center = Offset(st.x, st.y)
+            )
+        }
+        drawCircle(
+            color = finalColor,
+            radius = st.size,
+            center = Offset(st.x, st.y)
+        )
+    }
 }

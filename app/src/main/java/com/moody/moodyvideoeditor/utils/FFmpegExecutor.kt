@@ -123,6 +123,58 @@ class FFmpegExecutor(
                         c.timelineEndMs > 0L &&
                         c.timelineStartMs < totalDurationMs
             }
+            // ✨💥 Particle/blast PNG sequences
+            val particleClips = allClips.filter { c ->
+                c.isEffectClip &&
+                        c.effectState?.particle != null &&
+                        c.timelineEndMs > 0L &&
+                        c.timelineStartMs < totalDurationMs
+            }
+            val particleSequences = if (particleClips.isNotEmpty()) {
+                try {
+                    ParticleBitmapRenderer.renderParticleSequences(
+                        context = context,
+                        particleClips = particleClips,
+                        W = targetW, H = targetH,
+                        fps = fps,
+                        totalDurationMs = totalDurationMs,
+                        onProgress = { p -> onProgress(p * 0.15f) },
+                        shouldCancel = { isCancelled }
+                    )
+                } catch (e: CancellationException) {
+                    cleanupMaskSequences()
+                    throw e
+                } catch (e: Exception) {
+                    Log.e("FFMPEG", "Particle render failed", e)
+                    emptyList()
+                }
+            } else emptyList()
+            // 🔥 Fire sequences
+            val fireClips = allClips.filter { c ->
+                c.isEffectClip &&
+                        c.effectState?.fire != null &&
+                        c.timelineEndMs > 0L &&
+                        c.timelineStartMs < totalDurationMs
+            }
+            val fireSequences = if (fireClips.isNotEmpty()) {
+                try {
+                    FireBitmapRenderer.renderFireSequences(
+                        context = context,
+                        fireClips = fireClips,
+                        W = targetW, H = targetH,
+                        fps = fps,
+                        totalDurationMs = totalDurationMs,
+                        onProgress = { p -> onProgress(p * 0.15f) },
+                        shouldCancel = { isCancelled }
+                    )
+                } catch (e: CancellationException) {
+                    cleanupMaskSequences()
+                    throw e
+                } catch (e: Exception) {
+                    Log.e("FFMPEG", "Fire render failed", e)
+                    emptyList()
+                }
+            } else emptyList()
             val lightningSequences = if (lightningClips.isNotEmpty()) {
                 try {
                     LightningBitmapRenderer.renderLightningStrikes(
@@ -147,7 +199,9 @@ class FFmpegExecutor(
                 clips.map { it.trackIndex }.distinct().size > 1 ||
                         maskSequences.isNotEmpty() ||
                         matteClips.isNotEmpty() ||
-                        lightningSequences.isNotEmpty()
+                        lightningSequences.isNotEmpty() ||
+                        particleSequences.isNotEmpty() ||
+                        fireSequences.isNotEmpty()
 
             if (needsLayered) {
                 exportLayeredTracks(
@@ -165,7 +219,7 @@ class FFmpegExecutor(
                     maskSequences = maskSequences,
                     colorMettes = matteClips,
                     totalDurationMs = totalDurationMs,
-                    extraSequences = lightningSequences
+                    extraSequences = lightningSequences + particleSequences + fireSequences
                 )
                 return
             }

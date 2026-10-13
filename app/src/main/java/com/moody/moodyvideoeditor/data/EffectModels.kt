@@ -14,10 +14,13 @@ data class EffectPreset(
     val edgeGlow: EdgeGlowConfig? = null,
     val blur: com.moody.moodyvideoeditor.utils.BlurConfig? = null,
     val lightLeak: LightLeakConfig? = null,
-    val lightning: LightningConfig? = null
+    val lightning: LightningConfig? = null,
+    val particle: ParticleConfig? = null,
+    val fire: FireConfig? = null
 )
 enum class EffectKind {
-    MOTION, ANIMATED_COLOR, BLUR, OVERLAY, EDGE_GLOW, LIGHT_LEAK, LIGHTNING
+    MOTION, ANIMATED_COLOR, BLUR, OVERLAY, EDGE_GLOW, LIGHT_LEAK,
+    LIGHTNING, PARTICLE, FIRE
 }
 // Mirrors MOTION_MAP values from beatsEngine.js
 data class MotionConfig(
@@ -97,6 +100,7 @@ enum class LightLeakAnimation {
     DRIFT,       // slow position drift
     SWEEP        // horizontal sweep
 }
+
 // ═══════════════════════════════════════════════════════════════
 //  ⚡ LIGHTNING — thunderstorm-style flash effect
 // ═══════════════════════════════════════════════════════════════
@@ -799,6 +803,32 @@ object EffectLibrary {
         )
     )
     // ═══════════════════════════════════════════════════════════
+//  ✨💥 PARTICLE EFFECTS — 20 (sparks + blasts)
+// ═══════════════════════════════════════════════════════════
+    val PARTICLE_EFFECTS: List<EffectPreset> =
+        com.moody.moodyvideoeditor.data.ParticleLibrary.PRESETS.map { p ->
+            EffectPreset(
+                key = p.key,
+                label = p.label,
+                icon = p.icon,
+                kind = EffectKind.PARTICLE,
+                particle = p.config
+            )
+        }
+    // ═══════════════════════════════════════════════════════════
+//  🔥 FIRE EFFECTS — 10
+// ═══════════════════════════════════════════════════════════
+    val FIRE_EFFECTS: List<EffectPreset> =
+        com.moody.moodyvideoeditor.data.FireLibrary.PRESETS.map { p ->
+            EffectPreset(
+                key = p.key,
+                label = p.label,
+                icon = p.icon,
+                kind = EffectKind.FIRE,
+                fire = p.config
+            )
+        }
+    // ═══════════════════════════════════════════════════════════
 //  BLUR EFFECTS — 10 animated blurs
 // ═══════════════════════════════════════════════════════════
     val BLUR_EFFECTS: List<EffectPreset> = listOf(
@@ -918,6 +948,6 @@ object EffectLibrary {
 
     val ALL: List<EffectPreset> = MOTION_EFFECTS + ANIMATED_COLOR_EFFECTS +
             BLUR_EFFECTS + OVERLAY_EFFECTS + EDGE_GLOW_EFFECTS + LIGHT_LEAK_EFFECTS +
-            LIGHTNING_EFFECTS
+            LIGHTNING_EFFECTS + PARTICLE_EFFECTS + FIRE_EFFECTS
     fun findByKey(key: String): EffectPreset? = ALL.firstOrNull { it.key == key }
 }

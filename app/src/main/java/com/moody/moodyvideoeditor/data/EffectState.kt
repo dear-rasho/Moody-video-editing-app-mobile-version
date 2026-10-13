@@ -11,8 +11,9 @@ data class EffectState(
     val edgeGlow: EdgeGlowConfig? = null,
     val lightLeak: LightLeakConfig? = null,
     val lightning: LightningConfig? = null,
+    val particle: ParticleConfig? = null,
+    val fire: FireConfig? = null,
     val masterIntensity: Float = 100f
-
 ) {
     companion object {
         const val KIND_EFFECT = "effect"

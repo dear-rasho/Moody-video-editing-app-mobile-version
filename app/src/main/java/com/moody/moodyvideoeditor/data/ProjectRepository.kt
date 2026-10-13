@@ -584,6 +584,7 @@ object ProjectRepository {
                 put("speed", edgeGlow.speed.toDouble())
             })
         }
+
         // 🆕 Lightning
         val lightning = e.lightning
         if (lightning != null) {
@@ -595,7 +596,56 @@ object ProjectRepository {
                 put("doubleStrike", lightning.doubleStrike)
             })
         }
+        // ✨💥 Particle
+        val particle = e.particle
+        if (particle != null) {
+            put("particle", JSONObject().apply {
+                put("style", particle.style.name)
+                put("category", particle.category.name)
+                put("count", particle.count)
+                put("speed", particle.speed.toDouble())
+                put("spread", particle.spread.toDouble())
+                put("direction", particle.direction.toDouble())
+                put("gravity", particle.gravity.toDouble())
+                put("sizeMin", particle.sizeMin.toDouble())
+                put("sizeMax", particle.sizeMax.toDouble())
+                put("color1", particle.color1)
+                put("color2", particle.color2)
+                put("glow", particle.glow)
+                put("fadeOut", particle.fadeOut)
+                put("lifetimeMs", particle.lifetimeMs)
+                put("burstDurationMs", particle.burstDurationMs)
+                put("triggerEverySec", particle.triggerEverySec.toDouble())
+                put("triggerX", particle.triggerX.toDouble())
+                put("triggerY", particle.triggerY.toDouble())
+                put("emojis", particle.emojis)
+                put("shockwave", particle.shockwave)
+                put("shockwaveThickness", particle.shockwaveThickness.toDouble())
+                put("flashOnTrigger", particle.flashOnTrigger)
+                put("masterIntensity", particle.masterIntensity.toDouble())
+            })
+        }
+        // 🔥 Fire
+        val fire = e.fire
+        if (fire != null) {
+            put("fire", JSONObject().apply {
+                put("style", fire.style.name)
+                put("intensity", fire.intensity.toDouble())
+                put("flameHeight", fire.flameHeight.toDouble())
+                put("waviness", fire.waviness.toDouble())
+                put("density", fire.density)
+                put("colorHot", fire.colorHot)
+                put("colorMid", fire.colorMid)
+                put("colorCool", fire.colorCool)
+                put("particleCount", fire.particleCount)
+                put("particleSpeed", fire.particleSpeed.toDouble())
+                put("speed", fire.speed.toDouble())
+                put("masterIntensity", fire.masterIntensity.toDouble())
+            })
+        }
     }
+
+
 
     private fun effectStateFromJson(o: JSONObject): EffectState {
         val motionObj = o.optJSONObject("motion")
@@ -678,9 +728,75 @@ object ProjectRepository {
                     durationMs = lc.optLong("durationMs", 80L),
                     doubleStrike = lc.optBoolean("doubleStrike", true)
                 )
+            },
+
+            particle = o.optJSONObject("particle")?.let { pc ->
+                ParticleConfig(
+                    style = try {
+                        ParticleStyle.valueOf(
+                            pc.optString("style", "SPARK_BURST")
+                        )
+                    } catch (_: Exception) {
+                        ParticleStyle.SPARK_BURST
+                    },
+                    category = try {
+                        ParticleCategory.valueOf(
+                            pc.optString("category", "PARTICLES")
+                        )
+                    } catch (_: Exception) {
+                        ParticleCategory.PARTICLES
+                    },
+                    count = pc.optInt("count", 80),
+                    speed = pc.optDouble("speed", 100.0).toFloat(),
+                    spread = pc.optDouble("spread", 360.0).toFloat(),
+                    direction = pc.optDouble("direction", -90.0).toFloat(),
+                    gravity = pc.optDouble("gravity", 0.0).toFloat(),
+                    sizeMin = pc.optDouble("sizeMin", 2.0).toFloat(),
+                    sizeMax = pc.optDouble("sizeMax", 8.0).toFloat(),
+                    color1 = pc.optLong("color1", 0xFFFFD166L),
+                    color2 = pc.optLong("color2", 0xFFFF6B00L),
+                    glow = pc.optBoolean("glow", true),
+                    fadeOut = pc.optBoolean("fadeOut", true),
+                    lifetimeMs = pc.optLong("lifetimeMs", 1200L),
+                    burstDurationMs = pc.optLong("burstDurationMs", 500L),
+                    triggerEverySec = pc.optDouble(
+                        "triggerEverySec", 0.0
+                    ).toFloat(),
+                    triggerX = pc.optDouble("triggerX", 0.5).toFloat(),
+                    triggerY = pc.optDouble("triggerY", 0.5).toFloat(),
+                    emojis = pc.optString("emojis", ""),
+                    shockwave = pc.optBoolean("shockwave", false),
+                    shockwaveThickness = pc.optDouble(
+                        "shockwaveThickness", 0.05
+                    ).toFloat(),
+                    flashOnTrigger = pc.optBoolean("flashOnTrigger", false),
+                    masterIntensity = pc.optDouble(
+                        "masterIntensity", 100.0
+                    ).toFloat()
+                )
+            },
+
+            fire = o.optJSONObject("fire")?.let { fc ->
+                FireConfig(
+                    style = try {
+                        FireStyle.valueOf(fc.optString("style", "FIRE_BOTTOM"))
+                    } catch (_: Exception) { FireStyle.FIRE_BOTTOM },
+                    intensity = fc.optDouble("intensity", 100.0).toFloat(),
+                    flameHeight = fc.optDouble("flameHeight", 0.35).toFloat(),
+                    waviness = fc.optDouble("waviness", 0.5).toFloat(),
+                    density = fc.optInt("density", 12),
+                    colorHot = fc.optLong("colorHot", 0xFFFFEE88L),
+                    colorMid = fc.optLong("colorMid", 0xFFFF6600L),
+                    colorCool = fc.optLong("colorCool", 0xFFAA0000L),
+                    particleCount = fc.optInt("particleCount", 60),
+                    particleSpeed = fc.optDouble("particleSpeed", 80.0).toFloat(),
+                    speed = fc.optDouble("speed", 1.0).toFloat(),
+                    masterIntensity = fc.optDouble("masterIntensity", 100.0).toFloat()
+                )
             }
         )
     }
+
 
 
     //  TEXT

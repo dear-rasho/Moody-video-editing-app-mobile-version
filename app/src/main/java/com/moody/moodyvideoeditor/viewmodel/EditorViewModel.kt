@@ -2535,6 +2535,33 @@ class EditorViewModel : ViewModel() {
         addClipOnNewLayer(clip, baseTrack + 1)
         updateHistoryFlags()
     }
+    fun updateClipEffectParticle(
+        clipId: String,
+        config: com.moody.moodyvideoeditor.data.ParticleConfig
+    ) {
+        updateClipDirect(clipId) { clip ->
+            val eff = clip.effectState
+            if (eff != null && eff.particle != null) {
+                clip.copy(effectState = eff.copy(particle = config))
+            } else clip
+        }
+    }
+    fun updateClipEffectFire(
+        clipId: String,
+        config: com.moody.moodyvideoeditor.data.FireConfig
+    ) {
+        updateClipDirect(clipId) { clip ->
+            val eff = clip.effectState
+            if (eff != null && eff.fire != null) {
+                clip.copy(effectState = eff.copy(fire = config))
+            } else clip
+        }
+    }
+    // Force autosave trigger — call this after particle/lightning updates
+    fun markDirtyForAutosave() {
+        // Just touch the state to trigger LaunchedEffect in EditorScreen
+        _state.update { it.copy(currentPosMs = it.currentPosMs) }
+    }
     fun updateClipEffectLightning(
         clipId: String,
         config: com.moody.moodyvideoeditor.data.LightningConfig
@@ -2637,6 +2664,18 @@ class EditorViewModel : ViewModel() {
                     .coerceIn(0f, 200f)
             )
         }
+        val scaledParticle = preset.particle?.let { pc ->
+            pc.copy(
+                masterIntensity = (pc.masterIntensity * (intensity / 100f))
+                    .coerceIn(0f, 200f)
+            )
+        }
+        val scaledFire = preset.fire?.let { fc ->
+            fc.copy(
+                masterIntensity = (fc.masterIntensity * (intensity / 100f))
+                    .coerceIn(0f, 200f)
+            )
+        }
 
         return EffectState(
             kind = EffectState.KIND_EFFECT,
@@ -2648,7 +2687,9 @@ class EditorViewModel : ViewModel() {
             overlay = scaledOverlay,
             edgeGlow = scaledEdgeGlow,
             lightLeak = scaledLightLeak,
-            lightning = scaledLightning,        // 🆕 ADD THIS LINE
+            lightning = scaledLightning,
+            particle = scaledParticle,
+            fire = scaledFire,
             masterIntensity = intensity
         )
     }

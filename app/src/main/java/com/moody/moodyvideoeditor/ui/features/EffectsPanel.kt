@@ -1,5 +1,6 @@
 package com.moody.moodyvideoeditor.ui.features
-
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
@@ -87,8 +88,9 @@ private val CATEGORIES = listOf(
     Triple(EffectKind.BLUR, "🔍 Blur", EffectLibrary.BLUR_EFFECTS),
     Triple(EffectKind.OVERLAY, "🎬 Overlay", EffectLibrary.OVERLAY_EFFECTS),
     Triple(EffectKind.EDGE_GLOW, "✨ Edge Glow", EffectLibrary.EDGE_GLOW_EFFECTS),
-    Triple(EffectKind.LIGHT_LEAK, "🌅 Light Leaks", EffectLibrary.LIGHT_LEAK_EFFECTS),
-    Triple(EffectKind.LIGHTNING, "⚡ Lightning", EffectLibrary.LIGHTNING_EFFECTS)
+    Triple(EffectKind.LIGHTNING, "⚡ Lightning", EffectLibrary.LIGHTNING_EFFECTS),
+    Triple(EffectKind.PARTICLE, "✨ Particles", EffectLibrary.PARTICLE_EFFECTS),
+    Triple(EffectKind.FIRE, "🔥 Fire & Thermal", EffectLibrary.FIRE_EFFECTS)
 )
 @Composable
 fun EffectsPanel(
@@ -103,6 +105,11 @@ fun EffectsPanel(
     onOverlayPropertyChange: ((presetKey: String, config: OverlayConfig) -> Unit)? = null,
     onBlurPropertyChange: ((presetKey: String, config: BlurConfig) -> Unit)? = null,
     onLightningPropertyChange: ((presetKey: String, config: com.moody.moodyvideoeditor.data.LightningConfig) -> Unit)? = null,
+    onParticlePropertyChange: ((presetKey: String, config: com.moody.moodyvideoeditor.data.ParticleConfig) -> Unit)? = null,
+    onApplyParticleLayer: ((presetKey: String, intensity: Float, config: com.moody.moodyvideoeditor.data.ParticleConfig) -> Unit)? = null,
+    onApplyLightningLayer: ((presetKey: String, intensity: Float, config: com.moody.moodyvideoeditor.data.LightningConfig) -> Unit)? = null,
+    onFirePropertyChange: ((presetKey: String, config: com.moody.moodyvideoeditor.data.FireConfig) -> Unit)? = null,
+    onApplyFireLayer: ((presetKey: String, intensity: Float, config: com.moody.moodyvideoeditor.data.FireConfig) -> Unit)? = null,
     onDeleteLayer: () -> Unit = {},
     onClose: () -> Unit
 ) {
@@ -124,7 +131,12 @@ fun EffectsPanel(
             )
         )
     }
-
+    var currentFireConfig by remember(selectedPreset?.key) {
+        mutableStateOf(
+            selectedPreset?.fire
+                ?: com.moody.moodyvideoeditor.data.FireLibrary.PRESETS[0].config
+        )
+    }
     // Local blur config
     var currentBlurConfig by remember(selectedPreset?.key) {
         mutableStateOf(
@@ -139,6 +151,12 @@ fun EffectsPanel(
     var currentLightningConfig by remember(selectedPreset?.key) {
         mutableStateOf(
             selectedPreset?.lightning ?: com.moody.moodyvideoeditor.data.LightningConfig()
+        )
+    }
+    var currentParticleConfig by remember(selectedPreset?.key) {
+        mutableStateOf(
+            selectedPreset?.particle
+                ?: com.moody.moodyvideoeditor.data.ParticleLibrary.PRESETS[0].config
         )
     }
     var refBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -166,6 +184,8 @@ fun EffectsPanel(
                 initialEffectState?.overlay?.let { currentOverlayConfig = it }
                 initialEffectState?.blur?.let { currentBlurConfig = it }
                 initialEffectState?.lightning?.let { currentLightningConfig = it }
+                initialEffectState?.particle?.let { currentParticleConfig = it }
+                initialEffectState?.fire?.let { currentFireConfig = it }
                 val catIdx = CATEGORIES.indexOfFirst { (_, _, list) ->
                     list.any { it.key == initialPresetKey }
                 }
@@ -265,6 +285,8 @@ fun EffectsPanel(
                             preset.overlay?.let { currentOverlayConfig = it }
                             preset.blur?.let { currentBlurConfig = it }
                             preset.lightning?.let { currentLightningConfig = it }
+                            preset.particle?.let { currentParticleConfig = it }
+                            preset.fire?.let { currentFireConfig = it }
                             onPreviewEffect(preset.key, intensity)
                             if (isEditMode) onUpdateIntensity(intensity)
                         }
@@ -638,6 +660,114 @@ fun EffectsPanel(
                     }
                 }
                 // ═══════════════════════════════════════════════════════
+                //  🔥 FIRE PROPERTIES
+                // ═══════════════════════════════════════════════════════
+                if (current.kind == EffectKind.FIRE) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "🔥 Fire Options",
+                        color = Color(0xFF888888),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+
+                    PropertySliderRow(
+                        label = "Flame H",
+                        value = currentFireConfig.flameHeight * 100f,
+                        range = 5f..100f,
+                        format = "%.0f",
+                        suffix = "%",
+                        onValueChange = { v ->
+                            currentFireConfig = currentFireConfig.copy(
+                                flameHeight = (v / 100f).coerceIn(0.05f, 1f)
+                            )
+                            onFirePropertyChange?.invoke(current.key, currentFireConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Waviness",
+                        value = currentFireConfig.waviness * 100f,
+                        range = 0f..100f,
+                        format = "%.0f",
+                        suffix = "%",
+                        onValueChange = { v ->
+                            currentFireConfig = currentFireConfig.copy(
+                                waviness = (v / 100f).coerceIn(0f, 1f)
+                            )
+                            onFirePropertyChange?.invoke(current.key, currentFireConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Density",
+                        value = currentFireConfig.density.toFloat(),
+                        range = 4f..40f,
+                        format = "%.0f",
+                        suffix = "",
+                        onValueChange = { v ->
+                            currentFireConfig = currentFireConfig.copy(
+                                density = v.toInt().coerceIn(4, 40)
+                            )
+                            onFirePropertyChange?.invoke(current.key, currentFireConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Sparks",
+                        value = currentFireConfig.particleCount.toFloat(),
+                        range = 0f..500f,
+                        format = "%.0f",
+                        suffix = "",
+                        onValueChange = { v ->
+                            currentFireConfig = currentFireConfig.copy(
+                                particleCount = v.toInt().coerceIn(0, 500)
+                            )
+                            onFirePropertyChange?.invoke(current.key, currentFireConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Speed",
+                        value = currentFireConfig.speed,
+                        range = 0.2f..5f,
+                        format = "%.2f",
+                        suffix = "x",
+                        onValueChange = { v ->
+                            currentFireConfig = currentFireConfig.copy(speed = v)
+                            onFirePropertyChange?.invoke(current.key, currentFireConfig)
+                        }
+                    )
+
+                    ColorPickerField(
+                        label = "Hot",
+                        colorLong = currentFireConfig.colorHot,
+                        onChange = { newCol ->
+                            currentFireConfig = currentFireConfig.copy(colorHot = newCol)
+                            onFirePropertyChange?.invoke(current.key, currentFireConfig)
+                        }
+                    )
+
+                    ColorPickerField(
+                        label = "Mid",
+                        colorLong = currentFireConfig.colorMid,
+                        onChange = { newCol ->
+                            currentFireConfig = currentFireConfig.copy(colorMid = newCol)
+                            onFirePropertyChange?.invoke(current.key, currentFireConfig)
+                        }
+                    )
+
+                    ColorPickerField(
+                        label = "Cool",
+                        colorLong = currentFireConfig.colorCool,
+                        onChange = { newCol ->
+                            currentFireConfig = currentFireConfig.copy(colorCool = newCol)
+                            onFirePropertyChange?.invoke(current.key, currentFireConfig)
+                        }
+                    )
+                }
+                // ═══════════════════════════════════════════════════════
                 //  ⚡ LIGHTNING PROPERTIES
                 // ═══════════════════════════════════════════════════════
                 if (current.kind == EffectKind.LIGHTNING) {
@@ -804,6 +934,221 @@ fun EffectsPanel(
                         }
                     }
                 }
+                // ═══════════════════════════════════════════════════════
+                //  ✨💥 PARTICLE PROPERTIES
+                // ═══════════════════════════════════════════════════════
+                if (current.kind == EffectKind.PARTICLE) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "✨ Particle Options",
+                        color = Color(0xFF888888),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+
+                    PropertySliderRow(
+                        label = "Count",
+                        value = currentParticleConfig.count.toFloat(),
+                        range = 1f..10000f,
+                        format = "%.0f",
+                        suffix = "",
+                        onValueChange = { v ->
+                            currentParticleConfig = currentParticleConfig.copy(
+                                count = v.toInt().coerceIn(1, 20000)
+                            )
+                            onParticlePropertyChange?.invoke(current.key, currentParticleConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Speed",
+                        value = currentParticleConfig.speed,
+                        range = 20f..500f,
+                        format = "%.0f",
+                        suffix = "",
+                        onValueChange = { v ->
+                            currentParticleConfig = currentParticleConfig.copy(speed = v)
+                            onParticlePropertyChange?.invoke(current.key, currentParticleConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Spread",
+                        value = currentParticleConfig.spread,
+                        range = 10f..360f,
+                        format = "%.0f",
+                        suffix = "°",
+                        onValueChange = { v ->
+                            currentParticleConfig = currentParticleConfig.copy(spread = v)
+                            onParticlePropertyChange?.invoke(current.key, currentParticleConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Direction",
+                        value = currentParticleConfig.direction,
+                        range = -180f..180f,
+                        format = "%.0f",
+                        suffix = "°",
+                        onValueChange = { v ->
+                            currentParticleConfig = currentParticleConfig.copy(direction = v)
+                            onParticlePropertyChange?.invoke(current.key, currentParticleConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Gravity",
+                        value = currentParticleConfig.gravity,
+                        range = -300f..300f,
+                        format = "%.0f",
+                        suffix = "",
+                        onValueChange = { v ->
+                            currentParticleConfig = currentParticleConfig.copy(gravity = v)
+                            onParticlePropertyChange?.invoke(current.key, currentParticleConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Size Min",
+                        value = currentParticleConfig.sizeMin,
+                        range = 0.1f..500f,
+                        format = "%.1f",
+                        suffix = "",
+                        onValueChange = { v ->
+                            currentParticleConfig = currentParticleConfig.copy(sizeMin = v)
+                            onParticlePropertyChange?.invoke(current.key, currentParticleConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Size Max",
+                        value = currentParticleConfig.sizeMax,
+                        range = 0.1f..500f,
+                        format = "%.1f",
+                        suffix = "",
+                        onValueChange = { v ->
+                            currentParticleConfig = currentParticleConfig.copy(sizeMax = v)
+                            onParticlePropertyChange?.invoke(current.key, currentParticleConfig)
+                        }
+                    )
+
+                    ColorPickerField(
+                        label = "Color 1",
+                        colorLong = currentParticleConfig.color1,
+                        onChange = { newCol ->
+                            currentParticleConfig = currentParticleConfig.copy(color1 = newCol)
+                            onParticlePropertyChange?.invoke(current.key, currentParticleConfig)
+                        }
+                    )
+
+                    ColorPickerField(
+                        label = "Color 2",
+                        colorLong = currentParticleConfig.color2,
+                        onChange = { newCol ->
+                            currentParticleConfig = currentParticleConfig.copy(color2 = newCol)
+                            onParticlePropertyChange?.invoke(current.key, currentParticleConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Lifetime",
+                        value = currentParticleConfig.lifetimeMs.toFloat(),
+                        range = 200f..5000f,
+                        format = "%.0f",
+                        suffix = "ms",
+                        onValueChange = { v ->
+                            currentParticleConfig = currentParticleConfig.copy(
+                                lifetimeMs = v.toLong().coerceIn(200L, 5000L)
+                            )
+                            onParticlePropertyChange?.invoke(current.key, currentParticleConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Repeat",
+                        value = currentParticleConfig.triggerEverySec,
+                        range = 0f..10f,
+                        format = "%.2f",
+                        suffix = "s",
+                        onValueChange = { v ->
+                            currentParticleConfig = currentParticleConfig.copy(
+                                triggerEverySec = v.coerceIn(0f, 10f)
+                            )
+                            onParticlePropertyChange?.invoke(current.key, currentParticleConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Trigger X",
+                        value = currentParticleConfig.triggerX * 100f,
+                        range = 0f..100f,
+                        format = "%.0f",
+                        suffix = "%",
+                        onValueChange = { v ->
+                            currentParticleConfig = currentParticleConfig.copy(
+                                triggerX = (v / 100f).coerceIn(0f, 1f)
+                            )
+                            onParticlePropertyChange?.invoke(current.key, currentParticleConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Trigger Y",
+                        value = currentParticleConfig.triggerY * 100f,
+                        range = 0f..100f,
+                        format = "%.0f",
+                        suffix = "%",
+                        onValueChange = { v ->
+                            currentParticleConfig = currentParticleConfig.copy(
+                                triggerY = (v / 100f).coerceIn(0f, 1f)
+                            )
+                            onParticlePropertyChange?.invoke(current.key, currentParticleConfig)
+                        }
+                    )
+
+                    // Toggles
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            "Glow" to currentParticleConfig.glow,
+                            "Fade" to currentParticleConfig.fadeOut
+                        ).forEach { (label, active) ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(28.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(
+                                        if (active) Color(0xFF7C3AED)
+                                        else Color(0xFF181818)
+                                    )
+                                    .pointerInput(label, active) {
+                                        detectTapGestures {
+                                            currentParticleConfig = when (label) {
+                                                "Glow" -> currentParticleConfig.copy(glow = !active)
+                                                "Fade" -> currentParticleConfig.copy(fadeOut = !active)
+                                                else -> currentParticleConfig
+                                            }
+                                            onParticlePropertyChange?.invoke(
+                                                current.key, currentParticleConfig
+                                            )
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "$label ${if (active) "ON" else "OFF"}",
+                                    color = Color.White, fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
                 // ─── ACTIONS ───
                 if (isEditMode) {
                     Row(
@@ -888,6 +1233,24 @@ fun EffectsPanel(
                                                     onApplyOverlayLayer != null -> {
                                                 onApplyOverlayLayer(
                                                     current.key, intensity, currentOverlayConfig
+                                                )
+                                            }
+                                            current.kind == EffectKind.PARTICLE &&
+                                                    onApplyParticleLayer != null -> {
+                                                onApplyParticleLayer(
+                                                    current.key, intensity, currentParticleConfig
+                                                )
+                                            }
+                                            current.kind == EffectKind.LIGHTNING &&
+                                                    onApplyLightningLayer != null -> {
+                                                onApplyLightningLayer(
+                                                    current.key, intensity, currentLightningConfig
+                                                )
+                                            }
+                                            current.kind == EffectKind.FIRE &&
+                                                    onApplyFireLayer != null -> {
+                                                onApplyFireLayer(
+                                                    current.key, intensity, currentFireConfig
                                                 )
                                             }
                                             else -> {
@@ -1185,6 +1548,237 @@ private fun EffectThumbChip(
                                 blendMode = BlendMode.Screen
                             )
                         } catch (_: Throwable) {}
+                    }
+                }
+                // ⚡ Lightning thumbnail preview
+                if (kind == EffectKind.LIGHTNING && preset.lightning != null) {
+                    val thumbTime = clockSec % 2f
+                    val flash = com.moody.moodyvideoeditor.utils.LightningEngine
+                        .flashAt(preset.lightning, thumbTime)
+
+                    if (flash > 0.01f) {
+                        Canvas(modifier = Modifier.matchParentSize()) {
+                            val flashColor = Color(preset.lightning.color)
+
+                            drawRect(
+                                color = flashColor.copy(
+                                    alpha = (flash * 0.30f).coerceIn(0f, 1f)
+                                ),
+                                size = size,
+                                blendMode = BlendMode.Screen
+                            )
+
+                            val cycleIdx = kotlin.math.floor(
+                                thumbTime *
+                                        preset.lightning.frequency.coerceIn(0.2f, 5f)
+                            ).toInt()
+
+                            val segments =
+                                com.moody.moodyvideoeditor.utils.LightningEngine
+                                    .generateBolt(
+                                        cfg = preset.lightning,
+                                        cycleIndex = cycleIdx,
+                                        W = size.width,
+                                        H = size.height
+                                    )
+
+                            val trunkW = (size.width / 100f) *
+                                    (1f + flash * 1.5f)
+
+                            // outer glow
+                            segments.forEach { seg ->
+                                drawLine(
+                                    color = flashColor.copy(
+                                        alpha = (seg.alpha * flash * 0.4f)
+                                            .coerceIn(0f, 1f)
+                                    ),
+                                    start = Offset(seg.x1, seg.y1),
+                                    end = Offset(seg.x2, seg.y2),
+                                    strokeWidth = trunkW * seg.thickness * 3f,
+                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                    blendMode = BlendMode.Screen
+                                )
+                            }
+                            // mid
+                            segments.forEach { seg ->
+                                drawLine(
+                                    color = flashColor.copy(
+                                        alpha = (seg.alpha * flash * 0.8f)
+                                            .coerceIn(0f, 1f)
+                                    ),
+                                    start = Offset(seg.x1, seg.y1),
+                                    end = Offset(seg.x2, seg.y2),
+                                    strokeWidth = trunkW * seg.thickness * 1.6f,
+                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                    blendMode = BlendMode.Screen
+                                )
+                            }
+                            // white core
+                            segments.forEach { seg ->
+                                drawLine(
+                                    color = Color.White.copy(
+                                        alpha = (flash * 0.95f).coerceIn(0f, 1f)
+                                    ),
+                                    start = Offset(seg.x1, seg.y1),
+                                    end = Offset(seg.x2, seg.y2),
+                                    strokeWidth = trunkW * seg.thickness * 0.7f,
+                                    cap = androidx.compose.ui.graphics.StrokeCap.Round
+                                )
+                            }
+                        }
+                    }
+                }
+                // 🔥 Fire thumbnail preview
+                if (kind == EffectKind.FIRE && preset.fire != null) {
+                    Canvas(modifier = Modifier.matchParentSize()) {
+                        try {
+                            val cfg = preset.fire
+                            val thumbTime = (clockSec % 3f)
+                            drawIntoCanvas { canvas ->
+                                com.moody.moodyvideoeditor.utils.FireEngine
+                                    .drawOnCanvas(
+                                        canvas = canvas.nativeCanvas,
+                                        cfg = cfg,
+                                        localTimeSec = thumbTime,
+                                        W = size.width.toInt(),
+                                        H = size.height.toInt()
+                                    )
+                            }
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+                // ✨💥 Particle thumbnail preview
+                if (kind == EffectKind.PARTICLE && preset.particle != null) {
+                    Canvas(modifier = Modifier.matchParentSize()) {
+                        try {
+                            val cfg = preset.particle
+                            val W = size.width
+                            val H = size.height
+                            val localSec = clockSec % 2f
+
+                            val cycleSec = cfg.triggerEverySec
+                            val cycleIdx: Int
+                            val localT: Float
+                            if (cycleSec <= 0.01f) {
+                                if (localSec * 1000f >
+                                    cfg.burstDurationMs + cfg.lifetimeMs
+                                ) return@Canvas
+                                cycleIdx = 0
+                                localT = localSec
+                            } else {
+                                cycleIdx =
+                                    kotlin.math.floor(localSec / cycleSec).toInt()
+                                localT = localSec - cycleIdx * cycleSec
+                            }
+
+                            val localMs = (localT * 1000f).toLong()
+
+                            // Shockwave
+                            if (cfg.shockwave) {
+                                val waveFrac =
+                                    (localMs.toFloat() / 800f).coerceIn(0f, 1f)
+                                if (waveFrac < 1f) {
+                                    val ringRadius = waveFrac * W * 0.7f
+                                    val ringAlpha =
+                                        (1f - waveFrac).coerceIn(0f, 1f)
+                                    val c1 = Color(cfg.color1)
+                                    drawCircle(
+                                        color = c1.copy(alpha = ringAlpha * 0.8f),
+                                        radius = ringRadius,
+                                        center = Offset(
+                                            cfg.triggerX * W,
+                                            cfg.triggerY * H
+                                        ),
+                                        style =
+                                            androidx.compose.ui.graphics.drawscope
+                                                .Stroke(
+                                                    width = (W *
+                                                            cfg.shockwaveThickness)
+                                                        .coerceAtLeast(1f)
+                                                ),
+                                        blendMode = BlendMode.Screen
+                                    )
+                                }
+                            }
+
+                            // Flash
+                            if (cfg.flashOnTrigger) {
+                                val flashFrac =
+                                    (localMs / 150f).coerceIn(0f, 1f)
+                                if (flashFrac < 1f) {
+                                    val c1 = Color(cfg.color1)
+                                    drawRect(
+                                        color = c1.copy(
+                                            alpha = (1f - flashFrac) * 0.55f
+                                        ),
+                                        size =
+                                            androidx.compose.ui.geometry.Size(W, H),
+                                        blendMode = BlendMode.Screen
+                                    )
+                                }
+                            }
+
+                            // Cap for thumb perf
+                            val thumbCfg = if (cfg.count > 200)
+                                cfg.copy(count = 200) else cfg
+
+                            val particles =
+                                com.moody.moodyvideoeditor.utils.ParticleEngine
+                                    .generateParticles(thumbCfg, cycleIdx)
+                            val intensityMul =
+                                (cfg.masterIntensity / 100f).coerceIn(0f, 2f)
+                            val sizeScale = (W / 250f).coerceIn(0.12f, 1f)
+
+                            particles.forEach { p ->
+                                val age = localMs - p.birthMs
+                                if (age < 0L || age > cfg.lifetimeMs) {
+                                    return@forEach
+                                }
+
+                                val st =
+                                    com.moody.moodyvideoeditor.utils.ParticleEngine
+                                        .computeState(
+                                            thumbCfg, p, age, W, H
+                                        ) ?: return@forEach
+
+                                val c1 = Color(cfg.color1)
+                                val c2 = Color(cfg.color2)
+                                val mix = p.colorMix
+                                val finalColor = Color(
+                                    red = c1.red * (1f - mix) + c2.red * mix,
+                                    green = c1.green * (1f - mix) + c2.green * mix,
+                                    blue = c1.blue * (1f - mix) + c2.blue * mix,
+                                    alpha = (st.alpha * intensityMul)
+                                        .coerceIn(0f, 1f)
+                                )
+
+                                val thumbSize = (st.size * sizeScale)
+                                    .coerceIn(0.4f, 12f)
+
+                                if (cfg.glow) {
+                                    drawCircle(
+                                        brush = Brush.radialGradient(
+                                            colors = listOf(
+                                                finalColor,
+                                                finalColor.copy(alpha = 0f)
+                                            ),
+                                            center = Offset(st.x, st.y),
+                                            radius = thumbSize * 2.5f
+                                        ),
+                                        radius = thumbSize * 2.5f,
+                                        center = Offset(st.x, st.y),
+                                        blendMode = BlendMode.Screen
+                                    )
+                                }
+                                drawCircle(
+                                    color = finalColor,
+                                    radius = thumbSize,
+                                    center = Offset(st.x, st.y)
+                                )
+                            }
+                        } catch (_: Throwable) {
+                        }
                     }
                 }
             } else {
