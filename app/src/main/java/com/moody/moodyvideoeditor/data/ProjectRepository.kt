@@ -219,6 +219,8 @@ object ProjectRepository {
         put("linkedId", c.linkedId ?: JSONObject.NULL)
         put("linkGroupId", c.linkGroupId ?: JSONObject.NULL)
         put("isMuted", c.isMuted)
+        put("blendMode", c.blendMode)
+        put("blendOpacity", c.blendOpacity.toDouble())
 
         put("audioFx", c.audioFx)
         put("audioFxIntensity", c.audioFxIntensity.toDouble())
@@ -304,6 +306,8 @@ object ProjectRepository {
             linkGroupId = if (o.isNull("linkGroupId")) null
             else o.optString("linkGroupId", null),
             isMuted = o.optBoolean("isMuted", false),
+            blendMode = o.optString("blendMode", "normal"),
+            blendOpacity = o.optDouble("blendOpacity", 100.0).toFloat(),
 
             audioFx = o.optString("audioFx", "none"),
             audioFxIntensity = o.optDouble("audioFxIntensity", 100.0).toFloat(),

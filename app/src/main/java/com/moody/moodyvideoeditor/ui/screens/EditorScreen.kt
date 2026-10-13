@@ -1,7 +1,7 @@
 @file:OptIn(androidx.media3.common.util.UnstableApi::class)
 
 package com.moody.moodyvideoeditor.ui.screens
-
+import com.moody.moodyvideoeditor.ui.features.BlendModePanel
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
@@ -2105,7 +2105,16 @@ fun EditorScreen(
                         }
                     }
                 }
-
+                "blend" -> BlendModePanel(
+                    currentBlendMode = state.selectedClip?.blendMode ?: "normal",
+                    currentBlendOpacity = state.selectedClip?.blendOpacity ?: 100f,
+                    hasClipSelected = state.selectedClip != null ||
+                            state.multiSelectedIds.isNotEmpty(),
+                    multiCount = state.multiSelectedIds.size,
+                    onBlendModeSelected = { key -> viewModel.setBlendMode(key) },
+                    onBlendOpacityChanged = { v -> viewModel.setBlendOpacity(v) },
+                    onClose = { activePanel = null }
+                )
                 "ratio" -> AspectRatioPanel(
                     currentRatio = state.aspectRatio,
                     onRatioSelected = { key ->

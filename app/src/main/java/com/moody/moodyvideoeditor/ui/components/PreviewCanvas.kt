@@ -1,8 +1,7 @@
 @file:OptIn(UnstableApi::class)
 
 package com.moody.moodyvideoeditor.ui.components
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.nativeCanvas
+
 import android.graphics.Bitmap
 import android.graphics.BlurMaskFilter
 import android.graphics.Paint
@@ -117,9 +116,42 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 // ═══════════════════════════════════════════════════════════════
-//  HELPER — Per-clip color matrix
+//  🎨 BLEND MODE HELPER
 // ═══════════════════════════════════════════════════════════════
 
+private fun blendKeyToCompose(key: String): BlendMode = when (key.lowercase()) {
+    "multiply" -> BlendMode.Multiply
+    "screen" -> BlendMode.Screen
+    "overlay" -> BlendMode.Overlay
+    "darken" -> BlendMode.Darken
+    "lighten" -> BlendMode.Lighten
+    "hardlight" -> BlendMode.Overlay
+    "softlight" -> BlendMode.Softlight
+    "colordodge" -> BlendMode.ColorDodge
+    "colorburn" -> BlendMode.ColorBurn
+    "vividlight" -> BlendMode.Overlay
+    "linearlight" -> BlendMode.Overlay
+    "pinlight" -> BlendMode.Overlay
+    "difference" -> BlendMode.Difference
+    "exclusion" -> BlendMode.Exclusion
+    "subtract" -> BlendMode.Difference
+    "divide" -> BlendMode.Difference
+    "add" -> BlendMode.Plus
+    "lineardodge" -> BlendMode.Plus
+    "hue" -> BlendMode.Hue
+    "saturation" -> BlendMode.Saturation
+    "color" -> BlendMode.Color
+    "luminosity" -> BlendMode.Luminosity
+    else -> BlendMode.SrcOver
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  HELPER — Per-clip color matrix
+// ═══════════════════════════════════════════════════════════════
+// 🎨 Blend opacity → alpha multiplier
+private fun blendOpacityFactor(clip: EditorClip): Float =
+    if (clip.blendMode.lowercase() == "normal") 1f
+    else (clip.blendOpacity / 100f).coerceIn(0f, 1f)
 private fun buildClipMatrix(
     clip: EditorClip,
     globalMatrix: android.graphics.ColorMatrix,
@@ -209,7 +241,6 @@ private fun fittedBoundsFractions(
     }
 }
 
-// 🆕 Compute current blur radius for a video/image clip based on effect layers above it
 private fun computeClipBlurRadiusDp(
     clips: List<EditorClip>,
     clip: EditorClip,
@@ -390,16 +421,17 @@ fun PreviewCanvas(
         motionFrames.add(EffectsEngine.computeMotion(m, timeSec))
     }
     val combinedMotion = EffectsEngine.combineMotions(motionFrames)
-// 🆕 Preview blur — active while Effects panel is open (before Apply)
+
+    // 🆕 Preview blur (live in Effects panel before Apply)
     val previewBlurDp = remember(previewEffectState?.blur) {
         previewEffectState?.blur?.let { cfg ->
             val i = cfg.intensity.coerceIn(0f, 100f) / 100f
-            (20f * i).coerceIn(0f, 25f)   // visible but capped for perf
+            (20f * i).coerceIn(0f, 25f)
         } ?: 0f
     }
+
     val filterList = activeEffects.mapNotNull { it.effectState?.filters }.toMutableList()
 
-    // Animated colors from active effect clips
     activeEffects.forEach { clip ->
         val acCfg = clip.effectState?.animatedColor
         if (acCfg != null) {
@@ -583,7 +615,6 @@ fun PreviewCanvas(
                             else colorWheelMatrixForClip(clip, activeColorWheels)
                         }
 
-                        // Compute blur radius for this video clip (effect layer + live preview)
                         val videoBlurDp = remember(
                             currentPosMs, clip.id, clip.trackIndex, previewBlurDp
                         ) {
@@ -598,6 +629,11 @@ fun PreviewCanvas(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .graphicsLayer {
+                                        // 🎨 Blend mode
+                                        compositingStrategy =
+                                            CompositingStrategy.Offscreen
+                                        blendMode = blendKeyToCompose(clip.blendMode)
+
                                         val w = size.width
                                         val h = size.height
                                         val cropSx = 1f /
@@ -650,7 +686,7 @@ fun PreviewCanvas(
                                             pivotFractionX = videoTransform2.anchorX / 100f,
                                             pivotFractionY = videoTransform2.anchorY / 100f
                                         )
-                                        alpha = opacityAlpha * transT.alpha
+                                        alpha = opacityAlpha * transT.alpha * blendOpacityFactor(clip)
                                         this.clip = true
                                     }
                                     .then(
@@ -747,7 +783,6 @@ fun PreviewCanvas(
                             else -> Color.Transparent
                         }
 
-                        // Compute blur radius for this image clip (effect layer + live preview)
                         val imageBlurDp = remember(
                             currentPosMs, clip.id, clip.trackIndex, previewBlurDp
                         ) {
@@ -762,6 +797,11 @@ fun PreviewCanvas(
                                 modifier = Modifier
                                     .matchParentSize()
                                     .graphicsLayer {
+                                        // 🎨 Blend mode
+                                        compositingStrategy =
+                                            CompositingStrategy.Offscreen
+                                        blendMode = blendKeyToCompose(clip.blendMode)
+
                                         val w = size.width
                                         val h = size.height
                                         val cropSx = 1f /
@@ -809,7 +849,7 @@ fun PreviewCanvas(
                                             pivotFractionX = imgTransform.anchorX / 100f,
                                             pivotFractionY = imgTransform.anchorY / 100f
                                         )
-                                        alpha = opacityAlpha * transT.alpha
+                                        alpha = opacityAlpha * transT.alpha * blendOpacityFactor(clip)
                                         this.clip = true
                                     }
                                     .then(
@@ -1007,6 +1047,11 @@ fun PreviewCanvas(
                                 modifier = Modifier
                                     .matchParentSize()
                                     .graphicsLayer {
+                                        // 🎨 Blend mode
+                                        compositingStrategy =
+                                            CompositingStrategy.Offscreen
+                                        alpha = matteAlpha * opacityAlpha * blendOpacityFactor(clip)
+
                                         val w = size.width
                                         val h = size.height
                                         val cropSx = 1f /
@@ -1149,7 +1194,17 @@ fun PreviewCanvas(
                     clip.isTextClip -> {
                         val st = clip.textState ?: return@forEach
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
-                            Box(modifier = Modifier.fillMaxSize()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        // 🎨 Blend mode
+                                        compositingStrategy =
+                                            CompositingStrategy.Offscreen
+                                        blendMode = blendKeyToCompose(clip.blendMode)
+                                        alpha = blendOpacityFactor(clip)
+                                    }
+                            ) {
                                 InteractiveTextOverlay(
                                     clip = clip,
                                     textState = st,
@@ -1179,7 +1234,17 @@ fun PreviewCanvas(
                     clip.isStickerClip -> {
                         val ss = clip.stickerState ?: return@forEach
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
-                            Box(modifier = Modifier.fillMaxSize()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        // 🎨 Blend mode
+                                        compositingStrategy =
+                                            CompositingStrategy.Offscreen
+                                        blendMode = blendKeyToCompose(clip.blendMode)
+                                        alpha = blendOpacityFactor(clip)
+                                    }
+                            ) {
                                 InteractiveStickerOverlay(
                                     clip = clip,
                                     stickerState = ss,
@@ -1219,7 +1284,15 @@ fun PreviewCanvas(
 
                         Box(modifier = Modifier.fillMaxSize()) {
                             MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
-                                Box(modifier = Modifier.fillMaxSize()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .graphicsLayer {
+                                            compositingStrategy =
+                                                CompositingStrategy.Offscreen
+                                            blendMode = blendKeyToCompose(clip.blendMode)
+                                        }
+                                ) {
                                     VisualizerOverlay(
                                         state = vs,
                                         visualizerClip = clip,
@@ -1393,6 +1466,11 @@ fun PreviewCanvas(
                                 modifier = Modifier
                                     .matchParentSize()
                                     .graphicsLayer {
+                                        // 🎨 Blend mode
+                                        compositingStrategy =
+                                            CompositingStrategy.Offscreen
+                                        blendMode = blendKeyToCompose(clip.blendMode)
+
                                         val w = size.width
                                         val h = size.height
                                         translationX = (brushTransform.x - 50f) / 100f * w +
@@ -1595,100 +1673,7 @@ fun PreviewCanvas(
                     }
                 }
             }
-            // ═══════════════════════════════════════════════════════
-            //  🌀 DUST PREVIEW
-            // ═══════════════════════════════════════════════════════
-            val activeDust = clips
-                .filter { c ->
-                    c.isEffectClip &&
-                            c.trackIndex > videoTrackIdx &&
-                            currentPosMs >= c.timelineStartMs &&
-                            currentPosMs < c.timelineEndMs &&
-                            c.effectState?.dust != null
-                }
-                .sortedBy { it.trackIndex }
-                .mapNotNull { c ->
-                    val cfg = c.effectState?.dust ?: return@mapNotNull null
-                    val localSec = ((currentPosMs - c.timelineStartMs) / 1000f)
-                        .coerceAtLeast(0f)
-                    cfg to localSec
-                }
 
-            val previewDust = previewEffectState?.dust?.let { cfg ->
-                val localSec = currentPosMs / 1000f
-                cfg to localSec
-            }
-
-            val allDust = if (previewDust != null)
-                activeDust + previewDust
-            else activeDust
-
-            if (allDust.isNotEmpty()) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    allDust.forEach { (cfg, localSec) ->
-                        try {
-                            drawIntoCanvas { canvas ->
-                                com.moody.moodyvideoeditor.utils.DustEngine
-                                    .drawOnCanvas(
-                                        canvas = canvas.nativeCanvas,
-                                        cfg = cfg,
-                                        localTimeSec = localSec,
-                                        W = size.width.toInt(),
-                                        H = size.height.toInt()
-                                    )
-                            }
-                        } catch (_: Throwable) {
-                        }
-                    }
-                }
-            }
-            // ═══════════════════════════════════════════════════════
-            //  🔥 FIRE PREVIEW
-            // ═══════════════════════════════════════════════════════
-            val activeFire = clips
-                .filter { c ->
-                    c.isEffectClip &&
-                            c.trackIndex > videoTrackIdx &&
-                            currentPosMs >= c.timelineStartMs &&
-                            currentPosMs < c.timelineEndMs &&
-                            c.effectState?.fire != null
-                }
-                .sortedBy { it.trackIndex }
-                .mapNotNull { c ->
-                    val cfg = c.effectState?.fire ?: return@mapNotNull null
-                    val localSec = ((currentPosMs - c.timelineStartMs) / 1000f)
-                        .coerceAtLeast(0f)
-                    cfg to localSec
-                }
-
-            val previewFire = previewEffectState?.fire?.let { cfg ->
-                val localSec = currentPosMs / 1000f
-                cfg to localSec
-            }
-
-            val allFire = if (previewFire != null)
-                activeFire + previewFire
-            else activeFire
-
-            if (allFire.isNotEmpty()) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    allFire.forEach { (cfg, localSec) ->
-                        try {
-                            drawIntoCanvas { canvas ->
-                                com.moody.moodyvideoeditor.utils.FireEngine
-                                    .drawOnCanvas(
-                                        canvas = canvas.nativeCanvas,
-                                        cfg = cfg,
-                                        localTimeSec = localSec,
-                                        W = size.width.toInt(),
-                                        H = size.height.toInt()
-                                    )
-                            }
-                        } catch (_: Throwable) {
-                        }
-                    }
-                }
-            }
             val activeLightLeaks = clips
                 .filter { c ->
                     c.isEffectClip &&
@@ -1737,6 +1722,110 @@ fun PreviewCanvas(
                     }
                 }
             }
+
+            // ═══════════════════════════════════════════════════════
+            //  ⚡ LIGHTNING — bolt drawing + screen flash
+            // ═══════════════════════════════════════════════════════
+            val activeLightning = clips
+                .filter { c ->
+                    c.isEffectClip &&
+                            c.trackIndex > videoTrackIdx &&
+                            currentPosMs >= c.timelineStartMs &&
+                            currentPosMs < c.timelineEndMs &&
+                            c.effectState?.lightning != null
+                }
+                .sortedBy { it.trackIndex }
+                .mapNotNull { c ->
+                    val cfg = c.effectState?.lightning ?: return@mapNotNull null
+                    val localSec = ((currentPosMs - c.timelineStartMs) / 1000f)
+                        .coerceAtLeast(0f)
+                    val flash = com.moody.moodyvideoeditor.utils.LightningEngine
+                        .flashAt(cfg, localSec)
+                    if (flash <= 0.01f) null
+                    else Triple(cfg, flash, localSec)
+                }
+
+            val previewLightning = previewEffectState?.lightning?.let { cfg ->
+                val localSec = currentPosMs / 1000f
+                val flash = com.moody.moodyvideoeditor.utils.LightningEngine
+                    .flashAt(cfg, localSec)
+                if (flash <= 0.01f) null
+                else Triple(cfg, flash, localSec)
+            }
+
+            val allLightning = if (previewLightning != null)
+                activeLightning + previewLightning
+            else activeLightning
+
+            if (allLightning.isNotEmpty()) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    allLightning.forEach { (cfg, flash, localSec) ->
+                        val flashColor = Color(cfg.color)
+                        drawRect(
+                            color = flashColor.copy(
+                                alpha = (flash * 0.35f).coerceIn(0f, 1f)
+                            ),
+                            size = size,
+                            blendMode = BlendMode.Screen
+                        )
+
+                        val cycleIdx = kotlin.math.floor(
+                            localSec * cfg.frequency.coerceIn(0.2f, 5f)
+                        ).toInt()
+
+                        val segments =
+                            com.moody.moodyvideoeditor.utils.LightningEngine
+                                .generateBolt(
+                                    cfg = cfg,
+                                    cycleIndex = cycleIdx,
+                                    W = size.width,
+                                    H = size.height
+                                )
+
+                        val trunkW = (size.width / 100f) *
+                                (1f + flash * 1.5f)
+
+                        segments.forEach { seg ->
+                            drawLine(
+                                color = flashColor.copy(
+                                    alpha = (seg.alpha * flash * 0.35f)
+                                        .coerceIn(0f, 1f)
+                                ),
+                                start = Offset(seg.x1, seg.y1),
+                                end = Offset(seg.x2, seg.y2),
+                                strokeWidth = trunkW * seg.thickness * 3.2f,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                blendMode = BlendMode.Screen
+                            )
+                        }
+                        segments.forEach { seg ->
+                            drawLine(
+                                color = flashColor.copy(
+                                    alpha = (seg.alpha * flash * 0.75f)
+                                        .coerceIn(0f, 1f)
+                                ),
+                                start = Offset(seg.x1, seg.y1),
+                                end = Offset(seg.x2, seg.y2),
+                                strokeWidth = trunkW * seg.thickness * 1.8f,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                blendMode = BlendMode.Screen
+                            )
+                        }
+                        segments.forEach { seg ->
+                            drawLine(
+                                color = Color.White.copy(
+                                    alpha = (flash * 0.95f).coerceIn(0f, 1f)
+                                ),
+                                start = Offset(seg.x1, seg.y1),
+                                end = Offset(seg.x2, seg.y2),
+                                strokeWidth = trunkW * seg.thickness * 0.7f,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round
+                            )
+                        }
+                    }
+                }
+            }
+
             // ═══════════════════════════════════════════════════════
             //  ✨💥 PARTICLE / BLAST PREVIEW
             // ═══════════════════════════════════════════════════════
@@ -1780,116 +1869,103 @@ fun PreviewCanvas(
                     }
                 }
             }
+
             // ═══════════════════════════════════════════════════════
-            //  ⚡ LIGHTNING — bolt drawing + screen flash
+            //  🔥 FIRE PREVIEW
             // ═══════════════════════════════════════════════════════
-            val activeLightning = clips
+            val activeFire = clips
                 .filter { c ->
                     c.isEffectClip &&
                             c.trackIndex > videoTrackIdx &&
                             currentPosMs >= c.timelineStartMs &&
                             currentPosMs < c.timelineEndMs &&
-                            c.effectState?.lightning != null
+                            c.effectState?.fire != null
                 }
                 .sortedBy { it.trackIndex }
                 .mapNotNull { c ->
-                    val cfg = c.effectState?.lightning ?: return@mapNotNull null
+                    val cfg = c.effectState?.fire ?: return@mapNotNull null
                     val localSec = ((currentPosMs - c.timelineStartMs) / 1000f)
                         .coerceAtLeast(0f)
-                    val flash = com.moody.moodyvideoeditor.utils.LightningEngine
-                        .flashAt(cfg, localSec)
-                    if (flash <= 0.01f) null
-                    else Triple(cfg, flash, localSec)
+                    cfg to localSec
                 }
 
-            val previewLightning = previewEffectState?.lightning?.let { cfg ->
+            val previewFire = previewEffectState?.fire?.let { cfg ->
                 val localSec = currentPosMs / 1000f
-                val flash = com.moody.moodyvideoeditor.utils.LightningEngine
-                    .flashAt(cfg, localSec)
-                if (flash <= 0.01f) null
-                else Triple(cfg, flash, localSec)
+                cfg to localSec
             }
 
-            val allLightning = if (previewLightning != null)
-                activeLightning + previewLightning
-            else activeLightning
+            val allFire = if (previewFire != null)
+                activeFire + previewFire
+            else activeFire
 
-            if (allLightning.isNotEmpty()) {
+            if (allFire.isNotEmpty()) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    allLightning.forEach { (cfg, flash, localSec) ->
-                        // ── Screen flash (soft ambient glow) ──
-                        val flashColor = Color(cfg.color)
-                        drawRect(
-                            color = flashColor.copy(
-                                alpha = (flash * 0.35f).coerceIn(0f, 1f)
-                            ),
-                            size = size,
-                            blendMode = BlendMode.Screen
-                        )
-
-                        // ── Bolt lines ──
-                        val cycleIdx = kotlin.math.floor(
-                            localSec * cfg.frequency.coerceIn(0.2f, 5f)
-                        ).toInt()
-
-                        val segments =
-                            com.moody.moodyvideoeditor.utils.LightningEngine
-                                .generateBolt(
-                                    cfg = cfg,
-                                    cycleIndex = cycleIdx,
-                                    W = size.width,
-                                    H = size.height
-                                )
-
-                        val trunkW = (size.width / 100f) *
-                                (1f + flash * 1.5f)
-
-                        // Pass 1: outer glow
-                        segments.forEach { seg ->
-                            drawLine(
-                                color = flashColor.copy(
-                                    alpha = (seg.alpha * flash * 0.35f)
-                                        .coerceIn(0f, 1f)
-                                ),
-                                start = Offset(seg.x1, seg.y1),
-                                end = Offset(seg.x2, seg.y2),
-                                strokeWidth = trunkW * seg.thickness * 3.2f,
-                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                                blendMode = BlendMode.Screen
-                            )
-                        }
-
-                        // Pass 2: mid glow
-                        segments.forEach { seg ->
-                            drawLine(
-                                color = flashColor.copy(
-                                    alpha = (seg.alpha * flash * 0.75f)
-                                        .coerceIn(0f, 1f)
-                                ),
-                                start = Offset(seg.x1, seg.y1),
-                                end = Offset(seg.x2, seg.y2),
-                                strokeWidth = trunkW * seg.thickness * 1.8f,
-                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                                blendMode = BlendMode.Screen
-                            )
-                        }
-
-                        // Pass 3: bright white core
-                        segments.forEach { seg ->
-                            drawLine(
-                                color = Color.White.copy(
-                                    alpha = (flash * 0.95f).coerceIn(0f, 1f)
-                                ),
-                                start = Offset(seg.x1, seg.y1),
-                                end = Offset(seg.x2, seg.y2),
-                                strokeWidth = trunkW * seg.thickness * 0.7f,
-                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                                blendMode = BlendMode.Screen
-                            )
+                    allFire.forEach { (cfg, localSec) ->
+                        try {
+                            drawIntoCanvas { canvas ->
+                                com.moody.moodyvideoeditor.utils.FireEngine
+                                    .drawOnCanvas(
+                                        canvas = canvas.nativeCanvas,
+                                        cfg = cfg,
+                                        localTimeSec = localSec,
+                                        W = size.width.toInt(),
+                                        H = size.height.toInt()
+                                    )
+                            }
+                        } catch (_: Throwable) {
                         }
                     }
                 }
             }
+
+            // ═══════════════════════════════════════════════════════
+            //  🌀 DUST PREVIEW
+            // ═══════════════════════════════════════════════════════
+            val activeDust = clips
+                .filter { c ->
+                    c.isEffectClip &&
+                            c.trackIndex > videoTrackIdx &&
+                            currentPosMs >= c.timelineStartMs &&
+                            currentPosMs < c.timelineEndMs &&
+                            c.effectState?.dust != null
+                }
+                .sortedBy { it.trackIndex }
+                .mapNotNull { c ->
+                    val cfg = c.effectState?.dust ?: return@mapNotNull null
+                    val localSec = ((currentPosMs - c.timelineStartMs) / 1000f)
+                        .coerceAtLeast(0f)
+                    cfg to localSec
+                }
+
+            val previewDust = previewEffectState?.dust?.let { cfg ->
+                val localSec = currentPosMs / 1000f
+                cfg to localSec
+            }
+
+            val allDust = if (previewDust != null)
+                activeDust + previewDust
+            else activeDust
+
+            if (allDust.isNotEmpty()) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    allDust.forEach { (cfg, localSec) ->
+                        try {
+                            drawIntoCanvas { canvas ->
+                                com.moody.moodyvideoeditor.utils.DustEngine
+                                    .drawOnCanvas(
+                                        canvas = canvas.nativeCanvas,
+                                        cfg = cfg,
+                                        localTimeSec = localSec,
+                                        W = size.width.toInt(),
+                                        H = size.height.toInt()
+                                    )
+                            }
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            }
+
             activeAdjustment?.let { adj ->
                 if (adj.vignette > 0f) {
                     val alpha = (adj.vignette / 100f).coerceIn(0f, 1f)
@@ -2002,6 +2078,106 @@ fun PreviewCanvas(
                     color = Color.White.copy(alpha = 0.15f),
                     shape = RoundedCornerShape(2.dp)
                 )
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PARTICLE PREVIEW HELPER
+// ═══════════════════════════════════════════════════════════════
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawParticlePreview(
+    cfg: com.moody.moodyvideoeditor.data.ParticleConfig,
+    localSec: Float,
+    W: Float,
+    H: Float
+) {
+    if (localSec < 0f) return
+
+    val cycleSec = cfg.triggerEverySec
+    val cycleIdx: Int
+    val localT: Float
+    if (cycleSec <= 0.01f) {
+        if (localSec * 1000f > cfg.burstDurationMs + cfg.lifetimeMs) return
+        cycleIdx = 0
+        localT = localSec
+    } else {
+        cycleIdx = kotlin.math.floor(localSec / cycleSec).toInt()
+        localT = localSec - cycleIdx * cycleSec
+    }
+
+    val localMs = (localT * 1000f).toLong()
+
+    if (cfg.shockwave) {
+        val waveFrac = (localMs.toFloat() / 800f).coerceIn(0f, 1f)
+        if (waveFrac < 1f) {
+            val ringRadius = waveFrac * W * 0.7f
+            val ringAlpha = (1f - waveFrac).coerceIn(0f, 1f)
+            val c1 = Color(cfg.color1)
+            drawCircle(
+                color = c1.copy(alpha = ringAlpha * 0.8f),
+                radius = ringRadius,
+                center = Offset(cfg.triggerX * W, cfg.triggerY * H),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(
+                    width = (W * cfg.shockwaveThickness).coerceAtLeast(1f)
+                ),
+                blendMode = BlendMode.Screen
+            )
+        }
+    }
+
+    if (cfg.flashOnTrigger) {
+        val flashFrac = (localMs / 150f).coerceIn(0f, 1f)
+        if (flashFrac < 1f) {
+            val c1 = Color(cfg.color1)
+            drawRect(
+                color = c1.copy(alpha = (1f - flashFrac) * 0.55f),
+                size = androidx.compose.ui.geometry.Size(W, H),
+                blendMode = BlendMode.Screen
+            )
+        }
+    }
+
+    val particles = com.moody.moodyvideoeditor.utils.ParticleEngine
+        .generateParticles(cfg, cycleIdx)
+    val intensityMul = (cfg.masterIntensity / 100f).coerceIn(0f, 2f)
+
+    particles.forEach { p ->
+        val age = localMs - p.birthMs
+        if (age < 0L || age > cfg.lifetimeMs) return@forEach
+
+        val st = com.moody.moodyvideoeditor.utils.ParticleEngine
+            .computeState(cfg, p, age, W, H) ?: return@forEach
+
+        val c1 = Color(cfg.color1)
+        val c2 = Color(cfg.color2)
+        val mix = p.colorMix
+        val finalColor = Color(
+            red = c1.red * (1f - mix) + c2.red * mix,
+            green = c1.green * (1f - mix) + c2.green * mix,
+            blue = c1.blue * (1f - mix) + c2.blue * mix,
+            alpha = (st.alpha * intensityMul).coerceIn(0f, 1f)
+        )
+
+        if (cfg.glow) {
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        finalColor,
+                        finalColor.copy(alpha = 0f)
+                    ),
+                    center = Offset(st.x, st.y),
+                    radius = st.size * 2.5f
+                ),
+                radius = st.size * 2.5f,
+                center = Offset(st.x, st.y),
+                blendMode = BlendMode.Screen
+            )
+        }
+        drawCircle(
+            color = finalColor,
+            radius = st.size,
+            center = Offset(st.x, st.y)
         )
     }
 }
@@ -3199,7 +3375,6 @@ private fun InteractiveTextOverlay(
             contentAlignment = Alignment.Center
         ) {
             Box(contentAlignment = Alignment.Center) {
-                // Background
                 if (textState.backgroundEnabled) {
                     TextBackgroundRenderer(
                         state = textState,
@@ -3208,62 +3383,63 @@ private fun InteractiveTextOverlay(
                     )
                 }
 
-                // Glow
                 if (textState.glowEnabled && textState.glowRadius > 0f) {
                     Canvas(modifier = Modifier.matchParentSize()) {
-                        val nativeCanvas = drawContext.canvas.nativeCanvas
-                        val glowColorInt = textState.glowColor.toInt()
-                        val glowAlign = when (textState.alignment) {
-                            "left" -> Paint.Align.LEFT
-                            "right" -> Paint.Align.RIGHT
-                            else -> Paint.Align.CENTER
-                        }
-                        val textSizePx = finalFontSizePx
-                        val letterSpacingEm = if (finalFontSizePx <= 0f) 0f
-                        else (effLetterSpacingPx / finalFontSizePx).coerceIn(-0.3f, 0.3f)
-                        val glowRadiusPx = textState.glowRadius * (canvasWpx / 720f)
-
-                        val lines = displayContent.split('\n')
-                        val lineCount = lines.size
-                        val lineHeightPx = effLineHeightPx.coerceAtLeast(1f)
-
-                        val measurePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            textSize = textSizePx
-                            this.typeface = textTypeface
-                        }
-                        val fm = measurePaint.fontMetrics
-
-                        val totalTextH = lineHeightPx * lineCount
-                        val firstBaseline = (size.height - totalTextH) / 2f +
-                                lineHeightPx / 2f - (fm.ascent + fm.descent) / 2f
-
-                        val textW = finalMeasure.size.width.toFloat()
-                        val textLeft = (size.width - textW) / 2f
-                        val textRight = (size.width + textW) / 2f
-
-                        val x = when (glowAlign) {
-                            Paint.Align.LEFT -> textLeft
-                            Paint.Align.RIGHT -> textRight
-                            else -> size.width / 2f
-                        }
-
-                        TextRenderContract.glowLayers().forEach { layer ->
-                            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                                isAntiAlias = true
-                                color = glowColorInt
-                                textSize = textSizePx * layer.fontScale
-                                textAlign = glowAlign
-                                this.typeface = textTypeface
-                                this.letterSpacing = letterSpacingEm
-                                alpha = (layer.alpha * 255).toInt().coerceIn(0, 255)
-                                maskFilter = android.graphics.BlurMaskFilter(
-                                    (glowRadiusPx * layer.blurScale).coerceIn(1f, 250f),
-                                    android.graphics.BlurMaskFilter.Blur.NORMAL
-                                )
+                        drawIntoCanvas { canvas ->
+                            val nativeCanvas = canvas.nativeCanvas
+                            val glowColorInt = textState.glowColor.toInt()
+                            val glowAlign = when (textState.alignment) {
+                                "left" -> Paint.Align.LEFT
+                                "right" -> Paint.Align.RIGHT
+                                else -> Paint.Align.CENTER
                             }
-                            lines.forEachIndexed { i, line ->
-                                val y = firstBaseline + i * lineHeightPx
-                                nativeCanvas.drawText(line, x, y, paint)
+                            val textSizePx = finalFontSizePx
+                            val letterSpacingEm = if (finalFontSizePx <= 0f) 0f
+                            else (effLetterSpacingPx / finalFontSizePx).coerceIn(-0.3f, 0.3f)
+                            val glowRadiusPx = textState.glowRadius * (canvasWpx / 720f)
+
+                            val lines = displayContent.split('\n')
+                            val lineCount = lines.size
+                            val lineHeightPx = effLineHeightPx.coerceAtLeast(1f)
+
+                            val measurePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                textSize = textSizePx
+                                this.typeface = textTypeface
+                            }
+                            val fm = measurePaint.fontMetrics
+
+                            val totalTextH = lineHeightPx * lineCount
+                            val firstBaseline = (size.height - totalTextH) / 2f +
+                                    lineHeightPx / 2f - (fm.ascent + fm.descent) / 2f
+
+                            val textW = finalMeasure.size.width.toFloat()
+                            val textLeft = (size.width - textW) / 2f
+                            val textRight = (size.width + textW) / 2f
+
+                            val x = when (glowAlign) {
+                                Paint.Align.LEFT -> textLeft
+                                Paint.Align.RIGHT -> textRight
+                                else -> size.width / 2f
+                            }
+
+                            TextRenderContract.glowLayers().forEach { layer ->
+                                val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                    isAntiAlias = true
+                                    color = glowColorInt
+                                    textSize = textSizePx * layer.fontScale
+                                    textAlign = glowAlign
+                                    this.typeface = textTypeface
+                                    this.letterSpacing = letterSpacingEm
+                                    alpha = (layer.alpha * 255).toInt().coerceIn(0, 255)
+                                    maskFilter = android.graphics.BlurMaskFilter(
+                                        (glowRadiusPx * layer.blurScale).coerceIn(1f, 250f),
+                                        android.graphics.BlurMaskFilter.Blur.NORMAL
+                                    )
+                                }
+                                lines.forEachIndexed { i, line ->
+                                    val y = firstBaseline + i * lineHeightPx
+                                    nativeCanvas.drawText(line, x, y, paint)
+                                }
                             }
                         }
                     }
@@ -3726,99 +3902,4 @@ private fun normalizeAngle(radians: Float): Float {
     while (normalized > Math.PI) normalized -= twoPi
     while (normalized < -Math.PI) normalized += twoPi
     return normalized
-}
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawParticlePreview(
-    cfg: com.moody.moodyvideoeditor.data.ParticleConfig,
-    localSec: Float,
-    W: Float,
-    H: Float
-) {
-    if (localSec < 0f) return
-
-    val cycleSec = cfg.triggerEverySec
-    val cycleIdx: Int
-    val localT: Float
-    if (cycleSec <= 0.01f) {
-        if (localSec * 1000f > cfg.burstDurationMs + cfg.lifetimeMs) return
-        cycleIdx = 0
-        localT = localSec
-    } else {
-        cycleIdx = kotlin.math.floor(localSec / cycleSec).toInt()
-        localT = localSec - cycleIdx * cycleSec
-    }
-
-    val localMs = (localT * 1000f).toLong()
-
-    // Shockwave ring
-    if (cfg.shockwave) {
-        val waveFrac = (localMs.toFloat() / 800f).coerceIn(0f, 1f)
-        if (waveFrac < 1f) {
-            val ringRadius = waveFrac * W * 0.7f
-            val ringAlpha = (1f - waveFrac).coerceIn(0f, 1f)
-            val c1 = Color(cfg.color1)
-            drawCircle(
-                color = c1.copy(alpha = ringAlpha * 0.8f),
-                radius = ringRadius,
-                center = Offset(cfg.triggerX * W, cfg.triggerY * H),
-                style = androidx.compose.ui.graphics.drawscope.Stroke(
-                    width = W * cfg.shockwaveThickness
-                )
-            )
-        }
-    }
-
-    // Flash
-    if (cfg.flashOnTrigger) {
-        val flashFrac = (localMs / 150f).coerceIn(0f, 1f)
-        if (flashFrac < 1f) {
-            val c1 = Color(cfg.color1)
-            drawRect(
-                color = c1.copy(alpha = (1f - flashFrac) * 0.7f),
-                size = androidx.compose.ui.geometry.Size(W, H)
-            )
-        }
-    }
-
-    // Particles
-    val particles = com.moody.moodyvideoeditor.utils.ParticleEngine
-        .generateParticles(cfg, cycleIdx)
-    val intensityMul = (cfg.masterIntensity / 100f).coerceIn(0f, 2f)
-
-    particles.forEach { p ->
-        val age = localMs - p.birthMs
-        if (age < 0L || age > cfg.lifetimeMs) return@forEach
-
-        val st = com.moody.moodyvideoeditor.utils.ParticleEngine
-            .computeState(cfg, p, age, W, H) ?: return@forEach
-
-        val c1 = Color(cfg.color1)
-        val c2 = Color(cfg.color2)
-        val mix = p.colorMix
-        val finalColor = Color(
-            red = c1.red * (1f - mix) + c2.red * mix,
-            green = c1.green * (1f - mix) + c2.green * mix,
-            blue = c1.blue * (1f - mix) + c2.blue * mix,
-            alpha = (st.alpha * intensityMul).coerceIn(0f, 1f)
-        )
-
-        if (cfg.glow) {
-            drawCircle(
-                brush = androidx.compose.ui.graphics.Brush.radialGradient(
-                    colors = listOf(
-                        finalColor,
-                        finalColor.copy(alpha = 0f)
-                    ),
-                    center = Offset(st.x, st.y),
-                    radius = st.size * 2.5f
-                ),
-                radius = st.size * 2.5f,
-                center = Offset(st.x, st.y)
-            )
-        }
-        drawCircle(
-            color = finalColor,
-            radius = st.size,
-            center = Offset(st.x, st.y)
-        )
-    }
 }

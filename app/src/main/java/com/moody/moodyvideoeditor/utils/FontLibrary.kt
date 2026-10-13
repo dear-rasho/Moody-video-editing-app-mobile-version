@@ -39,7 +39,21 @@ object FontLibrary {
         FontMeta("Qahiri", "Qahiri", "Arabic", "🇸🇦", "العربية", "Qahiri-Regular"),
         FontMeta("Reem Kufi Fun", "Reem Kufi Fun", "Arabic", "🇸🇦", "العربية", "ReemKufiFun-Regular"),
         FontMeta("Reem Kufi Ink", "Reem Kufi Ink", "Arabic", "🇸🇦", "العربية", "ReemKufiInk-Regular"),
-
+        // ═══════════ 🇵🇰 URDU / NASTALIQ (14) ═══════════
+        FontMeta("Noto Nastaliq Urdu", "Noto Nastaliq", "Urdu", "🇵🇰", "اردو", "NotoNastaliqUrdu-Regular"),
+        FontMeta("Noto Nastaliq Urdu Bold", "Noto Nastaliq Bold", "Urdu", "🇵🇰", "اردو", "NotoNastaliqUrdu-Bold"),
+        FontMeta("Noto Nastaliq Urdu Medium", "Noto Nastaliq Med", "Urdu", "🇵🇰", "اردو", "NotoNastaliqUrdu-Medium"),
+        FontMeta("Noto Nastaliq Urdu SemiBold", "Noto Nastaliq SB", "Urdu", "🇵🇰", "اردو", "NotoNastaliqUrdu-SemiBold"),
+        FontMeta("Noto Nastaliq Urdu Variable", "Noto Nastaliq Var", "Urdu", "🇵🇰", "اردو", "NotoNastaliqUrdu-Variable"),
+        FontMeta("AA Sameer Bassam", "AA Sameer Bassam", "Urdu", "🇵🇰", "اردو", "AASameerBassam-Bold"),
+        FontMeta("Aadil", "Aadil", "Urdu", "🇵🇰", "اردو", "Aadil-Regular"),
+        FontMeta("Akram Unicode", "Akram Unicode", "Urdu", "🇵🇰", "اردو", "AkramUnicode-Regular"),
+        FontMeta("AlQalam Abuzar", "AlQalam Abuzar", "Urdu", "🇵🇰", "اردو", "AlQalamAbuzar-Regular"),
+        FontMeta("AlQalam Irtaza Hassan", "AlQalam Irtaza", "Urdu", "🇵🇰", "اردو", "AlQalamIrtazaHassan-Regular"),
+        FontMeta("AlQalam Fahad", "AlQalam Fahad", "Urdu", "🇵🇰", "اردو", "AlQalamFahad-Regular"),
+        FontMeta("AlQalam", "AlQalam", "Urdu", "🇵🇰", "اردو", "AlQalam-Regular"),
+        FontMeta("Gandhara Suls", "Gandhara Suls", "Urdu", "🇵🇰", "اردو", "GandharaSuls-Regular"),
+        FontMeta("Gulzar", "Gulzar", "Urdu", "🇵🇰", "اردو", "Gulzar-Regular"),
         // ═══════════ 🇮🇳 HINDI / DEVANAGARI (6) ═══════════
         FontMeta("Gajraj One", "Gajraj One", "Hindi", "🇮🇳", "हिन्दी", "GajrajOne-Regular"),
         FontMeta("Jaini", "Jaini", "Hindi", "🇮🇳", "हिन्दी", "Jaini-Regular"),
@@ -177,6 +191,7 @@ object FontLibrary {
     // ═══════════════════════════════════════════════════════════
     val FONT_CATEGORIES: Map<String, List<String>> = mapOf(
         "arabic" to FONT_METADATA.filter { it.language == "Arabic" }.map { it.name },
+        "urdu" to FONT_METADATA.filter { it.language == "Urdu" }.map { it.name },
         "hindi" to FONT_METADATA.filter { it.language == "Hindi" }.map { it.name },
         "script" to FONT_METADATA.filter { it.language == "Script" }.map { it.name },
         "display" to FONT_METADATA.filter { it.language == "Display" }.map { it.name },
@@ -188,11 +203,12 @@ object FontLibrary {
     fun allFonts(): List<String> = FONT_METADATA.map { it.name }
 
     fun categories(): List<String> = listOf(
-        "arabic", "hindi", "script", "display", "gothic", "modern", "system"
+        "arabic", "urdu", "hindi", "script", "display", "gothic", "modern", "system"
     )
 
     fun categoryLabel(key: String): String = when (key) {
         "arabic" -> "🇸🇦 Arabic"
+        "urdu" -> "🇵🇰 Urdu"
         "hindi" -> "🇮🇳 Hindi"
         "script" -> "✍️ Script"
         "display" -> "🎨 Display"

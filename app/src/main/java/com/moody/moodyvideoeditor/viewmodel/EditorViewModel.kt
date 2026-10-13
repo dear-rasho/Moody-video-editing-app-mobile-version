@@ -3517,7 +3517,38 @@ class EditorViewModel : ViewModel() {
     fun setClipOffset(x: Float, y: Float) {
         forEachSelectedClip { it.copy(offsetX = x, offsetY = y) }
     }
+    fun setBlendMode(blendKey: String) {
+        pushHistory()
+        val targetIds: Set<String> = if (_state.value.multiSelectedIds.isNotEmpty()) {
+            _state.value.multiSelectedIds
+        } else setOfNotNull(_state.value.selectedClipId)
+        if (targetIds.isEmpty()) return
 
+        val list = _state.value.clips.toMutableList()
+        for (i in list.indices) {
+            if (list[i].id in targetIds) {
+                list[i] = list[i].copy(blendMode = blendKey)
+            }
+        }
+        _state.update { it.copy(clips = list) }
+        updateHistoryFlags()
+    }
+
+    fun setBlendOpacity(opacity: Float) {
+        val clamped = opacity.coerceIn(0f, 100f)
+        val targetIds: Set<String> = if (_state.value.multiSelectedIds.isNotEmpty()) {
+            _state.value.multiSelectedIds
+        } else setOfNotNull(_state.value.selectedClipId)
+        if (targetIds.isEmpty()) return
+
+        val list = _state.value.clips.toMutableList()
+        for (i in list.indices) {
+            if (list[i].id in targetIds) {
+                list[i] = list[i].copy(blendOpacity = clamped)
+            }
+        }
+        _state.update { it.copy(clips = list) }
+    }
     fun setCrop(l: Float, r: Float, t: Float, b: Float) {
         val cl = l.coerceIn(0f, 0.45f)
         val cr = r.coerceIn(0f, 0.45f)

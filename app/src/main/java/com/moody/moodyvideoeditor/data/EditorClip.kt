@@ -29,6 +29,11 @@ data class EditorClip(
     val linkGroupId: String? = null,
     val isMuted: Boolean = false,
 
+    // 🎨 Blend mode for this layer (applies to compositing on top of layers below)
+    val blendMode: String = "normal",
+
+    // 🎨 Blend opacity/mix amount: 0..100 (0 = no blend, 100 = full blend)
+    val blendOpacity: Float = 100f,
     // 🆕 PER-CLIP AUDIO EFFECTS
     val audioFx: String = "none",
     val audioFxIntensity: Float = 100f,

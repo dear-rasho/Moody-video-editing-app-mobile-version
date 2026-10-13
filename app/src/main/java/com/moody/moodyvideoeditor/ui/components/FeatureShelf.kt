@@ -32,6 +32,7 @@ val FEATURES = listOf(
     Feature("trim", "Trim", "✂️"),
     Feature("speed", "Speed", "⏩"),
     Feature("text", "Text", "📝"),
+    Feature("blend", "Blend", "◐"),
     Feature("animations", "Animate", "🎞️"),
     Feature("filters", "Filters", "🎨"),
     Feature("effects", "Effects", "✨"),
