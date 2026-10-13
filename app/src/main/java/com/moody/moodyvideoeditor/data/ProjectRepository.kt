@@ -540,6 +540,21 @@ object ProjectRepository {
             })
         }
 
+// 🆕 Blur
+        val blurCfg = e.blur
+        if (blurCfg != null) {
+            put("blur", JSONObject().apply {
+                put("type", blurCfg.type)
+                put("intensity", blurCfg.intensity.toDouble())
+                put("animDuration", blurCfg.animDuration.toDouble())
+                put("speed", blurCfg.speed.toDouble())
+                put("angle", blurCfg.angle.toDouble())
+                put("centerX", blurCfg.centerX.toDouble())
+                put("centerY", blurCfg.centerY.toDouble())
+                put("blockSize", blurCfg.blockSize.toDouble())
+                put("secondary", blurCfg.secondary.toDouble())
+            })
+        }
         val overlay = e.overlay
         if (overlay != null) {
             put("overlayCfg", JSONObject().apply {
@@ -569,6 +584,17 @@ object ProjectRepository {
                 put("speed", edgeGlow.speed.toDouble())
             })
         }
+        // 🆕 Lightning
+        val lightning = e.lightning
+        if (lightning != null) {
+            put("lightning", JSONObject().apply {
+                put("intensity", lightning.intensity.toDouble())
+                put("frequency", lightning.frequency.toDouble())
+                put("color", lightning.color)
+                put("durationMs", lightning.durationMs)
+                put("doubleStrike", lightning.doubleStrike)
+            })
+        }
     }
 
     private fun effectStateFromJson(o: JSONObject): EffectState {
@@ -589,7 +615,19 @@ object ProjectRepository {
                     speed = motionObj.optDouble("speed", 1.0).toFloat()
                 )
             } else null,
-
+            blur = o.optJSONObject("blur")?.let { b ->
+                com.moody.moodyvideoeditor.utils.BlurConfig(
+                    type = b.optString("type", "blurIn"),
+                    intensity = b.optDouble("intensity", 50.0).toFloat(),
+                    animDuration = b.optDouble("animDuration", 2.0).toFloat(),
+                    speed = b.optDouble("speed", 1.0).toFloat(),
+                    angle = b.optDouble("angle", 0.0).toFloat(),
+                    centerX = b.optDouble("centerX", 0.5).toFloat(),
+                    centerY = b.optDouble("centerY", 0.5).toFloat(),
+                    blockSize = b.optDouble("blockSize", 20.0).toFloat(),
+                    secondary = b.optDouble("secondary", 50.0).toFloat()
+                )
+            },
             // 🆕 Animated color
             animatedColor = if (acObj != null) {
                 com.moody.moodyvideoeditor.utils.AnimatedColorConfig(
@@ -630,7 +668,17 @@ object ProjectRepository {
                     },
                     speed = edgeGlowObj.optDouble("speed", 1.0).toFloat()
                 )
-            } else null
+            } else null,
+
+            lightning = o.optJSONObject("lightning")?.let { lc ->
+                LightningConfig(
+                    intensity = lc.optDouble("intensity", 80.0).toFloat(),
+                    frequency = lc.optDouble("frequency", 1.0).toFloat(),
+                    color = lc.optLong("color", 0xFFFFFFFFL),
+                    durationMs = lc.optLong("durationMs", 80L),
+                    doubleStrike = lc.optBoolean("doubleStrike", true)
+                )
+            }
         )
     }
 

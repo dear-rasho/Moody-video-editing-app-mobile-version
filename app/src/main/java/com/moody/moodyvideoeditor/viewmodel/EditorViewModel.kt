@@ -1002,14 +1002,15 @@ class EditorViewModel : ViewModel() {
     ): Int {
         val s = _state.value
         val endMs = startMs + durMs
-        for (t in 0 until s.visualLayerCount) {
+        val startFrom = preferredTrack.coerceAtLeast(0)
+        for (t in startFrom until s.visualLayerCount) {   // ✅ ab respect karega
             val hasOverlap = s.clips.any { c ->
                 !c.isAudio && c.trackIndex == t &&
                         c.timelineStartMs < endMs && startMs < c.timelineEndMs
             }
             if (!hasOverlap) return t
         }
-        val newIdx = s.visualLayerCount
+        val newIdx = maxOf(s.visualLayerCount, startFrom)
         _state.update { it.copy(visualLayerCount = newIdx + 1) }
         return newIdx
     }
@@ -2503,6 +2504,48 @@ class EditorViewModel : ViewModel() {
         addClipOnNewLayer(clip, baseTrack + 1)
         updateHistoryFlags()
     }
+    fun createBlurLayer(
+        presetKey: String,
+        intensity: Float,
+        blurConfig: com.moody.moodyvideoeditor.utils.BlurConfig
+    ) {
+        val preset = EffectLibrary.findByKey(presetKey) ?: return
+        val s = _state.value
+        val baseClip = s.selectedClip
+        val startMs = baseClip?.timelineStartMs ?: s.currentPosMs
+        val durMs = baseClip?.durationMs ?: 3000L
+        val baseTrack = baseClip?.trackIndex ?: 0
+
+        val effectState = EffectState(
+            kind = EffectState.KIND_EFFECT,
+            presetKey = presetKey,
+            blur = blurConfig,
+            masterIntensity = intensity
+        )
+
+        val clip = EditorClip(
+            id = UUID.randomUUID().toString(), uri = Uri.EMPTY,
+            name = "🔍 ${preset.label}", type = "effect/plain",
+            sourceStartMs = 0L, sourceEndMs = durMs,
+            timelineStartMs = startMs, trackIndex = 0, isAudio = false,
+            sourceTotalMs = Long.MAX_VALUE, effectKeys = listOf(presetKey),
+            effectState = effectState
+        )
+        pushHistory()
+        addClipOnNewLayer(clip, baseTrack + 1)
+        updateHistoryFlags()
+    }
+    fun updateClipEffectLightning(
+        clipId: String,
+        config: com.moody.moodyvideoeditor.data.LightningConfig
+    ) {
+        updateClipDirect(clipId) { clip ->
+            val eff = clip.effectState
+            if (eff != null && eff.lightning != null) {
+                clip.copy(effectState = eff.copy(lightning = config))
+            } else clip
+        }
+    }
     fun updateEffectLayerIntensity(layerId: String, intensity: Float) {
         val clip = _state.value.clips.firstOrNull { it.id == layerId } ?: return
         if (!clip.isEffectClip) return
@@ -2568,6 +2611,10 @@ class EditorViewModel : ViewModel() {
             ac.copy(intensity = (ac.intensity * t).coerceIn(0f, 200f))
         }
 
+// 🆕 Blur — scale intensity
+        val scaledBlur = preset.blur?.let { bc ->
+            bc.copy(intensity = (bc.intensity * t).coerceIn(0f, 100f))
+        }
         val scaledOverlay = preset.overlay?.let { o ->
             o.copy(intensity = (o.intensity * t).coerceIn(0f, 300f))
         }
@@ -2583,15 +2630,25 @@ class EditorViewModel : ViewModel() {
             )
         }
 
+        // ⚡ Lightning — scale intensity (only brightness scales, timing stays)
+        val scaledLightning = preset.lightning?.let { lc ->
+            lc.copy(
+                intensity = (lc.intensity * (intensity / 100f))
+                    .coerceIn(0f, 200f)
+            )
+        }
+
         return EffectState(
             kind = EffectState.KIND_EFFECT,
             presetKey = preset.key,
             filters = scaledFilters,
-            animatedColor = scaledAnimatedColor,   // 🆕
+            blur = scaledBlur,
+            animatedColor = scaledAnimatedColor,
             motion = scaledMotion,
             overlay = scaledOverlay,
             edgeGlow = scaledEdgeGlow,
             lightLeak = scaledLightLeak,
+            lightning = scaledLightning,        // 🆕 ADD THIS LINE
             masterIntensity = intensity
         )
     }

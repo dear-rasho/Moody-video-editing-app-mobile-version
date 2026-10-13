@@ -12,13 +12,13 @@ data class EffectPreset(
     val animatedColor: com.moody.moodyvideoeditor.utils.AnimatedColorConfig? = null,
     val overlay: OverlayConfig? = null,
     val edgeGlow: EdgeGlowConfig? = null,
-    val lightLeak: LightLeakConfig? = null
+    val blur: com.moody.moodyvideoeditor.utils.BlurConfig? = null,
+    val lightLeak: LightLeakConfig? = null,
+    val lightning: LightningConfig? = null
 )
-
 enum class EffectKind {
-    MOTION, ANIMATED_COLOR, OVERLAY, EDGE_GLOW, LIGHT_LEAK
+    MOTION, ANIMATED_COLOR, BLUR, OVERLAY, EDGE_GLOW, LIGHT_LEAK, LIGHTNING
 }
-
 // Mirrors MOTION_MAP values from beatsEngine.js
 data class MotionConfig(
     val type: String,       // shake | bounce | pulse | zoomPulse | rotate | glitch
@@ -97,7 +97,17 @@ enum class LightLeakAnimation {
     DRIFT,       // slow position drift
     SWEEP        // horizontal sweep
 }
+// ═══════════════════════════════════════════════════════════════
+//  ⚡ LIGHTNING — thunderstorm-style flash effect
+// ═══════════════════════════════════════════════════════════════
 
+data class LightningConfig(
+    val intensity: Float = 80f,          // 0..200 — brightness peak
+    val frequency: Float = 1.0f,          // 0.2..5 — flashes per second
+    val color: Long = 0xFFFFFFFF,         // flash color (white/blue/purple)
+    val durationMs: Long = 80L,           // each flash duration in ms
+    val doubleStrike: Boolean = true      // main flash + echo
+)
 data class LightLeakConfig(
     val color1: Long = 0xFFFFCC66,
     val color2: Long = 0xFFFF8800,
@@ -788,8 +798,105 @@ object EffectLibrary {
             )
         )
     )
-
-
+    // ═══════════════════════════════════════════════════════════
+//  BLUR EFFECTS — 10 animated blurs
+// ═══════════════════════════════════════════════════════════
+    val BLUR_EFFECTS: List<EffectPreset> = listOf(
+        EffectPreset(
+            "blurIn", "Blur In", "🔍", EffectKind.BLUR,
+            blur = com.moody.moodyvideoeditor.utils.BlurConfig(
+                type = "blurIn", intensity = 60f, animDuration = 2f
+            )
+        ),
+        EffectPreset(
+            "blurOut", "Blur Out", "💨", EffectKind.BLUR,
+            blur = com.moody.moodyvideoeditor.utils.BlurConfig(
+                type = "blurOut", intensity = 60f, animDuration = 2f
+            )
+        ),
+        EffectPreset(
+            "halo", "Halo Burst", "☀️", EffectKind.BLUR,
+            blur = com.moody.moodyvideoeditor.utils.BlurConfig(
+                type = "halo", intensity = 80f, animDuration = 1.5f
+            )
+        ),
+        EffectPreset(
+            "mosaic", "Mosaic", "🟦", EffectKind.BLUR,
+            blur = com.moody.moodyvideoeditor.utils.BlurConfig(
+                type = "mosaic", intensity = 50f, animDuration = 2f,
+                blockSize = 20f
+            )
+        )
+    )
+    // ═══════════════════════════════════════════════════════════
+//  ⚡ LIGHTNING EFFECTS — 8 presets
+// ═══════════════════════════════════════════════════════════
+    val LIGHTNING_EFFECTS: List<EffectPreset> = listOf(
+        EffectPreset(
+            "lightningBolt", "Lightning Bolt", "⚡", EffectKind.LIGHTNING,
+            lightning = LightningConfig(
+                intensity = 100f, frequency = 0.8f,
+                color = 0xFFFFFFFF, durationMs = 70L,
+                doubleStrike = true
+            )
+        ),
+        EffectPreset(
+            "thunderStorm", "Thunder Storm", "🌩️", EffectKind.LIGHTNING,
+            lightning = LightningConfig(
+                intensity = 130f, frequency = 1.8f,
+                color = 0xFFFFFFFF, durationMs = 60L,
+                doubleStrike = true
+            )
+        ),
+        EffectPreset(
+            "blueLightning", "Blue Lightning", "🔵", EffectKind.LIGHTNING,
+            lightning = LightningConfig(
+                intensity = 110f, frequency = 1.2f,
+                color = 0xFF66CCFF, durationMs = 75L,
+                doubleStrike = true
+            )
+        ),
+        EffectPreset(
+            "purpleStrike", "Purple Strike", "💜", EffectKind.LIGHTNING,
+            lightning = LightningConfig(
+                intensity = 120f, frequency = 1.0f,
+                color = 0xFFB366FF, durationMs = 80L,
+                doubleStrike = true
+            )
+        ),
+        EffectPreset(
+            "atomicFlash", "Atomic Flash", "💥", EffectKind.LIGHTNING,
+            lightning = LightningConfig(
+                intensity = 200f, frequency = 0.5f,
+                color = 0xFFFFFFFF, durationMs = 150L,
+                doubleStrike = false
+            )
+        ),
+        EffectPreset(
+            "rapidStrobe", "Rapid Strobe", "📸", EffectKind.LIGHTNING,
+            lightning = LightningConfig(
+                intensity = 90f, frequency = 4.5f,
+                color = 0xFFFFFFFF, durationMs = 40L,
+                doubleStrike = false
+            )
+        ),
+        EffectPreset(
+            "stormyNight", "Stormy Night", "🌧️", EffectKind.LIGHTNING,
+            lightning = LightningConfig(
+                intensity = 85f, frequency = 0.6f,
+                color = 0xFFDDEEFF, durationMs = 100L,
+                doubleStrike = true
+            )
+        ),
+        EffectPreset(
+            "cloudFlash", "Cloud Flash", "☁️", EffectKind.LIGHTNING,
+            lightning = LightningConfig(
+                intensity = 60f, frequency = 1.5f,
+                color = 0xFFFFEECC, durationMs = 90L,
+                doubleStrike = false
+            )
+        )
+    )
     // ═══════════════════════════════════════════════════════════
     //  🆕 LIGHT LEAK EFFECTS — built from separate LightLeaks.kt file
     //  Presets change karne ho toh sirf LightLeaks.kt edit karo
@@ -810,7 +917,7 @@ object EffectLibrary {
     //  ALL EFFECTS — combined
 
     val ALL: List<EffectPreset> = MOTION_EFFECTS + ANIMATED_COLOR_EFFECTS +
-            OVERLAY_EFFECTS + EDGE_GLOW_EFFECTS + LIGHT_LEAK_EFFECTS
-
+            BLUR_EFFECTS + OVERLAY_EFFECTS + EDGE_GLOW_EFFECTS + LIGHT_LEAK_EFFECTS +
+            LIGHTNING_EFFECTS
     fun findByKey(key: String): EffectPreset? = ALL.firstOrNull { it.key == key }
 }

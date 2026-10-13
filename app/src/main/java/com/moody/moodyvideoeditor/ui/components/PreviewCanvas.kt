@@ -95,6 +95,7 @@ import com.moody.moodyvideoeditor.data.FilterState
 import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.OverlayState
+import com.moody.moodyvideoeditor.utils.BlurEngine
 import com.moody.moodyvideoeditor.utils.BrushEngine
 import com.moody.moodyvideoeditor.utils.ColorMatrixBuilder
 import com.moody.moodyvideoeditor.utils.ColorWheelEngine
@@ -205,6 +206,27 @@ private fun fittedBoundsFractions(
     } else {
         (contentAspectRatio / containerAspectRatio) to 1f
     }
+}
+
+// 🆕 Compute current blur radius for a video/image clip based on effect layers above it
+private fun computeClipBlurRadiusDp(
+    clips: List<EditorClip>,
+    clip: EditorClip,
+    currentPosMs: Long
+): Float {
+    val effectAbove = clips.firstOrNull { e ->
+        e.isEffectClip &&
+                e.trackIndex > clip.trackIndex &&
+                currentPosMs >= e.timelineStartMs &&
+                currentPosMs < e.timelineEndMs &&
+                e.effectState?.blur != null
+    } ?: return 0f
+
+    val cfg = effectAbove.effectState?.blur ?: return 0f
+    val localSec = ((currentPosMs - effectAbove.timelineStartMs) / 1000f)
+        .coerceAtLeast(0f)
+    val durSec = (effectAbove.durationMs / 1000f).coerceAtLeast(0.1f)
+    return BlurEngine.computeRadiusDp(cfg, localSec, durSec)
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -367,10 +389,16 @@ fun PreviewCanvas(
         motionFrames.add(EffectsEngine.computeMotion(m, timeSec))
     }
     val combinedMotion = EffectsEngine.combineMotions(motionFrames)
-
+// 🆕 Preview blur — active while Effects panel is open (before Apply)
+    val previewBlurDp = remember(previewEffectState?.blur) {
+        previewEffectState?.blur?.let { cfg ->
+            val i = cfg.intensity.coerceIn(0f, 100f) / 100f
+            (20f * i).coerceIn(0f, 25f)   // visible but capped for perf
+        } ?: 0f
+    }
     val filterList = activeEffects.mapNotNull { it.effectState?.filters }.toMutableList()
 
-// Animated colors from active effect clips (only once!)
+    // Animated colors from active effect clips
     activeEffects.forEach { clip ->
         val acCfg = clip.effectState?.animatedColor
         if (acCfg != null) {
@@ -382,7 +410,6 @@ fun PreviewCanvas(
 
     previewEffectState?.filters?.let { filterList.add(it) }
 
-// Animated color from preview effect
     previewEffectState?.animatedColor?.let { acCfg ->
         val dyn = com.moody.moodyvideoeditor.utils.AnimatedColorEngine
             .compute(acCfg, timeSec)
@@ -555,6 +582,16 @@ fun PreviewCanvas(
                             else colorWheelMatrixForClip(clip, activeColorWheels)
                         }
 
+                        // Compute blur radius for this video clip (effect layer + live preview)
+                        val videoBlurDp = remember(
+                            currentPosMs, clip.id, clip.trackIndex, previewBlurDp
+                        ) {
+                            maxOf(
+                                computeClipBlurRadiusDp(clips, clip, currentPosMs),
+                                previewBlurDp
+                            )
+                        }
+
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
                             Box(
                                 modifier = Modifier
@@ -583,20 +620,16 @@ fun PreviewCanvas(
 
                                         val transT: Transform2D =
                                             if (activeTransitionClip != null) {
-                                                val st =
-                                                    activeTransitionClip.transition!!
+                                                val st = activeTransitionClip.transition!!
                                                 val prog = (
                                                         (currentPosMs -
                                                                 activeTransitionClip
                                                                     .timelineStartMs)
                                                             .toFloat() /
-                                                                st.durationMs
-                                                                    .coerceAtLeast(1L)
+                                                                st.durationMs.coerceAtLeast(1L)
                                                         ).coerceIn(0f, 1f)
                                                 TransitionRenderer
-                                                    .getIncomingTransform(
-                                                        st.key, prog, w, h
-                                                    )
+                                                    .getIncomingTransform(st.key, prog, w, h)
                                             } else Transform2D()
 
                                         translationX = posTx + cropTx +
@@ -613,21 +646,26 @@ fun PreviewCanvas(
                                                 combinedMotion.rotation +
                                                 transT.rotZ
                                         transformOrigin = TransformOrigin(
-                                            pivotFractionX =
-                                                videoTransform2.anchorX / 100f,
-                                            pivotFractionY =
-                                                videoTransform2.anchorY / 100f
+                                            pivotFractionX = videoTransform2.anchorX / 100f,
+                                            pivotFractionY = videoTransform2.anchorY / 100f
                                         )
                                         alpha = opacityAlpha * transT.alpha
                                         this.clip = true
                                     }
+                                    .then(
+                                        if (videoBlurDp > 0.5f) {
+                                            Modifier.blur(
+                                                radius = videoBlurDp.dp,
+                                                edgeTreatment = BlurredEdgeTreatment.Unbounded
+                                            )
+                                        } else Modifier
+                                    )
                             ) {
                                 AndroidView(
                                     factory = { ctx ->
                                         LayoutInflater.from(ctx)
                                             .inflate(
-                                                com.moody.moodyvideoeditor.R.layout
-                                                    .view_player,
+                                                com.moody.moodyvideoeditor.R.layout.view_player,
                                                 null
                                             ) as PlayerView
                                     },
@@ -639,26 +677,17 @@ fun PreviewCanvas(
                                         val sv = view.videoSurfaceView
                                         if (sv is TextureView) {
                                             val videoCm = buildClipMatrix(
-                                                clip,
-                                                combinedMatrix,
-                                                applyMatrix,
-                                                videoWheelMatrix,
-                                                useExactVideoColorWheels
+                                                clip, combinedMatrix, applyMatrix,
+                                                videoWheelMatrix, useExactVideoColorWheels
                                             )
                                             if (videoCm != null) {
                                                 val paint = Paint().apply {
                                                     colorFilter =
-                                                        android.graphics.ColorMatrixColorFilter(
-                                                            videoCm
-                                                        )
+                                                        android.graphics.ColorMatrixColorFilter(videoCm)
                                                 }
-                                                sv.setLayerType(
-                                                    View.LAYER_TYPE_HARDWARE, paint
-                                                )
+                                                sv.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
                                             } else {
-                                                sv.setLayerType(
-                                                    View.LAYER_TYPE_HARDWARE, null
-                                                )
+                                                sv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
                                             }
                                             if (Build.VERSION.SDK_INT >= 31) {
                                                 view.setRenderEffect(
@@ -691,11 +720,8 @@ fun PreviewCanvas(
                                         onGestureEnd = onGroupGestureEnd,
                                         onTransformChanged = { scale, rotation ->
                                             onGroupGesture(
-                                                clip.id,
-                                                videoTransform2.x,
-                                                videoTransform2.y,
-                                                scale,
-                                                rotation
+                                                clip.id, videoTransform2.x,
+                                                videoTransform2.y, scale, rotation
                                             )
                                         },
                                         onDelete = { onDeleteLayer(clip.id) },
@@ -720,6 +746,16 @@ fun PreviewCanvas(
                             else -> Color.Transparent
                         }
 
+                        // Compute blur radius for this image clip (effect layer + live preview)
+                        val imageBlurDp = remember(
+                            currentPosMs, clip.id, clip.trackIndex, previewBlurDp
+                        ) {
+                            maxOf(
+                                computeClipBlurRadiusDp(clips, clip, currentPosMs),
+                                previewBlurDp
+                            )
+                        }
+
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
                             Box(
                                 modifier = Modifier
@@ -728,23 +764,17 @@ fun PreviewCanvas(
                                         val w = size.width
                                         val h = size.height
                                         val cropSx = 1f /
-                                                (1f - imgTransform.cropL -
-                                                        imgTransform.cropR)
+                                                (1f - imgTransform.cropL - imgTransform.cropR)
                                                     .coerceAtLeast(0.05f)
                                         val cropSy = 1f /
-                                                (1f - imgTransform.cropT -
-                                                        imgTransform.cropB)
+                                                (1f - imgTransform.cropT - imgTransform.cropB)
                                                     .coerceAtLeast(0.05f)
                                         val cropTx =
-                                            -(imgTransform.cropL -
-                                                    imgTransform.cropR) / 2f * w
+                                            -(imgTransform.cropL - imgTransform.cropR) / 2f * w
                                         val cropTy =
-                                            -(imgTransform.cropT -
-                                                    imgTransform.cropB) / 2f * h
-                                        val posTx =
-                                            (imgTransform.x - 50f) / 100f * w
-                                        val posTy =
-                                            (imgTransform.y - 50f) / 100f * h
+                                            -(imgTransform.cropT - imgTransform.cropB) / 2f * h
+                                        val posTx = (imgTransform.x - 50f) / 100f * w
+                                        val posTy = (imgTransform.y - 50f) / 100f * h
 
                                         val transT: Transform2D =
                                             if (activeTransitionClip != null &&
@@ -756,13 +786,10 @@ fun PreviewCanvas(
                                                                 activeTransitionClip
                                                                     .timelineStartMs)
                                                             .toFloat() /
-                                                                st.durationMs
-                                                                    .coerceAtLeast(1L)
+                                                                st.durationMs.coerceAtLeast(1L)
                                                         ).coerceIn(0f, 1f)
                                                 TransitionRenderer
-                                                    .getIncomingTransform(
-                                                        st.key, prog, w, h
-                                                    )
+                                                    .getIncomingTransform(st.key, prog, w, h)
                                             } else Transform2D()
 
                                         translationX = posTx + cropTx +
@@ -776,8 +803,7 @@ fun PreviewCanvas(
                                                 cropSy * combinedMotion.scale *
                                                 transT.scaleY
                                         rotationZ = imgTransform.rotation +
-                                                combinedMotion.rotation +
-                                                transT.rotZ
+                                                combinedMotion.rotation + transT.rotZ
                                         transformOrigin = TransformOrigin(
                                             pivotFractionX = imgTransform.anchorX / 100f,
                                             pivotFractionY = imgTransform.anchorY / 100f
@@ -785,6 +811,14 @@ fun PreviewCanvas(
                                         alpha = opacityAlpha * transT.alpha
                                         this.clip = true
                                     }
+                                    .then(
+                                        if (imageBlurDp > 0.5f) {
+                                            Modifier.blur(
+                                                radius = imageBlurDp.dp,
+                                                edgeTreatment = BlurredEdgeTreatment.Unbounded
+                                            )
+                                        } else Modifier
+                                    )
                                     .then(
                                         if (isMulti) Modifier.border(
                                             width = 1.dp, color = borderColor,
@@ -814,15 +848,13 @@ fun PreviewCanvas(
                                             var continueGesture = true
                                             while (continueGesture) {
                                                 val event = awaitPointerEvent()
-                                                val pressed =
-                                                    event.changes.filter { it.pressed }
+                                                val pressed = event.changes.filter { it.pressed }
                                                 if (pressed.isEmpty()) {
                                                     continueGesture = false
                                                 } else {
                                                     if (pressed.size == 1) {
                                                         val ch = pressed.first()
-                                                        val pan =
-                                                            ch.position - ch.previousPosition
+                                                        val pan = ch.position - ch.previousPosition
                                                         accumPanX += pan.x
                                                         accumPanY += pan.y
                                                         ch.consume()
@@ -830,8 +862,7 @@ fun PreviewCanvas(
                                                         val c1 = pressed[0]
                                                         val c2 = pressed[1]
                                                         val d = c1.position - c2.position
-                                                        val dist =
-                                                            kotlin.math.sqrt(d.x * d.x + d.y * d.y)
+                                                        val dist = kotlin.math.sqrt(d.x * d.x + d.y * d.y)
                                                         val angle = kotlin.math.atan2(d.y, d.x)
                                                         if (hasMulti && lastDist > 1f) {
                                                             accumZoom *= dist / lastDist
@@ -846,20 +877,14 @@ fun PreviewCanvas(
                                                         c1.consume()
                                                         c2.consume()
                                                     }
-                                                    val newX =
-                                                        (baseX + accumPanX / size.width * 100f)
-                                                            .coerceIn(0f, 100f)
-                                                    val newY =
-                                                        (baseY + accumPanY / size.height * 100f)
-                                                            .coerceIn(0f, 100f)
+                                                    val newX = (baseX + accumPanX / size.width * 100f)
+                                                        .coerceIn(0f, 100f)
+                                                    val newY = (baseY + accumPanY / size.height * 100f)
+                                                        .coerceIn(0f, 100f)
                                                     val newScale = (baseScale * accumZoom)
                                                         .coerceIn(10f, 500f)
                                                     val newRot = baseRot + accumRot
-
-                                                    onGroupGesture(
-                                                        clip.id, newX, newY,
-                                                        newScale, newRot
-                                                    )
+                                                    onGroupGesture(clip.id, newX, newY, newScale, newRot)
                                                 }
                                             }
                                             onGroupGestureEnd()
@@ -894,16 +919,13 @@ fun PreviewCanvas(
                                     canvasW, canvasH, imageAspect
                                 )
                                 val useExactImageColorWheels = Build.VERSION.SDK_INT >= 33
-                                val imageWheelStates = remember(
-                                    clip.colorWheel, activeColorWheels
-                                ) {
+                                val imageWheelStates = remember(clip.colorWheel, activeColorWheels) {
                                     colorWheelStatesForClip(clip, activeColorWheels)
                                 }
                                 val imageWheelEffect = remember(imageWheelStates) {
                                     if (useExactImageColorWheels) {
-                                        ColorWheelPreviewFilter.createRenderEffect(
-                                            imageWheelStates
-                                        )?.asComposeRenderEffect()
+                                        ColorWheelPreviewFilter.createRenderEffect(imageWheelStates)
+                                            ?.asComposeRenderEffect()
                                     } else null
                                 }
                                 val useExactImageWheels =
@@ -912,13 +934,11 @@ fun PreviewCanvas(
                                                     imageWheelEffect != null)
                                 val imgColorFilter = remember(
                                     clip.filters, clip.adjustments,
-                                    combinedMatrix, applyMatrix, activeColorWheels, clip.id,
-                                    useExactImageWheels
+                                    combinedMatrix, applyMatrix, activeColorWheels,
+                                    clip.id, useExactImageWheels
                                 ) {
                                     val cm = buildClipMatrix(
-                                        clip,
-                                        combinedMatrix,
-                                        applyMatrix,
+                                        clip, combinedMatrix, applyMatrix,
                                         if (useExactImageWheels) null
                                         else colorWheelMatrixForClip(clip, activeColorWheels),
                                         useExactImageWheels
@@ -949,22 +969,14 @@ fun PreviewCanvas(
                                         positionX = imgTransform.x,
                                         positionY = imgTransform.y,
                                         onPositionChanged = { x, y ->
-                                            onGroupGesture(
-                                                clip.id, x, y,
-                                                imgTransform.scale,
-                                                imgTransform.rotation
-                                            )
+                                            onGroupGesture(clip.id, x, y,
+                                                imgTransform.scale, imgTransform.rotation)
                                         },
                                         onGestureStart = onGroupGestureStart,
                                         onGestureEnd = onGroupGestureEnd,
                                         onTransformChanged = { scale, rotation ->
-                                            onGroupGesture(
-                                                clip.id,
-                                                imgTransform.x,
-                                                imgTransform.y,
-                                                scale,
-                                                rotation
-                                            )
+                                            onGroupGesture(clip.id, imgTransform.x,
+                                                imgTransform.y, scale, rotation)
                                         },
                                         onDelete = { onDeleteLayer(clip.id) },
                                     )
@@ -979,8 +991,7 @@ fun PreviewCanvas(
                             ((currentPosMs - clip.timelineStartMs) / 1000f)
                                 .coerceAtLeast(0f)
                         val matteTransform = TransformApplier.resolveLive(clip, localSec)
-                        val matteAlpha = (clip.filters.opacity / 100f)
-                            .coerceIn(0f, 1f)
+                        val matteAlpha = (clip.filters.opacity / 100f).coerceIn(0f, 1f)
 
                         val isSel = clip.id == selectedClipId
                         val isMulti = clip.id in multiSelectedIds
@@ -1011,15 +1022,11 @@ fun PreviewCanvas(
                                         val cropTy =
                                             -(matteTransform.cropT -
                                                     matteTransform.cropB) / 2f * h
-                                        val posTx =
-                                            (matteTransform.x - 50f) / 100f * w
-                                        val posTy =
-                                            (matteTransform.y - 50f) / 100f * h
+                                        val posTx = (matteTransform.x - 50f) / 100f * w
+                                        val posTy = (matteTransform.y - 50f) / 100f * h
 
-                                        translationX = posTx + cropTx +
-                                                combinedMotion.tx
-                                        translationY = posTy + cropTy +
-                                                combinedMotion.ty
+                                        translationX = posTx + cropTx + combinedMotion.tx
+                                        translationY = posTy + cropTy + combinedMotion.ty
                                         scaleX = (matteTransform.scale / 100f) *
                                                 cropSx * combinedMotion.scale
                                         scaleY = (matteTransform.scale / 100f) *
@@ -1027,10 +1034,8 @@ fun PreviewCanvas(
                                         rotationZ = matteTransform.rotation +
                                                 combinedMotion.rotation
                                         transformOrigin = TransformOrigin(
-                                            pivotFractionX =
-                                                matteTransform.anchorX / 100f,
-                                            pivotFractionY =
-                                                matteTransform.anchorY / 100f
+                                            pivotFractionX = matteTransform.anchorX / 100f,
+                                            pivotFractionY = matteTransform.anchorY / 100f
                                         )
                                         alpha = matteAlpha * opacityAlpha
                                     }
@@ -1046,7 +1051,6 @@ fun PreviewCanvas(
                                         awaitEachGesture {
                                             awaitFirstDown(requireUnconsumed = true)
                                             onGroupGestureStart()
-
                                             val baseX = matteTransform.x
                                             val baseY = matteTransform.y
                                             val baseScale = matteTransform.scale
@@ -1058,21 +1062,17 @@ fun PreviewCanvas(
                                             var lastDist = 0f
                                             var lastAngle = 0f
                                             var hasMulti = false
-
                                             if (!isSel && !isMulti) onClipSelected(clip.id)
-
                                             var continueGesture = true
                                             while (continueGesture) {
                                                 val event = awaitPointerEvent()
-                                                val pressed =
-                                                    event.changes.filter { it.pressed }
+                                                val pressed = event.changes.filter { it.pressed }
                                                 if (pressed.isEmpty()) {
                                                     continueGesture = false
                                                 } else {
                                                     if (pressed.size == 1) {
                                                         val ch = pressed.first()
-                                                        val pan =
-                                                            ch.position - ch.previousPosition
+                                                        val pan = ch.position - ch.previousPosition
                                                         accumPanX += pan.x
                                                         accumPanY += pan.y
                                                         ch.consume()
@@ -1080,14 +1080,12 @@ fun PreviewCanvas(
                                                         val c1 = pressed[0]
                                                         val c2 = pressed[1]
                                                         val d = c1.position - c2.position
-                                                        val dist =
-                                                            kotlin.math.sqrt(d.x * d.x + d.y * d.y)
+                                                        val dist = kotlin.math.sqrt(d.x * d.x + d.y * d.y)
                                                         val angle = kotlin.math.atan2(d.y, d.x)
                                                         if (hasMulti && lastDist > 1f) {
                                                             accumZoom *= dist / lastDist
                                                             accumRot += Math.toDegrees(
-                                                                normalizeAngle(angle - lastAngle)
-                                                                    .toDouble()
+                                                                normalizeAngle(angle - lastAngle).toDouble()
                                                             ).toFloat()
                                                         }
                                                         lastDist = dist
@@ -1096,28 +1094,17 @@ fun PreviewCanvas(
                                                         c1.consume()
                                                         c2.consume()
                                                     }
-                                                    val newX =
-                                                        (baseX + accumPanX / size.width * 100f)
-                                                            .coerceIn(0f, 100f)
-                                                    val newY =
-                                                        (baseY + accumPanY / size.height * 100f)
-                                                            .coerceIn(0f, 100f)
-                                                    val newScale = (baseScale * accumZoom)
-                                                        .coerceIn(10f, 500f)
+                                                    val newX = (baseX + accumPanX / size.width * 100f)
+                                                        .coerceIn(0f, 100f)
+                                                    val newY = (baseY + accumPanY / size.height * 100f)
+                                                        .coerceIn(0f, 100f)
+                                                    val newScale = (baseScale * accumZoom).coerceIn(10f, 500f)
                                                     val newRot = baseRot + accumRot
-
                                                     if (isMulti) {
-                                                        onGroupGesture(
-                                                            clip.id, newX, newY,
-                                                            newScale, newRot
-                                                        )
+                                                        onGroupGesture(clip.id, newX, newY, newScale, newRot)
                                                     } else {
-                                                        onBrushPositionChanged(
-                                                            clip.id, newX, newY
-                                                        )
-                                                        onBrushTransformChanged(
-                                                            clip.id, newScale, newRot
-                                                        )
+                                                        onBrushPositionChanged(clip.id, newX, newY)
+                                                        onBrushTransformChanged(clip.id, newScale, newRot)
                                                     }
                                                 }
                                             }
@@ -1135,7 +1122,6 @@ fun PreviewCanvas(
                                     style = clip.matteStyle,
                                     modifier = Modifier.fillMaxSize()
                                 )
-
                                 if (isSel && !isDrawingMode) {
                                     LayerTransformHandles(
                                         clipId = clip.id,
@@ -1161,8 +1147,6 @@ fun PreviewCanvas(
                     // ─── TEXT ───
                     clip.isTextClip -> {
                         val st = clip.textState ?: return@forEach
-                        val textLocalSec = ((currentPosMs - clip.timelineStartMs) / 1000f)
-                            .coerceAtLeast(0f)
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
                             Box(modifier = Modifier.fillMaxSize()) {
                                 InteractiveTextOverlay(
@@ -1193,8 +1177,6 @@ fun PreviewCanvas(
                     // ─── STICKER ───
                     clip.isStickerClip -> {
                         val ss = clip.stickerState ?: return@forEach
-                        val stickerLocalSec = ((currentPosMs - clip.timelineStartMs) / 1000f)
-                            .coerceAtLeast(0f)
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
                             Box(modifier = Modifier.fillMaxSize()) {
                                 InteractiveStickerOverlay(
@@ -1225,9 +1207,6 @@ fun PreviewCanvas(
                     // ─── VISUALIZER ───
                     clip.isVisualizerClip -> {
                         val vs = clip.visualizer ?: return@forEach
-                        val vizLocalSec = ((currentPosMs - clip.timelineStartMs) / 1000f)
-                            .coerceAtLeast(0f)
-
                         val minDimDp = minOf(canvasW, canvasH)
                         val radiusDp = vs.size * minDimDp
                         val diameterDp = radiusDp * 2f
@@ -1238,9 +1217,7 @@ fun PreviewCanvas(
                         val isMulti = clip.id in multiSelectedIds
 
                         Box(modifier = Modifier.fillMaxSize()) {
-                            MaskedClipContent(
-                                mask = maskAtClipTime(clip, currentPosMs)
-                            ) {
+                            MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
                                 Box(modifier = Modifier.fillMaxSize()) {
                                     VisualizerOverlay(
                                         state = vs,
@@ -1266,14 +1243,11 @@ fun PreviewCanvas(
                                             shape = RoundedCornerShape(8.dp)
                                         ) else Modifier
                                     )
-                                    .pointerInput(
-                                        clip.id, isSel, isMulti, canvasW, canvasH, isDrawingMode
-                                    ) {
+                                    .pointerInput(clip.id, isSel, isMulti, canvasW, canvasH, isDrawingMode) {
                                         if (isDrawingMode) return@pointerInput
                                         awaitEachGesture {
                                             awaitFirstDown(requireUnconsumed = true)
                                             onGroupGestureStart()
-
                                             val baseX = vs.positionX * 100f
                                             val baseY = vs.positionY * 100f
                                             val baseScale = vs.size / 0.32f * 100f
@@ -1285,9 +1259,7 @@ fun PreviewCanvas(
                                             var lastDist = 0f
                                             var lastAngle = 0f
                                             var hasMulti = false
-
                                             if (!isSel && !isMulti) onClipSelected(clip.id)
-
                                             var continueGesture = true
                                             while (continueGesture) {
                                                 val event = awaitPointerEvent()
@@ -1305,14 +1277,12 @@ fun PreviewCanvas(
                                                         val c1 = pressed[0]
                                                         val c2 = pressed[1]
                                                         val d = c1.position - c2.position
-                                                        val dist =
-                                                            kotlin.math.sqrt(d.x * d.x + d.y * d.y)
+                                                        val dist = kotlin.math.sqrt(d.x * d.x + d.y * d.y)
                                                         val angle = kotlin.math.atan2(d.y, d.x)
                                                         if (hasMulti && lastDist > 1f) {
                                                             accumZoom *= dist / lastDist
                                                             accumRot += Math.toDegrees(
-                                                                normalizeAngle(angle - lastAngle)
-                                                                    .toDouble()
+                                                                normalizeAngle(angle - lastAngle).toDouble()
                                                             ).toFloat()
                                                         }
                                                         lastDist = dist
@@ -1321,26 +1291,17 @@ fun PreviewCanvas(
                                                         c1.consume()
                                                         c2.consume()
                                                     }
-                                                    val newX = (baseX + accumPanX /
-                                                            size.width * 100f).coerceIn(0f, 100f)
-                                                    val newY = (baseY + accumPanY /
-                                                            size.height * 100f).coerceIn(0f, 100f)
-                                                    val newScale = (baseScale * accumZoom)
-                                                        .coerceIn(10f, 500f)
+                                                    val newX = (baseX + accumPanX / size.width * 100f)
+                                                        .coerceIn(0f, 100f)
+                                                    val newY = (baseY + accumPanY / size.height * 100f)
+                                                        .coerceIn(0f, 100f)
+                                                    val newScale = (baseScale * accumZoom).coerceIn(10f, 500f)
                                                     val newRot = baseRot + accumRot
-
                                                     if (isMulti) {
-                                                        onGroupGesture(
-                                                            clip.id, newX, newY,
-                                                            newScale, newRot
-                                                        )
+                                                        onGroupGesture(clip.id, newX, newY, newScale, newRot)
                                                     } else {
-                                                        onVisualizerPositionChanged(
-                                                            clip.id, newX, newY
-                                                        )
-                                                        onVisualizerTransformChanged(
-                                                            clip.id, newScale, newRot
-                                                        )
+                                                        onVisualizerPositionChanged(clip.id, newX, newY)
+                                                        onVisualizerTransformChanged(clip.id, newScale, newRot)
                                                     }
                                                 }
                                             }
@@ -1367,9 +1328,7 @@ fun PreviewCanvas(
                                         onGestureStart = onGroupGestureStart,
                                         onGestureEnd = onGroupGestureEnd,
                                         onTransformChanged = { scale, rotation ->
-                                            onVisualizerTransformChanged(
-                                                clip.id, scale, rotation
-                                            )
+                                            onVisualizerTransformChanged(clip.id, scale, rotation)
                                         },
                                         onDelete = { onDeleteLayer(clip.id) },
                                     )
@@ -1383,8 +1342,7 @@ fun PreviewCanvas(
                         val brushLocalSec =
                             ((currentPosMs - clip.timelineStartMs) / 1000f)
                                 .coerceAtLeast(0f)
-                        val brushTransform =
-                            TransformApplier.resolveLive(clip, brushLocalSec)
+                        val brushTransform = TransformApplier.resolveLive(clip, brushLocalSec)
 
                         val isSelected = clip.id == selectedClipId
                         val isMulti = clip.id in multiSelectedIds
@@ -1409,8 +1367,7 @@ fun PreviewCanvas(
                                 ) {
                                     androidx.compose.foundation.layout.Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = androidx.compose.foundation
-                                            .layout.Arrangement.spacedBy(6.dp)
+                                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)
                                     ) {
                                         Text("✏️", fontSize = 32.sp)
                                         Text(
@@ -1437,24 +1394,17 @@ fun PreviewCanvas(
                                     .graphicsLayer {
                                         val w = size.width
                                         val h = size.height
-                                        translationX =
-                                            (brushTransform.x - 50f) / 100f * w +
-                                                    combinedMotion.tx
-                                        translationY =
-                                            (brushTransform.y - 50f) / 100f * h +
-                                                    combinedMotion.ty
-                                        scaleX = (brushTransform.scale / 100f) *
-                                                combinedMotion.scale
-                                        scaleY = (brushTransform.scale / 100f) *
-                                                combinedMotion.scale
-                                        rotationZ = brushTransform.rotation +
-                                                combinedMotion.rotation
+                                        translationX = (brushTransform.x - 50f) / 100f * w +
+                                                combinedMotion.tx
+                                        translationY = (brushTransform.y - 50f) / 100f * h +
+                                                combinedMotion.ty
+                                        scaleX = (brushTransform.scale / 100f) * combinedMotion.scale
+                                        scaleY = (brushTransform.scale / 100f) * combinedMotion.scale
+                                        rotationZ = brushTransform.rotation + combinedMotion.rotation
                                         alpha = opacityAlpha
                                         transformOrigin = TransformOrigin(
-                                            pivotFractionX =
-                                                brushTransform.anchorX / 100f,
-                                            pivotFractionY =
-                                                brushTransform.anchorY / 100f
+                                            pivotFractionX = brushTransform.anchorX / 100f,
+                                            pivotFractionY = brushTransform.anchorY / 100f
                                         )
                                     }
                                     .then(
@@ -1464,14 +1414,11 @@ fun PreviewCanvas(
                                             shape = RoundedCornerShape(4.dp)
                                         ) else Modifier
                                     )
-                                    .pointerInput(
-                                        clip.id, isSelected, isMulti, isDrawingMode
-                                    ) {
+                                    .pointerInput(clip.id, isSelected, isMulti, isDrawingMode) {
                                         if (isDrawingMode) return@pointerInput
                                         awaitEachGesture {
                                             awaitFirstDown(requireUnconsumed = true)
                                             onGroupGestureStart()
-
                                             val baseX = brushTransform.x
                                             val baseY = brushTransform.y
                                             val baseScale = brushTransform.scale
@@ -1483,21 +1430,17 @@ fun PreviewCanvas(
                                             var lastDist = 0f
                                             var lastAngle = 0f
                                             var hasMulti = false
-
                                             if (!isSelected && !isMulti) onClipSelected(clip.id)
-
                                             var continueGesture = true
                                             while (continueGesture) {
                                                 val event = awaitPointerEvent()
-                                                val pressed =
-                                                    event.changes.filter { it.pressed }
+                                                val pressed = event.changes.filter { it.pressed }
                                                 if (pressed.isEmpty()) {
                                                     continueGesture = false
                                                 } else {
                                                     if (pressed.size == 1) {
                                                         val ch = pressed.first()
-                                                        val pan =
-                                                            ch.position - ch.previousPosition
+                                                        val pan = ch.position - ch.previousPosition
                                                         accumPanX += pan.x
                                                         accumPanY += pan.y
                                                         ch.consume()
@@ -1505,14 +1448,12 @@ fun PreviewCanvas(
                                                         val c1 = pressed[0]
                                                         val c2 = pressed[1]
                                                         val d = c1.position - c2.position
-                                                        val dist =
-                                                            kotlin.math.sqrt(d.x * d.x + d.y * d.y)
+                                                        val dist = kotlin.math.sqrt(d.x * d.x + d.y * d.y)
                                                         val angle = kotlin.math.atan2(d.y, d.x)
                                                         if (hasMulti && lastDist > 1f) {
                                                             accumZoom *= dist / lastDist
                                                             accumRot += Math.toDegrees(
-                                                                normalizeAngle(angle - lastAngle)
-                                                                    .toDouble()
+                                                                normalizeAngle(angle - lastAngle).toDouble()
                                                             ).toFloat()
                                                         }
                                                         lastDist = dist
@@ -1521,28 +1462,17 @@ fun PreviewCanvas(
                                                         c1.consume()
                                                         c2.consume()
                                                     }
-                                                    val newX =
-                                                        (baseX + accumPanX / size.width * 100f)
-                                                            .coerceIn(0f, 100f)
-                                                    val newY =
-                                                        (baseY + accumPanY / size.height * 100f)
-                                                            .coerceIn(0f, 100f)
-                                                    val newScale = (baseScale * accumZoom)
-                                                        .coerceIn(10f, 500f)
+                                                    val newX = (baseX + accumPanX / size.width * 100f)
+                                                        .coerceIn(0f, 100f)
+                                                    val newY = (baseY + accumPanY / size.height * 100f)
+                                                        .coerceIn(0f, 100f)
+                                                    val newScale = (baseScale * accumZoom).coerceIn(10f, 500f)
                                                     val newRot = baseRot + accumRot
-
                                                     if (isMulti) {
-                                                        onGroupGesture(
-                                                            clip.id, newX, newY,
-                                                            newScale, newRot
-                                                        )
+                                                        onGroupGesture(clip.id, newX, newY, newScale, newRot)
                                                     } else {
-                                                        onBrushPositionChanged(
-                                                            clip.id, newX, newY
-                                                        )
-                                                        onBrushTransformChanged(
-                                                            clip.id, newScale, newRot
-                                                        )
+                                                        onBrushPositionChanged(clip.id, newX, newY)
+                                                        onBrushTransformChanged(clip.id, newScale, newRot)
                                                     }
                                                 }
                                             }
@@ -1563,9 +1493,8 @@ fun PreviewCanvas(
                                             stroke = stroke,
                                             viewW = size.width,
                                             viewH = size.height,
-                                            currentTimeMs =
-                                                (currentPosMs - clip.timelineStartMs)
-                                                    .coerceAtLeast(0L)
+                                            currentTimeMs = (currentPosMs - clip.timelineStartMs)
+                                                .coerceAtLeast(0L)
                                         )
                                     }
                                 }
@@ -1582,9 +1511,7 @@ fun PreviewCanvas(
                                         onGestureStart = onGroupGestureStart,
                                         onGestureEnd = onGroupGestureEnd,
                                         onTransformChanged = { scale, rotation ->
-                                            onBrushTransformChanged(
-                                                clip.id, scale, rotation
-                                            )
+                                            onBrushTransformChanged(clip.id, scale, rotation)
                                         },
                                         onDelete = { onDeleteLayer(clip.id) },
                                     )
@@ -1601,7 +1528,6 @@ fun PreviewCanvas(
                 }
             }
 
-            // EDGE GLOW — render glowing border around canvas
             val activeEdgeGlows = clips
                 .filter { c ->
                     c.isEffectClip &&
@@ -1626,61 +1552,39 @@ fun PreviewCanvas(
                             val intensity = (glow.intensity / 100f) * frame.intensityMul
                             val alpha = (intensity * frame.alpha).coerceIn(0f, 1f)
                             if (alpha < 0.02f) return@forEach
-
                             val baseColor = frame.color
                             val thickness = (glow.radius * frame.radiusMul)
                                 .coerceIn(4f, minOf(size.width, size.height) * 0.45f)
                             val ox = frame.offsetX
                             val oy = frame.offsetY
-
-                            // Top edge
                             drawRect(
                                 brush = Brush.verticalGradient(
-                                    colors = listOf(
-                                        baseColor.copy(alpha = alpha),
-                                        Color.Transparent
-                                    ),
-                                    startY = 0f,
-                                    endY = thickness
+                                    colors = listOf(baseColor.copy(alpha = alpha), Color.Transparent),
+                                    startY = 0f, endY = thickness
                                 ),
                                 topLeft = Offset(ox, oy),
                                 size = Size(size.width, thickness)
                             )
-                            // Bottom edge
                             drawRect(
                                 brush = Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color.Transparent,
-                                        baseColor.copy(alpha = alpha)
-                                    ),
-                                    startY = size.height - thickness,
-                                    endY = size.height
+                                    colors = listOf(Color.Transparent, baseColor.copy(alpha = alpha)),
+                                    startY = size.height - thickness, endY = size.height
                                 ),
                                 topLeft = Offset(ox, size.height - thickness + oy),
                                 size = Size(size.width, thickness)
                             )
-                            // Left edge
                             drawRect(
                                 brush = Brush.horizontalGradient(
-                                    colors = listOf(
-                                        baseColor.copy(alpha = alpha),
-                                        Color.Transparent
-                                    ),
-                                    startX = 0f,
-                                    endX = thickness
+                                    colors = listOf(baseColor.copy(alpha = alpha), Color.Transparent),
+                                    startX = 0f, endX = thickness
                                 ),
                                 topLeft = Offset(ox, oy),
                                 size = Size(thickness, size.height)
                             )
-                            // Right edge
                             drawRect(
                                 brush = Brush.horizontalGradient(
-                                    colors = listOf(
-                                        Color.Transparent,
-                                        baseColor.copy(alpha = alpha)
-                                    ),
-                                    startX = size.width - thickness,
-                                    endX = size.width
+                                    colors = listOf(Color.Transparent, baseColor.copy(alpha = alpha)),
+                                    startX = size.width - thickness, endX = size.width
                                 ),
                                 topLeft = Offset(size.width - thickness + ox, oy),
                                 size = Size(thickness, size.height)
@@ -1691,7 +1595,6 @@ fun PreviewCanvas(
                 }
             }
 
-            // LIGHT LEAKS — from effect state above video
             val activeLightLeaks = clips
                 .filter { c ->
                     c.isEffectClip &&
@@ -1715,15 +1618,12 @@ fun PreviewCanvas(
                             val frame = com.moody.moodyvideoeditor.utils
                                 .LightLeakEngine.computeFrame(leak, timeSec)
                             val intensity = (leak.intensity / 100f) * frame.intensityMul
-                            val alpha = (intensity * frame.alpha * 0.85f)
-                                .coerceIn(0f, 1f)
+                            val alpha = (intensity * frame.alpha * 0.85f).coerceIn(0f, 1f)
                             if (alpha < 0.02f) return@forEach
-
                             val cx = frame.posX * size.width
                             val cy = frame.posY * size.height
                             val maxDim = maxOf(size.width, size.height)
                             val r = frame.radius * maxDim
-
                             drawCircle(
                                 brush = Brush.radialGradient(
                                     colors = listOf(
@@ -1743,7 +1643,116 @@ fun PreviewCanvas(
                     }
                 }
             }
+            // ═══════════════════════════════════════════════════════
+            //  ⚡ LIGHTNING — bolt drawing + screen flash
+            // ═══════════════════════════════════════════════════════
+            val activeLightning = clips
+                .filter { c ->
+                    c.isEffectClip &&
+                            c.trackIndex > videoTrackIdx &&
+                            currentPosMs >= c.timelineStartMs &&
+                            currentPosMs < c.timelineEndMs &&
+                            c.effectState?.lightning != null
+                }
+                .sortedBy { it.trackIndex }
+                .mapNotNull { c ->
+                    val cfg = c.effectState?.lightning ?: return@mapNotNull null
+                    val localSec = ((currentPosMs - c.timelineStartMs) / 1000f)
+                        .coerceAtLeast(0f)
+                    val flash = com.moody.moodyvideoeditor.utils.LightningEngine
+                        .flashAt(cfg, localSec)
+                    if (flash <= 0.01f) null
+                    else Triple(cfg, flash, localSec)
+                }
 
+            val previewLightning = previewEffectState?.lightning?.let { cfg ->
+                val localSec = currentPosMs / 1000f
+                val flash = com.moody.moodyvideoeditor.utils.LightningEngine
+                    .flashAt(cfg, localSec)
+                if (flash <= 0.01f) null
+                else Triple(cfg, flash, localSec)
+            }
+
+            val allLightning = if (previewLightning != null)
+                activeLightning + previewLightning
+            else activeLightning
+
+            if (allLightning.isNotEmpty()) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    allLightning.forEach { (cfg, flash, localSec) ->
+                        // ── Screen flash (soft ambient glow) ──
+                        val flashColor = Color(cfg.color)
+                        drawRect(
+                            color = flashColor.copy(
+                                alpha = (flash * 0.35f).coerceIn(0f, 1f)
+                            ),
+                            size = size,
+                            blendMode = BlendMode.Screen
+                        )
+
+                        // ── Bolt lines ──
+                        val cycleIdx = kotlin.math.floor(
+                            localSec * cfg.frequency.coerceIn(0.2f, 5f)
+                        ).toInt()
+
+                        val segments =
+                            com.moody.moodyvideoeditor.utils.LightningEngine
+                                .generateBolt(
+                                    cfg = cfg,
+                                    cycleIndex = cycleIdx,
+                                    W = size.width,
+                                    H = size.height
+                                )
+
+                        val trunkW = (size.width / 100f) *
+                                (1f + flash * 1.5f)
+
+                        // Pass 1: outer glow
+                        segments.forEach { seg ->
+                            drawLine(
+                                color = flashColor.copy(
+                                    alpha = (seg.alpha * flash * 0.35f)
+                                        .coerceIn(0f, 1f)
+                                ),
+                                start = Offset(seg.x1, seg.y1),
+                                end = Offset(seg.x2, seg.y2),
+                                strokeWidth = trunkW * seg.thickness * 3.2f,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                blendMode = BlendMode.Screen
+                            )
+                        }
+
+                        // Pass 2: mid glow
+                        segments.forEach { seg ->
+                            drawLine(
+                                color = flashColor.copy(
+                                    alpha = (seg.alpha * flash * 0.75f)
+                                        .coerceIn(0f, 1f)
+                                ),
+                                start = Offset(seg.x1, seg.y1),
+                                end = Offset(seg.x2, seg.y2),
+                                strokeWidth = trunkW * seg.thickness * 1.8f,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                blendMode = BlendMode.Screen
+                            )
+                        }
+
+                        // Pass 3: bright white core
+                        segments.forEach { seg ->
+                            drawLine(
+                                color = Color.White.copy(
+                                    alpha = (flash * 0.95f).coerceIn(0f, 1f)
+                                ),
+                                start = Offset(seg.x1, seg.y1),
+                                end = Offset(seg.x2, seg.y2),
+                                strokeWidth = trunkW * seg.thickness * 0.7f,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                blendMode = BlendMode.Screen
+                            )
+                        }
+                    }
+                }
+            }
             activeAdjustment?.let { adj ->
                 if (adj.vignette > 0f) {
                     val alpha = (adj.vignette / 100f).coerceIn(0f, 1f)
@@ -1933,12 +1942,9 @@ private fun ColorMatteRenderer(
                             val wTR = fx * (1f - fy)
                             val wBL = (1f - fx) * fy
                             val wBR = fx * fy
-                            val r = (tlR * wTL + trR * wTR + blR * wBL + brR * wBR)
-                                .coerceIn(0f, 1f)
-                            val g = (tlG * wTL + trG * wTR + blG * wBL + brG * wBR)
-                                .coerceIn(0f, 1f)
-                            val b = (tlB * wTL + trB * wTR + blB * wBL + brB * wBR)
-                                .coerceIn(0f, 1f)
+                            val r = (tlR * wTL + trR * wTR + blR * wBL + brR * wBR).coerceIn(0f, 1f)
+                            val g = (tlG * wTL + trG * wTR + blG * wBL + brG * wBR).coerceIn(0f, 1f)
+                            val b = (tlB * wTL + trB * wTR + blB * wBL + brB * wBR).coerceIn(0f, 1f)
                             drawRect(
                                 color = Color(r, g, b, 1f),
                                 topLeft = Offset(x, y),
@@ -2083,10 +2089,8 @@ private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
             }
 
             MaskType.HEART -> {
-                val s = (
-                        mask.scale * minOf(w, h) * 0.4f +
-                                mask.expansion / 100f * minOf(w, h)
-                        ).coerceAtLeast(0f)
+                val s = (mask.scale * minOf(w, h) * 0.4f +
+                        mask.expansion / 100f * minOf(w, h)).coerceAtLeast(0f)
 
                 fun rp2(px: Float, py: Float) =
                     (cx + px * cosR - py * sinR) to (cy + px * sinR + py * cosR)
@@ -2133,10 +2137,7 @@ private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
                             val c1 = rp3(prev.outX * w, prev.outY * h)
                             val c2 = rp3(curr.inX * w, curr.inY * h)
                             val end = rp3(curr.x * w, curr.y * h)
-                            cubicTo(
-                                c1.first, c1.second, c2.first, c2.second,
-                                end.first, end.second
-                            )
+                            cubicTo(c1.first, c1.second, c2.first, c2.second, end.first, end.second)
                         } else {
                             val end = rp3(curr.x * w, curr.y * h)
                             lineTo(end.first, end.second)
@@ -2148,10 +2149,7 @@ private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
                         val c1 = rp3(last.outX * w, last.outY * h)
                         val c2 = rp3(first.inX * w, first.inY * h)
                         val end = rp3(first.x * w, first.y * h)
-                        cubicTo(
-                            c1.first, c1.second, c2.first, c2.second,
-                            end.first, end.second
-                        )
+                        cubicTo(c1.first, c1.second, c2.first, c2.second, end.first, end.second)
                     }
                     close()
                 }
@@ -2416,9 +2414,7 @@ private fun MaskPenOverlay(
                     val isFirst = i == 0
 
                     if (isFirst && !isClosed && pts.size >= 3) {
-                        drawCircle(
-                            Color(0xFF60EFFF).copy(alpha = 0.4f), 22f, Offset(cx, cy)
-                        )
+                        drawCircle(Color(0xFF60EFFF).copy(alpha = 0.4f), 22f, Offset(cx, cy))
                         drawCircle(
                             Color(0xFF60EFFF).copy(alpha = 0.8f), 16f, Offset(cx, cy),
                             style = Stroke(width = 3f)
@@ -2498,9 +2494,7 @@ private fun maskHandlePositions(
         cx, cy,
         if (mask.type == MaskType.CIRCLE) 0f else mask.rotation
     )
-    val rotate = rotateMaskPoint(
-        Offset(cx, cy - radius - 34f), cx, cy, mask.rotation
-    )
+    val rotate = rotateMaskPoint(Offset(cx, cy - radius - 34f), cx, cy, mask.rotation)
     val feather = Offset(cx + radius + 42f, cy)
     return Triple(resize, rotate, feather)
 }
@@ -2575,10 +2569,8 @@ private fun transformMaskWithOneFinger(
             when (initial.type) {
                 MaskType.CIRCLE -> initial.copy(
                     radius = (kotlin.math.hypot(
-                        local.x - centerX,
-                        local.y - centerY
-                    ) / minDimension)
-                        .coerceIn(0.01f, 2f)
+                        local.x - centerX, local.y - centerY
+                    ) / minDimension).coerceIn(0.01f, 2f)
                 )
 
                 MaskType.RECTANGLE -> initial.copy(
@@ -2711,6 +2703,79 @@ private fun BrushDrawLayer(
                     viewW = size.width, viewH = size.height, currentTimeMs = 0
                 )
             }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TEXT BACKGROUND RENDERER
+// ═══════════════════════════════════════════════════════════════
+
+@Composable
+private fun TextBackgroundRenderer(
+    state: com.moody.moodyvideoeditor.data.TextState,
+    textWidthDp: Float,
+    textHeightDp: Float
+) {
+    val padX = state.backgroundPaddingX
+    val padY = state.backgroundPaddingY
+    val alpha = (state.backgroundOpacity / 100f).coerceIn(0f, 1f)
+
+    val brush: Brush = if (state.backgroundGradientEnabled) {
+        val rad = Math.toRadians(state.backgroundGradientAngle.toDouble())
+        val dx = kotlin.math.cos(rad).toFloat()
+        val dy = kotlin.math.sin(rad).toFloat()
+        val ext = 500f
+        Brush.linearGradient(
+            colors = listOf(
+                Color(state.backgroundColor1).copy(alpha = alpha),
+                Color(state.backgroundColor2).copy(alpha = alpha)
+            ),
+            start = Offset(-dx * ext, -dy * ext),
+            end = Offset(dx * ext, dy * ext)
+        )
+    } else {
+        Brush.linearGradient(
+            colors = listOf(
+                Color(state.backgroundColor1).copy(alpha = alpha),
+                Color(state.backgroundColor1).copy(alpha = alpha)
+            )
+        )
+    }
+
+    when (state.backgroundType) {
+        "rounded" -> {
+            Box(
+                modifier = Modifier
+                    .width((textWidthDp + padX * 2).coerceAtLeast(20f).dp)
+                    .height((textHeightDp + padY * 2).coerceAtLeast(20f).dp)
+                    .clip(RoundedCornerShape(state.backgroundCornerRadius.dp))
+                    .background(brush)
+            )
+        }
+
+        "character" -> {
+            Box(
+                modifier = Modifier
+                    .width((textWidthDp + 4f).coerceAtLeast(20f).dp)
+                    .height((textHeightDp + 4f).coerceAtLeast(20f).dp)
+                    .background(brush)
+            )
+        }
+
+        "outline" -> {
+            Box(
+                modifier = Modifier
+                    .width((textWidthDp + padX * 2).coerceAtLeast(20f).dp)
+                    .height((textHeightDp + padY * 2).coerceAtLeast(20f).dp)
+                    .clip(RoundedCornerShape(state.backgroundCornerRadius.dp))
+                    .background(Color.Transparent)
+                    .border(
+                        width = 3.dp,
+                        brush = brush,
+                        shape = RoundedCornerShape(state.backgroundCornerRadius.dp)
+                    )
+            )
         }
     }
 }
@@ -2860,34 +2925,29 @@ private fun InteractiveTextOverlay(
         else -> androidx.compose.ui.text.style.TextAlign.Center
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  DIMENSIONS
-    // ═══════════════════════════════════════════════════════════
-
-    val bgPadX = if (textState.backgroundEnabled) textState.backgroundPaddingX else 4f
-    val bgPadY = if (textState.backgroundEnabled) textState.backgroundPaddingY else 4f
+    val borderColor = when {
+        isSelected -> Color(0xFF60EFFF)
+        isMulti -> Color(0xFFFFD166)
+        else -> Color.Transparent
+    }
 
     val glowPadDp = if (textState.glowEnabled && textState.glowRadius > 0f) {
         val glowPadPx = textState.glowRadius * (canvasWpx / 720f) * 3.0f
         with(density) { glowPadPx.toDp().value }
     } else 0f
 
-    // ✅ Selection box = text + bg padding ONLY (no glow)
+    val blurDp = with(density) { frame.blurRadiusPx.toDp() }
+        .coerceAtLeast(0.dp)
+        .coerceAtMost(20.dp)
+
+    val bgPadX = if (textState.backgroundEnabled) textState.backgroundPaddingX else 4f
+    val bgPadY = if (textState.backgroundEnabled) textState.backgroundPaddingY else 4f
+
     val selectionWidthDp = (textWidthDp + bgPadX * 2f).coerceAtLeast(20f)
     val selectionHeightDp = (textHeightDp + bgPadY * 2f).coerceAtLeast(20f)
 
-    // Outer box has glow padding for glow not to clip
     val outerWidthDp = selectionWidthDp + glowPadDp * 2f
     val outerHeightDp = selectionHeightDp + glowPadDp * 2f
-
-    val blurDp = with(density) { frame.blurRadiusPx.toDp() }
-        .coerceAtLeast(0.dp).coerceAtMost(20.dp)
-
-    val borderColor = when {
-        isSelected -> Color(0xFF60EFFF)
-        isMulti -> Color(0xFFFFD166)
-        else -> Color.Transparent
-    }
 
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -3001,82 +3061,106 @@ private fun InteractiveTextOverlay(
                 },
             contentAlignment = Alignment.Center
         ) {
-            // 1. BACKGROUND
-            if (textState.backgroundEnabled) {
-                TextBackgroundRenderer(
-                    state = textState,
-                    textWidthDp = textWidthDp,
-                    textHeightDp = textHeightDp
-                )
-            }
+            Box(contentAlignment = Alignment.Center) {
+                // Background
+                if (textState.backgroundEnabled) {
+                    TextBackgroundRenderer(
+                        state = textState,
+                        textWidthDp = textWidthDp,
+                        textHeightDp = textHeightDp
+                    )
+                }
 
-            // 2. GLOW — per-line
-            if (textState.glowEnabled && textState.glowRadius > 0f) {
-                Canvas(modifier = Modifier.matchParentSize()) {
-                    val nativeCanvas = drawContext.canvas.nativeCanvas
-                    val glowColorInt = textState.glowColor.toInt()
-                    val glowAlign = when (textState.alignment) {
-                        "left" -> Paint.Align.LEFT
-                        "right" -> Paint.Align.RIGHT
-                        else -> Paint.Align.CENTER
-                    }
-                    val textSizePx = finalFontSizePx
-                    val letterSpacingEm = if (finalFontSizePx <= 0f) 0f
-                    else (effLetterSpacingPx / finalFontSizePx).coerceIn(-0.3f, 0.3f)
-                    val glowRadiusPx = textState.glowRadius * (canvasWpx / 720f)
-
-                    val lines = displayContent.split('\n')
-                    val lineCount = lines.size
-                    val lineHeightPx = effLineHeightPx.coerceAtLeast(1f)
-
-                    val measurePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        textSize = textSizePx
-                        this.typeface = textTypeface
-                    }
-                    val fm = measurePaint.fontMetrics
-
-                    // ✅ Baseline: centered for multi-line
-                    val totalTextH = lineHeightPx * lineCount
-                    val firstBaseline = (size.height - totalTextH) / 2f +
-                            lineHeightPx / 2f - (fm.ascent + fm.descent) / 2f
-
-                    val textW = finalMeasure.size.width.toFloat()
-                    val textLeft = (size.width - textW) / 2f
-                    val textRight = (size.width + textW) / 2f
-
-                    val x = when (glowAlign) {
-                        Paint.Align.LEFT -> textLeft
-                        Paint.Align.RIGHT -> textRight
-                        else -> size.width / 2f
-                    }
-
-                    TextRenderContract.glowLayers().forEach { layer ->
-                        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            isAntiAlias = true
-                            color = glowColorInt
-                            textSize = textSizePx * layer.fontScale
-                            textAlign = glowAlign
-                            this.typeface = textTypeface
-                            this.letterSpacing = letterSpacingEm
-                            alpha = (layer.alpha * 255).toInt().coerceIn(0, 255)
-                            maskFilter = android.graphics.BlurMaskFilter(
-                                (glowRadiusPx * layer.blurScale).coerceIn(1f, 250f),
-                                android.graphics.BlurMaskFilter.Blur.NORMAL
-                            )
+                // Glow
+                if (textState.glowEnabled && textState.glowRadius > 0f) {
+                    Canvas(modifier = Modifier.matchParentSize()) {
+                        val nativeCanvas = drawContext.canvas.nativeCanvas
+                        val glowColorInt = textState.glowColor.toInt()
+                        val glowAlign = when (textState.alignment) {
+                            "left" -> Paint.Align.LEFT
+                            "right" -> Paint.Align.RIGHT
+                            else -> Paint.Align.CENTER
                         }
-                        lines.forEachIndexed { i, line ->
-                            val y = firstBaseline + i * lineHeightPx
-                            nativeCanvas.drawText(line, x, y, paint)
+                        val textSizePx = finalFontSizePx
+                        val letterSpacingEm = if (finalFontSizePx <= 0f) 0f
+                        else (effLetterSpacingPx / finalFontSizePx).coerceIn(-0.3f, 0.3f)
+                        val glowRadiusPx = textState.glowRadius * (canvasWpx / 720f)
+
+                        val lines = displayContent.split('\n')
+                        val lineCount = lines.size
+                        val lineHeightPx = effLineHeightPx.coerceAtLeast(1f)
+
+                        val measurePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            textSize = textSizePx
+                            this.typeface = textTypeface
+                        }
+                        val fm = measurePaint.fontMetrics
+
+                        val totalTextH = lineHeightPx * lineCount
+                        val firstBaseline = (size.height - totalTextH) / 2f +
+                                lineHeightPx / 2f - (fm.ascent + fm.descent) / 2f
+
+                        val textW = finalMeasure.size.width.toFloat()
+                        val textLeft = (size.width - textW) / 2f
+                        val textRight = (size.width + textW) / 2f
+
+                        val x = when (glowAlign) {
+                            Paint.Align.LEFT -> textLeft
+                            Paint.Align.RIGHT -> textRight
+                            else -> size.width / 2f
+                        }
+
+                        TextRenderContract.glowLayers().forEach { layer ->
+                            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                isAntiAlias = true
+                                color = glowColorInt
+                                textSize = textSizePx * layer.fontScale
+                                textAlign = glowAlign
+                                this.typeface = textTypeface
+                                this.letterSpacing = letterSpacingEm
+                                alpha = (layer.alpha * 255).toInt().coerceIn(0, 255)
+                                maskFilter = android.graphics.BlurMaskFilter(
+                                    (glowRadiusPx * layer.blurScale).coerceIn(1f, 250f),
+                                    android.graphics.BlurMaskFilter.Blur.NORMAL
+                                )
+                            }
+                            lines.forEachIndexed { i, line ->
+                                val y = firstBaseline + i * lineHeightPx
+                                nativeCanvas.drawText(line, x, y, paint)
+                            }
                         }
                     }
                 }
-            }
 
-            // 3. STROKE
-            if (textState.strokeEnabled && userStrokePx > 0f) {
+                if (textState.strokeEnabled && userStrokePx > 0f) {
+                    Text(
+                        text = displayContent,
+                        color = Color(textState.strokeColor),
+                        fontSize = finalFontSizeSp,
+                        fontWeight = weight,
+                        fontStyle = fontSty,
+                        fontFamily = family,
+                        textAlign = textAlignValue,
+                        softWrap = true,
+                        maxLines = Int.MAX_VALUE,
+                        overflow = TextOverflow.Visible,
+                        modifier = Modifier.width(textWidthConstraintDp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            drawStyle = Stroke(
+                                userStrokePx,
+                                join = androidx.compose.ui.graphics.StrokeJoin.Round,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                miter = 4f
+                            ),
+                            letterSpacing = finalLetterSpacingSp,
+                            lineHeight = finalLineHeightSp
+                        )
+                    )
+                }
+
                 Text(
                     text = displayContent,
-                    color = Color(textState.strokeColor),
+                    color = if (gradient != null) Color.Unspecified else solidColor,
                     fontSize = finalFontSizeSp,
                     fontWeight = weight,
                     fontStyle = fontSty,
@@ -3087,59 +3171,33 @@ private fun InteractiveTextOverlay(
                     overflow = TextOverflow.Visible,
                     modifier = Modifier.width(textWidthConstraintDp),
                     style = androidx.compose.ui.text.TextStyle(
-                        drawStyle = Stroke(
-                            userStrokePx,
-                            join = androidx.compose.ui.graphics.StrokeJoin.Round,
-                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                            miter = 4f
-                        ),
+                        brush = gradient,
+                        shadow = shadowStyle,
                         letterSpacing = finalLetterSpacingSp,
                         lineHeight = finalLineHeightSp
                     )
                 )
-            }
 
-            // 4. FILL
-            Text(
-                text = displayContent,
-                color = if (gradient != null) Color.Unspecified else solidColor,
-                fontSize = finalFontSizeSp,
-                fontWeight = weight,
-                fontStyle = fontSty,
-                fontFamily = family,
-                textAlign = textAlignValue,
-                softWrap = true,
-                maxLines = Int.MAX_VALUE,
-                overflow = TextOverflow.Visible,
-                modifier = Modifier.width(textWidthConstraintDp),
-                style = androidx.compose.ui.text.TextStyle(
-                    brush = gradient,
-                    shadow = shadowStyle,
-                    letterSpacing = finalLetterSpacingSp,
-                    lineHeight = finalLineHeightSp
-                )
-            )
-
-            // 5. SELECTION BOX — sized to content, not glow
-            if (isSelected && !isDrawingMode) {
-                Box(
-                    modifier = Modifier
-                        .width(selectionWidthDp.dp)
-                        .height(selectionHeightDp.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    LayerTransformHandles(
-                        clipId = clip.id,
-                        scale = sampled.scale,
-                        rotation = sampled.rotation,
-                        positionX = sampled.x,
-                        positionY = sampled.y,
-                        onPositionChanged = onPositionChanged,
-                        onGestureStart = onGroupGestureStart,
-                        onGestureEnd = onGroupGestureEnd,
-                        onTransformChanged = onTransformChanged,
-                        onDelete = onDeleteLayer,
-                    )
+                if (isSelected && !isDrawingMode) {
+                    Box(
+                        modifier = Modifier
+                            .width(selectionWidthDp.dp)
+                            .height(selectionHeightDp.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        LayerTransformHandles(
+                            clipId = clip.id,
+                            scale = sampled.scale,
+                            rotation = sampled.rotation,
+                            positionX = sampled.x,
+                            positionY = sampled.y,
+                            onPositionChanged = onPositionChanged,
+                            onGestureStart = onGroupGestureStart,
+                            onGestureEnd = onGroupGestureEnd,
+                            onTransformChanged = onTransformChanged,
+                            onDelete = onDeleteLayer,
+                        )
+                    }
                 }
             }
         }
@@ -3196,6 +3254,10 @@ private fun InteractiveStickerOverlay(
     }
     val effStickerSizeSp = (effStickerSizePx / density.density).sp
 
+    val blurDp = with(density) { frame.blurRadiusPx.toDp() }
+        .coerceAtLeast(0.dp)
+        .coerceAtMost(20.dp)
+
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -3210,9 +3272,17 @@ private fun InteractiveStickerOverlay(
                     scaleX = (sampled.scale / 100f) * frame.scaleX
                     scaleY = (sampled.scale / 100f) * frame.scaleY
                     rotationZ = sampled.rotation + frame.rotationZ
+                    rotationX = frame.rotationX
+                    rotationY = frame.rotationY
+                    cameraDistance = 16f * density.density
                     alpha = (stickerState.opacity / 100f) * frame.alpha
                     transformOrigin = TransformOrigin.Center
                 }
+                .then(
+                    if (blurDp > 0.dp) {
+                        Modifier.blur(blurDp, BlurredEdgeTreatment.Unbounded)
+                    } else Modifier
+                )
                 .then(
                     if (isSelected || isMulti) Modifier.border(
                         width = if (isSelected) 1.5.dp else 1.dp,
@@ -3477,9 +3547,7 @@ private fun TransformHandle(
                                 currentX.toDouble(), currentY.toDouble()
                             ).toFloat()
                             val currentAngle = kotlin.math.atan2(currentY, currentX)
-                            accumulatedRotation += normalizeAngle(
-                                currentAngle - previousAngle
-                            )
+                            accumulatedRotation += normalizeAngle(currentAngle - previousAngle)
                             previousAngle = currentAngle
                             if (corner == TransformHandleCorner.Scale) {
                                 currentOnTransformChanged.value(
@@ -3521,77 +3589,4 @@ private fun normalizeAngle(radians: Float): Float {
     while (normalized > Math.PI) normalized -= twoPi
     while (normalized < -Math.PI) normalized += twoPi
     return normalized
-}
-// ═══════════════════════════════════════════════════════════════
-//  🆕 TEXT BACKGROUND RENDERER — 5 types
-// ═══════════════════════════════════════════════════════════════
-
-
-@Composable
-private fun TextBackgroundRenderer(
-    state: com.moody.moodyvideoeditor.data.TextState,
-    textWidthDp: Float,
-    textHeightDp: Float
-) {
-    val padX = state.backgroundPaddingX
-    val padY = state.backgroundPaddingY
-    val alpha = (state.backgroundOpacity / 100f).coerceIn(0f, 1f)
-
-    val brush: Brush = if (state.backgroundGradientEnabled) {
-        val rad = Math.toRadians(state.backgroundGradientAngle.toDouble())
-        val dx = kotlin.math.cos(rad).toFloat()
-        val dy = kotlin.math.sin(rad).toFloat()
-        val ext = 500f
-        Brush.linearGradient(
-            colors = listOf(
-                Color(state.backgroundColor1).copy(alpha = alpha),
-                Color(state.backgroundColor2).copy(alpha = alpha)
-            ),
-            start = Offset(-dx * ext, -dy * ext),
-            end = Offset(dx * ext, dy * ext)
-        )
-    } else {
-        Brush.linearGradient(
-            colors = listOf(
-                Color(state.backgroundColor1).copy(alpha = alpha),
-                Color(state.backgroundColor1).copy(alpha = alpha)
-            )
-        )
-    }
-
-    when (state.backgroundType) {
-        "rounded" -> {
-            Box(
-                modifier = Modifier
-                    .width((textWidthDp + padX * 2).coerceAtLeast(20f).dp)
-                    .height((textHeightDp + padY * 2).coerceAtLeast(20f).dp)
-                    .clip(RoundedCornerShape(state.backgroundCornerRadius.dp))
-                    .background(brush)
-            )
-        }
-
-        "character" -> {
-            Box(
-                modifier = Modifier
-                    .width((textWidthDp + 4f).coerceAtLeast(20f).dp)
-                    .height((textHeightDp + 4f).coerceAtLeast(20f).dp)
-                    .background(brush)
-            )
-        }
-
-        "outline" -> {
-            Box(
-                modifier = Modifier
-                    .width((textWidthDp + padX * 2).coerceAtLeast(20f).dp)
-                    .height((textHeightDp + padY * 2).coerceAtLeast(20f).dp)
-                    .clip(RoundedCornerShape(state.backgroundCornerRadius.dp))
-                    .background(Color.Transparent)
-                    .border(
-                        width = 3.dp,
-                        brush = brush,
-                        shape = RoundedCornerShape(state.backgroundCornerRadius.dp)
-                    )
-            )
-        }
-    }
 }

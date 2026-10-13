@@ -6,9 +6,11 @@ data class EffectState(
     val filters: ColorFilterValues? = null,
     val animatedColor: com.moody.moodyvideoeditor.utils.AnimatedColorConfig? = null,
     val motion: MotionConfig? = null,
+    val blur: com.moody.moodyvideoeditor.utils.BlurConfig? = null,
     val overlay: OverlayConfig? = null,
     val edgeGlow: EdgeGlowConfig? = null,
     val lightLeak: LightLeakConfig? = null,
+    val lightning: LightningConfig? = null,
     val masterIntensity: Float = 100f
 
 ) {

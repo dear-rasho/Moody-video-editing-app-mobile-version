@@ -42,6 +42,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -72,6 +74,7 @@ import com.moody.moodyvideoeditor.data.OverlayConfig
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.ui.components.ColorPickerField
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
+import com.moody.moodyvideoeditor.utils.BlurConfig
 import com.moody.moodyvideoeditor.utils.EffectsEngine
 import com.moody.moodyvideoeditor.utils.LightLeakEngine
 import com.moody.moodyvideoeditor.utils.OverlayEngine
@@ -81,11 +84,12 @@ import kotlinx.coroutines.withContext
 private val CATEGORIES = listOf(
     Triple(EffectKind.MOTION, "💫 Motion", EffectLibrary.MOTION_EFFECTS),
     Triple(EffectKind.ANIMATED_COLOR, "🌈 Anim Color", EffectLibrary.ANIMATED_COLOR_EFFECTS),
+    Triple(EffectKind.BLUR, "🔍 Blur", EffectLibrary.BLUR_EFFECTS),
     Triple(EffectKind.OVERLAY, "🎬 Overlay", EffectLibrary.OVERLAY_EFFECTS),
     Triple(EffectKind.EDGE_GLOW, "✨ Edge Glow", EffectLibrary.EDGE_GLOW_EFFECTS),
-    Triple(EffectKind.LIGHT_LEAK, "🌅 Light Leaks", EffectLibrary.LIGHT_LEAK_EFFECTS)
+    Triple(EffectKind.LIGHT_LEAK, "🌅 Light Leaks", EffectLibrary.LIGHT_LEAK_EFFECTS),
+    Triple(EffectKind.LIGHTNING, "⚡ Lightning", EffectLibrary.LIGHTNING_EFFECTS)
 )
-
 @Composable
 fun EffectsPanel(
     editLayerId: String? = null,
@@ -94,8 +98,11 @@ fun EffectsPanel(
     onPreviewEffect: (presetKey: String?, intensity: Float) -> Unit,
     onApplyAsLayer: (presetKey: String, intensity: Float) -> Unit,
     onApplyOverlayLayer: ((presetKey: String, intensity: Float, config: OverlayConfig) -> Unit)? = null,
+    onApplyBlurLayer: ((presetKey: String, intensity: Float, config: BlurConfig) -> Unit)? = null,
     onUpdateIntensity: (intensity: Float) -> Unit = {},
     onOverlayPropertyChange: ((presetKey: String, config: OverlayConfig) -> Unit)? = null,
+    onBlurPropertyChange: ((presetKey: String, config: BlurConfig) -> Unit)? = null,
+    onLightningPropertyChange: ((presetKey: String, config: com.moody.moodyvideoeditor.data.LightningConfig) -> Unit)? = null,
     onDeleteLayer: () -> Unit = {},
     onClose: () -> Unit
 ) {
@@ -106,7 +113,7 @@ fun EffectsPanel(
     var selectedPreset by remember { mutableStateOf<EffectPreset?>(null) }
     var intensity by remember { mutableStateOf(100f) }
 
-    // 🆕 LOCAL overlay config — survives shape/size changes
+    // Local overlay config — survives shape/size changes
     var currentOverlayConfig by remember(selectedPreset?.key) {
         mutableStateOf(
             selectedPreset?.overlay ?: OverlayConfig(
@@ -118,6 +125,22 @@ fun EffectsPanel(
         )
     }
 
+    // Local blur config
+    var currentBlurConfig by remember(selectedPreset?.key) {
+        mutableStateOf(
+            selectedPreset?.blur ?: BlurConfig(
+                type = selectedPreset?.key ?: "blurIn",
+                intensity = 50f,
+                animDuration = 2f
+            )
+        )
+    }
+    // Local lightning config
+    var currentLightningConfig by remember(selectedPreset?.key) {
+        mutableStateOf(
+            selectedPreset?.lightning ?: com.moody.moodyvideoeditor.data.LightningConfig()
+        )
+    }
     var refBitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(Unit) {
         refBitmap = withContext(Dispatchers.IO) { loadRefImage(context) }
@@ -141,6 +164,8 @@ fun EffectsPanel(
                 selectedPreset = preset
                 intensity = initialEffectState?.masterIntensity ?: 100f
                 initialEffectState?.overlay?.let { currentOverlayConfig = it }
+                initialEffectState?.blur?.let { currentBlurConfig = it }
+                initialEffectState?.lightning?.let { currentLightningConfig = it }
                 val catIdx = CATEGORIES.indexOfFirst { (_, _, list) ->
                     list.any { it.key == initialPresetKey }
                 }
@@ -162,7 +187,7 @@ fun EffectsPanel(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 380.dp)
+                .heightIn(max = 420.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -238,6 +263,8 @@ fun EffectsPanel(
                             selectedPreset = preset
                             intensity = 100f
                             preset.overlay?.let { currentOverlayConfig = it }
+                            preset.blur?.let { currentBlurConfig = it }
+                            preset.lightning?.let { currentLightningConfig = it }
                             onPreviewEffect(preset.key, intensity)
                             if (isEditMode) onUpdateIntensity(intensity)
                         }
@@ -250,6 +277,7 @@ fun EffectsPanel(
             if (current != null) {
                 Spacer(Modifier.height(2.dp))
 
+                // Info bar
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -276,7 +304,7 @@ fun EffectsPanel(
                     }
                 }
 
-                // Intensity
+                // Intensity (all effects have this)
                 PropertySliderRow(
                     label = "Intensity",
                     value = intensity,
@@ -290,7 +318,155 @@ fun EffectsPanel(
                     }
                 )
 
-                // 🆕 Overlay properties (only for OVERLAY kind)
+                // ═══════════════════════════════════════════════════════
+                //  🆕 BLUR PROPERTIES
+                // ═══════════════════════════════════════════════════════
+                if (current.kind == EffectKind.BLUR) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "🔍 Blur Options",
+                        color = Color(0xFF888888),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+
+                    // Blur Intensity (peak)
+                    PropertySliderRow(
+                        label = "Blur Peak",
+                        value = currentBlurConfig.intensity,
+                        range = 0f..100f,
+                        format = "%.0f",
+                        suffix = "%",
+                        onValueChange = { v ->
+                            currentBlurConfig = currentBlurConfig.copy(intensity = v)
+                            onBlurPropertyChange?.invoke(current.key, currentBlurConfig)
+                        }
+                    )
+
+                    // Animation Duration
+                    PropertySliderRow(
+                        label = "Anim Dur",
+                        value = currentBlurConfig.animDuration,
+                        range = 0.2f..10f,
+                        format = "%.1f",
+                        suffix = "s",
+                        onValueChange = { v ->
+                            currentBlurConfig = currentBlurConfig.copy(animDuration = v)
+                            onBlurPropertyChange?.invoke(current.key, currentBlurConfig)
+                        }
+                    )
+
+                    // Speed
+                    PropertySliderRow(
+                        label = "Speed",
+                        value = currentBlurConfig.speed,
+                        range = 0.2f..3f,
+                        format = "%.2f",
+                        suffix = "x",
+                        onValueChange = { v ->
+                            currentBlurConfig = currentBlurConfig.copy(speed = v)
+                            onBlurPropertyChange?.invoke(current.key, currentBlurConfig)
+                        }
+                    )
+
+                    // Type-specific options
+                    when (currentBlurConfig.type) {
+                        "motion", "oblique" -> {
+                            PropertySliderRow(
+                                label = "Angle",
+                                value = currentBlurConfig.angle,
+                                range = 0f..360f,
+                                format = "%.0f",
+                                suffix = "°",
+                                onValueChange = { v ->
+                                    currentBlurConfig = currentBlurConfig.copy(angle = v)
+                                    onBlurPropertyChange?.invoke(current.key, currentBlurConfig)
+                                }
+                            )
+                        }
+                        "radial", "spin" -> {
+                            PropertySliderRow(
+                                label = "Pivot X",
+                                value = currentBlurConfig.centerX * 100f,
+                                range = 0f..100f,
+                                format = "%.0f",
+                                suffix = "%",
+                                onValueChange = { v ->
+                                    currentBlurConfig = currentBlurConfig.copy(centerX = v / 100f)
+                                    onBlurPropertyChange?.invoke(current.key, currentBlurConfig)
+                                }
+                            )
+                            PropertySliderRow(
+                                label = "Pivot Y",
+                                value = currentBlurConfig.centerY * 100f,
+                                range = 0f..100f,
+                                format = "%.0f",
+                                suffix = "%",
+                                onValueChange = { v ->
+                                    currentBlurConfig = currentBlurConfig.copy(centerY = v / 100f)
+                                    onBlurPropertyChange?.invoke(current.key, currentBlurConfig)
+                                }
+                            )
+                        }
+                        "mosaic" -> {
+                            PropertySliderRow(
+                                label = "Block",
+                                value = currentBlurConfig.blockSize,
+                                range = 4f..100f,
+                                format = "%.0f",
+                                suffix = "px",
+                                onValueChange = { v ->
+                                    currentBlurConfig = currentBlurConfig.copy(blockSize = v)
+                                    onBlurPropertyChange?.invoke(current.key, currentBlurConfig)
+                                }
+                            )
+                        }
+                        "softFocus" -> {
+                            PropertySliderRow(
+                                label = "Glow",
+                                value = currentBlurConfig.secondary,
+                                range = 0f..100f,
+                                format = "%.0f",
+                                suffix = "%",
+                                onValueChange = { v ->
+                                    currentBlurConfig = currentBlurConfig.copy(secondary = v)
+                                    onBlurPropertyChange?.invoke(current.key, currentBlurConfig)
+                                }
+                            )
+                        }
+                        "edgeBlur" -> {
+                            PropertySliderRow(
+                                label = "Safe Zone",
+                                value = currentBlurConfig.secondary,
+                                range = 0f..100f,
+                                format = "%.0f",
+                                suffix = "%",
+                                onValueChange = { v ->
+                                    currentBlurConfig = currentBlurConfig.copy(secondary = v)
+                                    onBlurPropertyChange?.invoke(current.key, currentBlurConfig)
+                                }
+                            )
+                        }
+                        "chromaBlur" -> {
+                            PropertySliderRow(
+                                label = "Split",
+                                value = currentBlurConfig.secondary,
+                                range = 0f..50f,
+                                format = "%.1f",
+                                suffix = "px",
+                                onValueChange = { v ->
+                                    currentBlurConfig = currentBlurConfig.copy(secondary = v)
+                                    onBlurPropertyChange?.invoke(current.key, currentBlurConfig)
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // ═══════════════════════════════════════════════════════
+                //  🎬 OVERLAY PROPERTIES
+                // ═══════════════════════════════════════════════════════
                 if (current.kind == EffectKind.OVERLAY) {
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -363,10 +539,12 @@ fun EffectsPanel(
                     )
 
                     // Shape
-                    Text("Shape",
+                    Text(
+                        "Shape",
                         color = Color(0xFF888888), fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(start = 4.dp, top = 4.dp))
+                        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -459,7 +637,173 @@ fun EffectsPanel(
                         )
                     }
                 }
+                // ═══════════════════════════════════════════════════════
+                //  ⚡ LIGHTNING PROPERTIES
+                // ═══════════════════════════════════════════════════════
+                if (current.kind == EffectKind.LIGHTNING) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "⚡ Lightning Options",
+                        color = Color(0xFF888888),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
 
+                    PropertySliderRow(
+                        label = "Intensity",
+                        value = currentLightningConfig.intensity,
+                        range = 0f..200f,
+                        format = "%.0f",
+                        suffix = "%",
+                        onValueChange = { v ->
+                            currentLightningConfig =
+                                currentLightningConfig.copy(intensity = v)
+                            onLightningPropertyChange?.invoke(
+                                current.key, currentLightningConfig
+                            )
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Frequency",
+                        value = currentLightningConfig.frequency,
+                        range = 0.2f..5f,
+                        format = "%.2f",
+                        suffix = "/s",
+                        onValueChange = { v ->
+                            currentLightningConfig =
+                                currentLightningConfig.copy(frequency = v)
+                            onLightningPropertyChange?.invoke(
+                                current.key, currentLightningConfig
+                            )
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Flash Dur",
+                        value = currentLightningConfig.durationMs.toFloat(),
+                        range = 20f..500f,
+                        format = "%.0f",
+                        suffix = "ms",
+                        onValueChange = { v ->
+                            currentLightningConfig = currentLightningConfig.copy(
+                                durationMs = v.toLong().coerceIn(20L, 500L)
+                            )
+                            onLightningPropertyChange?.invoke(
+                                current.key, currentLightningConfig
+                            )
+                        }
+                    )
+
+                    ColorPickerField(
+                        label = "Flash Color",
+                        colorLong = currentLightningConfig.color,
+                        onChange = { newCol ->
+                            currentLightningConfig =
+                                currentLightningConfig.copy(color = newCol)
+                            onLightningPropertyChange?.invoke(
+                                current.key, currentLightningConfig
+                            )
+                        }
+                    )
+
+                    // Quick color presets
+                    Text(
+                        "Quick Colors",
+                        color = Color(0xFF888888),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            0xFFFFFFFF to "⚪ White",
+                            0xFF66CCFF to "🔵 Blue",
+                            0xFFB366FF to "💜 Purple",
+                            0xFFFFEECC to "🌤️ Warm",
+                            0xFFFF6666 to "🔴 Red"
+                        ).forEach { (colorLong, label) ->
+                            val active = currentLightningConfig.color == colorLong
+                            Box(
+                                modifier = Modifier
+                                    .height(30.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(
+                                        if (active) Color(0xFF7C3AED)
+                                        else Color(0xFF181818)
+                                    )
+                                    .pointerInput(colorLong) {
+                                        detectTapGestures {
+                                            currentLightningConfig =
+                                                currentLightningConfig.copy(color = colorLong)
+                                            onLightningPropertyChange?.invoke(
+                                                current.key, currentLightningConfig
+                                            )
+                                        }
+                                    }
+                                    .padding(horizontal = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    label,
+                                    color = Color.White,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    // Double strike toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "Double Strike",
+                            color = Color(0xFF888888), fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.width(100.dp)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .height(28.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    if (currentLightningConfig.doubleStrike)
+                                        Color(0xFF7C3AED)
+                                    else Color(0xFF181818)
+                                )
+                                .pointerInput(currentLightningConfig.doubleStrike) {
+                                    detectTapGestures {
+                                        currentLightningConfig =
+                                            currentLightningConfig.copy(
+                                                doubleStrike =
+                                                    !currentLightningConfig.doubleStrike
+                                            )
+                                        onLightningPropertyChange?.invoke(
+                                            current.key, currentLightningConfig
+                                        )
+                                    }
+                                }
+                                .padding(horizontal = 14.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                if (currentLightningConfig.doubleStrike) "ON" else "OFF",
+                                color = Color.White, fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
                 // ─── ACTIONS ───
                 if (isEditMode) {
                     Row(
@@ -533,15 +877,22 @@ fun EffectsPanel(
                                 .background(Color(0xFF7C3AED))
                                 .pointerInput(Unit) {
                                     detectTapGestures {
-                                        // 🆕 Pass custom config for overlays
-                                        if (current.kind == EffectKind.OVERLAY &&
-                                            onApplyOverlayLayer != null
-                                        ) {
-                                            onApplyOverlayLayer(
-                                                current.key, intensity, currentOverlayConfig
-                                            )
-                                        } else {
-                                            onApplyAsLayer(current.key, intensity)
+                                        when {
+                                            current.kind == EffectKind.BLUR &&
+                                                    onApplyBlurLayer != null -> {
+                                                onApplyBlurLayer(
+                                                    current.key, intensity, currentBlurConfig
+                                                )
+                                            }
+                                            current.kind == EffectKind.OVERLAY &&
+                                                    onApplyOverlayLayer != null -> {
+                                                onApplyOverlayLayer(
+                                                    current.key, intensity, currentOverlayConfig
+                                                )
+                                            }
+                                            else -> {
+                                                onApplyAsLayer(current.key, intensity)
+                                            }
                                         }
                                         selectedPreset = null
                                         intensity = 100f
@@ -574,7 +925,7 @@ fun EffectsPanel(
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  🆕 SLIDER WITH TEXT INPUT
+//  SLIDER WITH TEXT INPUT
 // ═══════════════════════════════════════════════════════════════
 
 @Composable
@@ -599,13 +950,11 @@ private fun PropertySliderRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(label, color = Color(0xFF888888), fontSize = 10.sp,
-            fontWeight = FontWeight.Bold, modifier = Modifier.width(56.dp))
+            fontWeight = FontWeight.Bold, modifier = Modifier.width(60.dp))
 
         Slider(
-            // Only clamp for display on slider; user value stays as-is
             value = value.coerceIn(range.start, range.endInclusive),
             onValueChange = {
-                // User dragging slider — clamp to slider range
                 onValueChange(it.coerceIn(range.start, range.endInclusive))
                 textValue = String.format(format, it)
             },
@@ -657,7 +1006,7 @@ private fun PropertySliderRow(
                             if (!state.isFocused) {
                                 textValue.toFloatOrNull()
                                     ?.takeIf { it.isFinite() }
-                                    ?.let { onValueChange(it) }
+                                    ?.let { onValueChange(it.coerceIn(0f, 1000f)) }
                             }
                         }
                 )
@@ -672,81 +1021,8 @@ private fun PropertySliderRow(
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  THUMB CHIP (existing — keep as-is)
+//  EFFECT THUMB CHIP
 // ═══════════════════════════════════════════════════════════════
-
-@Composable
-private fun LightLeakThumbChip(
-    preset: com.moody.moodyvideoeditor.data.LightLeakPreset,
-    refBitmap: Bitmap?,
-    clockSec: Float,
-    onClick: () -> Unit
-) {
-    val hasImage = refBitmap != null && !refBitmap.isRecycled
-    val frame = remember(preset.key, clockSec) {
-        LightLeakEngine.computeFrame(preset.config, clockSec)
-    }
-
-    Column(
-        modifier = Modifier
-            .width(76.dp)
-            .height(102.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFF181818))
-            .pointerInput(preset.key) { detectTapGestures { onClick() } }
-            .padding(4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(60.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFF0F0F0F))
-        ) {
-            if (hasImage) {
-                Image(
-                    bitmap = refBitmap!!.asImageBitmap(),
-                    contentDescription = preset.label,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.matchParentSize()
-                )
-                Canvas(modifier = Modifier.matchParentSize()) {
-                    try {
-                        val cx = frame.posX * size.width
-                        val cy = frame.posY * size.height
-                        val maxDim = maxOf(size.width, size.height)
-                        val r = frame.radius * maxDim
-                        val alpha = (frame.alpha * frame.intensityMul * 0.7f)
-                            .coerceIn(0f, 1f)
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    frame.color1.copy(alpha = alpha),
-                                    frame.color2.copy(alpha = alpha * 0.5f),
-                                    Color.Transparent
-                                ),
-                                center = Offset(cx, cy),
-                                radius = r
-                            ),
-                            radius = r,
-                            center = Offset(cx, cy),
-                            blendMode = BlendMode.Screen
-                        )
-                    } catch (_: Throwable) {}
-                }
-            } else {
-                Box(modifier = Modifier.matchParentSize(),
-                    contentAlignment = Alignment.Center) {
-                    Text(preset.icon, fontSize = 24.sp)
-                }
-            }
-        }
-        Text(preset.label, color = Color.White, fontSize = 9.sp,
-            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-            maxLines = 2, lineHeight = 10.sp)
-    }
-}
 
 @Composable
 private fun EffectThumbChip(
@@ -801,6 +1077,15 @@ private fun EffectThumbChip(
             } else null
         }
 
+    // Blur radius preview
+    val blurRadiusDp = remember(preset.key, kind, clockSec) {
+        if (kind == EffectKind.BLUR && preset.blur != null) {
+            try {
+                BlurEngineForThumb(preset.blur, clockSec)
+            } catch (_: Throwable) { 0f }
+        } else 0f
+    }
+
     val hasImage = refBitmap != null && !refBitmap.isRecycled
 
     Column(
@@ -821,6 +1106,8 @@ private fun EffectThumbChip(
                 .background(Color(0xFF0F0F0F))
         ) {
             if (hasImage) {
+                // ✅ FIX: Use Modifier.blur() instead of RenderEffect
+                //    Works on all API levels, no asComposeRenderEffect import needed
                 Image(
                     bitmap = refBitmap!!.asImageBitmap(),
                     contentDescription = preset.label,
@@ -828,6 +1115,16 @@ private fun EffectThumbChip(
                     colorFilter = colorFilter,
                     modifier = Modifier
                         .matchParentSize()
+                        .then(
+                            if (kind == EffectKind.BLUR && blurRadiusDp > 0.5f) {
+                                Modifier.blur(
+                                    radius = blurRadiusDp
+                                        .coerceAtMost(15f)
+                                        .dp,
+                                    edgeTreatment = BlurredEdgeTreatment.Unbounded
+                                )
+                            } else Modifier
+                        )
                         .graphicsLayer {
                             translationX = motionFrame.tx
                             translationY = motionFrame.ty
@@ -911,6 +1208,21 @@ private fun EffectThumbChip(
     }
 }
 
+// Helper for thumb preview — different time base
+private fun BlurEngineForThumb(
+    cfg: BlurConfig,
+    clockSec: Float
+): Float {
+    // Thumbnail animates from 0..2 sec in a loop
+    val thumbTime = (clockSec % 2f)
+    return com.moody.moodyvideoeditor.utils.BlurEngine
+        .computeRadiusDp(cfg, thumbTime, 2f)
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  REFERENCE IMAGE LOADER
+// ═══════════════════════════════════════════════════════════════
+
 private fun loadRefImage(context: android.content.Context): Bitmap? {
     return try {
         val opts = BitmapFactory.Options().apply { inScaled = false }
@@ -927,6 +1239,6 @@ private fun loadRefImage(context: android.content.Context): Bitmap? {
         scaled
     } catch (e: Throwable) {
         Log.e("EFFECT_REF", "Failed to load reference image", e)
-        null
+        return null
     }
 }

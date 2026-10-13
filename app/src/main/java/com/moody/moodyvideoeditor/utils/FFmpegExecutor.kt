@@ -115,10 +115,39 @@ class FFmpegExecutor(
 
             val maskSequences = renderMaskSequences(clips, targetW, targetH, fps)
 
+            // ⚡ Lightning bolt PNG sequences (from effect layers)
+            // NOTE: `clips` = visual only. Effect clips live in `allClips`.
+            val lightningClips = allClips.filter { c ->
+                c.isEffectClip &&
+                        c.effectState?.lightning != null &&
+                        c.timelineEndMs > 0L &&
+                        c.timelineStartMs < totalDurationMs
+            }
+            val lightningSequences = if (lightningClips.isNotEmpty()) {
+                try {
+                    LightningBitmapRenderer.renderLightningStrikes(
+                        context = context,
+                        lightningClips = lightningClips,
+                        W = targetW, H = targetH,
+                        fps = fps,
+                        totalDurationMs = totalDurationMs,
+                        onProgress = { p -> onProgress(p * 0.20f) },
+                        shouldCancel = { isCancelled }
+                    )
+                } catch (e: CancellationException) {
+                    cleanupMaskSequences()
+                    throw e
+                } catch (e: Exception) {
+                    Log.e("FFMPEG", "Lightning render failed", e)
+                    emptyList()
+                }
+            } else emptyList()
+
             val needsLayered =
                 clips.map { it.trackIndex }.distinct().size > 1 ||
                         maskSequences.isNotEmpty() ||
-                        matteClips.isNotEmpty()
+                        matteClips.isNotEmpty() ||
+                        lightningSequences.isNotEmpty()
 
             if (needsLayered) {
                 exportLayeredTracks(
@@ -135,7 +164,8 @@ class FFmpegExecutor(
                     sequences = textSequences,
                     maskSequences = maskSequences,
                     colorMettes = matteClips,
-                    totalDurationMs = totalDurationMs
+                    totalDurationMs = totalDurationMs,
+                    extraSequences = lightningSequences
                 )
                 return
             }
@@ -203,13 +233,30 @@ class FFmpegExecutor(
                             (mask.customPoints.size >= 3 && mask.customClosed)
                     )
         }
+
+        Log.e(
+            "MASK_RENDER",
+            "Total clips=${clips.size}, masked=${maskedClips.size}"
+        )
+        clips.forEach { c ->
+            Log.e(
+                "MASK_RENDER",
+                "  clip id=${c.id} type=${c.type} maskType=${c.mask.type} " +
+                        "active=${c.mask.isActive} " +
+                        "kf=${c.mask.keyframes.size}"
+            )
+        }
+
         if (maskedClips.isEmpty()) return@withContext emptyList()
 
         val output = mutableListOf<MaskFrameSequence>()
         try {
             maskedClips.forEach { clip ->
                 currentCoroutineContext().ensureActive()
-                val directory = File(context.cacheDir, "mask_${clip.id}_${System.nanoTime()}")
+                val directory = File(
+                    context.cacheDir,
+                    "mask_${clip.id}_${System.nanoTime()}"
+                )
                 if (!directory.mkdirs()) {
                     throw java.io.IOException("Could not create mask render directory")
                 }
@@ -255,6 +302,11 @@ class FFmpegExecutor(
                     staticFile = staticFile,
                     fps = fps,
                     directory = directory
+                )
+                Log.e(
+                    "MASK_RENDER",
+                    "Rendered mask for clip=${clip.id} frames=$frameCount " +
+                            "anim=$hasAnimation"
                 )
             }
             output
@@ -1391,16 +1443,8 @@ class FFmpegExecutor(
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  🆕 ANIMATED COLOR → FFmpeg time expressions
-    //  NOTE: No single quotes, no commas in expressions.
+    //  ANIMATED COLOR → FFmpeg
     // ═══════════════════════════════════════════════════════════
-    /**
-     * Converts an AnimatedColorConfig into a LIST of FFmpeg filter strings.
-     * Each string is a valid filter. Caller joins/attaches enable as needed.
-     *
-     * All time-based filters use `t` (PTS seconds). `hue` and `eq` filters
-     * both support `:enable='between(t,a,b)'` timeline gating.
-     */
     private fun animatedColorToFfmpeg(
         cfg: com.moody.moodyvideoeditor.utils.AnimatedColorConfig
     ): List<String> {
@@ -1410,8 +1454,6 @@ class FFmpegExecutor(
         fun f(v: Float) = String.format(loc, "%.4f", v)
 
         return when (cfg.type) {
-
-            // ═══ HUE ROTATIONS ═══
             "hueCycle" -> listOf("hue=h=${f(60f * I * sp)}*t")
             "hueFast" -> listOf("hue=h=${f(200f * I * sp)}*t")
             "hueReverse" -> listOf("hue=h=-${f(60f * I * sp)}*t")
@@ -1422,21 +1464,17 @@ class FFmpegExecutor(
                 "eq=saturation=1+${f(0.4f * I)}*sin(t*${f(2f * sp)}):eval=frame"
             )
 
-            // ═══ WARM ↔ COOL ═══
             "warmCool" -> listOf(
                 "hue=h=${f(45f * I)}*sin(t*${f(1.5f * sp)})",
                 "eq=saturation=1+${f(0.3f * I)}*abs(sin(t*${f(1.5f * sp)})):eval=frame"
             )
 
-            // ═══ SATURATION ═══
             "satPulse" -> listOf(
                 "eq=saturation=1+${f(0.6f * I)}*sin(t*${f(3f * sp)}):eval=frame"
             )
             "satFade" -> listOf(
                 "eq=saturation=1-${f(0.7f * I)}*abs(sin(t*${f(2f * sp)})):eval=frame"
             )
-
-            // ═══ BRIGHTNESS ═══
             "brightPulse" -> listOf(
                 "eq=brightness=${f(0.30f * I)}*sin(t*${f(3f * sp)}):eval=frame"
             )
@@ -1444,7 +1482,6 @@ class FFmpegExecutor(
                 "eq=brightness=${f(0.30f * I)}*sin(t*${f(20f * sp)}):eval=frame"
             )
 
-            // ═══ HUE OSCILLATIONS ═══
             "chromaWave" -> listOf(
                 "hue=h=${f(90f * I)}*sin(t*${f(2f * sp)})",
                 "eq=brightness=${f(0.15f * I)}*cos(t*${f(3f * sp)}):eval=frame"
@@ -1500,7 +1537,6 @@ class FFmpegExecutor(
                 "eq=contrast=1+${f(0.2f * I)}*sin(t*${f(1.2f * sp)}):eval=frame"
             )
 
-            // ═══ FLASHES & STROBE ═══
             "colorStrobe" -> listOf(
                 "eq=saturation=1.4+${f(0.4f * I)}*sin(t*${f(24f * sp)}):eval=frame",
                 "eq=brightness=${f(0.20f * I)}*sin(t*${f(24f * sp)}):eval=frame"
@@ -1520,8 +1556,83 @@ class FFmpegExecutor(
             else -> emptyList()
         }
     }
+
     // ═══════════════════════════════════════════════════════════
-    //  LAYERED TRACK EXPORT — MAIN PATH
+    //  ANIMATED BLUR — staircase of gblur filters with enable
+    // ═══════════════════════════════════════════════════════════
+    private fun buildAnimatedBlurFilters(
+        cfg: com.moody.moodyvideoeditor.utils.BlurConfig,
+        effectRelStartSec: Double,
+        effectRelEndSec: Double,
+        instanceName: String
+    ): List<String> {
+        val loc = Locale.US
+        fun f(v: Float): String = String.format(loc, "%.3f", v)
+
+        val startStr = String.format(loc, "%.4f", effectRelStartSec)
+        val endStr = String.format(loc, "%.4f", effectRelEndSec)
+
+        // ─── Mosaic — pixelate only, no animation ───
+        if (cfg.type == "mosaic") {
+            val bs = cfg.blockSize.coerceIn(4f, 100f).toInt()
+            return listOf(
+                "pixelize=w=$bs:h=$bs:enable='between(t,$startStr,$endStr)'"
+            )
+        }
+
+        val isAnimated = cfg.type == "blurIn" ||
+                cfg.type == "blurOut" ||
+                cfg.type == "halo"
+
+        if (!isAnimated) return emptyList()
+
+        val I = cfg.intensity.coerceIn(0f, 100f) / 100f
+        val maxR = (50f * I).coerceIn(0.5f, 50f)
+        val sp = cfg.speed.coerceIn(0.2f, 5f)
+        val animDur = (cfg.animDuration / sp).coerceAtLeast(0.1f)
+        val effDurSec = (effectRelEndSec - effectRelStartSec).coerceAtLeast(0.1)
+
+        val effAnim = minOf(animDur.toDouble(), effDurSec).coerceAtLeast(0.1)
+        val steps = 12
+        val stepDur = effAnim / steps
+
+        val filters = mutableListOf<String>()
+
+        for (i in 0 until steps) {
+            val tStart = effectRelStartSec + i * stepDur
+
+            val tEnd = if (i == steps - 1) {
+                when (cfg.type) {
+                    "blurOut" -> effectRelEndSec
+                    else -> effectRelStartSec + effAnim
+                }
+            } else {
+                effectRelStartSec + (i + 1) * stepDur
+            }
+
+            val localT = ((i + 0.5) * stepDur).toFloat()
+
+            val sigma = when (cfg.type) {
+                "blurIn" -> maxR * (1f - (localT / animDur).coerceIn(0f, 1f))
+                "blurOut" -> maxR * (localT / animDur).coerceIn(0f, 1f)
+                "halo" -> maxR * 1.3f * (1f - (localT / animDur).coerceIn(0f, 1f))
+                else -> maxR
+            }.coerceAtLeast(0.01f)
+
+            val tStartStr = String.format(loc, "%.4f", tStart)
+            val tEndStr = String.format(loc, "%.4f", tEnd)
+
+            filters.add(
+                "gblur=sigma=${f(sigma)}:steps=1:" +
+                        "enable='between(t,$tStartStr,$tEndStr)'"
+            )
+        }
+
+        return filters
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  LAYERED TRACK EXPORT
     // ═══════════════════════════════════════════════════════════
     private fun exportLayeredTracks(
         clips: List<EditorClip>,
@@ -1537,7 +1648,8 @@ class FFmpegExecutor(
         sequences: List<TextOverlaySequence>,
         maskSequences: List<MaskFrameSequence>,
         colorMettes: List<EditorClip> = emptyList(),
-        totalDurationMs: Long
+        totalDurationMs: Long,
+        extraSequences: List<TextOverlaySequence> = emptyList()
     ) {
         try {
             val durationSec = (totalDurationMs / 1000.0).coerceAtLeast(0.1)
@@ -1674,10 +1786,11 @@ class FFmpegExecutor(
             )
 
             val sequenceStartIdx = silenceInputIdx + 1
-            addSequenceInputs(args, sequences)
+            val combinedSequences = sequences + extraSequences
+            addSequenceInputs(args, combinedSequences)
 
             val maskInputIndices = mutableMapOf<String, Int>()
-            var nextMaskInputIdx = sequenceStartIdx + sequences.size
+            var nextMaskInputIdx = sequenceStartIdx + combinedSequences.size
             maskSequences.forEach { sequence ->
                 if (sequence.staticFile != null) {
                     args.addAll(
@@ -1759,15 +1872,33 @@ class FFmpegExecutor(
                 val maskInputIdx = maskInputIndices[clip.id]
                 val layerLabel = if (maskInputIdx != null) {
                     val maskPtsLabel = "mask_pts$index"
+                    val maskReadyLabel = "mask_ready$index"
+                    val layerRgbaLabel = "layer_rgba$index"
+
                     filterParts.add(
-                        "[$maskInputIdx:v]format=rgba,alphaextract," +
-                                "setpts=PTS-STARTPTS+${startSec}/TB[$maskPtsLabel]"
+                        "[$maskInputIdx:v]format=rgba," +
+                                "alphaextract," +
+                                "format=gray," +
+                                "setpts=PTS-STARTPTS+${startSec}/TB" +
+                                "[$maskPtsLabel]"
                     )
                     filterParts.add(
-                        "[$unmaskedLayerLabel][$maskPtsLabel]alphamerge[masked$index]"
+                        "[$unmaskedLayerLabel]format=rgba[$layerRgbaLabel]"
                     )
-                    "masked$index"
+                    filterParts.add(
+                        "[$layerRgbaLabel][$maskPtsLabel]alphamerge[$maskReadyLabel]"
+                    )
+                    Log.e(
+                        "MASK_EXPORT",
+                        "Mask applied: clip=${clip.id} track=${clip.trackIndex} " +
+                                "startSec=$startSec idx=$index"
+                    )
+                    maskReadyLabel
                 } else {
+                    Log.e(
+                        "MASK_EXPORT",
+                        "No mask for clip=${clip.id} track=${clip.trackIndex}"
+                    )
                     unmaskedLayerLabel
                 }
 
@@ -1841,8 +1972,9 @@ class FFmpegExecutor(
                         "dropout_transition=0[mixedAudio]"
             )
 
-            val outputVideo =
-                buildOverlayChain(filterParts, sequences, sequenceStartIdx, canvasLabel)
+            val outputVideo = buildOverlayChain(
+                filterParts, combinedSequences, sequenceStartIdx, canvasLabel
+            )
             val finalVideo = enforceOutputDimensions(filterParts, outputVideo, targetW, targetH)
             args.addAll(
                 listOf(
@@ -2539,14 +2671,11 @@ class FFmpegExecutor(
         }.sortedBy { it.trackIndex }
 
         effectClipsAbove.forEach { effClip ->
-            // Compute this effect's own time range, RELATIVE to the source clip.
-            // enableExpr uses single quotes so embedded commas are safe.
             val relStartSec = ((effClip.timelineStartMs - clip.timelineStartMs)
                 .coerceAtLeast(0L)) / 1000.0
             val relEndSec = ((effClip.timelineEndMs - clip.timelineStartMs)
                 .coerceAtMost(clip.durationMs)) / 1000.0
 
-            // Skip if the effect range is fully outside the source clip
             if (relEndSec <= relStartSec) return@forEach
 
             val enableExpr = String.format(
@@ -2556,7 +2685,6 @@ class FFmpegExecutor(
                 relEndSec
             )
 
-            // Helper — splits a comma chain, tags each filter with enable
             fun addChain(chain: String) {
                 if (chain.isBlank()) return
                 chain.split(",").forEach { part ->
@@ -2565,15 +2693,12 @@ class FFmpegExecutor(
                 }
             }
 
-            // ── Motion ──
             val m = effClip.effectState?.motion
             if (m != null) addChain(motionToFfmpeg(m))
 
-            // ── Static color filters ──
             val cf = effClip.effectState?.filters
             if (cf != null) addChain(colorFilterValuesToFfmpeg(cf))
 
-            // ── Animated color (time expressions) ──
             val acCfg = effClip.effectState?.animatedColor
             if (acCfg != null) {
                 val list = animatedColorToFfmpeg(acCfg)
@@ -2581,22 +2706,31 @@ class FFmpegExecutor(
                     list.forEach { filters.add("$it$enableExpr") }
                     Log.e(
                         "FFMPEG_AC",
-                        "Animated color [${acCfg.type}] → ${list.size} filters: $list"
+                        "Animated color [${acCfg.type}] → ${list.size} filters"
                     )
                 } else {
-                    // Fallback: static snapshot at midpoint (rare)
                     val midSec = (relStartSec + relEndSec) / 2.0
                     val dyn = com.moody.moodyvideoeditor.utils.AnimatedColorEngine
                         .compute(acCfg, midSec.toFloat())
                     addChain(colorFilterValuesToFfmpeg(dyn))
-                    Log.e(
-                        "FFMPEG_AC",
-                        "Fallback static [${acCfg.type}] @${midSec}s"
-                    )
                 }
             }
 
-            // ── Edge glow ──
+            val blurCfg = effClip.effectState?.blur
+            if (blurCfg != null) {
+                val instanceName = "blur${
+                    kotlin.math.abs(effClip.id.hashCode()) % 9999
+                }"
+                val blurFilters = buildAnimatedBlurFilters(
+                    blurCfg, relStartSec, relEndSec, instanceName
+                )
+                filters.addAll(blurFilters)
+                Log.e(
+                    "FFMPEG_BLUR",
+                    "Blur → ${blurFilters.joinToString(" | ")}"
+                )
+            }
+
             val glow = effClip.effectState?.edgeGlow
             if (glow != null && glow.intensity > 1f) {
                 addChain(buildEdgeGlowDrawboxFilter(glow))
@@ -2975,7 +3109,8 @@ class FFmpegExecutor(
                             if (outputFile.exists()) {
                                 Log.e(
                                     "FFMPEG_RESULT",
-                                    "SUCCESS: ${outputFile.absolutePath} (${outputFile.length()} bytes)"
+                                    "SUCCESS: ${outputFile.absolutePath} " +
+                                            "(${outputFile.length()} bytes)"
                                 )
                                 cleanupMaskSequences()
                                 onSuccess(outputFile)

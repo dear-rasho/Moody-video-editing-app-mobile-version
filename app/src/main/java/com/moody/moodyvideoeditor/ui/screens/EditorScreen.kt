@@ -1275,6 +1275,25 @@ fun EditorScreen(
                                 viewModel.setPreviewEffectFull(updated)
                             }
                         },
+                        onLightningPropertyChange = { key, config ->
+                            // Update preview with new lightning config
+                            val currentPreview = viewModel.state.value.previewEffectState
+                            if (currentPreview != null &&
+                                currentPreview.presetKey == key &&
+                                currentPreview.lightning != null
+                            ) {
+                                // Update preview
+                                viewModel.setPreviewEffectFull(
+                                    currentPreview.copy(lightning = config)
+                                )
+                            }
+                            // Update actual layer if editing
+                            if (editLayer != null) {
+                                viewModel.updateClipEffectLightning(
+                                    editLayer.id, config
+                                )
+                            }
+                        },
                         onDeleteLayer = {
                             editLayer?.let {
                                 viewModel.removeEffectLayer(it.id)
