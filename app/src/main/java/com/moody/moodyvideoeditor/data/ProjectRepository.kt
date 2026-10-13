@@ -643,6 +643,35 @@ object ProjectRepository {
                 put("masterIntensity", fire.masterIntensity.toDouble())
             })
         }
+        // 🌀 Dust
+        val dust = e.dust
+        if (dust != null) {
+            put("dust", JSONObject().apply {
+                put("style", dust.style.name)
+                put("intensity", dust.intensity.toDouble())
+                put("masterIntensity", dust.masterIntensity.toDouble())
+                put("count", dust.count)
+                put("speed", dust.speed.toDouble())
+                put("spread", dust.spread.toDouble())
+                put("direction", dust.direction.toDouble())
+                put("gravity", dust.gravity.toDouble())
+                put("sizeMin", dust.sizeMin.toDouble())
+                put("sizeMax", dust.sizeMax.toDouble())
+                put("color1", dust.color1)
+                put("color2", dust.color2)
+                put("glow", dust.glow)
+                put("fadeOut", dust.fadeOut)
+                put("softness", dust.softness.toDouble())
+                put("lifetimeMs", dust.lifetimeMs)
+                put("burstDurationMs", dust.burstDurationMs)
+                put("triggerEverySec", dust.triggerEverySec.toDouble())
+                put("triggerX", dust.triggerX.toDouble())
+                put("triggerY", dust.triggerY.toDouble())
+                put("windX", dust.windX.toDouble())
+                put("floorHeight", dust.floorHeight.toDouble())
+                put("opacity", dust.opacity.toDouble())
+            })
+        }
     }
 
 
@@ -793,9 +822,40 @@ object ProjectRepository {
                     speed = fc.optDouble("speed", 1.0).toFloat(),
                     masterIntensity = fc.optDouble("masterIntensity", 100.0).toFloat()
                 )
+            },
+
+            dust = o.optJSONObject("dust")?.let { dc ->
+                DustConfig(
+                    style = try {
+                        DustStyle.valueOf(dc.optString("style", "DUST_MOTES"))
+                    } catch (_: Exception) { DustStyle.DUST_MOTES },
+                    intensity = dc.optDouble("intensity", 100.0).toFloat(),
+                    masterIntensity = dc.optDouble("masterIntensity", 100.0).toFloat(),
+                    count = dc.optInt("count", 100),
+                    speed = dc.optDouble("speed", 40.0).toFloat(),
+                    spread = dc.optDouble("spread", 360.0).toFloat(),
+                    direction = dc.optDouble("direction", -90.0).toFloat(),
+                    gravity = dc.optDouble("gravity", 0.0).toFloat(),
+                    sizeMin = dc.optDouble("sizeMin", 2.0).toFloat(),
+                    sizeMax = dc.optDouble("sizeMax", 10.0).toFloat(),
+                    color1 = dc.optLong("color1", 0xFFCCAA88L),
+                    color2 = dc.optLong("color2", 0xFF886644L),
+                    glow = dc.optBoolean("glow", false),
+                    fadeOut = dc.optBoolean("fadeOut", true),
+                    softness = dc.optDouble("softness", 1.0).toFloat(),
+                    lifetimeMs = dc.optLong("lifetimeMs", 2500L),
+                    burstDurationMs = dc.optLong("burstDurationMs", 800L),
+                    triggerEverySec = dc.optDouble("triggerEverySec", 0.0).toFloat(),
+                    triggerX = dc.optDouble("triggerX", 0.5).toFloat(),
+                    triggerY = dc.optDouble("triggerY", 0.5).toFloat(),
+                    windX = dc.optDouble("windX", 30.0).toFloat(),
+                    floorHeight = dc.optDouble("floorHeight", 0.25).toFloat(),
+                    opacity = dc.optDouble("opacity", 1.0).toFloat()
+                )
             }
         )
     }
+
 
 
 

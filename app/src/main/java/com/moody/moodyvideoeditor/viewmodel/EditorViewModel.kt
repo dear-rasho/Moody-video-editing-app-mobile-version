@@ -2535,6 +2535,17 @@ class EditorViewModel : ViewModel() {
         addClipOnNewLayer(clip, baseTrack + 1)
         updateHistoryFlags()
     }
+    fun updateClipEffectDust(
+        clipId: String,
+        config: com.moody.moodyvideoeditor.data.DustConfig
+    ) {
+        updateClipDirect(clipId) { clip ->
+            val eff = clip.effectState
+            if (eff != null && eff.dust != null) {
+                clip.copy(effectState = eff.copy(dust = config))
+            } else clip
+        }
+    }
     fun updateClipEffectParticle(
         clipId: String,
         config: com.moody.moodyvideoeditor.data.ParticleConfig
@@ -2637,6 +2648,13 @@ class EditorViewModel : ViewModel() {
         val scaledAnimatedColor = preset.animatedColor?.let { ac ->
             ac.copy(intensity = (ac.intensity * t).coerceIn(0f, 200f))
         }
+        // scale dust intensity
+        val scaledDust = preset.dust?.let { dc ->
+            dc.copy(
+                masterIntensity = (dc.masterIntensity * (intensity / 100f))
+                    .coerceIn(0f, 200f)
+            )
+        }
 
 // 🆕 Blur — scale intensity
         val scaledBlur = preset.blur?.let { bc ->
@@ -2690,6 +2708,7 @@ class EditorViewModel : ViewModel() {
             lightning = scaledLightning,
             particle = scaledParticle,
             fire = scaledFire,
+            dust = scaledDust,
             masterIntensity = intensity
         )
     }

@@ -1,4 +1,5 @@
 package com.moody.moodyvideoeditor.ui.features
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import android.graphics.Bitmap
@@ -90,7 +91,8 @@ private val CATEGORIES = listOf(
     Triple(EffectKind.EDGE_GLOW, "✨ Edge Glow", EffectLibrary.EDGE_GLOW_EFFECTS),
     Triple(EffectKind.LIGHTNING, "⚡ Lightning", EffectLibrary.LIGHTNING_EFFECTS),
     Triple(EffectKind.PARTICLE, "✨ Particles", EffectLibrary.PARTICLE_EFFECTS),
-    Triple(EffectKind.FIRE, "🔥 Fire & Thermal", EffectLibrary.FIRE_EFFECTS)
+    Triple(EffectKind.FIRE, "🔥 Fire & Thermal", EffectLibrary.FIRE_EFFECTS),
+    Triple(EffectKind.DUST, "🌀 Dust", EffectLibrary.DUST_EFFECTS)
 )
 @Composable
 fun EffectsPanel(
@@ -110,6 +112,8 @@ fun EffectsPanel(
     onApplyLightningLayer: ((presetKey: String, intensity: Float, config: com.moody.moodyvideoeditor.data.LightningConfig) -> Unit)? = null,
     onFirePropertyChange: ((presetKey: String, config: com.moody.moodyvideoeditor.data.FireConfig) -> Unit)? = null,
     onApplyFireLayer: ((presetKey: String, intensity: Float, config: com.moody.moodyvideoeditor.data.FireConfig) -> Unit)? = null,
+    onDustPropertyChange: ((presetKey: String, config: com.moody.moodyvideoeditor.data.DustConfig) -> Unit)? = null,
+    onApplyDustLayer: ((presetKey: String, intensity: Float, config: com.moody.moodyvideoeditor.data.DustConfig) -> Unit)? = null,
     onDeleteLayer: () -> Unit = {},
     onClose: () -> Unit
 ) {
@@ -135,6 +139,12 @@ fun EffectsPanel(
         mutableStateOf(
             selectedPreset?.fire
                 ?: com.moody.moodyvideoeditor.data.FireLibrary.PRESETS[0].config
+        )
+    }
+    var currentDustConfig by remember(selectedPreset?.key) {
+        mutableStateOf(
+            selectedPreset?.dust
+                ?: com.moody.moodyvideoeditor.data.DustLibrary.PRESETS[0].config
         )
     }
     // Local blur config
@@ -186,6 +196,7 @@ fun EffectsPanel(
                 initialEffectState?.lightning?.let { currentLightningConfig = it }
                 initialEffectState?.particle?.let { currentParticleConfig = it }
                 initialEffectState?.fire?.let { currentFireConfig = it }
+                initialEffectState?.dust?.let { currentDustConfig = it }
                 val catIdx = CATEGORIES.indexOfFirst { (_, _, list) ->
                     list.any { it.key == initialPresetKey }
                 }
@@ -287,6 +298,7 @@ fun EffectsPanel(
                             preset.lightning?.let { currentLightningConfig = it }
                             preset.particle?.let { currentParticleConfig = it }
                             preset.fire?.let { currentFireConfig = it }
+                            preset.dust?.let { currentDustConfig = it }
                             onPreviewEffect(preset.key, intensity)
                             if (isEditMode) onUpdateIntensity(intensity)
                         }
@@ -339,6 +351,246 @@ fun EffectsPanel(
                         if (isEditMode) onUpdateIntensity(v)
                     }
                 )
+                // ═══════════════════════════════════════════════════════
+                //  🌀 DUST PROPERTIES
+                // ═══════════════════════════════════════════════════════
+                if (current.kind == EffectKind.DUST) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "🌀 Dust Options",
+                        color = Color(0xFF888888),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+
+                    PropertySliderRow(
+                        label = "Count",
+                        value = currentDustConfig.count.toFloat(),
+                        range = 1f..5000f,
+                        format = "%.0f",
+                        suffix = "",
+                        onValueChange = { v ->
+                            currentDustConfig = currentDustConfig.copy(
+                                count = v.toInt().coerceIn(1, 5000)
+                            )
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Speed",
+                        value = currentDustConfig.speed,
+                        range = 10f..400f,
+                        format = "%.0f",
+                        suffix = "",
+                        onValueChange = { v ->
+                            currentDustConfig = currentDustConfig.copy(speed = v)
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Spread",
+                        value = currentDustConfig.spread,
+                        range = 10f..360f,
+                        format = "%.0f",
+                        suffix = "°",
+                        onValueChange = { v ->
+                            currentDustConfig = currentDustConfig.copy(spread = v)
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Direction",
+                        value = currentDustConfig.direction,
+                        range = -180f..180f,
+                        format = "%.0f",
+                        suffix = "°",
+                        onValueChange = { v ->
+                            currentDustConfig = currentDustConfig.copy(direction = v)
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Gravity",
+                        value = currentDustConfig.gravity,
+                        range = -200f..200f,
+                        format = "%.0f",
+                        suffix = "",
+                        onValueChange = { v ->
+                            currentDustConfig = currentDustConfig.copy(gravity = v)
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Size Min",
+                        value = currentDustConfig.sizeMin,
+                        range = 0.5f..50f,
+                        format = "%.1f",
+                        suffix = "",
+                        onValueChange = { v ->
+                            currentDustConfig = currentDustConfig.copy(sizeMin = v)
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Size Max",
+                        value = currentDustConfig.sizeMax,
+                        range = 0.5f..200f,
+                        format = "%.1f",
+                        suffix = "",
+                        onValueChange = { v ->
+                            currentDustConfig = currentDustConfig.copy(sizeMax = v)
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Softness",
+                        value = currentDustConfig.softness,
+                        range = 0.3f..3f,
+                        format = "%.2f",
+                        suffix = "x",
+                        onValueChange = { v ->
+                            currentDustConfig = currentDustConfig.copy(softness = v)
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    ColorPickerField(
+                        label = "Color 1",
+                        colorLong = currentDustConfig.color1,
+                        onChange = { newCol ->
+                            currentDustConfig = currentDustConfig.copy(color1 = newCol)
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    ColorPickerField(
+                        label = "Color 2",
+                        colorLong = currentDustConfig.color2,
+                        onChange = { newCol ->
+                            currentDustConfig = currentDustConfig.copy(color2 = newCol)
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Opacity",
+                        value = currentDustConfig.opacity * 100f,
+                        range = 0f..100f,
+                        format = "%.0f",
+                        suffix = "%",
+                        onValueChange = { v ->
+                            currentDustConfig = currentDustConfig.copy(
+                                opacity = (v / 100f).coerceIn(0f, 1f)
+                            )
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Lifetime",
+                        value = currentDustConfig.lifetimeMs.toFloat(),
+                        range = 500f..8000f,
+                        format = "%.0f",
+                        suffix = "ms",
+                        onValueChange = { v ->
+                            currentDustConfig = currentDustConfig.copy(
+                                lifetimeMs = v.toLong().coerceIn(500L, 8000L)
+                            )
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Repeat",
+                        value = currentDustConfig.triggerEverySec,
+                        range = 0f..15f,
+                        format = "%.2f",
+                        suffix = "s",
+                        onValueChange = { v ->
+                            currentDustConfig = currentDustConfig.copy(
+                                triggerEverySec = v.coerceIn(0f, 15f)
+                            )
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Trigger X",
+                        value = currentDustConfig.triggerX * 100f,
+                        range = 0f..100f,
+                        format = "%.0f",
+                        suffix = "%",
+                        onValueChange = { v ->
+                            currentDustConfig = currentDustConfig.copy(
+                                triggerX = (v / 100f).coerceIn(0f, 1f)
+                            )
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    PropertySliderRow(
+                        label = "Trigger Y",
+                        value = currentDustConfig.triggerY * 100f,
+                        range = 0f..100f,
+                        format = "%.0f",
+                        suffix = "%",
+                        onValueChange = { v ->
+                            currentDustConfig = currentDustConfig.copy(
+                                triggerY = (v / 100f).coerceIn(0f, 1f)
+                            )
+                            onDustPropertyChange?.invoke(current.key, currentDustConfig)
+                        }
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            "Glow" to currentDustConfig.glow,
+                            "Fade" to currentDustConfig.fadeOut
+                        ).forEach { (label, active) ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(28.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(
+                                        if (active) Color(0xFF7C3AED)
+                                        else Color(0xFF181818)
+                                    )
+                                    .pointerInput(label, active) {
+                                        detectTapGestures {
+                                            currentDustConfig = when (label) {
+                                                "Glow" -> currentDustConfig.copy(glow = !active)
+                                                "Fade" -> currentDustConfig.copy(fadeOut = !active)
+                                                else -> currentDustConfig
+                                            }
+                                            onDustPropertyChange?.invoke(
+                                                current.key, currentDustConfig
+                                            )
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "$label ${if (active) "ON" else "OFF"}",
+                                    color = Color.White, fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
 
                 // ═══════════════════════════════════════════════════════
                 //  🆕 BLUR PROPERTIES
@@ -1253,6 +1505,12 @@ fun EffectsPanel(
                                                     current.key, intensity, currentFireConfig
                                                 )
                                             }
+                                            current.kind == EffectKind.DUST &&
+                                                    onApplyDustLayer != null -> {
+                                                onApplyDustLayer(
+                                                    current.key, intensity, currentDustConfig
+                                                )
+                                            }
                                             else -> {
                                                 onApplyAsLayer(current.key, intensity)
                                             }
@@ -1630,7 +1888,7 @@ private fun EffectThumbChip(
                 }
                 // 🔥 Fire thumbnail preview
                 if (kind == EffectKind.FIRE && preset.fire != null) {
-                    Canvas(modifier = Modifier.matchParentSize()) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
                         try {
                             val cfg = preset.fire
                             val thumbTime = (clockSec % 3f)
@@ -1776,6 +2034,27 @@ private fun EffectThumbChip(
                                     radius = thumbSize,
                                     center = Offset(st.x, st.y)
                                 )
+                            }
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+                if (kind == EffectKind.DUST && preset.dust != null) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        try {
+                            val cfg = preset.dust.copy(
+                                count = preset.dust.count.coerceAtMost(120)
+                            )
+                            val thumbTime = (clockSec % 4f)
+                            drawIntoCanvas { canvas ->
+                                com.moody.moodyvideoeditor.utils.DustEngine
+                                    .drawOnCanvas(
+                                        canvas = canvas.nativeCanvas,
+                                        cfg = cfg,
+                                        localTimeSec = thumbTime,
+                                        W = size.width.toInt(),
+                                        H = size.height.toInt()
+                                    )
                             }
                         } catch (_: Throwable) {
                         }

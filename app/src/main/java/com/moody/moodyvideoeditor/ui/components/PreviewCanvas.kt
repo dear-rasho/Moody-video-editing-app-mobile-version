@@ -1596,6 +1596,53 @@ fun PreviewCanvas(
                 }
             }
             // ═══════════════════════════════════════════════════════
+            //  🌀 DUST PREVIEW
+            // ═══════════════════════════════════════════════════════
+            val activeDust = clips
+                .filter { c ->
+                    c.isEffectClip &&
+                            c.trackIndex > videoTrackIdx &&
+                            currentPosMs >= c.timelineStartMs &&
+                            currentPosMs < c.timelineEndMs &&
+                            c.effectState?.dust != null
+                }
+                .sortedBy { it.trackIndex }
+                .mapNotNull { c ->
+                    val cfg = c.effectState?.dust ?: return@mapNotNull null
+                    val localSec = ((currentPosMs - c.timelineStartMs) / 1000f)
+                        .coerceAtLeast(0f)
+                    cfg to localSec
+                }
+
+            val previewDust = previewEffectState?.dust?.let { cfg ->
+                val localSec = currentPosMs / 1000f
+                cfg to localSec
+            }
+
+            val allDust = if (previewDust != null)
+                activeDust + previewDust
+            else activeDust
+
+            if (allDust.isNotEmpty()) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    allDust.forEach { (cfg, localSec) ->
+                        try {
+                            drawIntoCanvas { canvas ->
+                                com.moody.moodyvideoeditor.utils.DustEngine
+                                    .drawOnCanvas(
+                                        canvas = canvas.nativeCanvas,
+                                        cfg = cfg,
+                                        localTimeSec = localSec,
+                                        W = size.width.toInt(),
+                                        H = size.height.toInt()
+                                    )
+                            }
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            }
+            // ═══════════════════════════════════════════════════════
             //  🔥 FIRE PREVIEW
             // ═══════════════════════════════════════════════════════
             val activeFire = clips

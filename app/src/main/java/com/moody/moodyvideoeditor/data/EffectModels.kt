@@ -16,11 +16,12 @@ data class EffectPreset(
     val lightLeak: LightLeakConfig? = null,
     val lightning: LightningConfig? = null,
     val particle: ParticleConfig? = null,
-    val fire: FireConfig? = null
+    val fire: FireConfig? = null,
+    val dust: DustConfig? = null
 )
 enum class EffectKind {
     MOTION, ANIMATED_COLOR, BLUR, OVERLAY, EDGE_GLOW, LIGHT_LEAK,
-    LIGHTNING, PARTICLE, FIRE
+    LIGHTNING, PARTICLE, FIRE, DUST
 }
 // Mirrors MOTION_MAP values from beatsEngine.js
 data class MotionConfig(
@@ -816,6 +817,19 @@ object EffectLibrary {
             )
         }
     // ═══════════════════════════════════════════════════════════
+//  🌀 DUST EFFECTS — 10
+// ═══════════════════════════════════════════════════════════
+    val DUST_EFFECTS: List<EffectPreset> =
+        com.moody.moodyvideoeditor.data.DustLibrary.PRESETS.map { p ->
+            EffectPreset(
+                key = p.key,
+                label = p.label,
+                icon = p.icon,
+                kind = EffectKind.DUST,
+                dust = p.config
+            )
+        }
+    // ═══════════════════════════════════════════════════════════
 //  🔥 FIRE EFFECTS — 10
 // ═══════════════════════════════════════════════════════════
     val FIRE_EFFECTS: List<EffectPreset> =
@@ -948,6 +962,6 @@ object EffectLibrary {
 
     val ALL: List<EffectPreset> = MOTION_EFFECTS + ANIMATED_COLOR_EFFECTS +
             BLUR_EFFECTS + OVERLAY_EFFECTS + EDGE_GLOW_EFFECTS + LIGHT_LEAK_EFFECTS +
-            LIGHTNING_EFFECTS + PARTICLE_EFFECTS + FIRE_EFFECTS
+            LIGHTNING_EFFECTS + PARTICLE_EFFECTS + FIRE_EFFECTS + DUST_EFFECTS
     fun findByKey(key: String): EffectPreset? = ALL.firstOrNull { it.key == key }
 }

@@ -1348,6 +1348,28 @@ fun EditorScreen(
                             }
                             effectEditLayerId = null
                         },
+                        onDustPropertyChange = { key, config ->
+                            val currentPreview = viewModel.state.value.previewEffectState
+                            if (currentPreview != null &&
+                                currentPreview.presetKey == key &&
+                                currentPreview.dust != null
+                            ) {
+                                viewModel.setPreviewEffectFull(
+                                    currentPreview.copy(dust = config)
+                                )
+                            }
+                            if (editLayer != null) {
+                                viewModel.updateClipEffectDust(editLayer.id, config)
+                            }
+                        },
+                        onApplyDustLayer = { key, intensity, config ->
+                            viewModel.createEffectLayerAt(key, intensity)
+                            val newLayer = viewModel.state.value.selectedClip
+                            if (newLayer != null && newLayer.isEffectClip) {
+                                viewModel.updateClipEffectDust(newLayer.id, config)
+                            }
+                            effectEditLayerId = null
+                        },
                         onDeleteLayer = {
                             editLayer?.let {
                                 viewModel.removeEffectLayer(it.id)

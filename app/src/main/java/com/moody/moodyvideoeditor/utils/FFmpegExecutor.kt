@@ -175,6 +175,34 @@ class FFmpegExecutor(
                     emptyList()
                 }
             } else emptyList()
+
+            // 🌀 Dust sequences
+            val dustClips = allClips.filter { c ->
+                c.isEffectClip &&
+                        c.effectState?.dust != null &&
+                        c.timelineEndMs > 0L &&
+                        c.timelineStartMs < totalDurationMs
+            }
+            val dustSequences = if (dustClips.isNotEmpty()) {
+                try {
+                    DustBitmapRenderer.renderDustSequences(
+                        context = context,
+                        dustClips = dustClips,
+                        W = targetW, H = targetH,
+                        fps = fps,
+                        totalDurationMs = totalDurationMs,
+                        onProgress = { p -> onProgress(p * 0.15f) },
+                        shouldCancel = { isCancelled }
+                    )
+                } catch (e: CancellationException) {
+                    cleanupMaskSequences()
+                    throw e
+                } catch (e: Exception) {
+                    Log.e("FFMPEG", "Dust render failed", e)
+                    emptyList()
+                }
+            } else emptyList()
+
             val lightningSequences = if (lightningClips.isNotEmpty()) {
                 try {
                     LightningBitmapRenderer.renderLightningStrikes(
@@ -201,7 +229,8 @@ class FFmpegExecutor(
                         matteClips.isNotEmpty() ||
                         lightningSequences.isNotEmpty() ||
                         particleSequences.isNotEmpty() ||
-                        fireSequences.isNotEmpty()
+                        fireSequences.isNotEmpty() ||
+                        dustSequences.isNotEmpty()
 
             if (needsLayered) {
                 exportLayeredTracks(
@@ -219,7 +248,8 @@ class FFmpegExecutor(
                     maskSequences = maskSequences,
                     colorMettes = matteClips,
                     totalDurationMs = totalDurationMs,
-                    extraSequences = lightningSequences + particleSequences + fireSequences
+                    extraSequences = lightningSequences + particleSequences +
+                            fireSequences + dustSequences
                 )
                 return
             }

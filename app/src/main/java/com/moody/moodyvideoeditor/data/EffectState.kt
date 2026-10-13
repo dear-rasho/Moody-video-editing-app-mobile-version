@@ -13,6 +13,7 @@ data class EffectState(
     val lightning: LightningConfig? = null,
     val particle: ParticleConfig? = null,
     val fire: FireConfig? = null,
+    val dust: DustConfig? = null,
     val masterIntensity: Float = 100f
 ) {
     companion object {
