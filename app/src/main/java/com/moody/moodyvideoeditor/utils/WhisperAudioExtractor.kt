@@ -8,6 +8,8 @@ import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
+import kotlin.math.sqrt
 
 object WhisperAudioExtractor {
 
@@ -55,11 +57,50 @@ object WhisperAudioExtractor {
 
             buffer.get(result)
 
+            // ═══════════════════════════════════════════════════════════
+            //  DEBUG — audio sanity check
+            //  peak < 0.001  → silent / nearly silent
+            //  rms  < 0.005  → very quiet (may fail Whisper)
+            //  duration < 1s → too short
+            // ═══════════════════════════════════════════════════════════
+            var peak = 0f
+            var sumSq = 0.0
+            for (v in result) {
+                val a = abs(v)
+                if (a > peak) peak = a
+                sumSq += v.toDouble() * v.toDouble()
+            }
+            val rms = if (result.isNotEmpty())
+                sqrt(sumSq / result.size).toFloat() else 0f
+            val durationSec = result.size.toFloat() / TARGET_SAMPLE_RATE
+
             Log.e(
                 TAG,
-                "Extracted PCM: ${result.size} samples, " +
-                        "${result.size / TARGET_SAMPLE_RATE}s duration"
+                "📊 Audio stats → samples=${result.size}, " +
+                        "duration=%.2fs, peak=%.4f, rms=%.4f".format(
+                            durationSec, peak, rms
+                        )
             )
+
+            if (peak < 0.001f) {
+                Log.e(TAG, "🔇 WARNING: Audio is SILENT (peak=$peak)")
+            } else if (peak < 0.05f) {
+                Log.e(
+                    TAG,
+                    "🔉 WARNING: Audio is very quiet (peak=$peak). " +
+                            "Whisper may struggle."
+                )
+            } else {
+                Log.e(TAG, "✅ Audio level OK (peak=$peak)")
+            }
+
+            if (durationSec < 1.0f) {
+                Log.e(
+                    TAG,
+                    "⚠️ WARNING: Audio shorter than 1 second " +
+                            "(duration=${durationSec}s)"
+                )
+            }
 
             result
         } catch (t: Throwable) {
