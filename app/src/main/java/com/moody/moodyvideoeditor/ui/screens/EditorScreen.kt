@@ -1806,40 +1806,36 @@ fun EditorScreen(
                 isProcessing = isGeneratingCaptions,
                 progress = captionProgress,
                 statusMessage = captionStatus,
-                downloadedModels = downloadedModels,      // ✅ yeh add karo
+                isModelDownloaded = WhisperModelManager.isTinyReady(context),
                 hasClipSelected = selected != null,
                 generatedCaptions = generatedCaptions,
                 detectedLanguage = detectedCaptionLanguage,
-                onDownloadModel = { fileName ->
+                onDownloadModel = {
                     captionJob?.cancel()
                     captionJob = coroutineScope.launch {
                         isGeneratingCaptions = true
                         captionProgress = 0f
-
-                        val resumed = WhisperModelManager.hasPartialDownload(context, fileName)
-                        captionStatus = if (resumed)
-                            "Resuming $fileName…" else "Downloading $fileName…"
+                        captionStatus = "Downloading model…"
 
                         val ok = WhisperModelManager.downloadModel(
                             context = context,
-                            fileName = fileName,
+                            fileName = WhisperModelManager.MODEL_TINY,
                             onProgress = { p ->
                                 captionProgress = p
-                                captionStatus = if (resumed)
-                                    "Resuming… ${(p * 100).toInt()}%"
-                                else "Downloading… ${(p * 100).toInt()}%"
+                                captionStatus = "Downloading… ${(p * 100).toInt()}%"
                             }
                         )
 
                         isGeneratingCaptions = false
                         captionProgress = 0f
-                        if (ok) {
-                            downloadedModels = downloadedModels + fileName
-                            captionStatus = "✅ Model ready"
-                            delay(1000)
-                            captionStatus = ""
+                        captionStatus = if (ok) {
+                            "✅ Model ready"
                         } else {
-                            captionStatus = "❌ Download failed — tap Resume"
+                            "❌ Download failed — try again"
+                        }
+                        if (ok) {
+                            delay(1500)
+                            captionStatus = ""
                         }
                     }
                 },
@@ -1848,14 +1844,14 @@ fun EditorScreen(
                     captionJob = null
                     isGeneratingCaptions = false
                     captionProgress = 0f
-                    captionStatus = "⏸ Paused — tap Resume"
+                    captionStatus = "⏸ Paused — tap Download again"
                 },
-                onDeleteModel = { fileName ->
-                    WhisperModelManager.deleteModel(context, fileName)
-                    downloadedModels = downloadedModels - fileName
+                onDeleteModel = {
+                    WhisperModelManager.deleteModel(
+                        context, WhisperModelManager.MODEL_TINY
+                    )
                 },
-
-                onGenerateCaptions = { language, modelFile, grouping ->
+                onGenerateCaptions = { grouping ->
                     val sel = selected
                     if (sel != null) {
                         captionJob?.cancel()
@@ -1867,8 +1863,8 @@ fun EditorScreen(
                             val res = CaptionGenerator.generate(
                                 context = context,
                                 clip = sel,
-                                language = language,
-                                modelFile = modelFile,
+                                language = "auto",     // ← always auto
+                                modelFile = WhisperModelManager.MODEL_TINY,
                                 grouping = grouping,
                                 viewModel = viewModel,
                                 onStatus = { captionStatus = it },
@@ -1876,15 +1872,16 @@ fun EditorScreen(
                             )
 
                             if (res.success) {
-                                captionStatus = "✅ ${res.segmentsAdded} captions (${res.detectedLanguage})"
+                                captionStatus =
+                                    "✅ ${res.segmentsAdded} captions"
                                 generatedCaptions = res.segments
                                 detectedCaptionLanguage = res.detectedLanguage
                                 delay(800)
                                 isGeneratingCaptions = false
                                 captionStatus = ""
-                                // panel stays open for copy
                             } else {
-                                captionStatus = "❌ ${res.errorMessage ?: "Failed"}"
+                                captionStatus =
+                                    "❌ ${res.errorMessage ?: "Failed"}"
                                 isGeneratingCaptions = false
                             }
                         }

@@ -28,10 +28,6 @@ Java_com_moody_moodyvideoeditor_utils_WhisperEngine_nativeInit(
 
     auto *wctx = new WhisperContext();
 
-    // ═══════════════════════════════════════════════════════════
-    //  whisper.cpp v1.6.2 CONTEXT PARAMS
-    //  (use_mmap, dtw_*, etc. later versions mein hain)
-    // ═══════════════════════════════════════════════════════════
     struct whisper_context_params cparams = whisper_context_default_params();
     cparams.use_gpu = false;
     cparams.flash_attn = false;
@@ -47,7 +43,7 @@ Java_com_moody_moodyvideoeditor_utils_WhisperEngine_nativeInit(
     }
 
     wctx->is_loaded = true;
-    LOGI("✅ Whisper model loaded successfully");
+    LOGI("✅ Whisper model loaded");
     return reinterpret_cast<jlong>(wctx);
 }
 
@@ -87,21 +83,17 @@ Java_com_moody_moodyvideoeditor_utils_WhisperEngine_nativeTranscribe(
         return env->NewStringUTF("{\"error\":\"empty_pcm\"}");
     }
 
-    // ─── Audio sanity check ───
+    // ─── Sanity check ───
     float peak = 0.0f;
-    double sumSq = 0.0;
     for (jsize i = 0; i < pcmSize; i++) {
-        float v = pcmData[i];
-        float a = v < 0 ? -v : v;
+        float a = pcmData[i] < 0 ? -pcmData[i] : pcmData[i];
         if (a > peak) peak = a;
-        sumSq += (double)v * (double)v;
     }
-    double rms = (pcmSize > 0) ? sqrt(sumSq / (double)pcmSize) : 0.0;
-    LOGE("📊 PCM chunk: size=%d, peak=%.4f, rms=%.4f, dur=%.2fs",
-         (int)pcmSize, peak, rms, (double)pcmSize / 16000.0);
+    LOGE("📊 PCM: size=%d, peak=%.4f, dur=%.2fs",
+         (int)pcmSize, peak, (double)pcmSize / 16000.0);
 
     if (peak < 0.001f) {
-        LOGE("🔇 Silent chunk — skipping inference");
+        LOGE("🔇 Silent PCM — skipping");
         env->ReleaseFloatArrayElements(pcmArray, pcmData, JNI_ABORT);
         return env->NewStringUTF("{\"error\":\"silent\"}");
     }
@@ -109,30 +101,41 @@ Java_com_moody_moodyvideoeditor_utils_WhisperEngine_nativeTranscribe(
     struct whisper_full_params params =
             whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
 
+    // ─── Language setup ───
     std::string langStr;
     if (language != nullptr) {
-        const char *langChars = env->GetStringUTFChars(language, nullptr);
-        langStr = std::string(langChars);
-        env->ReleaseStringUTFChars(language, langChars);
+        const char *lc = env->GetStringUTFChars(language, nullptr);
+        langStr = std::string(lc);
+        env->ReleaseStringUTFChars(language, lc);
     }
 
     bool autoDetect = (langStr == "auto" || langStr.empty());
+
+    // ═══════════════════════════════════════════════════════════
+    //  AUTO-DETECT LANGUAGE (v1.6.2 correct way)
+    //  - Set language = "auto" (string sentinel)
+    //  - Set detect_language = true
+    //  Whisper will detect from first ~30s and use that language
+    // ═══════════════════════════════════════════════════════════
     if (autoDetect) {
         params.language = "auto";
         params.detect_language = true;
+        LOGE("🌐 Auto-detect mode");
     } else {
-        params.language = langStr.c_str();
+        // Local string storage so pointer remains valid during whisper_full
+        static thread_local std::string langStorage;
+        langStorage = langStr;
+        params.language = langStorage.c_str();
         params.detect_language = false;
+        LOGE("🎯 Forced language: %s", langStorage.c_str());
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  CRASH-SAFE THREADING
-    //    Mobile: 2 threads = stable. 8 threads = crash.
-    // ═══════════════════════════════════════════════════════════
+    // ─── Threading — 2 threads for stability ───
     int cores = (int)sysconf(_SC_NPROCESSORS_ONLN);
-    int useThreads = (cores >= 4) ? 2 : 1;   // ← 2 max for stability
+    int useThreads = (cores >= 4) ? 2 : 1;
     params.n_threads = useThreads;
 
+    // ─── Standard settings ───
     params.print_progress = false;
     params.print_realtime = false;
     params.print_timestamps = false;
@@ -140,46 +143,58 @@ Java_com_moody_moodyvideoeditor_utils_WhisperEngine_nativeTranscribe(
     params.translate = false;
     params.no_context = true;
     params.single_segment = false;
-
-    // ─── Safe speedups ───
     params.token_timestamps = true;
     params.suppress_blank = true;
-
-    // ─── Greedy (fastest) ───
     params.greedy.best_of = 1;
 
-    LOGE("▶️ whisper_full: threads=%d, samples=%d, lang=%s",
-         useThreads, (int)pcmSize,
-         autoDetect ? "auto" : langStr.c_str());
+    LOGE("▶️ whisper_full: threads=%d, samples=%d, auto=%d",
+         useThreads, (int)pcmSize, autoDetect ? 1 : 0);
 
     int result = whisper_full(wctx->ctx, params, pcmData, pcmSize);
 
     env->ReleaseFloatArrayElements(pcmArray, pcmData, JNI_ABORT);
 
     if (result != 0) {
-        LOGE("❌ whisper_full error code: %d", result);
+        LOGE("❌ whisper_full failed: %d", result);
         return env->NewStringUTF("{\"error\":\"inference_failed\"}");
     }
 
+    // ─── Get detected language ───
     std::string detectedLang = "unknown";
-    if (autoDetect) {
-        int langId = whisper_full_lang_id(wctx->ctx);
-        if (langId >= 0) {
-            const char *s = whisper_lang_str(langId);
-            if (s != nullptr) detectedLang = s;
-        }
-    } else {
-        detectedLang = langStr;
+    int langId = whisper_full_lang_id(wctx->ctx);
+    if (langId >= 0) {
+        const char *s = whisper_lang_str(langId);
+        if (s != nullptr) detectedLang = s;
     }
 
+    int nSegments = whisper_full_n_segments(wctx->ctx);
+    LOGE("✅ Result: lang=%s, segments=%d",
+         detectedLang.c_str(), nSegments);
+
+    // ─── Fallback if auto-detect produced nothing ───
+    if (nSegments == 0 && autoDetect) {
+        LOGE("⚠️ Auto-detect produced 0 segments — retrying with English");
+
+        // Second pass with English
+        params.language = "en";
+        params.detect_language = false;
+
+        jfloat *pcmData2 = env->GetFloatArrayElements(pcmArray, nullptr);
+        result = whisper_full(wctx->ctx, params, pcmData2, pcmSize);
+        env->ReleaseFloatArrayElements(pcmArray, pcmData2, JNI_ABORT);
+
+        if (result == 0) {
+            nSegments = whisper_full_n_segments(wctx->ctx);
+            detectedLang = "en";
+            LOGE("🇬🇧 English retry: %d segments", nSegments);
+        }
+    }
+
+    // ─── Build JSON ───
     std::ostringstream json;
     json << "{\"lang\":\"" << detectedLang << "\",\"segments\":[";
 
-    int nSegments = whisper_full_n_segments(wctx->ctx);
     bool first = true;
-
-    LOGE("✅ whisper_full produced %d segments", nSegments);
-
     for (int i = 0; i < nSegments; i++) {
         const char *text = whisper_full_get_segment_text(wctx->ctx, i);
         int64_t t0 = whisper_full_get_segment_t0(wctx->ctx, i);

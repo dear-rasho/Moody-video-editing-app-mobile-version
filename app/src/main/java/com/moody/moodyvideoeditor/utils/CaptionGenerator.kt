@@ -7,15 +7,11 @@ import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.viewmodel.EditorViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 
 object CaptionGenerator {
 
     private const val TAG = "CaptionGenerator"
 
-    // ═══════════════════════════════════════════════════════════
-    //  GROUPING MODES
-    // ═══════════════════════════════════════════════════════════
     enum class GroupingMode(val key: String, val label: String, val icon: String) {
         WORD("word", "Word by Word", "🔤"),
         PHRASE("phrase", "Short Phrase (3-5)", "📝"),
@@ -41,11 +37,9 @@ object CaptionGenerator {
         onProgress: (Float) -> Unit
     ): Result {
         try {
-            // ═══════════════════════════════════════════════════════
-            //  1. LOAD MODEL
-            // ═══════════════════════════════════════════════════════
+            // ─── Load model ───
             onStatus("Loading model…")
-            onProgress(0.02f)
+            onProgress(0.05f)
 
             val modelFileRef = WhisperModelManager.getModelFile(context, modelFile)
             if (!modelFileRef.exists()) {
@@ -58,11 +52,9 @@ object CaptionGenerator {
             if (!loaded) {
                 return Result(false, 0, "", emptyList(), "Model load failed")
             }
-            onProgress(0.08f)
+            onProgress(0.15f)
 
-            // ═══════════════════════════════════════════════════════
-            //  2. EXTRACT PCM
-            // ═══════════════════════════════════════════════════════
+            // ─── Extract PCM ───
             onStatus("Extracting audio…")
             val pcm = withContext(Dispatchers.IO) {
                 WhisperAudioExtractor.extractPcm(context, clip.uri)
@@ -71,66 +63,57 @@ object CaptionGenerator {
                 return Result(false, 0, "", emptyList(), "Audio extraction failed")
             }
 
-            val audioDurationSec = pcm.size.toFloat() / 16000f
+            val durationSec = pcm.size.toFloat() / 16000f
             Log.e(
                 TAG,
-                "📊 Audio extracted: ${pcm.size} samples (${"%.2f".format(audioDurationSec)}s)"
+                "📊 Audio: ${pcm.size} samples, " +
+                        "${"%.2f".format(durationSec)}s"
             )
 
-            if (audioDurationSec < 0.5f) {
+            if (durationSec < 0.5f) {
                 return Result(
                     false, 0, "", emptyList(),
                     "Audio too short (< 0.5s)"
                 )
             }
 
-            onProgress(0.15f)
+            onProgress(0.30f)
 
-            // ═══════════════════════════════════════════════════════
-            //  3. TRANSCRIBE (CHUNKED, 10s chunks)
-            //     Progress map: 0.15 → 0.90
-            // ═══════════════════════════════════════════════════════
-            onStatus("Transcribing… (${"%.1f".format(audioDurationSec)}s audio)")
+            // ─── Transcribe (single-pass) ───
+            onStatus("Transcribing… (${"%.1f".format(durationSec)}s)")
+            onProgress(0.35f)
 
             val result = withContext(Dispatchers.Default) {
-                WhisperEngine.transcribeChunked(
-                    pcm = pcm,
-                    language = language,
-                    onProgress = { chunkProgress ->
-                        // 0.15 → 0.90 during chunks
-                        val mapped = 0.15f + chunkProgress * 0.75f
-                        onProgress(mapped)
-                    }
-                )
+                WhisperEngine.transcribe(pcm, language)
             }
+
+            onProgress(0.85f)
 
             if (result.isEmpty) {
                 onProgress(1f)
-                Log.e(TAG, "❌ No segments produced (lang=${result.language})")
+                Log.e(TAG, "❌ No segments (lang=${result.language})")
                 return Result(
                     success = false,
                     segmentsAdded = 0,
                     detectedLanguage = result.language,
                     segments = emptyList(),
-                    errorMessage = "No speech detected " +
-                            "(audio may be silent, too quiet, or non-verbal)"
+                    errorMessage = "No speech detected — audio may be silent, " +
+                            "too quiet, or non-verbal"
                 )
             }
 
             Log.e(
                 TAG,
-                "✅ Transcription: ${result.segments.size} raw segments, " +
+                "✅ Transcribed: ${result.segments.size} raw segments, " +
                         "lang=${result.language}"
             )
 
-            // ═══════════════════════════════════════════════════════
-            //  4. GROUPING
-            // ═══════════════════════════════════════════════════════
+            // ─── Grouping ───
             onStatus("Grouping captions…")
             val grouped = groupSegments(result.segments, grouping)
             Log.e(
                 TAG,
-                "🔀 Grouped ${result.segments.size} → ${grouped.size} captions " +
+                "🔀 Grouped ${result.segments.size} → ${grouped.size} " +
                         "(${grouping.key})"
             )
 
@@ -138,18 +121,15 @@ object CaptionGenerator {
                 onProgress(1f)
                 return Result(
                     false, 0, result.language, emptyList(),
-                    "Grouping produced no captions"
+                    "No captions after grouping"
                 )
             }
 
             onProgress(0.92f)
 
-            // ═══════════════════════════════════════════════════════
-            //  5. ADD TEXT LAYERS
-            // ═══════════════════════════════════════════════════════
+            // ─── Add text layers ───
             onStatus("Adding ${grouped.size} text layers…")
-
-            var addedCount = 0
+            var added = 0
             grouped.forEach { seg ->
                 try {
                     viewModel.createTextClipAtTime(
@@ -172,32 +152,29 @@ object CaptionGenerator {
                         startMs = clip.timelineStartMs + seg.startMs,
                         endMs = clip.timelineStartMs + seg.endMs
                     )
-                    addedCount++
+                    added++
                 } catch (t: Throwable) {
-                    Log.e(TAG, "Failed to add caption \"${seg.text}\"", t)
+                    Log.e(TAG, "Failed to add \"${seg.text}\"", t)
                 }
             }
 
             onProgress(1f)
-            Log.e(TAG, "🎉 Complete: $addedCount / ${grouped.size} layers added")
+            Log.e(TAG, "🎉 Complete: $added / ${grouped.size} layers added")
 
             return Result(
                 success = true,
-                segmentsAdded = addedCount,
+                segmentsAdded = added,
                 detectedLanguage = result.language,
                 segments = grouped
             )
         } catch (t: Throwable) {
             Log.e(TAG, "💥 generate failed", t)
-            return Result(
-                false, 0, "", emptyList(),
-                t.message ?: "Unknown error"
-            )
+            return Result(false, 0, "", emptyList(), t.message ?: "Unknown error")
         }
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  GROUPING LOGIC
+    //  GROUPING
     // ═══════════════════════════════════════════════════════════
 
     private fun groupSegments(
@@ -211,31 +188,23 @@ object CaptionGenerator {
         }
     }
 
-    /**
-     * Split a caption segment into individual words.
-     * Time is distributed evenly across all words.
-     */
     private fun splitIntoWords(seg: CaptionSegment): List<CaptionSegment> {
         val words = seg.text.split(Regex("\\s+")).filter { it.isNotBlank() }
         if (words.isEmpty()) return emptyList()
         if (words.size == 1) return listOf(seg)
 
         val totalMs = (seg.endMs - seg.startMs).coerceAtLeast(100L)
-        val perWordMs = totalMs / words.size
+        val perWord = totalMs / words.size
 
-        return words.mapIndexed { idx, w ->
+        return words.mapIndexed { i, w ->
             CaptionSegment(
-                startMs = seg.startMs + idx * perWordMs,
-                endMs = seg.startMs + (idx + 1) * perWordMs,
+                startMs = seg.startMs + i * perWord,
+                endMs = seg.startMs + (i + 1) * perWord,
                 text = w
             )
         }
     }
 
-    /**
-     * Split a caption segment into phrase chunks (3-5 words each).
-     * Last chunk absorbs remaining if too small (< minWords).
-     */
     private fun splitIntoPhrases(
         seg: CaptionSegment,
         minWords: Int,
@@ -250,26 +219,26 @@ object CaptionGenerator {
         var i = 0
         while (i < words.size) {
             val remaining = words.size - i
-            val chunkSize = when {
+            val size = when {
                 remaining <= maxWords -> remaining
                 remaining - maxWords < minWords -> remaining
                 else -> maxWords
             }
-            chunks.add(words.subList(i, i + chunkSize))
-            i += chunkSize
+            chunks.add(words.subList(i, i + size))
+            i += size
         }
 
         val totalWords = words.size
-        var cursorMs = seg.startMs
+        var cursor = seg.startMs
         return chunks.map { chunk ->
-            val chunkDur = (totalMs * chunk.size / totalWords).coerceAtLeast(100L)
-            val result = CaptionSegment(
-                startMs = cursorMs,
-                endMs = (cursorMs + chunkDur).coerceAtMost(seg.endMs),
+            val dur = (totalMs * chunk.size / totalWords).coerceAtLeast(100L)
+            val r = CaptionSegment(
+                startMs = cursor,
+                endMs = (cursor + dur).coerceAtMost(seg.endMs),
                 text = chunk.joinToString(" ")
             )
-            cursorMs += chunkDur
-            result
+            cursor += dur
+            r
         }
     }
 }

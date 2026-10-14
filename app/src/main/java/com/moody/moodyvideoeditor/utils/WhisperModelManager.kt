@@ -14,11 +14,10 @@ object WhisperModelManager {
     private const val TAG = "WhisperModel"
 
     // ═══════════════════════════════════════════════════════════
-    //  MODELS
+    //  SINGLE MODEL — Tiny (75 MB)
+    //  Auto-detect language → no manual selection needed
     // ═══════════════════════════════════════════════════════════
     const val MODEL_TINY = "ggml-tiny.bin"
-    const val MODEL_BASE = "ggml-base.bin"
-    const val MODEL_SMALL = "ggml-small.bin"
 
     private const val BASE_URL =
         "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
@@ -38,20 +37,6 @@ object WhisperModelManager {
             sizeBytes = 75L * 1024 * 1024,
             speedLabel = "~10x faster",
             qualityLabel = "Basic accuracy"
-        ),
-        ModelInfo(
-            fileName = MODEL_BASE,
-            label = "Balanced",
-            sizeBytes = 142L * 1024 * 1024,
-            speedLabel = "~3x faster",
-            qualityLabel = "Good accuracy"
-        ),
-        ModelInfo(
-            fileName = MODEL_SMALL,
-            label = "Accurate",
-            sizeBytes = 466L * 1024 * 1024,
-            speedLabel = "Slow",
-            qualityLabel = "Best accuracy"
         )
     )
 
@@ -69,15 +54,13 @@ object WhisperModelManager {
 
     fun isModelDownloaded(context: Context, fileName: String): Boolean {
         val f = getModelFile(context, fileName)
-        // Minimum size varies per model
-        val minSize = when (fileName) {
-            MODEL_TINY -> 50L * 1024 * 1024
-            MODEL_BASE -> 100L * 1024 * 1024
-            MODEL_SMALL -> 400L * 1024 * 1024
-            else -> 50L * 1024 * 1024
-        }
+        val minSize = 70L * 1024 * 1024   // 70 MB minimum
         return f.exists() && f.length() >= minSize
     }
+
+    // Convenience — Tiny only
+    fun isTinyReady(context: Context): Boolean =
+        isModelDownloaded(context, MODEL_TINY)
 
     fun hasPartialDownload(context: Context, fileName: String): Boolean {
         val p = getPartialFile(context, fileName)
@@ -170,7 +153,7 @@ object WhisperModelManager {
             conn.disconnect()
 
             val finalLen = partial.length()
-            if (finalLen < 30L * 1024 * 1024) {
+            if (finalLen < 70L * 1024 * 1024) {
                 Log.e(TAG, "Downloaded file too small: $finalLen")
                 return@withContext false
             }
@@ -182,9 +165,10 @@ object WhisperModelManager {
             }
 
             onProgress(1f)
-            Log.e(TAG, "✅ Downloaded: $fileName (${
-                target.length() / 1024 / 1024
-            } MB)")
+            Log.e(
+                TAG,
+                "✅ Downloaded: $fileName (${target.length() / 1024 / 1024} MB)"
+            )
             true
         } catch (t: Throwable) {
             Log.e(TAG, "downloadModel failed (partial kept)", t)
