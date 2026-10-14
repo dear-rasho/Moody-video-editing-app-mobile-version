@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "com.moody.moodyvideoeditor"
     compileSdk = 37
+    ndkVersion = "25.1.8937393"
 
     defaultConfig {
         applicationId = "com.moody.moodyvideoeditor"
@@ -21,6 +22,22 @@ android {
         // ═══════════════════════════════════════════════════════
         ndk {
             abiFilters += listOf("arm64-v8a")
+            externalNativeBuild {
+                cmake {
+                    cppFlags += "-std=c++17"
+                    arguments += "-DANDROID_STL=c++_shared"
+                }
+            }
+
+            ndk {
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
         }
     }
 

@@ -289,7 +289,6 @@ private fun PromptContent() {
                         )
                     }
 
-                    // Expand toggle
                     Box(
                         modifier = Modifier
                             .size(28.dp)
@@ -310,7 +309,6 @@ private fun PromptContent() {
                         )
                     }
 
-                    // Copy button
                     Box(
                         modifier = Modifier
                             .height(28.dp)
@@ -342,7 +340,6 @@ private fun PromptContent() {
                     }
                 }
 
-                // Expanded content
                 if (isExpanded) {
                     Box(
                         modifier = Modifier
@@ -370,7 +367,6 @@ private fun PromptContent() {
             }
         }
 
-        // ─── Reset copy indicators ───
         LaunchedEffect(copiedChunkId) {
             if (copiedChunkId != null) {
                 delay(2000)

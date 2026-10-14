@@ -1,7 +1,8 @@
 @file:OptIn(androidx.media3.common.util.UnstableApi::class)
 
 package com.moody.moodyvideoeditor.ui.screens
-import com.moody.moodyvideoeditor.ui.features.BlendModePanel
+
+import com.moody.moodyvideoeditor.utils.CaptionGenerator
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
@@ -33,6 +34,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,6 +56,7 @@ import com.moody.moodyvideoeditor.data.ColorWheelState
 import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.data.RatioLibrary
+import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.data.TransitionState
 import com.moody.moodyvideoeditor.data.VisualizerState
 import com.moody.moodyvideoeditor.ui.components.ControlBar
@@ -66,7 +69,9 @@ import com.moody.moodyvideoeditor.ui.features.AdjustmentsPanel
 import com.moody.moodyvideoeditor.ui.features.AnimationsPanel
 import com.moody.moodyvideoeditor.ui.features.AspectRatioPanel
 import com.moody.moodyvideoeditor.ui.features.AudioPanel
+import com.moody.moodyvideoeditor.ui.features.AutoCaptionsPanel
 import com.moody.moodyvideoeditor.ui.features.BeatsPanel
+import com.moody.moodyvideoeditor.ui.features.BlendModePanel
 import com.moody.moodyvideoeditor.ui.features.BrushPanel
 import com.moody.moodyvideoeditor.ui.features.ChromaKeyPanel
 import com.moody.moodyvideoeditor.ui.features.ColorMattePanel
@@ -95,19 +100,22 @@ import com.moody.moodyvideoeditor.utils.BrushConfigHolder
 import com.moody.moodyvideoeditor.utils.CropEngine
 import com.moody.moodyvideoeditor.utils.PromptEngine
 import com.moody.moodyvideoeditor.utils.PromptExecutor
+import com.moody.moodyvideoeditor.utils.SettingsConsumer
 import com.moody.moodyvideoeditor.utils.SpeedEngine
 import com.moody.moodyvideoeditor.utils.TransformApplier
 import com.moody.moodyvideoeditor.utils.TransformValues
 import com.moody.moodyvideoeditor.utils.VideoUtils
 import com.moody.moodyvideoeditor.utils.VisualizerEngine
+import com.moody.moodyvideoeditor.utils.WhisperModelManager
 import com.moody.moodyvideoeditor.viewmodel.EditorViewModel
 import com.moody.moodyvideoeditor.viewmodel.ExportUiStateBundle
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
-
 
 private data class MediaInfo(
     val name: String,
@@ -126,8 +134,8 @@ fun EditorScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
-    // Observe export state from service
     val exportState by viewModel.exportState.collectAsState()
 
     // ═══════════════════════════════════════════════════════════
@@ -157,8 +165,7 @@ fun EditorScreen(
         }
     }
 
-    val settings by com.moody.moodyvideoeditor.utils.SettingsConsumer
-        .current.collectAsState()
+    val settings by SettingsConsumer.current.collectAsState()
 
     LaunchedEffect(
         state.clips,
@@ -189,12 +196,9 @@ fun EditorScreen(
     var effectEditLayerId by remember { mutableStateOf<String?>(null) }
     var matteEditLayerId by remember { mutableStateOf<String?>(null) }
 
-
-    // Mask state — local (only UI concern)
     var isMaskPenMode by remember { mutableStateOf(false) }
     var isMaskHandMode by remember { mutableStateOf(false) }
 
-    // Brush state — shared via BrushConfigHolder so Code Mode can control it
     val brushConfig by BrushConfigHolder.config.collectAsState()
     val isDrawingMode = brushConfig.isDrawingMode
     val brushType = brushConfig.type
@@ -202,28 +206,42 @@ fun EditorScreen(
     val brushWidth = brushConfig.width
     val brushOpacity = brushConfig.opacity
     val brushGradient = brushConfig.gradient
-    // Import state
+
     var pendingUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var pendingVizImageUri by remember { mutableStateOf<String?>(null) }
 
-    // Visualizer detection state
     var isDetectingBeats by remember { mutableStateOf(false) }
     var beatDetectionProgress by remember { mutableFloatStateOf(0f) }
     var beatDetectionError by remember { mutableStateOf<String?>(null) }
 
-    // Export dialog state
     var exportStartMs by remember { mutableLongStateOf(0L) }
     var exportEndMs by remember { mutableLongStateOf(0L) }
     var useCustomRange by remember { mutableStateOf(false) }
     var showCancelConfirm by remember { mutableStateOf(false) }
 
-    // Prompt state
     var promptFeedback by remember { mutableStateOf("") }
     var promptFeedbackType by remember { mutableStateOf("none") }
 
-    // Playback state
     var isPlaybackActive by remember { mutableStateOf(false) }
 
+    // 📝 Auto Captions state
+    var captionProgress by remember { mutableFloatStateOf(0f) }
+    var captionStatus by remember { mutableStateOf("") }
+    var isGeneratingCaptions by remember { mutableStateOf(false) }
+    var captionJob by remember { mutableStateOf<Job?>(null) }
+
+    var generatedCaptions by remember {
+        mutableStateOf<List<com.moody.moodyvideoeditor.utils.CaptionSegment>>(emptyList())
+    }
+    var detectedCaptionLanguage by remember { mutableStateOf("") }
+    var downloadedModels by remember {
+        mutableStateOf(
+            WhisperModelManager.MODELS
+                .filter { WhisperModelManager.isModelDownloaded(context, it.fileName) }
+                .map { it.fileName }
+                .toSet()
+        )
+    }
     // ═══════════════════════════════════════════════════════════
     //  EXOPLAYERS
     // ═══════════════════════════════════════════════════════════
@@ -243,14 +261,12 @@ fun EditorScreen(
         }
     }
 
-    // Visualizer cache cleanup
     DisposableEffect(Unit) {
         onDispose {
             VisualizerEngine.clearCache()
         }
     }
 
-    // Audio FX preview release on panel change
     LaunchedEffect(activePanel) {
         if (activePanel != "audiofx" && activePanel != "soundfx") {
             AudioPreviewEngine.release()
@@ -517,32 +533,24 @@ fun EditorScreen(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or
                         Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             )
-            Log.e("FOLDER_PICK", "Permission granted: $uri")
         } catch (e: Exception) {
             Log.e("FOLDER_PICK", "Permission failed: ${e.message}", e)
         }
         viewModel.setExportFolderUri(uri.toString())
-        Log.e("FOLDER_PICK", "Saved URI: $uri")
     }
 
     val vizImagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri == null) {
-            Log.e("VIZ_IMAGE", "User cancelled")
             return@rememberLauncherForActivityResult
         }
-
         try {
             context.contentResolver.takePersistableUriPermission(
                 uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
             )
-        } catch (e: Exception) {
-            Log.e("VIZ_IMAGE", "Permission failed", e)
+        } catch (_: Exception) {
         }
-
-        val name = VideoUtils.getFileName(context, uri).lowercase()
-        Log.e("VIZ_IMAGE", "Picked: $name ($uri)")
 
         val cacheUri = try {
             val cacheFile = java.io.File(
@@ -553,13 +561,11 @@ fun EditorScreen(
                 cacheFile.outputStream().use { out -> input.copyTo(out) }
             }
             Uri.fromFile(cacheFile)
-        } catch (e: Exception) {
-            Log.e("VIZ_IMAGE", "Cache copy failed, using original", e)
+        } catch (_: Exception) {
             uri
         }
 
         pendingVizImageUri = cacheUri.toString()
-        Log.e("VIZ_IMAGE", "Final URI: $cacheUri")
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -594,7 +600,7 @@ fun EditorScreen(
                                             .use { output -> input.copyTo(output) }
                                     }
                                 Uri.fromFile(cacheFile)
-                            } catch (e: Exception) {
+                            } catch (_: Exception) {
                                 uri
                             }
                         } else uri
@@ -673,7 +679,7 @@ fun EditorScreen(
         beatDetectionProgress = 0f
         beatDetectionError = null
 
-        kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
+        CoroutineScope(Dispatchers.Main).launch {
             try {
                 val success = viewModel.createVisualizerClipWithBeats(context)
                 isDetectingBeats = false
@@ -688,6 +694,1222 @@ fun EditorScreen(
                 beatDetectionError = "Failed: ${e.message}"
                 Log.e("VISUALIZER", "Create failed", e)
             }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  PANEL HOST — local @Composable (keeps EditorScreen small)
+    //  JVM has a 64KB method limit; extracting this block prevents
+    //  "Method too large" compile errors as the file grows.
+    // ═══════════════════════════════════════════════════════════
+    @Composable
+    fun EditorPanelHost() {
+        val selected = state.selectedClip
+
+        when (activePanel) {
+            null -> FeatureShelf(
+                onFeatureSelected = { key ->
+                    if (key == "filters") filterEditLayerId = null
+                    if (key == "effects") effectEditLayerId = null
+                    if (key == "wheel") viewModel.prepareColorWheelLayer()
+                    activePanel = key
+                },
+                scrollState = featureScrollState
+            )
+
+            "code" -> PromptPanel(
+                feedback = promptFeedback,
+                feedbackType = promptFeedbackType,
+                onApply = { input -> runPrompt(input) },
+                onClear = {
+                    promptFeedback = ""
+                    promptFeedbackType = "none"
+                },
+                onClose = { activePanel = null }
+            )
+
+            "trim" -> TrimPanel(
+                clipName = selected?.name ?: "",
+                clipStartMs = selected?.timelineStartMs ?: 0L,
+                clipEndMs = selected?.timelineEndMs ?: 0L,
+                playheadMs = state.currentPosMs,
+                sourceInMs = selected?.sourceStartMs ?: 0L,
+                sourceOutMs = selected?.sourceEndMs ?: 0L,
+                hasClipSelected = selected?.isVisualClip == true,
+                playheadInsideClip = selected?.let {
+                    state.currentPosMs > it.timelineStartMs &&
+                            state.currentPosMs < it.timelineEndMs
+                } ?: false,
+                onClose = { activePanel = null },
+                onTrimLeft = { viewModel.trimLeft() },
+                onTrimRight = { viewModel.trimRight() },
+                onSplit = { viewModel.splitCurrentClip() }
+            )
+
+            "speed" -> SpeedPanel(
+                clipName = selected?.name ?: "",
+                baseDurationMs = viewModel.getSelectedBaseDurationMs(),
+                currentSpeed = selected?.speed ?: 1.0f,
+                hasClipSelected = selected != null,
+                onSpeedChanged = { viewModel.setSpeed(it) },
+                onReset = { viewModel.resetSpeed() },
+                onClose = { activePanel = null }
+            )
+
+            "text" -> TextPanel(
+                currentText = viewModel.getSelectedTextState(),
+                hasTextClipSelected = selected?.isTextClip == true ||
+                        state.multiSelectedIds.isNotEmpty(),
+                startInEdit = openTextEditor,
+                onTextChanged = { viewModel.updateSelectedText(it) },
+                onDraftTextChanged = { content ->
+                    viewModel.updateSelectedText(
+                        viewModel.getSelectedTextState().copy(content = content)
+                    )
+                },
+                onCreateNew = { viewModel.createTextClip() },
+                onRemove = { viewModel.removeSelectedText() },
+                onApplyTemplate = { templateId ->
+                    viewModel.applyTemplate(
+                        templateId = templateId,
+                        startMs = state.currentPosMs,
+                        canvasWidthPx = 720f
+                    )
+                    activePanel = null
+                },
+                onClose = {
+                    activePanel = null
+                    openTextEditor = false
+                }
+            )
+
+            "animations" -> AnimationsPanel(
+                currentAnimation = selected?.textState?.animation ?: "none",
+                currentDuration = selected?.textState?.animationDuration ?: 0.6f,
+                hasTextClipSelected = selected?.isTextClip == true ||
+                        state.multiSelectedIds.isNotEmpty(),
+                onAnimationSelected = { viewModel.setTextAnimation(it) },
+                onDurationChanged = {
+                    val st = viewModel.getSelectedTextState()
+                    viewModel.updateSelectedText(
+                        st.copy(animationDuration = it)
+                    )
+                },
+                onPreview = { exoPlayer.seekTo(0) },
+                onClose = { activePanel = null }
+            )
+
+            "matte" -> {
+                val editLayer = matteEditLayerId?.let { id ->
+                    state.clips.firstOrNull {
+                        it.id == id && it.isColorMatteClip
+                    }
+                }
+                ColorMattePanel(
+                    editLayerId = editLayer?.id,
+                    initialStyle = editLayer?.matteStyle
+                        ?: com.moody.moodyvideoeditor.data.ColorMatteStyle(),
+                    initialOpacity = editLayer?.filters?.opacity
+                        ?: com.moody.moodyvideoeditor.data.ColorMatteDefaults.DEFAULT_OPACITY,
+                    initialDurationMs = editLayer?.durationMs
+                        ?: com.moody.moodyvideoeditor.data.ColorMatteDefaults.DEFAULT_DURATION_MS,
+                    onApply = { style, opacity, durationMs ->
+                        viewModel.createColorMatte(
+                            color = style.solidColor,
+                            opacity = opacity,
+                            durationMs = durationMs,
+                            style = style
+                        )
+                        matteEditLayerId = null
+                    },
+                    onUpdate = { style, opacity, durationMs ->
+                        editLayer?.let {
+                            viewModel.updateColorMatte(
+                                it.id, style, opacity, durationMs
+                            )
+                        }
+                    },
+                    onDelete = {
+                        editLayer?.let { viewModel.removeColorMatte(it.id) }
+                        matteEditLayerId = null
+                        activePanel = null
+                    },
+                    onClose = {
+                        matteEditLayerId = null
+                        activePanel = null
+                    }
+                )
+            }
+
+            "filters" -> {
+                val editLayer = filterEditLayerId?.let { id ->
+                    state.clips.firstOrNull {
+                        it.id == id && it.isFilterLayerClip
+                    }
+                }
+                FiltersPanel(
+                    editLayerId = editLayer?.id,
+                    initialFilters = editLayer?.filters,
+                    previewClip = selected,
+                    previewTimeMs = state.currentPosMs,
+                    onPreviewFilters = { viewModel.setPreviewFilters(it) },
+                    onApplyAsLayer = { filters ->
+                        viewModel.createFilterLayer(filters)
+                        filterEditLayerId = null
+                    },
+                    onUpdateLayer = { filters ->
+                        editLayer?.let {
+                            viewModel.updateFilterLayer(it.id, filters)
+                        }
+                    },
+                    onDeleteLayer = {
+                        editLayer?.let {
+                            viewModel.removeFilterLayer(it.id)
+                        }
+                        filterEditLayerId = null
+                        activePanel = null
+                    },
+                    onClose = {
+                        viewModel.clearPreviewFilters()
+                        filterEditLayerId = null
+                        activePanel = null
+                    }
+                )
+            }
+
+            "effects" -> {
+                val editLayer = effectEditLayerId?.let { id ->
+                    state.clips.firstOrNull {
+                        it.id == id && it.isEffectClip
+                    }
+                }
+                EffectsPanel(
+                    editLayerId = editLayer?.id,
+                    initialEffectState = editLayer?.effectState,
+                    initialPresetKey = editLayer?.effectKeys?.firstOrNull(),
+                    onPreviewEffect = { key, intensity ->
+                        viewModel.setPreviewEffect(key, intensity)
+                    },
+                    onApplyAsLayer = { key, intensity ->
+                        viewModel.createEffectLayerAt(key, intensity)
+                        effectEditLayerId = null
+                    },
+                    onApplyOverlayLayer = { key, intensity, config ->
+                        viewModel.createEffectLayerAtWithConfig(key, intensity, config)
+                        effectEditLayerId = null
+                    },
+                    onUpdateIntensity = { intensity ->
+                        editLayer?.let {
+                            viewModel.updateEffectLayerIntensity(
+                                it.id, intensity
+                            )
+                        }
+                    },
+                    onOverlayPropertyChange = { key, config ->
+                        val preset = com.moody.moodyvideoeditor.data.EffectLibrary
+                            .findByKey(key)
+                        if (preset != null) {
+                            val currentPreview = viewModel.state.value.previewEffectState
+                            val updated = if (
+                                currentPreview != null &&
+                                currentPreview.presetKey == key
+                            ) {
+                                currentPreview.copy(overlay = config)
+                            } else {
+                                com.moody.moodyvideoeditor.data.EffectState(
+                                    kind = com.moody.moodyvideoeditor.data.EffectState.KIND_EFFECT,
+                                    presetKey = key,
+                                    overlay = config,
+                                    motion = preset.motion,
+                                    filters = preset.filters,
+                                    edgeGlow = preset.edgeGlow,
+                                    lightLeak = preset.lightLeak,
+                                    masterIntensity = 100f
+                                )
+                            }
+                            viewModel.setPreviewEffectFull(updated)
+                        }
+                    },
+                    onLightningPropertyChange = { key, config ->
+                        val currentPreview = viewModel.state.value.previewEffectState
+                        if (currentPreview != null &&
+                            currentPreview.presetKey == key &&
+                            currentPreview.lightning != null
+                        ) {
+                            viewModel.setPreviewEffectFull(
+                                currentPreview.copy(lightning = config)
+                            )
+                        }
+                        if (editLayer != null) {
+                            viewModel.updateClipEffectLightning(editLayer.id, config)
+                        }
+                    },
+                    onApplyLightningLayer = { key, intensity, config ->
+                        viewModel.createEffectLayerAt(key, intensity)
+                        val newLayer = viewModel.state.value.selectedClip
+                        if (newLayer != null && newLayer.isEffectClip) {
+                            viewModel.updateClipEffectLightning(newLayer.id, config)
+                        }
+                        effectEditLayerId = null
+                    },
+                    onParticlePropertyChange = { key, config ->
+                        val currentPreview = viewModel.state.value.previewEffectState
+                        if (currentPreview != null &&
+                            currentPreview.presetKey == key &&
+                            currentPreview.particle != null
+                        ) {
+                            viewModel.setPreviewEffectFull(
+                                currentPreview.copy(particle = config)
+                            )
+                        }
+                        if (editLayer != null) {
+                            viewModel.updateClipEffectParticle(editLayer.id, config)
+                        }
+                    },
+                    onApplyParticleLayer = { key, intensity, config ->
+                        viewModel.createEffectLayerAt(key, intensity)
+                        val newLayer = viewModel.state.value.selectedClip
+                        if (newLayer != null && newLayer.isEffectClip) {
+                            viewModel.updateClipEffectParticle(newLayer.id, config)
+                        }
+                        effectEditLayerId = null
+                    },
+                    onFirePropertyChange = { key, config ->
+                        val currentPreview = viewModel.state.value.previewEffectState
+                        if (currentPreview != null &&
+                            currentPreview.presetKey == key &&
+                            currentPreview.fire != null
+                        ) {
+                            viewModel.setPreviewEffectFull(
+                                currentPreview.copy(fire = config)
+                            )
+                        }
+                        if (editLayer != null) {
+                            viewModel.updateClipEffectFire(editLayer.id, config)
+                        }
+                    },
+                    onApplyFireLayer = { key, intensity, config ->
+                        viewModel.createEffectLayerAt(key, intensity)
+                        val newLayer = viewModel.state.value.selectedClip
+                        if (newLayer != null && newLayer.isEffectClip) {
+                            viewModel.updateClipEffectFire(newLayer.id, config)
+                        }
+                        effectEditLayerId = null
+                    },
+                    onDustPropertyChange = { key, config ->
+                        val currentPreview = viewModel.state.value.previewEffectState
+                        if (currentPreview != null &&
+                            currentPreview.presetKey == key &&
+                            currentPreview.dust != null
+                        ) {
+                            viewModel.setPreviewEffectFull(
+                                currentPreview.copy(dust = config)
+                            )
+                        }
+                        if (editLayer != null) {
+                            viewModel.updateClipEffectDust(editLayer.id, config)
+                        }
+                    },
+                    onApplyDustLayer = { key, intensity, config ->
+                        viewModel.createEffectLayerAt(key, intensity)
+                        val newLayer = viewModel.state.value.selectedClip
+                        if (newLayer != null && newLayer.isEffectClip) {
+                            viewModel.updateClipEffectDust(newLayer.id, config)
+                        }
+                        effectEditLayerId = null
+                    },
+                    onDeleteLayer = {
+                        editLayer?.let {
+                            viewModel.removeEffectLayer(it.id)
+                        }
+                        effectEditLayerId = null
+                        activePanel = null
+                    },
+                    onClose = {
+                        viewModel.clearPreviewEffect()
+                        effectEditLayerId = null
+                        activePanel = null
+                    }
+                )
+            }
+
+            "adjustments" -> AdjustmentsPanel(
+                adj = selected?.adjustments ?: AdjustmentData(),
+                onAdjChanged = { viewModel.updateSelectedAdjustment(it) },
+                onReset = { viewModel.resetAdjustments() },
+                onClose = { activePanel = null }
+            )
+
+            "wheel" -> ColorWheelPanel(
+                state = selected?.colorWheel ?: ColorWheelState(),
+                hasClipSelected = true,
+                onStateChanged = { newState ->
+                    selected?.let { viewModel.updateColorWheelLayer(it.id, newState) }
+                },
+                onRemove = { viewModel.removeSelectedColorWheelLayer() },
+                onClose = { activePanel = null }
+            )
+
+            "stickers" -> StickersPanel(
+                current = viewModel.getSelectedStickerState(),
+                hasStickerSelected = selected?.isStickerClip == true,
+                playheadMs = state.currentPosMs,
+                onStickerChanged = { viewModel.updateSelectedSticker(it) },
+                onEmojiTapped = { viewModel.addOrUpdateSticker(it) },
+                onRemove = { viewModel.removeSelectedSticker() },
+                onClose = { activePanel = null }
+            )
+
+            "overlays" -> OverlaysPanel(
+                current = selected?.overlay ?: OverlayState(),
+                hasClipSelected = true,
+                onStateChanged = { viewModel.updateSelectedOverlay(it) },
+                onRemove = { viewModel.removeSelectedOverlay() },
+                onClose = { activePanel = null }
+            )
+
+            "transitions" -> {
+                val selectedVisual = selected?.takeIf { it.isVisualClip }
+                val target = selectedVisual?.let { sel ->
+                    val hasLeft = state.clips.any { other ->
+                        other.id != sel.id && other.isVisualClip &&
+                                other.trackIndex == sel.trackIndex &&
+                                abs(other.timelineEndMs - sel.timelineStartMs) < 100L
+                    }
+                    if (hasLeft) sel
+                    else state.clips.filter { other ->
+                        other.id != sel.id && other.isVisualClip &&
+                                other.trackIndex == sel.trackIndex &&
+                                abs(other.timelineStartMs - sel.timelineEndMs) < 100L
+                    }.minByOrNull { it.timelineStartMs }
+                }
+
+                TransitionsPanel(
+                    current = target?.transition ?: TransitionState(),
+                    hasPairAvailable = target != null,
+                    hintText = when {
+                        selectedVisual == null ->
+                            "Pehle timeline pe ek video ya image clip select karo."
+
+                        target == null -> "Is clip ke saath koi adjacent clip chahiye."
+                        else -> "Transition lagao"
+                    },
+                    onTransitionChanged = { newState ->
+                        target?.let {
+                            viewModel.setTransitionForClip(it.id, newState)
+                        }
+                    },
+                    onRemove = {
+                        target?.let {
+                            viewModel.setTransitionForClip(
+                                it.id, TransitionState()
+                            )
+                        }
+                    },
+                    onClose = { activePanel = null }
+                )
+            }
+
+            "chroma" -> ChromaKeyPanel(
+                state = selected?.chroma ?: ChromaState(),
+                hasClipSelected = true,
+                onStateChanged = { viewModel.updateSelectedChroma(it) },
+                onRemove = { viewModel.removeSelectedChroma() },
+                onClose = { activePanel = null }
+            )
+
+            "mask" -> MaskPanel(
+                current = selected?.mask ?: MaskState(),
+                hasClipSelected = selected != null,
+                hasKeyframeAtPlayhead = viewModel.hasMaskKeyframeAtPlayhead(),
+                isPenMode = isMaskPenMode,
+                isHandMode = isMaskHandMode,
+                onStateChanged = { viewModel.updateMask(it) },
+                onTypeSelected = { viewModel.setMaskType(it) },
+                onAddKeyframe = { viewModel.addMaskKeyframe() },
+                onClearKeyframes = { viewModel.clearMaskKeyframes() },
+                onPenToolToggle = {
+                    isMaskPenMode = !isMaskPenMode
+                    if (isMaskPenMode) isMaskHandMode = false
+                },
+                onHandToolToggle = {
+                    isMaskHandMode = !isMaskHandMode
+                    if (isMaskHandMode) isMaskPenMode = false
+                },
+                onUndoPoint = { viewModel.removeLastMaskPoint() },
+                onClearPoints = { viewModel.clearMaskPoints() },
+                onClosedToggle = {
+                    val cur = selected?.mask ?: return@MaskPanel
+                    viewModel.setMaskClosed(!cur.customClosed)
+                },
+                onRemove = { viewModel.removeMask() },
+                onClose = {
+                    activePanel = null
+                    isMaskPenMode = false
+                    isMaskHandMode = false
+                }
+            )
+
+            "brush" -> {
+                val brushClip = selected?.takeIf { it.isBrushClip }
+                    ?: state.clips.lastOrNull { it.isBrushClip }
+                BrushPanel(
+                    isDrawing = isDrawingMode,
+                    activeType = brushType,
+                    activeColor = brushColor,
+                    activeWidth = brushWidth,
+                    activeOpacity = brushOpacity,
+                    activeGradient = brushGradient,
+                    strokeCount = brushClip?.brush?.strokes?.size ?: 0,
+                    hasBrushLayer = brushClip != null,
+                    onToggleDrawing = {
+                        BrushConfigHolder.update {
+                            it.copy(isDrawingMode = !it.isDrawingMode)
+                        }
+                    },
+                    onTypeChanged = { newType ->
+                        BrushConfigHolder.update { it.copy(type = newType) }
+                    },
+                    onColorChanged = { newColor ->
+                        BrushConfigHolder.update { it.copy(color = newColor) }
+                    },
+                    onWidthChanged = { newWidth ->
+                        BrushConfigHolder.update { it.copy(width = newWidth) }
+                    },
+                    onOpacityChanged = { newOpacity ->
+                        BrushConfigHolder.update { it.copy(opacity = newOpacity) }
+                    },
+                    onGradientChanged = { newGradient ->
+                        BrushConfigHolder.update { it.copy(gradient = newGradient) }
+                    },
+                    onUndoStroke = {
+                        brushClip?.let {
+                            viewModel.undoLastStrokeOnBrushClip(it.id)
+                        }
+                    },
+                    onClearStrokes = {
+                        brushClip?.let {
+                            viewModel.clearBrushClipStrokes(it.id)
+                        }
+                    },
+                    onCreateLayer = {
+                        viewModel.createBrushClip()
+                        BrushConfigHolder.update { it.copy(isDrawingMode = true) }
+                    },
+                    onClose = {
+                        activePanel = null
+                        BrushConfigHolder.update { it.copy(isDrawingMode = false) }
+                    }
+                )
+            }
+
+            "crop" -> CropPanel(
+                cropL = selected?.cropL ?: 0f,
+                cropR = selected?.cropR ?: 0f,
+                cropT = selected?.cropT ?: 0f,
+                cropB = selected?.cropB ?: 0f,
+                hasClipSelected =
+                    selected?.isVisualClip == true ||
+                            selected?.isColorMatteClip == true ||
+                            selected?.isTextClip == true ||
+                            selected?.isStickerClip == true ||
+                            selected?.isBrushClip == true ||
+                            selected?.isVisualizerClip == true ||
+                            state.multiSelectedIds.isNotEmpty(),
+                onCropChanged = { l, r, t, b ->
+                    viewModel.setCrop(l, r, t, b)
+                },
+                onAspectSelected = { key ->
+                    val q = CropEngine.presetFor(key, 16f, 9f)
+                    viewModel.setCrop(q.l, q.r, q.t, q.b)
+                },
+                onReset = { viewModel.setCrop(0f, 0f, 0f, 0f) },
+                onClose = { activePanel = null }
+            )
+
+            "transform" -> {
+                val hasAnySelected = selected != null ||
+                        state.multiSelectedIds.isNotEmpty()
+                val currentTimeSec = selected?.let {
+                    ((state.currentPosMs - it.timelineStartMs).toFloat() / 1000f)
+                        .coerceAtLeast(0f)
+                } ?: 0f
+                val clipDurSec = selected?.let { it.durationMs / 1000f } ?: 5f
+                val base = selected?.let { TransformApplier.baseOf(it) }
+                    ?: TransformValues()
+                TransformPanel(
+                    clipName = if (state.multiSelectedIds.size > 1)
+                        "${state.multiSelectedIds.size} clips"
+                    else selected?.name ?: "",
+                    hasClipSelected = hasAnySelected,
+                    base = base,
+                    keyframeMap = selected?.keyframes ?: emptyMap(),
+                    currentTimeSec = currentTimeSec,
+                    clipDurationSec = clipDurSec,
+                    onPropertyChanged = { prop, value ->
+                        viewModel.changeTransformProperty(prop, value)
+                    },
+                    onToggleKeyframe = { prop ->
+                        viewModel.toggleKeyframeAtPlayhead(prop)
+                    },
+                    onSetEase = { ease -> viewModel.setEaseAtPlayhead(ease) },
+                    onResetAll = { viewModel.resetAllSelectedTransforms() },
+                    onUpdateKeyframe = { prop, oldT, newT, newV ->
+                        viewModel.updateKeyframeInGraph(prop, oldT, newT, newV)
+                    },
+                    onDeleteKeyframe = { prop, t ->
+                        viewModel.deleteKeyframeFromGraph(prop, t)
+                    },
+                    onClose = { activePanel = null }
+                )
+            }
+
+            "volume" -> VolumePanel(
+                volume = state.volume,
+                isMuted = state.isMuted,
+                hasClipSelected = true,
+                onVolumeChanged = { viewModel.setVolume(it) },
+                onMuteToggle = { viewModel.toggleMute() },
+                onClose = { activePanel = null }
+            )
+
+            "audiofx" -> AudioPanel(
+                onPreviewFx = { fx, intensity ->
+                    AudioPreviewEngine.apply(
+                        exoPlayer, audioExoPlayer, fx, intensity
+                    )
+                },
+                onClearPreview = {
+                    AudioPreviewEngine.release()
+                    try {
+                        exoPlayer.playbackParameters =
+                            androidx.media3.common.PlaybackParameters(1f, 1f)
+                        audioExoPlayer.playbackParameters =
+                            androidx.media3.common.PlaybackParameters(1f, 1f)
+                    } catch (_: Throwable) {
+                    }
+                },
+                onApplyAudioFx = { fx, intensity ->
+                    viewModel.createAudioFxLayer(fx, intensity)
+                },
+                onClose = { activePanel = null }
+            )
+
+            "soundfx" -> {
+                AudioPanel(
+                    onPreviewFx = { fx, intensity ->
+                        AudioPreviewEngine.apply(
+                            exoPlayer, audioExoPlayer, fx, intensity
+                        )
+                    },
+                    onClearPreview = {
+                        AudioPreviewEngine.release()
+                        try {
+                            exoPlayer.playbackParameters =
+                                androidx.media3.common.PlaybackParameters(1f, 1f)
+                            audioExoPlayer.playbackParameters =
+                                androidx.media3.common.PlaybackParameters(1f, 1f)
+                        } catch (_: Throwable) {
+                        }
+                    },
+                    onApplyAudioFx = { fx, intensity ->
+                        viewModel.createAudioFxLayer(fx, intensity)
+                    },
+                    onClose = { activePanel = null }
+                )
+            }
+
+            "beats" -> BeatsPanel(
+                state = BeatsState(
+                    detected = state.beatsDetected,
+                    count = state.beatsCount,
+                    filter = state.beatsFilter
+                ),
+                viewModel = viewModel,
+                onDetect = { },
+                onClear = { viewModel.clearBeats() },
+                onClose = { activePanel = null }
+            )
+
+            "visualizer" -> {
+                val selectedAudioId: String? = selected?.takeIf {
+                    it.isAudio && !it.isAudioEffectClip
+                }?.id
+
+                val vizClip = selected?.takeIf { it.isVisualizerClip }
+                    ?: state.clips.firstOrNull { clip ->
+                        clip.isVisualizerClip &&
+                                selectedAudioId != null &&
+                                clip.visualizer?.linkedAudioClipId == selectedAudioId
+                    }
+
+                when {
+                    isDetectingBeats -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF1A1F3A))
+                                .padding(20.dp)
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text("🎵", fontSize = 36.sp)
+                                Text(
+                                    "Detecting beats...",
+                                    color = Color(0xFF60EFFF),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "Analyzing linked audio. This may take a few seconds.",
+                                    color = Color(0xFF888888),
+                                    fontSize = 10.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(Color(0xFF0F0F0F))
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(
+                                                beatDetectionProgress.coerceIn(0f, 1f)
+                                            )
+                                            .height(4.dp)
+                                            .background(Color(0xFF60EFFF))
+                                    )
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .height(36.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF181818))
+                                        .pointerInput(Unit) {
+                                            detectTapGestures {
+                                                isDetectingBeats = false
+                                                beatDetectionError = null
+                                                activePanel = null
+                                            }
+                                        }
+                                        .padding(horizontal = 20.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        "✕ Cancel",
+                                        color = Color(0xFFAAAAAA),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    beatDetectionError != null && vizClip == null -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF2A0F0F))
+                                .padding(16.dp)
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text("❌", fontSize = 32.sp)
+                                Text(
+                                    beatDetectionError ?: "Error",
+                                    color = Color(0xFFFF6B6B),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center
+                                )
+
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .height(36.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color(0xFF181818))
+                                            .pointerInput(Unit) {
+                                                detectTapGestures {
+                                                    beatDetectionError = null
+                                                    activePanel = null
+                                                }
+                                            }
+                                            .padding(horizontal = 20.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            "✕ Back",
+                                            color = Color(0xFFAAAAAA),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .height(36.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color(0xFF7C3AED))
+                                            .pointerInput(Unit) {
+                                                detectTapGestures {
+                                                    beatDetectionError = null
+                                                }
+                                            }
+                                            .padding(horizontal = 20.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            "↻ Retry",
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    vizClip == null -> {
+                        val sel = selected
+                        val selectedIsAudio = sel != null &&
+                                sel.isAudio && !sel.isAudioEffectClip
+
+                        val anyVisualizerInTimeline = state.clips.any {
+                            it.isVisualizerClip
+                        }
+
+                        if (!selectedIsAudio) {
+                            if (anyVisualizerInTimeline) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color(0xFF1A1F3A))
+                                        .padding(16.dp)
+                                ) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Text("🎵", fontSize = 36.sp)
+                                        Text(
+                                            "Visualizer exists on timeline",
+                                            color = Color.White,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            textAlign = TextAlign.Center
+                                        )
+                                        Text(
+                                            "Tap it on the timeline to edit, " +
+                                                    "or select an audio clip to create a new one.",
+                                            color = Color(0xFF888888),
+                                            fontSize = 10.sp,
+                                            textAlign = TextAlign.Center
+                                        )
+
+                                        Box(
+                                            modifier = Modifier
+                                                .height(40.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(Color(0xFF7C3AED))
+                                                .pointerInput(Unit) {
+                                                    detectTapGestures {
+                                                        activePanel = null
+                                                    }
+                                                }
+                                                .padding(horizontal = 24.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                "✕ Back to Editor",
+                                                color = Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color(0xFF2A0F0F))
+                                        .padding(16.dp)
+                                ) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text("⚠️", fontSize = 32.sp)
+                                        Text(
+                                            "Select an audio clip first",
+                                            color = Color(0xFFFF6B6B),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            "Visualizer only reacts to its linked audio clip. " +
+                                                    "Please select an audio clip on the timeline.",
+                                            color = Color(0xFF888888),
+                                            fontSize = 11.sp,
+                                            textAlign = TextAlign.Center
+                                        )
+
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .height(36.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(Color(0xFF181818))
+                                                    .pointerInput(Unit) {
+                                                        detectTapGestures {
+                                                            activePanel = null
+                                                        }
+                                                    }
+                                                    .padding(horizontal = 20.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    "✕ Back",
+                                                    color = Color(0xFFAAAAAA),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+
+                                            Box(
+                                                modifier = Modifier
+                                                    .height(36.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(Color(0xFF7C3AED))
+                                                    .pointerInput(Unit) {
+                                                        detectTapGestures {
+                                                            activePanel = null
+                                                        }
+                                                    }
+                                                    .padding(horizontal = 20.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    "✓ OK",
+                                                    color = Color.White,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF1A1F3A))
+                                    .padding(16.dp)
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Text("🎵", fontSize = 36.sp)
+                                    Text(
+                                        "Create Visualizer for \"${sel.name.take(20)}\"",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Text(
+                                        "Beats will be detected from this audio.",
+                                        color = Color(0xFF888888),
+                                        fontSize = 10.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .height(44.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(Color(0xFF181818))
+                                                .pointerInput(Unit) {
+                                                    detectTapGestures {
+                                                        activePanel = null
+                                                    }
+                                                }
+                                                .padding(horizontal = 16.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                "✕ Cancel",
+                                                color = Color(0xFFAAAAAA),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .height(44.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(Color(0xFF7C3AED))
+                                                .pointerInput(sel.id) {
+                                                    detectTapGestures {
+                                                        launchVisualizerCreation()
+                                                    }
+                                                }
+                                                .padding(horizontal = 24.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                "✨ Create Visualizer",
+                                                color = Color.White,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    else -> {
+                        LaunchedEffect(pendingVizImageUri) {
+                            val uri = pendingVizImageUri
+                                ?: return@LaunchedEffect
+                            viewModel.updateVisualizerLayer(
+                                vizClip.id,
+                                (vizClip.visualizer ?: VisualizerState()).copy(
+                                    imageUri = uri,
+                                    showImage = true
+                                )
+                            )
+                            pendingVizImageUri = null
+                        }
+
+                        val hasAudio = state.clips.any {
+                            it.isAudio && !it.isAudioEffectClip
+                        }
+
+                        VisualizerPanel(
+                            current = vizClip.visualizer ?: VisualizerState(),
+                            hasAudio = hasAudio,
+                            onStateChanged = {
+                                viewModel.updateVisualizerLayer(vizClip.id, it)
+                            },
+                            onPickImage = {
+                                vizImagePicker.launch(
+                                    arrayOf(
+                                        "image/*",
+                                        "image/jpeg",
+                                        "image/jpg",
+                                        "image/pjpeg",
+                                        "image/webp",
+                                        "image/gif",
+                                        "image/bmp",
+                                        "image/heic",
+                                        "image/heif",
+                                        "application/octet-stream",
+                                        "*/*"
+                                    )
+                                )
+                            },
+                            onClearImage = {
+                                viewModel.updateVisualizerLayer(
+                                    vizClip.id,
+                                    (vizClip.visualizer ?: VisualizerState()).copy(
+                                        imageUri = null,
+                                        showImage = false
+                                    )
+                                )
+                            },
+                            onRemove = {
+                                viewModel.removeVisualizerLayer(vizClip.id)
+                                activePanel = null
+                            },
+                            onClose = { activePanel = null }
+                        )
+                    }
+                }
+            }
+
+            "ratio" -> AspectRatioPanel(
+                currentRatio = state.aspectRatio,
+                onRatioSelected = { key ->
+                    viewModel.updateRatio(RatioLibrary.find(key))
+                },
+                onClose = { activePanel = null }
+            )
+
+            "freeze" -> FreezePanel(
+                hasClipSelected = selected?.isVisualClip == true,
+                onFreeze = { dur -> viewModel.addFreezeFrame(dur) },
+                onClose = { activePanel = null }
+            )
+
+            "music" -> MusicPanel(onClose = { activePanel = null })
+
+            "motion" -> MotionPanel(
+                current = "none",
+                onSelected = { },
+                onClose = { activePanel = null }
+            )
+
+            "duplicate" -> {
+                viewModel.duplicateCurrentClip()
+                activePanel = null
+            }
+
+            "delete" -> {
+                if (state.multiSelectedIds.isNotEmpty()) {
+                    viewModel.deleteSelectedClips()
+                } else {
+                    viewModel.deleteCurrentClip()
+                }
+                activePanel = null
+            }
+
+            "blend" -> BlendModePanel(
+                currentBlendMode = selected?.blendMode ?: "normal",
+                currentBlendOpacity = selected?.blendOpacity ?: 100f,
+                hasClipSelected = selected != null ||
+                        state.multiSelectedIds.isNotEmpty(),
+                multiCount = state.multiSelectedIds.size,
+                onBlendModeSelected = { key -> viewModel.setBlendMode(key) },
+                onBlendOpacityChanged = { v -> viewModel.setBlendOpacity(v) },
+                onClose = { activePanel = null }
+            )
+
+            "captions" -> AutoCaptionsPanel(
+                isProcessing = isGeneratingCaptions,
+                progress = captionProgress,
+                statusMessage = captionStatus,
+                downloadedModels = downloadedModels,      // ✅ yeh add karo
+                hasClipSelected = selected != null,
+                generatedCaptions = generatedCaptions,
+                detectedLanguage = detectedCaptionLanguage,
+                onDownloadModel = { fileName ->
+                    captionJob?.cancel()
+                    captionJob = coroutineScope.launch {
+                        isGeneratingCaptions = true
+                        captionProgress = 0f
+
+                        val resumed = WhisperModelManager.hasPartialDownload(context, fileName)
+                        captionStatus = if (resumed)
+                            "Resuming $fileName…" else "Downloading $fileName…"
+
+                        val ok = WhisperModelManager.downloadModel(
+                            context = context,
+                            fileName = fileName,
+                            onProgress = { p ->
+                                captionProgress = p
+                                captionStatus = if (resumed)
+                                    "Resuming… ${(p * 100).toInt()}%"
+                                else "Downloading… ${(p * 100).toInt()}%"
+                            }
+                        )
+
+                        isGeneratingCaptions = false
+                        captionProgress = 0f
+                        if (ok) {
+                            downloadedModels = downloadedModels + fileName
+                            captionStatus = "✅ Model ready"
+                            delay(1000)
+                            captionStatus = ""
+                        } else {
+                            captionStatus = "❌ Download failed — tap Resume"
+                        }
+                    }
+                },
+                onCancelDownload = {
+                    captionJob?.cancel()
+                    captionJob = null
+                    isGeneratingCaptions = false
+                    captionProgress = 0f
+                    captionStatus = "⏸ Paused — tap Resume"
+                },
+                onDeleteModel = { fileName ->
+                    WhisperModelManager.deleteModel(context, fileName)
+                    downloadedModels = downloadedModels - fileName
+                },
+
+                onGenerateCaptions = { language, modelFile, grouping ->
+                    val sel = selected
+                    if (sel != null) {
+                        captionJob?.cancel()
+                        captionJob = coroutineScope.launch {
+                            isGeneratingCaptions = true
+                            captionStatus = ""
+                            captionProgress = 0f
+
+                            val res = CaptionGenerator.generate(
+                                context = context,
+                                clip = sel,
+                                language = language,
+                                modelFile = modelFile,
+                                grouping = grouping,
+                                viewModel = viewModel,
+                                onStatus = { captionStatus = it },
+                                onProgress = { captionProgress = it }
+                            )
+
+                            if (res.success) {
+                                captionStatus = "✅ ${res.segmentsAdded} captions (${res.detectedLanguage})"
+                                generatedCaptions = res.segments
+                                detectedCaptionLanguage = res.detectedLanguage
+                                delay(800)
+                                isGeneratingCaptions = false
+                                captionStatus = ""
+                                // panel stays open for copy
+                            } else {
+                                captionStatus = "❌ ${res.errorMessage ?: "Failed"}"
+                                isGeneratingCaptions = false
+                            }
+                        }
+                    }
+                },
+                onCancel = {
+                    captionJob?.cancel()
+                    captionJob = null
+                    isGeneratingCaptions = false
+                    captionStatus = ""
+                    captionProgress = 0f
+                },
+                onClearCaptions = {
+                    generatedCaptions = emptyList()
+                    detectedCaptionLanguage = ""
+                },
+                onClose = { activePanel = null }
+            )
+            else -> FeatureShelf(
+                onFeatureSelected = {
+                    if (it == "wheel") viewModel.prepareColorWheelLayer()
+                    activePanel = it
+                },
+                scrollState = featureScrollState
+            )
         }
     }
 
@@ -894,13 +2116,11 @@ fun EditorScreen(
                     onAddVisualLayer = { viewModel.addVisualLayer() },
                     onAddAudioLayer = { viewModel.addAudioLayer() },
                     onLink = {
-                        val gid = viewModel.linkSelectedClips()
-                        Log.e("LINK", "Linked result: $gid")
+                        viewModel.linkSelectedClips()
                     },
                     onUnlink = {
                         selectedForToolbar?.let {
                             viewModel.unlinkClip(it.id)
-                            Log.e("LINK", "Unlinked: ${it.id}")
                         }
                     },
                     isLinked = isLinked,
@@ -925,12 +2145,10 @@ fun EditorScreen(
                             matteEditLayerId = clip.id
                             activePanel = "matte"
                         }
-
                         if (clip.isEffectClip) {
                             effectEditLayerId = clip.id
                             activePanel = "effects"
                         }
-
                         if (clip.isVisualizerClip) {
                             activePanel = "visualizer"
                         }
@@ -1046,1124 +2264,12 @@ fun EditorScreen(
                 .fillMaxWidth()
                 .heightIn(min = 140.dp, max = 320.dp)
         ) {
-            val selected = state.selectedClip
-
-            when (activePanel) {
-                null -> FeatureShelf(
-                    onFeatureSelected = { key ->
-                        if (key == "filters") filterEditLayerId = null
-                        if (key == "effects") effectEditLayerId = null
-                        if (key == "wheel") viewModel.prepareColorWheelLayer()
-                        activePanel = key
-                    },
-                    scrollState = featureScrollState
-                )
-
-                // [PART 2 CONTINUES - panel dispatch continues here]
-                "code" -> PromptPanel(
-                    feedback = promptFeedback,
-                    feedbackType = promptFeedbackType,
-                    onApply = { input -> runPrompt(input) },
-                    onClear = {
-                        promptFeedback = ""
-                        promptFeedbackType = "none"
-                    },
-                    onClose = { activePanel = null }
-                )
-
-                "trim" -> TrimPanel(
-                    clipName = selected?.name ?: "",
-                    clipStartMs = selected?.timelineStartMs ?: 0L,
-                    clipEndMs = selected?.timelineEndMs ?: 0L,
-                    playheadMs = state.currentPosMs,
-                    sourceInMs = selected?.sourceStartMs ?: 0L,
-                    sourceOutMs = selected?.sourceEndMs ?: 0L,
-                    hasClipSelected = selected?.isVisualClip == true,
-                    playheadInsideClip = selected?.let {
-                        state.currentPosMs > it.timelineStartMs &&
-                                state.currentPosMs < it.timelineEndMs
-                    } ?: false,
-                    onClose = { activePanel = null },
-                    onTrimLeft = { viewModel.trimLeft() },
-                    onTrimRight = { viewModel.trimRight() },
-                    onSplit = { viewModel.splitCurrentClip() }
-                )
-
-                "speed" -> SpeedPanel(
-                    clipName = selected?.name ?: "",
-                    baseDurationMs = viewModel.getSelectedBaseDurationMs(),
-                    currentSpeed = selected?.speed ?: 1.0f,
-                    hasClipSelected = selected != null,
-                    onSpeedChanged = { viewModel.setSpeed(it) },
-                    onReset = { viewModel.resetSpeed() },
-                    onClose = { activePanel = null }
-                )
-
-                "text" -> TextPanel(
-                    currentText = viewModel.getSelectedTextState(),
-                    hasTextClipSelected = selected?.isTextClip == true ||
-                            state.multiSelectedIds.isNotEmpty(),
-                    startInEdit = openTextEditor,
-                    onTextChanged = { viewModel.updateSelectedText(it) },
-                    onDraftTextChanged = { content ->
-                        viewModel.updateSelectedText(
-                            viewModel.getSelectedTextState().copy(content = content)
-                        )
-                    },
-                    onCreateNew = { viewModel.createTextClip() },
-                    onRemove = { viewModel.removeSelectedText() },
-                    onApplyTemplate = { templateId ->
-                        viewModel.applyTemplate(
-                            templateId = templateId,
-                            startMs = state.currentPosMs,
-                            canvasWidthPx = 720f
-                        )
-                        activePanel = null
-                    },
-                    onClose = {
-                        activePanel = null
-                        openTextEditor = false
-                    }
-                )
-
-                "animations" -> AnimationsPanel(
-                    currentAnimation = selected?.textState?.animation ?: "none",
-                    currentDuration = selected?.textState?.animationDuration ?: 0.6f,
-                    hasTextClipSelected = selected?.isTextClip == true ||
-                            state.multiSelectedIds.isNotEmpty(),
-                    onAnimationSelected = { viewModel.setTextAnimation(it) },
-                    onDurationChanged = {
-                        val st = viewModel.getSelectedTextState()
-                        viewModel.updateSelectedText(
-                            st.copy(animationDuration = it)
-                        )
-                    },
-                    onPreview = { exoPlayer.seekTo(0) },
-                    onClose = { activePanel = null }
-                )
-
-
-                "matte" -> {
-                    val editLayer = matteEditLayerId?.let { id ->
-                        state.clips.firstOrNull {
-                            it.id == id && it.isColorMatteClip
-                        }
-                    }
-                    ColorMattePanel(
-                        editLayerId = editLayer?.id,
-                        initialStyle = editLayer?.matteStyle
-                            ?: com.moody.moodyvideoeditor.data.ColorMatteStyle(),
-                        initialOpacity = editLayer?.filters?.opacity
-                            ?: com.moody.moodyvideoeditor.data.ColorMatteDefaults.DEFAULT_OPACITY,
-                        initialDurationMs = editLayer?.durationMs
-                            ?: com.moody.moodyvideoeditor.data.ColorMatteDefaults.DEFAULT_DURATION_MS,
-                        onApply = { style, opacity, durationMs ->
-                            viewModel.createColorMatte(
-                                color = style.solidColor,
-                                opacity = opacity,
-                                durationMs = durationMs,
-                                style = style
-                            )
-                            matteEditLayerId = null
-                        },
-                        onUpdate = { style, opacity, durationMs ->
-                            editLayer?.let {
-                                viewModel.updateColorMatte(
-                                    it.id, style, opacity, durationMs
-                                )
-                            }
-                        },
-                        onDelete = {
-                            editLayer?.let { viewModel.removeColorMatte(it.id) }
-                            matteEditLayerId = null
-                            activePanel = null
-                        },
-                        onClose = {
-                            matteEditLayerId = null
-                            activePanel = null
-                        }
-                    )
-                }
-
-                "filters" -> {
-                    val editLayer = filterEditLayerId?.let { id ->
-                        state.clips.firstOrNull {
-                            it.id == id && it.isFilterLayerClip
-                        }
-                    }
-                    FiltersPanel(
-                        editLayerId = editLayer?.id,
-                        initialFilters = editLayer?.filters,
-                        previewClip = selected,
-                        previewTimeMs = state.currentPosMs,
-                        onPreviewFilters = { viewModel.setPreviewFilters(it) },
-                        onApplyAsLayer = { filters ->
-                            viewModel.createFilterLayer(filters)
-                            filterEditLayerId = null
-                        },
-                        onUpdateLayer = { filters ->
-                            editLayer?.let {
-                                viewModel.updateFilterLayer(it.id, filters)
-                            }
-                        },
-                        onDeleteLayer = {
-                            editLayer?.let {
-                                viewModel.removeFilterLayer(it.id)
-                            }
-                            filterEditLayerId = null
-                            activePanel = null
-                        },
-                        onClose = {
-                            viewModel.clearPreviewFilters()
-                            filterEditLayerId = null
-                            activePanel = null
-                        }
-                    )
-                }
-
-                "effects" -> {
-                    val editLayer = effectEditLayerId?.let { id ->
-                        state.clips.firstOrNull {
-                            it.id == id && it.isEffectClip
-                        }
-                    }
-                    EffectsPanel(
-                        editLayerId = editLayer?.id,
-                        initialEffectState = editLayer?.effectState,
-                        initialPresetKey = editLayer?.effectKeys?.firstOrNull(),
-                        onPreviewEffect = { key, intensity ->
-                            viewModel.setPreviewEffect(key, intensity)
-                        },
-                        onApplyAsLayer = { key, intensity ->
-                            viewModel.createEffectLayerAt(key, intensity)
-                            effectEditLayerId = null
-                        },
-                        onApplyOverlayLayer = { key, intensity, config ->
-                            viewModel.createEffectLayerAtWithConfig(key, intensity, config)
-                            effectEditLayerId = null
-                        },
-                        onUpdateIntensity = { intensity ->
-                            editLayer?.let {
-                                viewModel.updateEffectLayerIntensity(
-                                    it.id, intensity
-                                )
-                            }
-                        },
-                        onOverlayPropertyChange = { key, config ->
-                            // 🆕 Build preview effect with updated overlay config
-                            val preset = com.moody.moodyvideoeditor.data.EffectLibrary
-                                .findByKey(key)
-                            if (preset != null) {
-                                val currentPreview = viewModel.state.value.previewEffectState
-                                val updated = if (
-                                    currentPreview != null &&
-                                    currentPreview.presetKey == key
-                                ) {
-                                    currentPreview.copy(overlay = config)
-                                } else {
-                                    com.moody.moodyvideoeditor.data.EffectState(
-                                        kind = com.moody.moodyvideoeditor.data.EffectState.KIND_EFFECT,
-                                        presetKey = key,
-                                        overlay = config,
-                                        motion = preset.motion,
-                                        filters = preset.filters,
-                                        edgeGlow = preset.edgeGlow,
-                                        lightLeak = preset.lightLeak,
-                                        masterIntensity = 100f
-                                    )
-                                }
-                                viewModel.setPreviewEffectFull(updated)
-                            }
-                        },
-                        onLightningPropertyChange = { key, config ->
-                            // Update preview with new lightning config
-                            val currentPreview = viewModel.state.value.previewEffectState
-                            if (currentPreview != null &&
-                                currentPreview.presetKey == key &&
-                                currentPreview.lightning != null
-                            ) {
-                                // Update preview
-                                viewModel.setPreviewEffectFull(
-                                    currentPreview.copy(lightning = config)
-                                )
-                            }
-                            // Update actual layer if editing
-                            if (editLayer != null) {
-                                viewModel.updateClipEffectLightning(
-                                    editLayer.id, config
-                                )
-                            }
-                        },
-                        onParticlePropertyChange = { key, config ->
-                            val currentPreview = viewModel.state.value.previewEffectState
-                            if (currentPreview != null &&
-                                currentPreview.presetKey == key &&
-                                currentPreview.particle != null
-                            ) {
-                                viewModel.setPreviewEffectFull(
-                                    currentPreview.copy(particle = config)
-                                )
-                            }
-                            if (editLayer != null) {
-                                viewModel.updateClipEffectParticle(editLayer.id, config)
-                            }
-                        },
-                        onApplyParticleLayer = { key, intensity, config ->
-                            viewModel.createEffectLayerAt(key, intensity)
-                            // Immediately apply custom config to the new layer
-                            val newLayer = viewModel.state.value.selectedClip
-                            if (newLayer != null && newLayer.isEffectClip) {
-                                viewModel.updateClipEffectParticle(newLayer.id, config)
-                            }
-                            effectEditLayerId = null
-                        },
-                        onApplyLightningLayer = { key, intensity, config ->
-                            viewModel.createEffectLayerAt(key, intensity)
-                            // Immediately apply custom config to the new layer
-                            val newLayer = viewModel.state.value.selectedClip
-                            if (newLayer != null && newLayer.isEffectClip) {
-                                viewModel.updateClipEffectLightning(newLayer.id, config)
-                            }
-                            effectEditLayerId = null
-                        },
-                        onFirePropertyChange = { key, config ->
-                            val currentPreview = viewModel.state.value.previewEffectState
-                            if (currentPreview != null &&
-                                currentPreview.presetKey == key &&
-                                currentPreview.fire != null
-                            ) {
-                                viewModel.setPreviewEffectFull(
-                                    currentPreview.copy(fire = config)
-                                )
-                            }
-                            if (editLayer != null) {
-                                viewModel.updateClipEffectFire(editLayer.id, config)
-                            }
-                        },
-                        onApplyFireLayer = { key, intensity, config ->
-                            viewModel.createEffectLayerAt(key, intensity)
-                            val newLayer = viewModel.state.value.selectedClip
-                            if (newLayer != null && newLayer.isEffectClip) {
-                                viewModel.updateClipEffectFire(newLayer.id, config)
-                            }
-                            effectEditLayerId = null
-                        },
-                        onDustPropertyChange = { key, config ->
-                            val currentPreview = viewModel.state.value.previewEffectState
-                            if (currentPreview != null &&
-                                currentPreview.presetKey == key &&
-                                currentPreview.dust != null
-                            ) {
-                                viewModel.setPreviewEffectFull(
-                                    currentPreview.copy(dust = config)
-                                )
-                            }
-                            if (editLayer != null) {
-                                viewModel.updateClipEffectDust(editLayer.id, config)
-                            }
-                        },
-                        onApplyDustLayer = { key, intensity, config ->
-                            viewModel.createEffectLayerAt(key, intensity)
-                            val newLayer = viewModel.state.value.selectedClip
-                            if (newLayer != null && newLayer.isEffectClip) {
-                                viewModel.updateClipEffectDust(newLayer.id, config)
-                            }
-                            effectEditLayerId = null
-                        },
-                        onDeleteLayer = {
-                            editLayer?.let {
-                                viewModel.removeEffectLayer(it.id)
-                            }
-                            effectEditLayerId = null
-                            activePanel = null
-                        },
-                        onClose = {
-                            viewModel.clearPreviewEffect()
-                            effectEditLayerId = null
-                            activePanel = null
-                        }
-                    )
-                }
-                "adjustments" -> AdjustmentsPanel(
-                    adj = selected?.adjustments ?: AdjustmentData(),
-                    onAdjChanged = { viewModel.updateSelectedAdjustment(it) },
-                    onReset = { viewModel.resetAdjustments() },
-                    onClose = { activePanel = null }
-                )
-
-                "wheel" -> ColorWheelPanel(
-                    state = selected?.colorWheel ?: ColorWheelState(),
-                    hasClipSelected = true,
-                    onStateChanged = { newState ->
-                        selected?.let { viewModel.updateColorWheelLayer(it.id, newState) }
-                    },
-                    onRemove = { viewModel.removeSelectedColorWheelLayer() },
-                    onClose = { activePanel = null }
-                )
-
-                "stickers" -> StickersPanel(
-                    current = viewModel.getSelectedStickerState(),
-                    hasStickerSelected = selected?.isStickerClip == true,
-                    playheadMs = state.currentPosMs,
-                    onStickerChanged = { viewModel.updateSelectedSticker(it) },
-                    onEmojiTapped = { viewModel.addOrUpdateSticker(it) },
-                    onRemove = { viewModel.removeSelectedSticker() },
-                    onClose = { activePanel = null }
-                )
-
-                "overlays" -> OverlaysPanel(
-                    current = selected?.overlay ?: OverlayState(),
-                    hasClipSelected = true,
-                    onStateChanged = { viewModel.updateSelectedOverlay(it) },
-                    onRemove = { viewModel.removeSelectedOverlay() },
-                    onClose = { activePanel = null }
-                )
-
-                "transitions" -> {
-                    val selectedVisual = selected?.takeIf { it.isVisualClip }
-                    val target = selectedVisual?.let { sel ->
-                        val hasLeft = state.clips.any { other ->
-                            other.id != sel.id && other.isVisualClip &&
-                                    other.trackIndex == sel.trackIndex &&
-                                    abs(other.timelineEndMs - sel.timelineStartMs) < 100L
-                        }
-                        if (hasLeft) sel
-                        else state.clips.filter { other ->
-                            other.id != sel.id && other.isVisualClip &&
-                                    other.trackIndex == sel.trackIndex &&
-                                    abs(other.timelineStartMs - sel.timelineEndMs) < 100L
-                        }.minByOrNull { it.timelineStartMs }
-                    }
-
-                    TransitionsPanel(
-                        current = target?.transition ?: TransitionState(),
-                        hasPairAvailable = target != null,
-                        hintText = when {
-                            selectedVisual == null ->
-                                "Pehle timeline pe ek video ya image clip select karo."
-
-                            target == null -> "Is clip ke saath koi adjacent clip chahiye."
-                            else -> "Transition lagao"
-                        },
-                        onTransitionChanged = { newState ->
-                            target?.let {
-                                viewModel.setTransitionForClip(it.id, newState)
-                            }
-                        },
-                        onRemove = {
-                            target?.let {
-                                viewModel.setTransitionForClip(
-                                    it.id, TransitionState()
-                                )
-                            }
-                        },
-                        onClose = { activePanel = null }
-                    )
-                }
-
-                "chroma" -> ChromaKeyPanel(
-                    state = selected?.chroma ?: ChromaState(),
-                    hasClipSelected = true,
-                    onStateChanged = { viewModel.updateSelectedChroma(it) },
-                    onRemove = { viewModel.removeSelectedChroma() },
-                    onClose = { activePanel = null }
-                )
-
-                "mask" -> MaskPanel(
-                    current = selected?.mask ?: MaskState(),
-                    hasClipSelected = selected != null,
-                    hasKeyframeAtPlayhead = viewModel.hasMaskKeyframeAtPlayhead(),
-                    isPenMode = isMaskPenMode,
-                    isHandMode = isMaskHandMode,
-                    onStateChanged = { viewModel.updateMask(it) },
-                    onTypeSelected = { viewModel.setMaskType(it) },
-                    onAddKeyframe = { viewModel.addMaskKeyframe() },
-                    onClearKeyframes = { viewModel.clearMaskKeyframes() },
-                    onPenToolToggle = {
-                        isMaskPenMode = !isMaskPenMode
-                        if (isMaskPenMode) isMaskHandMode = false
-                    },
-                    onHandToolToggle = {
-                        isMaskHandMode = !isMaskHandMode
-                        if (isMaskHandMode) isMaskPenMode = false
-                    },
-                    onUndoPoint = { viewModel.removeLastMaskPoint() },
-                    onClearPoints = { viewModel.clearMaskPoints() },
-                    onClosedToggle = {
-                        val cur = selected?.mask ?: return@MaskPanel
-                        viewModel.setMaskClosed(!cur.customClosed)
-                    },
-                    onRemove = { viewModel.removeMask() },
-                    onClose = {
-                        activePanel = null
-                        isMaskPenMode = false
-                        isMaskHandMode = false
-                    }
-                )
-
-                "brush" -> {
-                    val brushClip = selected?.takeIf { it.isBrushClip }
-                        ?: state.clips.lastOrNull { it.isBrushClip }
-                    BrushPanel(
-                        isDrawing = isDrawingMode,
-                        activeType = brushType,
-                        activeColor = brushColor,
-                        activeWidth = brushWidth,
-                        activeOpacity = brushOpacity,
-                        activeGradient = brushGradient,
-                        strokeCount = brushClip?.brush?.strokes?.size ?: 0,
-                        hasBrushLayer = brushClip != null,
-                        onToggleDrawing = {
-                            BrushConfigHolder.update {
-                                it.copy(isDrawingMode = !it.isDrawingMode)
-                            }
-                        },
-                        onTypeChanged = { newType ->
-                            BrushConfigHolder.update { it.copy(type = newType) }
-                        },
-                        onColorChanged = { newColor ->
-                            BrushConfigHolder.update { it.copy(color = newColor) }
-                        },
-                        onWidthChanged = { newWidth ->
-                            BrushConfigHolder.update { it.copy(width = newWidth) }
-                        },
-                        onOpacityChanged = { newOpacity ->
-                            BrushConfigHolder.update { it.copy(opacity = newOpacity) }
-                        },
-                        onGradientChanged = { newGradient ->
-                            BrushConfigHolder.update { it.copy(gradient = newGradient) }
-                        },
-                        onUndoStroke = {
-                            brushClip?.let {
-                                viewModel.undoLastStrokeOnBrushClip(it.id)
-                            }
-                        },
-                        onClearStrokes = {
-                            brushClip?.let {
-                                viewModel.clearBrushClipStrokes(it.id)
-                            }
-                        },
-                        onCreateLayer = {
-                            viewModel.createBrushClip()
-                            BrushConfigHolder.update { it.copy(isDrawingMode = true) }
-                        },
-                        onClose = {
-                            activePanel = null
-                            BrushConfigHolder.update { it.copy(isDrawingMode = false) }
-                        }
-                    )
-                }
-
-                "crop" -> CropPanel(
-                    cropL = selected?.cropL ?: 0f,
-                    cropR = selected?.cropR ?: 0f,
-                    cropT = selected?.cropT ?: 0f,
-                    cropB = selected?.cropB ?: 0f,
-                    hasClipSelected =
-                        selected?.isVisualClip == true ||
-                                selected?.isColorMatteClip == true ||     // 🆕
-                                selected?.isTextClip == true ||            // 🆕
-                                selected?.isStickerClip == true ||         // 🆕
-                                selected?.isBrushClip == true ||           // 🆕
-                                selected?.isVisualizerClip == true ||      // 🆕
-                                state.multiSelectedIds.isNotEmpty(),
-                    onCropChanged = { l, r, t, b ->
-                        viewModel.setCrop(l, r, t, b)
-                    },
-                    onAspectSelected = { key ->
-                        val q = CropEngine.presetFor(key, 16f, 9f)
-                        viewModel.setCrop(q.l, q.r, q.t, q.b)
-                    },
-                    onReset = { viewModel.setCrop(0f, 0f, 0f, 0f) },
-                    onClose = { activePanel = null }
-                )
-
-                "transform" -> {
-                    val hasAnySelected = selected != null ||
-                            state.multiSelectedIds.isNotEmpty()
-                    val currentTimeSec = selected?.let {
-                        ((state.currentPosMs - it.timelineStartMs).toFloat() / 1000f)
-                            .coerceAtLeast(0f)
-                    } ?: 0f
-                    val clipDurSec = selected?.let { it.durationMs / 1000f } ?: 5f
-                    val base = selected?.let { TransformApplier.baseOf(it) }
-                        ?: TransformValues()
-                    TransformPanel(
-                        clipName = if (state.multiSelectedIds.size > 1)
-                            "${state.multiSelectedIds.size} clips"
-                        else selected?.name ?: "",
-                        hasClipSelected = hasAnySelected,
-                        base = base,
-                        keyframeMap = selected?.keyframes ?: emptyMap(),
-                        currentTimeSec = currentTimeSec,
-                        clipDurationSec = clipDurSec,
-                        onPropertyChanged = { prop, value ->
-                            viewModel.changeTransformProperty(prop, value)
-                        },
-                        onToggleKeyframe = { prop ->
-                            viewModel.toggleKeyframeAtPlayhead(prop)
-                        },
-                        onSetEase = { ease -> viewModel.setEaseAtPlayhead(ease) },
-                        onResetAll = { viewModel.resetAllSelectedTransforms() },
-                        onUpdateKeyframe = { prop, oldT, newT, newV ->
-                            viewModel.updateKeyframeInGraph(prop, oldT, newT, newV)
-                        },
-                        onDeleteKeyframe = { prop, t ->
-                            viewModel.deleteKeyframeFromGraph(prop, t)
-                        },
-                        onClose = { activePanel = null }
-                    )
-                }
-
-                "volume" -> VolumePanel(
-                    volume = state.volume,
-                    isMuted = state.isMuted,
-                    hasClipSelected = true,
-                    onVolumeChanged = { viewModel.setVolume(it) },
-                    onMuteToggle = { viewModel.toggleMute() },
-                    onClose = { activePanel = null }
-                )
-
-                "audiofx" -> AudioPanel(
-                    onPreviewFx = { fx, intensity ->
-                        AudioPreviewEngine.apply(
-                            exoPlayer, audioExoPlayer, fx, intensity
-                        )
-                    },
-                    onClearPreview = {
-                        AudioPreviewEngine.release()
-                        try {
-                            exoPlayer.playbackParameters =
-                                androidx.media3.common.PlaybackParameters(1f, 1f)
-                            audioExoPlayer.playbackParameters =
-                                androidx.media3.common.PlaybackParameters(1f, 1f)
-                        } catch (_: Throwable) {
-                        }
-                    },
-                    onApplyAudioFx = { fx, intensity ->
-                        viewModel.createAudioFxLayer(fx, intensity)
-                    },
-                    onClose = { activePanel = null }
-                )
-
-                "soundfx" -> {
-                    AudioPanel(
-                        onPreviewFx = { fx, intensity ->
-                            AudioPreviewEngine.apply(
-                                exoPlayer, audioExoPlayer, fx, intensity
-                            )
-                        },
-                        onClearPreview = {
-                            AudioPreviewEngine.release()
-                            try {
-                                exoPlayer.playbackParameters =
-                                    androidx.media3.common.PlaybackParameters(1f, 1f)
-                                audioExoPlayer.playbackParameters =
-                                    androidx.media3.common.PlaybackParameters(1f, 1f)
-                            } catch (_: Throwable) {
-                            }
-                        },
-                        onApplyAudioFx = { fx, intensity ->
-                            viewModel.createAudioFxLayer(fx, intensity)
-                        },
-                        onClose = { activePanel = null }
-                    )
-                }
-
-                "beats" -> BeatsPanel(
-                    state = BeatsState(
-                        detected = state.beatsDetected,
-                        count = state.beatsCount,
-                        filter = state.beatsFilter
-                    ),
-                    viewModel = viewModel,
-                    onDetect = { },
-                    onClear = { viewModel.clearBeats() },
-                    onClose = { activePanel = null }
-                )
-
-                "visualizer" -> {
-                    val selectedAudioId: String? = selected?.takeIf {
-                        it.isAudio && !it.isAudioEffectClip
-                    }?.id
-
-                    val vizClip = selected?.takeIf { it.isVisualizerClip }
-                        ?: state.clips.firstOrNull { clip ->
-                            clip.isVisualizerClip &&
-                                    selectedAudioId != null &&
-                                    clip.visualizer?.linkedAudioClipId == selectedAudioId
-                        }
-
-                    when {
-                        isDetectingBeats -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFF1A1F3A))
-                                    .padding(20.dp)
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    Text("🎵", fontSize = 36.sp)
-                                    Text(
-                                        "Detecting beats...",
-                                        color = Color(0xFF60EFFF),
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        "Analyzing linked audio. This may take a few seconds.",
-                                        color = Color(0xFF888888),
-                                        fontSize = 10.sp,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(4.dp)
-                                            .clip(RoundedCornerShape(2.dp))
-                                            .background(Color(0xFF0F0F0F))
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth(
-                                                    beatDetectionProgress.coerceIn(0f, 1f)
-                                                )
-                                                .height(4.dp)
-                                                .background(Color(0xFF60EFFF))
-                                        )
-                                    }
-
-                                    Box(
-                                        modifier = Modifier
-                                            .height(36.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(Color(0xFF181818))
-                                            .pointerInput(Unit) {
-                                                detectTapGestures {
-                                                    isDetectingBeats = false
-                                                    beatDetectionError = null
-                                                    activePanel = null
-                                                }
-                                            }
-                                            .padding(horizontal = 20.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            "✕ Cancel",
-                                            color = Color(0xFFAAAAAA),
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        beatDetectionError != null && vizClip == null -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFF2A0F0F))
-                                    .padding(16.dp)
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Text("❌", fontSize = 32.sp)
-                                    Text(
-                                        beatDetectionError ?: "Error",
-                                        color = Color(0xFFFF6B6B),
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        textAlign = TextAlign.Center
-                                    )
-
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .height(36.dp)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(Color(0xFF181818))
-                                                .pointerInput(Unit) {
-                                                    detectTapGestures {
-                                                        beatDetectionError = null
-                                                        activePanel = null
-                                                    }
-                                                }
-                                                .padding(horizontal = 20.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                "✕ Back",
-                                                color = Color(0xFFAAAAAA),
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-
-                                        Box(
-                                            modifier = Modifier
-                                                .height(36.dp)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(Color(0xFF7C3AED))
-                                                .pointerInput(Unit) {
-                                                    detectTapGestures {
-                                                        beatDetectionError = null
-                                                    }
-                                                }
-                                                .padding(horizontal = 20.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                "↻ Retry",
-                                                color = Color.White,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        vizClip == null -> {
-                            val sel = selected
-                            val selectedIsAudio = sel != null &&
-                                    sel.isAudio && !sel.isAudioEffectClip
-
-                            val anyVisualizerInTimeline = state.clips.any {
-                                it.isVisualizerClip
-                            }
-
-                            if (!selectedIsAudio) {
-                                if (anyVisualizerInTimeline) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(Color(0xFF1A1F3A))
-                                            .padding(16.dp)
-                                    ) {
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                                        ) {
-                                            Text("🎵", fontSize = 36.sp)
-                                            Text(
-                                                "Visualizer exists on timeline",
-                                                color = Color.White,
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                textAlign = TextAlign.Center
-                                            )
-                                            Text(
-                                                "Tap it on the timeline to edit, " +
-                                                        "or select an audio clip to create a new one.",
-                                                color = Color(0xFF888888),
-                                                fontSize = 10.sp,
-                                                textAlign = TextAlign.Center
-                                            )
-
-                                            Box(
-                                                modifier = Modifier
-                                                    .height(40.dp)
-                                                    .clip(RoundedCornerShape(10.dp))
-                                                    .background(Color(0xFF7C3AED))
-                                                    .pointerInput(Unit) {
-                                                        detectTapGestures {
-                                                            activePanel = null
-                                                        }
-                                                    }
-                                                    .padding(horizontal = 24.dp),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Text(
-                                                    "✕ Back to Editor",
-                                                    color = Color.White,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(Color(0xFF2A0F0F))
-                                            .padding(16.dp)
-                                    ) {
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Text("⚠️", fontSize = 32.sp)
-                                            Text(
-                                                "Select an audio clip first",
-                                                color = Color(0xFFFF6B6B),
-                                                fontSize = 14.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Text(
-                                                "Visualizer only reacts to its linked audio clip. " +
-                                                        "Please select an audio clip on the timeline.",
-                                                color = Color(0xFF888888),
-                                                fontSize = 11.sp,
-                                                textAlign = TextAlign.Center
-                                            )
-
-                                            Row(
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .height(36.dp)
-                                                        .clip(RoundedCornerShape(8.dp))
-                                                        .background(Color(0xFF181818))
-                                                        .pointerInput(Unit) {
-                                                            detectTapGestures {
-                                                                activePanel = null
-                                                            }
-                                                        }
-                                                        .padding(horizontal = 20.dp),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(
-                                                        "✕ Back",
-                                                        color = Color(0xFFAAAAAA),
-                                                        fontSize = 12.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
-                                                }
-
-                                                Box(
-                                                    modifier = Modifier
-                                                        .height(36.dp)
-                                                        .clip(RoundedCornerShape(8.dp))
-                                                        .background(Color(0xFF7C3AED))
-                                                        .pointerInput(Unit) {
-                                                            detectTapGestures {
-                                                                activePanel = null
-                                                            }
-                                                        }
-                                                        .padding(horizontal = 20.dp),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(
-                                                        "✓ OK",
-                                                        color = Color.White,
-                                                        fontSize = 12.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(Color(0xFF1A1F3A))
-                                        .padding(16.dp)
-                                ) {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        Text("🎵", fontSize = 36.sp)
-                                        Text(
-                                            "Create Visualizer for \"${sel.name.take(20)}\"",
-                                            color = Color.White,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            textAlign = TextAlign.Center
-                                        )
-                                        Text(
-                                            "Beats will be detected from this audio.",
-                                            color = Color(0xFF888888),
-                                            fontSize = 10.sp,
-                                            textAlign = TextAlign.Center
-                                        )
-
-                                        Row(
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .height(44.dp)
-                                                    .clip(RoundedCornerShape(10.dp))
-                                                    .background(Color(0xFF181818))
-                                                    .pointerInput(Unit) {
-                                                        detectTapGestures {
-                                                            activePanel = null
-                                                        }
-                                                    }
-                                                    .padding(horizontal = 16.dp),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Text(
-                                                    "✕ Cancel",
-                                                    color = Color(0xFFAAAAAA),
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-
-                                            Box(
-                                                modifier = Modifier
-                                                    .height(44.dp)
-                                                    .clip(RoundedCornerShape(10.dp))
-                                                    .background(Color(0xFF7C3AED))
-                                                    .pointerInput(sel.id) {
-                                                        detectTapGestures {
-                                                            launchVisualizerCreation()
-                                                        }
-                                                    }
-                                                    .padding(horizontal = 24.dp),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Text(
-                                                    "✨ Create Visualizer",
-                                                    color = Color.White,
-                                                    fontSize = 13.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        else -> {
-                            LaunchedEffect(pendingVizImageUri) {
-                                val uri = pendingVizImageUri
-                                    ?: return@LaunchedEffect
-                                viewModel.updateVisualizerLayer(
-                                    vizClip.id,
-                                    (vizClip.visualizer ?: VisualizerState()).copy(
-                                        imageUri = uri,
-                                        showImage = true
-                                    )
-                                )
-                                pendingVizImageUri = null
-                            }
-
-                            val hasAudio = state.clips.any {
-                                it.isAudio && !it.isAudioEffectClip
-                            }
-
-                            VisualizerPanel(
-                                current = vizClip.visualizer ?: VisualizerState(),
-                                hasAudio = hasAudio,
-                                onStateChanged = {
-                                    viewModel.updateVisualizerLayer(vizClip.id, it)
-                                },
-                                onPickImage = {
-                                    vizImagePicker.launch(
-                                        arrayOf(
-                                            "image/*",
-                                            "image/jpeg",
-                                            "image/jpg",
-                                            "image/pjpeg",
-                                            "image/webp",
-                                            "image/gif",
-                                            "image/bmp",
-                                            "image/heic",
-                                            "image/heif",
-                                            "application/octet-stream",
-                                            "*/*"
-                                        )
-                                    )
-                                },
-                                onClearImage = {
-                                    viewModel.updateVisualizerLayer(
-                                        vizClip.id,
-                                        (vizClip.visualizer ?: VisualizerState()).copy(
-                                            imageUri = null,
-                                            showImage = false
-                                        )
-                                    )
-                                },
-                                onRemove = {
-                                    viewModel.removeVisualizerLayer(vizClip.id)
-                                    activePanel = null
-                                },
-                                onClose = { activePanel = null }
-                            )
-                        }
-                    }
-                }
-                "blend" -> BlendModePanel(
-                    currentBlendMode = state.selectedClip?.blendMode ?: "normal",
-                    currentBlendOpacity = state.selectedClip?.blendOpacity ?: 100f,
-                    hasClipSelected = state.selectedClip != null ||
-                            state.multiSelectedIds.isNotEmpty(),
-                    multiCount = state.multiSelectedIds.size,
-                    onBlendModeSelected = { key -> viewModel.setBlendMode(key) },
-                    onBlendOpacityChanged = { v -> viewModel.setBlendOpacity(v) },
-                    onClose = { activePanel = null }
-                )
-                "ratio" -> AspectRatioPanel(
-                    currentRatio = state.aspectRatio,
-                    onRatioSelected = { key ->
-                        viewModel.updateRatio(RatioLibrary.find(key))
-                    },
-                    onClose = { activePanel = null }
-                )
-
-                "freeze" -> FreezePanel(
-                    hasClipSelected = selected?.isVisualClip == true,
-                    onFreeze = { dur -> viewModel.addFreezeFrame(dur) },
-                    onClose = { activePanel = null }
-                )
-
-                "music" -> MusicPanel(onClose = { activePanel = null })
-
-                "motion" -> MotionPanel(
-                    current = "none",
-                    onSelected = { },
-                    onClose = { activePanel = null }
-                )
-
-                "duplicate" -> {
-                    viewModel.duplicateCurrentClip()
-                    activePanel = null
-                }
-
-                "delete" -> {
-                    if (state.multiSelectedIds.isNotEmpty()) {
-                        viewModel.deleteSelectedClips()
-                    } else {
-                        viewModel.deleteCurrentClip()
-                    }
-                    activePanel = null
-                }
-
-                else -> FeatureShelf(
-                    onFeatureSelected = {
-                        if (it == "wheel") viewModel.prepareColorWheelLayer()
-                        activePanel = it
-                    },
-                    scrollState = featureScrollState
-                )
-            }
+            EditorPanelHost()
         }
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  EXPORT CONFIG DIALOG
+    //  EXPORT DIALOG
     // ═══════════════════════════════════════════════════════════
 
     if (activePanel == "export") {
@@ -2229,7 +2335,7 @@ fun EditorScreen(
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  EXPORT OVERLAY (fullscreen)
+    //  EXPORT OVERLAY
     // ═══════════════════════════════════════════════════════════
 
     if (exportState.isExporting ||
