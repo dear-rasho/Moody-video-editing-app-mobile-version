@@ -18,22 +18,19 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // ═══════════════════════════════════════════════════════
-        //  ABI FILTERS — only arm64 (fork's native libs)
+        //  ABI FILTERS — 64-bit only (Whisper + ONNX stable)
         // ═══════════════════════════════════════════════════════
         ndk {
-            abiFilters += listOf("arm64-v8a")
-            externalNativeBuild {
-                cmake {
-                    cppFlags += "-std=c++17"
-                    arguments += "-DANDROID_STL=c++_shared"
-                }
-            }
-
-            ndk {
-abiFilters += listOf("arm64-v8a", "x86_64")
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+                arguments += "-DANDROID_STL=c++_shared"
             }
         }
     }
+
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
@@ -75,6 +72,12 @@ abiFilters += listOf("arm64-v8a", "x86_64")
 }
 
 dependencies {
+
+    // ═══════════════════════════════════════════════════════════
+    //  🧠 ONNX RUNTIME MOBILE — on-device emotion AI
+    //  (Used by CaptionEmotionAI for smart caption styling)
+    // ═══════════════════════════════════════════════════════════
+
 
     // ═══════════════════════════════════════════════════════════
     //  CORE ANDROID
@@ -134,6 +137,7 @@ dependencies {
     implementation("com.arthenica:smart-exception-java:0.2.1")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
+
     // ═══════════════════════════════════════════════════════════
     //  TESTING
     // ═══════════════════════════════════════════════════════════

@@ -13,11 +13,8 @@ object WhisperModelManager {
 
     private const val TAG = "WhisperModel"
 
-    // ═══════════════════════════════════════════════════════════
-    //  SINGLE MODEL — Tiny (75 MB)
-    //  Auto-detect language → no manual selection needed
-    // ═══════════════════════════════════════════════════════════
     const val MODEL_TINY = "ggml-tiny.bin"
+    const val MODEL_BASE = "ggml-base.bin"
 
     private const val BASE_URL =
         "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
@@ -27,7 +24,8 @@ object WhisperModelManager {
         val label: String,
         val sizeBytes: Long,
         val speedLabel: String,
-        val qualityLabel: String
+        val qualityLabel: String,
+        val bestFor: String
     )
 
     val MODELS = listOf(
@@ -36,7 +34,16 @@ object WhisperModelManager {
             label = "Fast",
             sizeBytes = 75L * 1024 * 1024,
             speedLabel = "~10x faster",
-            qualityLabel = "Basic accuracy"
+            qualityLabel = "Basic accuracy",
+            bestFor = "English only"
+        ),
+        ModelInfo(
+            fileName = MODEL_BASE,
+            label = "Multilingual",
+            sizeBytes = 142L * 1024 * 1024,
+            speedLabel = "~3x faster",
+            qualityLabel = "Good accuracy",
+            bestFor = "Urdu, Hindi, Arabic, etc."
         )
     )
 
@@ -54,13 +61,22 @@ object WhisperModelManager {
 
     fun isModelDownloaded(context: Context, fileName: String): Boolean {
         val f = getModelFile(context, fileName)
-        val minSize = 70L * 1024 * 1024   // 70 MB minimum
+        val minSize = when (fileName) {
+            MODEL_TINY -> 70L * 1024 * 1024
+            MODEL_BASE -> 130L * 1024 * 1024
+            else -> 70L * 1024 * 1024
+        }
         return f.exists() && f.length() >= minSize
     }
 
-    // Convenience — Tiny only
     fun isTinyReady(context: Context): Boolean =
         isModelDownloaded(context, MODEL_TINY)
+
+    fun isBaseReady(context: Context): Boolean =
+        isModelDownloaded(context, MODEL_BASE)
+
+    fun isAnyModelReady(context: Context): Boolean =
+        isTinyReady(context) || isBaseReady(context)
 
     fun hasPartialDownload(context: Context, fileName: String): Boolean {
         val p = getPartialFile(context, fileName)
@@ -96,18 +112,15 @@ object WhisperModelManager {
             if (existingBytes > 0L) {
                 conn.setRequestProperty("Range", "bytes=$existingBytes-")
             }
-
             conn.connect()
 
             val code = conn.responseCode
             val isResuming = (code == HttpURLConnection.HTTP_PARTIAL)
             val isFresh = (code == HttpURLConnection.HTTP_OK)
-
             if (!isResuming && !isFresh) {
                 Log.e(TAG, "HTTP error: $code")
                 return@withContext false
             }
-
             if (isFresh && existingBytes > 0L) {
                 partial.delete()
                 existingBytes = 0L
@@ -116,26 +129,20 @@ object WhisperModelManager {
             val totalSize = if (isResuming) {
                 existingBytes + conn.contentLengthLong
             } else conn.contentLengthLong
-
             var downloaded = existingBytes
 
             val raf = RandomAccessFile(partial, "rw")
             try {
-                if (isResuming && existingBytes > 0L) {
-                    raf.seek(existingBytes)
-                } else {
-                    raf.setLength(0L)
-                }
+                if (isResuming && existingBytes > 0L) raf.seek(existingBytes)
+                else raf.setLength(0L)
 
                 conn.inputStream.use { input ->
                     val buffer = ByteArray(64 * 1024)
                     var read: Int
                     var lastUpdate = 0L
-
                     while (input.read(buffer).also { read = it } > 0) {
                         raf.write(buffer, 0, read)
                         downloaded += read
-
                         val now = System.currentTimeMillis()
                         if (now - lastUpdate > 150) {
                             lastUpdate = now
@@ -149,29 +156,20 @@ object WhisperModelManager {
             } finally {
                 raf.close()
             }
-
             conn.disconnect()
 
-            val finalLen = partial.length()
-            if (finalLen < 70L * 1024 * 1024) {
-                Log.e(TAG, "Downloaded file too small: $finalLen")
+            if (partial.length() < 30L * 1024 * 1024) {
+                Log.e(TAG, "Downloaded too small: ${partial.length()}")
                 return@withContext false
             }
-
             if (target.exists()) target.delete()
-            if (!partial.renameTo(target)) {
-                Log.e(TAG, "Rename failed")
-                return@withContext false
-            }
+            if (!partial.renameTo(target)) return@withContext false
 
             onProgress(1f)
-            Log.e(
-                TAG,
-                "✅ Downloaded: $fileName (${target.length() / 1024 / 1024} MB)"
-            )
+            Log.e(TAG, "✅ Downloaded: $fileName (${target.length() / 1024 / 1024} MB)")
             true
         } catch (t: Throwable) {
-            Log.e(TAG, "downloadModel failed (partial kept)", t)
+            Log.e(TAG, "downloadModel failed", t)
             false
         }
     }

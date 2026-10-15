@@ -6,6 +6,7 @@ import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -36,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.CaptionGenerator
+import com.moody.moodyvideoeditor.utils.CaptionLanguage
 import com.moody.moodyvideoeditor.utils.CaptionSegment
 import com.moody.moodyvideoeditor.utils.WhisperModelManager
 import kotlinx.coroutines.delay
@@ -45,26 +48,57 @@ fun AutoCaptionsPanel(
     isProcessing: Boolean,
     progress: Float,
     statusMessage: String,
-    isModelDownloaded: Boolean,
     hasClipSelected: Boolean,
     generatedCaptions: List<CaptionSegment>,
     detectedLanguage: String,
-    onDownloadModel: () -> Unit,
+    onDownloadModel: (String) -> Unit,
     onCancelDownload: () -> Unit,
-    onDeleteModel: () -> Unit,
-    onGenerateCaptions: (grouping: CaptionGenerator.GroupingMode) -> Unit,
+    onDeleteModel: (String) -> Unit,
+    onGenerateCaptions: (
+        grouping: CaptionGenerator.GroupingMode,
+        autoStyle: Boolean,
+        language: String,
+        modelFile: String,
+        wordsPerLayer: Int
+    ) -> Unit,
     onCancel: () -> Unit,
     onClearCaptions: () -> Unit = {},
     onClose: () -> Unit
 ) {
-    var selectedGrouping by remember {
-        mutableStateOf(CaptionGenerator.GroupingMode.PHRASE)
-    }
     val context = LocalContext.current
+
+    var selectedGrouping by remember {
+        mutableStateOf(CaptionGenerator.GroupingMode.WORDS)
+    }
+    var autoStyle by remember { mutableStateOf(CaptionGenerator.autoStyleEnabled) }
+    var selectedLanguage by remember { mutableStateOf(CaptionLanguage.AUTO) }
+    var selectedModel by remember { mutableStateOf(WhisperModelManager.MODEL_TINY) }
+    var wordsPerLayer by remember { mutableIntStateOf(1) }
+
     var copiedAll by remember { mutableStateOf(false) }
     var copiedItemIdx by remember { mutableStateOf(-1) }
 
-    FeaturePanel(title = "📝 Auto Captions", onClose = onClose) {
+    var downloadTick by remember { mutableStateOf(0) }
+
+    val tinyReady = remember(downloadTick) { WhisperModelManager.isTinyReady(context) }
+    val baseReady = remember(downloadTick) { WhisperModelManager.isBaseReady(context) }
+
+    LaunchedEffect(selectedLanguage) {
+        val needsBase = selectedLanguage == CaptionLanguage.URDU ||
+                selectedLanguage == CaptionLanguage.HINDI ||
+                selectedLanguage == CaptionLanguage.ARABIC
+        if (needsBase && baseReady) {
+            selectedModel = WhisperModelManager.MODEL_BASE
+        } else if (!needsBase && tinyReady) {
+            selectedModel = WhisperModelManager.MODEL_TINY
+        }
+    }
+
+    val currentModelReady = remember(selectedModel, downloadTick) {
+        WhisperModelManager.isModelDownloaded(context, selectedModel)
+    }
+
+    FeaturePanel(title = "🎙️ Auto Captions", onClose = onClose) {
 
         if (!hasClipSelected) {
             Column(
@@ -93,7 +127,7 @@ fun AutoCaptionsPanel(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 550.dp)
+                .heightIn(max = 640.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -114,7 +148,7 @@ fun AutoCaptionsPanel(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "Language auto-detected. Works offline after download.",
+                        "Whisper AI · Works offline after download · Language-aware",
                         color = Color(0xFF888888),
                         fontSize = 10.sp
                     )
@@ -179,16 +213,16 @@ fun AutoCaptionsPanel(
                 }
             }
 
-            // ═══════════════════════════════════════════════════════════
-            //  GENERATED CAPTIONS LIST
-            // ═══════════════════════════════════════════════════════════
+            // ═══════════════════════════════════════════════════════
+            //  GENERATED LIST
+            // ═══════════════════════════════════════════════════════
             if (generatedCaptions.isNotEmpty()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "✅ ${generatedCaptions.size} Captions" +
+                        "✅ ${generatedCaptions.size} captions" +
                                 if (detectedLanguage.isNotBlank())
                                     " (${detectedLanguage.uppercase()})"
                                 else "",
@@ -219,9 +253,8 @@ fun AutoCaptionsPanel(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            if (copiedAll) "✓ Copied SRT" else "📋 Copy SRT",
-                            color = if (copiedAll) Color.White
-                            else Color(0xFFA78BFA),
+                            if (copiedAll) "✓ SRT" else "📋 SRT",
+                            color = if (copiedAll) Color.White else Color(0xFFA78BFA),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -231,7 +264,7 @@ fun AutoCaptionsPanel(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 220.dp)
+                        .heightIn(max = 200.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color(0xFF0F0F0F))
                         .verticalScroll(rememberScrollState())
@@ -328,103 +361,255 @@ fun AutoCaptionsPanel(
                 }
             }
 
-            // ═══════════════════════════════════════════════════════════
-            //  MAIN ACTION (no captions yet)
-            // ═══════════════════════════════════════════════════════════
+            // ═══════════════════════════════════════════════════════
+            //  MAIN ACTION
+            // ═══════════════════════════════════════════════════════
             if (!isProcessing && generatedCaptions.isEmpty()) {
 
-                // ─── Model status card ───
+                // ─── Language picker ───
+                Text(
+                    "Transcription Language",
+                    color = Color(0xFF888888),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF181818))
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .height(24.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                if (isModelDownloaded) Color(0xFF22C55E)
-                                else Color(0xFF4F9DFF).copy(alpha = 0.25f)
-                            )
-                            .padding(horizontal = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            if (isModelDownloaded) "✓ Ready" else "Not Downloaded",
-                            color = Color.White,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Fast Model (75 MB)",
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            "Auto-detects language · Works offline",
-                            color = Color(0xFF888888),
-                            fontSize = 9.sp
-                        )
-                    }
-
-                    if (isModelDownloaded) {
+                    CaptionLanguage.QUICK_PICK.forEach { lang ->
+                        val isActive = selectedLanguage == lang
                         Box(
                             modifier = Modifier
-                                .height(28.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFFFF6B6B).copy(alpha = 0.15f))
-                                .pointerInput(Unit) {
-                                    detectTapGestures { onDeleteModel() }
+                                .height(34.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (isActive) Color(0xFF7C3AED) else Color(0xFF181818)
+                                )
+                                .pointerInput(lang.code) {
+                                    detectTapGestures { selectedLanguage = lang }
                                 }
-                                .padding(horizontal = 10.dp),
+                                .padding(horizontal = 12.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("🗑", color = Color(0xFFFF6B6B), fontSize = 11.sp)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Text(lang.flag, fontSize = 12.sp)
+                                Text(
+                                    lang.label,
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
                 }
 
-                // ─── Download button ───
-                if (!isModelDownloaded) {
+                // ─── Warning: needs base model ───
+                val needsBaseModel = selectedLanguage == CaptionLanguage.URDU ||
+                        selectedLanguage == CaptionLanguage.HINDI ||
+                        selectedLanguage == CaptionLanguage.ARABIC
+
+                if (needsBaseModel && !baseReady) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(46.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF4F9DFF))
-                            .pointerInput(Unit) {
-                                detectTapGestures { onDownloadModel() }
-                            },
+                            .background(Color(0xFF2A1A0F))
+                            .padding(10.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                "⚠️ ${selectedLanguage.label} needs Base Model",
+                                color = Color(0xFFFFAA33),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Tiny model produces poor ${selectedLanguage.label} output. " +
+                                        "Download Base model (142 MB) below.",
+                                color = Color(0xFFAAAAAA),
+                                fontSize = 9.sp,
+                                lineHeight = 13.sp
+                            )
+                        }
+                    }
+                }
+
+                // ═══════════════════════════════════════════════════
+                //  MODEL PICKER
+                // ═══════════════════════════════════════════════════
+                Text(
+                    "Model",
+                    color = Color(0xFF888888),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                )
+
+                WhisperModelManager.MODELS.forEach { model ->
+                    val isDownloaded = remember(downloadTick) {
+                        WhisperModelManager.isModelDownloaded(context, model.fileName)
+                    }
+                    val isSelected = selectedModel == model.fileName
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (isSelected) Color(0xFF2A1F4D)
+                                else Color(0xFF181818)
+                            )
+                            .then(
+                                if (isSelected) Modifier.border(
+                                    1.dp, Color(0xFF7C3AED),
+                                    RoundedCornerShape(8.dp)
+                                ) else Modifier
+                            )
+                            .pointerInput(model.fileName) {
+                                detectTapGestures {
+                                    if (isDownloaded) selectedModel = model.fileName
+                                }
+                            }
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .height(22.dp)
+                                .clip(RoundedCornerShape(11.dp))
+                                .background(
+                                    if (isDownloaded) Color(0xFF22C55E)
+                                    else Color(0xFF4F9DFF).copy(alpha = 0.25f)
+                                )
+                                .padding(horizontal = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                if (isDownloaded) "✓ Ready" else "Not Downloaded",
+                                color = Color.White,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "${model.label} · ${model.sizeBytes / 1024 / 1024} MB",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                model.bestFor,
+                                color = if (isSelected) Color(0xFFA78BFA)
+                                else Color(0xFF888888),
+                                fontSize = 9.sp
+                            )
+                        }
+
+                        if (isDownloaded) {
+                            Box(
+                                modifier = Modifier
+                                    .height(26.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFFFF6B6B).copy(alpha = 0.15f))
+                                    .pointerInput(model.fileName) {
+                                        detectTapGestures {
+                                            onDeleteModel(model.fileName)
+                                            downloadTick++
+                                        }
+                                    }
+                                    .padding(horizontal = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("🗑", color = Color(0xFFFF6B6B), fontSize = 10.sp)
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .height(26.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF4F9DFF).copy(alpha = 0.2f))
+                                    .pointerInput(model.fileName) {
+                                        detectTapGestures {
+                                            onDownloadModel(model.fileName)
+                                        }
+                                    }
+                                    .padding(horizontal = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "⬇ Download",
+                                    color = Color(0xFF4F9DFF),
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // ─── AI Auto-Style toggle ───
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF1F1438))
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("🤖", fontSize = 18.sp)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "AI Auto-Style",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            if (autoStyle) "Random fonts, glows, animations"
+                            else "Simple plain captions",
+                            color = Color(0xFF888888),
+                            fontSize = 9.sp
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .height(28.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (autoStyle) Color(0xFF7C3AED)
+                                else Color(0xFF181818)
+                            )
+                            .pointerInput(autoStyle) {
+                                detectTapGestures {
+                                    autoStyle = !autoStyle
+                                    CaptionGenerator.autoStyleEnabled = autoStyle
+                                }
+                            }
+                            .padding(horizontal = 14.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            "⬇  Download Model (75 MB)",
+                            if (autoStyle) "ON" else "OFF",
                             color = Color.White,
-                            fontSize = 13.sp,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
-
-                    Text(
-                        "💡 One-time download · Works offline forever",
-                        color = Color(0xFF666666),
-                        fontSize = 9.sp,
-                        modifier = Modifier.padding(start = 4.dp)
-                    )
-
-                    return@Column
                 }
 
-                // ─── Caption style picker ───
+                // ─── Style: Words / Lines ───
                 Text(
                     "Caption Style",
                     color = Color(0xFF888888),
@@ -434,7 +619,7 @@ fun AutoCaptionsPanel(
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     CaptionGenerator.GroupingMode.values().forEach { mode ->
                         val isActive = selectedGrouping == mode
@@ -442,7 +627,7 @@ fun AutoCaptionsPanel(
                             modifier = Modifier
                                 .weight(1f)
                                 .height(52.dp)
-                                .clip(RoundedCornerShape(6.dp))
+                                .clip(RoundedCornerShape(8.dp))
                                 .background(
                                     if (isActive) Color(0xFF7C3AED)
                                     else Color(0xFF181818)
@@ -453,16 +638,64 @@ fun AutoCaptionsPanel(
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(mode.icon, fontSize = 16.sp)
+                                Text(mode.icon, fontSize = 18.sp)
                                 Text(
-                                    mode.label.split(" ").first(),
+                                    mode.label,
                                     color = Color.White,
-                                    fontSize = 9.sp,
+                                    fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
                         }
                     }
+                }
+
+                // ═══════════════════════════════════════════════════
+                //  WORDS PER LAYER — only for WORDS mode
+                // ═══════════════════════════════════════════════════
+                if (selectedGrouping == CaptionGenerator.GroupingMode.WORDS) {
+                    Text(
+                        "Words per layer: $wordsPerLayer",
+                        color = Color(0xFF888888),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        for (n in 1..7) {
+                            val isActive = wordsPerLayer == n
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(40.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(
+                                        if (isActive) Color(0xFF7C3AED)
+                                        else Color(0xFF181818)
+                                    )
+                                    .pointerInput(n) {
+                                        detectTapGestures { wordsPerLayer = n }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "$n",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        "1 = one word per caption · 7 = seven words per caption",
+                        color = Color(0xFF666666),
+                        fontSize = 9.sp,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
                 }
 
                 // ─── Generate button ───
@@ -471,16 +704,34 @@ fun AutoCaptionsPanel(
                         .fillMaxWidth()
                         .height(46.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF7C3AED))
-                        .pointerInput(selectedGrouping) {
+                        .background(
+                            if (currentModelReady) Color(0xFF7C3AED)
+                            else Color(0xFF2A2A2A)
+                        )
+                        .pointerInput(
+                            currentModelReady, selectedGrouping,
+                            autoStyle, selectedLanguage, selectedModel,
+                            wordsPerLayer
+                        ) {
                             detectTapGestures {
-                                onGenerateCaptions(selectedGrouping)
+                                if (currentModelReady) {
+                                    onGenerateCaptions(
+                                        selectedGrouping,
+                                        autoStyle,
+                                        selectedLanguage.code,
+                                        selectedModel,
+                                        wordsPerLayer
+                                    )
+                                }
                             }
                         },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "✨ Generate Captions",
+                        if (currentModelReady)
+                            "🎙️ Transcribe from Audio"
+                        else
+                            "⬇ Download model first",
                         color = Color.White,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
@@ -488,13 +739,14 @@ fun AutoCaptionsPanel(
                 }
 
                 Text(
-                    "💡 Language will be auto-detected from the audio.",
+                    "💡 Tip: For manual text captions, use ✍️ Manual Cap",
                     color = Color(0xFF666666),
                     fontSize = 9.sp,
                     modifier = Modifier.padding(start = 4.dp)
                 )
             }
 
+            // ─── Cancel button ───
             if (isProcessing) {
                 Box(
                     modifier = Modifier
@@ -518,6 +770,10 @@ fun AutoCaptionsPanel(
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════════
 
 private fun formatTime(ms: Long): String {
     val totalSec = ms / 1000.0

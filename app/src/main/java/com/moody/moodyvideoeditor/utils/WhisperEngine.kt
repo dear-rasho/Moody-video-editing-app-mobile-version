@@ -62,31 +62,18 @@ object WhisperEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  SINGLE-PASS TRANSCRIBE
-    //  Whisper.cpp internally chunks audio into 30s windows,
-    //  so long audio (>30s) is handled automatically.
-    //  Language detection works reliably in single-pass mode.
-    // ═══════════════════════════════════════════════════════════
-
-    fun transcribe(
-        pcm: FloatArray,
-        language: String
-    ): TranscriptionResult {
+    fun transcribe(pcm: FloatArray, language: String): TranscriptionResult {
         if (contextPtr == 0L) {
             Log.e(TAG, "❌ Context not loaded")
             return TranscriptionResult("unknown", emptyList())
         }
-
         if (pcm.isEmpty()) {
-            Log.e(TAG, "❌ Empty PCM")
             return TranscriptionResult("unknown", emptyList())
         }
 
         Log.e(
             TAG,
-            "▶️ transcribe: ${pcm.size} samples " +
-                    "(${"%.2f".format(pcm.size / 16000.0)}s), lang=$language"
+            "▶️ transcribe: ${pcm.size} samples, lang=$language"
         )
 
         return try {
@@ -101,13 +88,10 @@ object WhisperEngine {
     private fun parseResult(jsonStr: String): TranscriptionResult {
         return try {
             val obj = JSONObject(jsonStr)
-
             if (obj.has("error")) {
-                val err = obj.getString("error")
-                Log.e(TAG, "⚠️ Native error: $err")
+                Log.e(TAG, "⚠️ Native error: ${obj.getString("error")}")
                 return TranscriptionResult("unknown", emptyList())
             }
-
             val lang = obj.optString("lang", "unknown")
             val arr = obj.optJSONArray("segments")
                 ?: return TranscriptionResult(lang, emptyList())
@@ -125,7 +109,6 @@ object WhisperEngine {
                     )
                 )
             }
-
             Log.e(TAG, "✅ Parsed: lang=$lang, segments=${segments.size}")
             TranscriptionResult(lang, segments)
         } catch (t: Throwable) {

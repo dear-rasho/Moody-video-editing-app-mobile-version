@@ -34,11 +34,13 @@ val FEATURES = listOf(
     Feature("text", "Text", "📝"),
     Feature("blend", "Blend", "◐"),
     Feature("captions", "Captions", "📝"),
+    Feature("manual_captions", "Manual Cap", "✍️"),
     Feature("animations", "Animate", "🎞️"),
     Feature("filters", "Filters", "🎨"),
     Feature("effects", "Effects", "✨"),
     Feature("adjustments", "Adjust", "🎚️"),
     Feature("wheel", "Wheels", "🌈"),
+
     Feature("stickers", "Stickers", "😀"),
     Feature("overlays", "Overlays", "🎬"),
     Feature("transitions", "Transitions", "⇄"),

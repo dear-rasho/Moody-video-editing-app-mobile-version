@@ -3,6 +3,7 @@
 package com.moody.moodyvideoeditor.ui.screens
 
 import com.moody.moodyvideoeditor.utils.CaptionGenerator
+import com.moody.moodyvideoeditor.utils.ManualCaptionParser
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
@@ -82,6 +83,7 @@ import com.moody.moodyvideoeditor.ui.features.ExportDialog
 import com.moody.moodyvideoeditor.ui.features.ExportOverlay
 import com.moody.moodyvideoeditor.ui.features.FiltersPanel
 import com.moody.moodyvideoeditor.ui.features.FreezePanel
+import com.moody.moodyvideoeditor.ui.features.ManualCaptionsPanel
 import com.moody.moodyvideoeditor.ui.features.MaskPanel
 import com.moody.moodyvideoeditor.ui.features.MotionPanel
 import com.moody.moodyvideoeditor.ui.features.MusicPanel
@@ -224,7 +226,7 @@ fun EditorScreen(
 
     var isPlaybackActive by remember { mutableStateOf(false) }
 
-    // 📝 Auto Captions state
+    // 📝 Caption state
     var captionProgress by remember { mutableFloatStateOf(0f) }
     var captionStatus by remember { mutableStateOf("") }
     var isGeneratingCaptions by remember { mutableStateOf(false) }
@@ -234,14 +236,7 @@ fun EditorScreen(
         mutableStateOf<List<com.moody.moodyvideoeditor.utils.CaptionSegment>>(emptyList())
     }
     var detectedCaptionLanguage by remember { mutableStateOf("") }
-    var downloadedModels by remember {
-        mutableStateOf(
-            WhisperModelManager.MODELS
-                .filter { WhisperModelManager.isModelDownloaded(context, it.fileName) }
-                .map { it.fileName }
-                .toSet()
-        )
-    }
+
     // ═══════════════════════════════════════════════════════════
     //  EXOPLAYERS
     // ═══════════════════════════════════════════════════════════
@@ -698,9 +693,7 @@ fun EditorScreen(
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  PANEL HOST — local @Composable (keeps EditorScreen small)
-    //  JVM has a 64KB method limit; extracting this block prevents
-    //  "Method too large" compile errors as the file grows.
+    //  PANEL HOST — local @Composable
     // ═══════════════════════════════════════════════════════════
     @Composable
     fun EditorPanelHost() {
@@ -1802,24 +1795,26 @@ fun EditorScreen(
                 onClose = { activePanel = null }
             )
 
+            // ═══════════════════════════════════════════════════════
+            //  AUTO CAPTIONS (Whisper)
+            // ═══════════════════════════════════════════════════════
             "captions" -> AutoCaptionsPanel(
                 isProcessing = isGeneratingCaptions,
                 progress = captionProgress,
                 statusMessage = captionStatus,
-                isModelDownloaded = WhisperModelManager.isTinyReady(context),
                 hasClipSelected = selected != null,
                 generatedCaptions = generatedCaptions,
                 detectedLanguage = detectedCaptionLanguage,
-                onDownloadModel = {
+                onDownloadModel = { modelFile ->
                     captionJob?.cancel()
                     captionJob = coroutineScope.launch {
                         isGeneratingCaptions = true
                         captionProgress = 0f
-                        captionStatus = "Downloading model…"
+                        captionStatus = "Downloading $modelFile…"
 
                         val ok = WhisperModelManager.downloadModel(
                             context = context,
-                            fileName = WhisperModelManager.MODEL_TINY,
+                            fileName = modelFile,
                             onProgress = { p ->
                                 captionProgress = p
                                 captionStatus = "Downloading… ${(p * 100).toInt()}%"
@@ -1828,13 +1823,9 @@ fun EditorScreen(
 
                         isGeneratingCaptions = false
                         captionProgress = 0f
-                        captionStatus = if (ok) {
-                            "✅ Model ready"
-                        } else {
-                            "❌ Download failed — try again"
-                        }
+                        captionStatus = if (ok) "✅ Ready" else "❌ Failed"
                         if (ok) {
-                            delay(1500)
+                            delay(1200)
                             captionStatus = ""
                         }
                     }
@@ -1844,14 +1835,12 @@ fun EditorScreen(
                     captionJob = null
                     isGeneratingCaptions = false
                     captionProgress = 0f
-                    captionStatus = "⏸ Paused — tap Download again"
+                    captionStatus = "⏸ Paused"
                 },
-                onDeleteModel = {
-                    WhisperModelManager.deleteModel(
-                        context, WhisperModelManager.MODEL_TINY
-                    )
+                onDeleteModel = { modelFile ->
+                    WhisperModelManager.deleteModel(context, modelFile)
                 },
-                onGenerateCaptions = { grouping ->
+                onGenerateCaptions = { grouping, autoStyle, language, modelFile, wpl ->
                     val sel = selected
                     if (sel != null) {
                         captionJob?.cancel()
@@ -1860,28 +1849,28 @@ fun EditorScreen(
                             captionStatus = ""
                             captionProgress = 0f
 
+                            CaptionGenerator.autoStyleEnabled = autoStyle
+
                             val res = CaptionGenerator.generate(
                                 context = context,
                                 clip = sel,
-                                language = "auto",     // ← always auto
-                                modelFile = WhisperModelManager.MODEL_TINY,
+                                language = language,
+                                modelFile = modelFile,
                                 grouping = grouping,
+                                wordsPerLayer = wpl,
                                 viewModel = viewModel,
                                 onStatus = { captionStatus = it },
                                 onProgress = { captionProgress = it }
                             )
-
                             if (res.success) {
-                                captionStatus =
-                                    "✅ ${res.segmentsAdded} captions"
+                                captionStatus = "✅ ${res.segmentsAdded} clips"
                                 generatedCaptions = res.segments
                                 detectedCaptionLanguage = res.detectedLanguage
                                 delay(800)
                                 isGeneratingCaptions = false
                                 captionStatus = ""
                             } else {
-                                captionStatus =
-                                    "❌ ${res.errorMessage ?: "Failed"}"
+                                captionStatus = "❌ ${res.errorMessage ?: "Failed"}"
                                 isGeneratingCaptions = false
                             }
                         }
@@ -1893,6 +1882,63 @@ fun EditorScreen(
                     isGeneratingCaptions = false
                     captionStatus = ""
                     captionProgress = 0f
+                },
+                onClearCaptions = {
+                    generatedCaptions = emptyList()
+                    detectedCaptionLanguage = ""
+                },
+                onClose = { activePanel = null }
+            )
+
+            // ═══════════════════════════════════════════════════════
+            //  MANUAL CAPTIONS
+            // ═══════════════════════════════════════════════════════
+            // ═══════════════════════════════════════════════════════
+            //  MANUAL CAPTIONS — works without clip selection
+            // ═══════════════════════════════════════════════════════
+            "manual_captions" -> ManualCaptionsPanel(
+                statusMessage = captionStatus,
+                onAddManual = { input, grouping, autoStyle, wordsPerLayer, wordsPerLine ->
+                    val videoDurationMs = viewModel.state.value.totalDurationMs
+                    val parsed = ManualCaptionParser.parse(input, videoDurationMs)
+                    if (parsed.isEmpty()) {
+                        captionStatus = "❌ No valid captions — check format"
+                        return@ManualCaptionsPanel
+                    }
+
+                    // No clip needed — use playhead as offset (0 for absolute timestamps)
+                    val offsetMs = 0L
+
+                    captionJob?.cancel()
+                    captionJob = coroutineScope.launch {
+                        isGeneratingCaptions = true
+                        captionStatus = "Generating ${parsed.size} captions…"
+                        captionProgress = 0f
+
+                        val res = CaptionGenerator.generateFromManual(
+                            parsedCaptions = parsed,
+                            grouping = grouping,
+                            autoStyle = autoStyle,
+                            wordsPerLayer = wordsPerLayer,
+                            wordsPerLine = wordsPerLine,
+                            viewModel = viewModel,
+                            offsetMs = offsetMs,
+                            onProgress = { captionProgress = it }
+                        )
+
+                        isGeneratingCaptions = false
+                        captionProgress = 0f
+
+                        if (res.success) {
+                            captionStatus = "✅ ${res.segmentsAdded} clips added"
+                            generatedCaptions = res.segments
+                            detectedCaptionLanguage = ""
+                            delay(1200)
+                            captionStatus = ""
+                        } else {
+                            captionStatus = "❌ ${res.errorMessage ?: "Failed"}"
+                        }
+                    }
                 },
                 onClearCaptions = {
                     generatedCaptions = emptyList()

@@ -129,7 +129,61 @@ Java_com_moody_moodyvideoeditor_utils_WhisperEngine_nativeTranscribe(
         params.detect_language = false;
         LOGE("🎯 Forced language: %s", langStorage.c_str());
     }
+    // ═══════════════════════════════════════════════════════════
+    //  FORCE NATIVE SCRIPT (not English translation)
+    //  initial_prompt biases Whisper to output in the requested
+    //  language's NATIVE SCRIPT.
+    //  Example: "hi" → Devanagari, "ur" → Urdu script
+    // ═══════════════════════════════════════════════════════════
+    static thread_local std::string promptStorage;
 
+    if (!autoDetect) {
+        if (langStr == "hi") {
+            // Hindi Devanagari script prompt
+            promptStorage = "यह हिन्दी में लिखा गया है। कृपया हिन्दी में लिखें।";
+            params.initial_prompt = promptStorage.c_str();
+            LOGE("📝 Hindi prompt set");
+        } else if (langStr == "ur") {
+            // Urdu script prompt
+            promptStorage = "یہ اردو میں لکھا گیا ہے۔ اردو میں لکھیں۔";
+            params.initial_prompt = promptStorage.c_str();
+            LOGE("📝 Urdu prompt set");
+        } else if (langStr == "ar") {
+            // Arabic script prompt
+            promptStorage = "هذا نص عربي. الرجاء الكتابة بالعربية.";
+            params.initial_prompt = promptStorage.c_str();
+            LOGE("📝 Arabic prompt set");
+        } else if (langStr == "fa") {
+            promptStorage = "این متن به زبان فارسی است.";
+            params.initial_prompt = promptStorage.c_str();
+        }
+        // Other languages — no prompt
+    }
+    // ═══════════════════════════════════════════════════════════
+    //  LANGUAGE-SPECIFIC INITIAL PROMPT
+    //  Biases Whisper to output in the NATIVE SCRIPT of that
+    //  language instead of translating to English.
+    // ═══════════════════════════════════════════════════════════
+    if (!autoDetect) {
+        if (langStr == "ur") {
+            // Urdu script bias
+            params.initial_prompt =
+                    "یہ ایک اردو میں لکھا گیا متن ہے۔ براہ کرم اردو میں لکھیں۔";
+        } else if (langStr == "hi") {
+            // Hindi Devanagari bias
+            params.initial_prompt =
+                    "यह हिन्दी में लिखा गया पाठ है। कृपया हिन्दी में लिखें।";
+        } else if (langStr == "ar") {
+            // Arabic script bias
+            params.initial_prompt =
+                    "هذا نص مكتوب باللغة العربية. الرجاء الكتابة بالعربية.";
+        } else if (langStr == "fa") {
+            // Persian bias
+            params.initial_prompt =
+                    "این متن به زبان فارسی نوشته شده است.";
+        }
+        // Other languages don't need bias
+    }
     // ─── Threading — 2 threads for stability ───
     int cores = (int)sysconf(_SC_NPROCESSORS_ONLN);
     int useThreads = (cores >= 4) ? 2 : 1;
@@ -141,7 +195,7 @@ Java_com_moody_moodyvideoeditor_utils_WhisperEngine_nativeTranscribe(
     params.print_timestamps = false;
     params.print_special = false;
     params.translate = false;
-    params.no_context = true;
+    params.no_context = false;
     params.single_segment = false;
     params.token_timestamps = true;
     params.suppress_blank = true;

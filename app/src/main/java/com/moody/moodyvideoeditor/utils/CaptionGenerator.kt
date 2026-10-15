@@ -12,10 +12,11 @@ object CaptionGenerator {
 
     private const val TAG = "CaptionGenerator"
 
+    var autoStyleEnabled: Boolean = true
+
     enum class GroupingMode(val key: String, val label: String, val icon: String) {
-        WORD("word", "Word by Word", "🔤"),
-        PHRASE("phrase", "Short Phrase (3-5)", "📝"),
-        SENTENCE("sentence", "Sentence", "📄")
+        WORDS("words", "Words", "🔤"),
+        LINES("lines", "Lines", "📝")
     }
 
     data class Result(
@@ -32,6 +33,7 @@ object CaptionGenerator {
         language: String,
         modelFile: String,
         grouping: GroupingMode,
+        wordsPerLayer: Int = 1,
         viewModel: EditorViewModel,
         onStatus: (String) -> Unit,
         onProgress: (Float) -> Unit
@@ -64,23 +66,14 @@ object CaptionGenerator {
             }
 
             val durationSec = pcm.size.toFloat() / 16000f
-            Log.e(
-                TAG,
-                "📊 Audio: ${pcm.size} samples, " +
-                        "${"%.2f".format(durationSec)}s"
-            )
-
             if (durationSec < 0.5f) {
-                return Result(
-                    false, 0, "", emptyList(),
-                    "Audio too short (< 0.5s)"
-                )
+                return Result(false, 0, "", emptyList(), "Audio too short (< 0.5s)")
             }
 
             onProgress(0.30f)
 
-            // ─── Transcribe (single-pass) ───
-            onStatus("Transcribing… (${"%.1f".format(durationSec)}s)")
+            // ─── Transcribe ───
+            onStatus("Transcribing… (${"%.1f".format(durationSec)}s, lang=$language)")
             onProgress(0.35f)
 
             val result = withContext(Dispatchers.Default) {
@@ -91,81 +84,105 @@ object CaptionGenerator {
 
             if (result.isEmpty) {
                 onProgress(1f)
-                Log.e(TAG, "❌ No segments (lang=${result.language})")
-                return Result(
-                    success = false,
-                    segmentsAdded = 0,
-                    detectedLanguage = result.language,
-                    segments = emptyList(),
-                    errorMessage = "No speech detected — audio may be silent, " +
-                            "too quiet, or non-verbal"
-                )
-            }
-
-            Log.e(
-                TAG,
-                "✅ Transcribed: ${result.segments.size} raw segments, " +
-                        "lang=${result.language}"
-            )
-
-            // ─── Grouping ───
-            onStatus("Grouping captions…")
-            val grouped = groupSegments(result.segments, grouping)
-            Log.e(
-                TAG,
-                "🔀 Grouped ${result.segments.size} → ${grouped.size} " +
-                        "(${grouping.key})"
-            )
-
-            if (grouped.isEmpty()) {
-                onProgress(1f)
                 return Result(
                     false, 0, result.language, emptyList(),
-                    "No captions after grouping"
+                    "No speech detected"
                 )
             }
 
+            val effectiveLanguage = if (language.equals("auto", ignoreCase = true)) {
+                result.language
+            } else {
+                language
+            }
+            // ═══════════════════════════════════════════════════
+            //  TRANSLITERATE Urdu/Hindi → Roman
+            //  If user selected Urdu/Hindi, force Roman output
+            //  regardless of what script Whisper produced.
+            // ═══════════════════════════════════════════════════
+            val shouldTransliterate = effectiveLanguage == "ur" ||
+                    effectiveLanguage == "hi" ||
+                    effectiveLanguage == "ar"
+
+            val processedSegments = if (shouldTransliterate) {
+                Log.e(TAG, "🔤 Transliterating $effectiveLanguage → Roman")
+                result.segments.map { seg ->
+                    val roman = Transliterator.toRoman(seg.text)
+                    if (roman != seg.text) {
+                        Log.e(TAG, "  \"${seg.text}\" → \"$roman\"")
+                    }
+                    seg.copy(text = roman)
+                }
+            } else {
+                result.segments
+            }
+
+            Log.e(
+                TAG,
+                "✅ Transcribed: ${result.segments.size} segments, " +
+                        "detected=${result.language}, using=$effectiveLanguage"
+            )
+
+            // ─── Create text clips ───
+            onStatus("Styling ${result.segments.size} captions…")
             onProgress(0.92f)
 
-            // ─── Add text layers ───
-            onStatus("Adding ${grouped.size} text layers…")
-            var added = 0
-            grouped.forEach { seg ->
-                try {
-                    viewModel.createTextClipAtTime(
-                        textState = TextState(
-                            content = seg.text,
-                            fontSize = 40,
-                            fontWeight = "bold",
-                            color = 0xFFFFFFFF,
-                            alignment = "center",
-                            positionY = 82f,
-                            backgroundEnabled = true,
-                            backgroundType = "rounded",
-                            backgroundColor1 = 0xFF000000L,
-                            backgroundPaddingX = 16f,
-                            backgroundPaddingY = 8f,
-                            backgroundCornerRadius = 12f,
-                            animation = "fadeIn",
-                            animationDuration = 0.3f
-                        ),
-                        startMs = clip.timelineStartMs + seg.startMs,
-                        endMs = clip.timelineStartMs + seg.endMs
-                    )
-                    added++
+            var totalAdded = 0
+            processedSegments.forEach { seg ->
+            try {
+                    if (autoStyleEnabled) {
+                        val words = seg.text.split(Regex("\\s+"))
+                            .filter { it.isNotBlank() }
+                        if (words.isEmpty()) return@forEach
+
+                        val segStart = clip.timelineStartMs + seg.startMs
+                        val segEnd = clip.timelineStartMs + seg.endMs
+
+                        val clips = when (grouping) {
+                            GroupingMode.WORDS -> CaptionStyleEngine.buildWordsMode(
+                                words = words,
+                                segStartMs = segStart,
+                                segEndMs = segEnd,
+                                language = effectiveLanguage,
+                                wordsPerLayer = wordsPerLayer.coerceIn(1, 7)
+                            )
+                            GroupingMode.LINES -> CaptionStyleEngine.buildLinesMode(
+                                words = words,
+                                segStartMs = segStart,
+                                segEndMs = segEnd,
+                                language = effectiveLanguage
+                            )
+                        }
+
+                        clips.forEach { sc ->
+                            viewModel.createTextClipAtTime(
+                                textState = sc.toTextState(),
+                                startMs = sc.startMs,
+                                endMs = sc.endMs
+                            )
+                            totalAdded++
+                        }
+                    } else {
+                        viewModel.createTextClipAtTime(
+                            textState = simpleCaption(seg.text),
+                            startMs = clip.timelineStartMs + seg.startMs,
+                            endMs = clip.timelineStartMs + seg.endMs
+                        )
+                        totalAdded++
+                    }
                 } catch (t: Throwable) {
                     Log.e(TAG, "Failed to add \"${seg.text}\"", t)
                 }
             }
 
             onProgress(1f)
-            Log.e(TAG, "🎉 Complete: $added / ${grouped.size} layers added")
+            Log.e(TAG, "🎉 Complete: $totalAdded clips added")
 
             return Result(
                 success = true,
-                segmentsAdded = added,
+                segmentsAdded = totalAdded,
                 detectedLanguage = result.language,
-                segments = grouped
+                segments = processedSegments
             )
         } catch (t: Throwable) {
             Log.e(TAG, "💥 generate failed", t)
@@ -173,72 +190,111 @@ object CaptionGenerator {
         }
     }
 
+    private fun simpleCaption(text: String) = TextState(
+        content = text,
+        fontSize = 40,
+        fontWeight = "bold",
+        color = 0xFFFFFFFF,
+        alignment = "center",
+        positionY = 82f,
+        backgroundEnabled = true,
+        backgroundType = "rounded",
+        backgroundColor1 = 0xFF000000L,
+        backgroundPaddingX = 16f,
+        backgroundPaddingY = 8f,
+        backgroundCornerRadius = 12f,
+        animation = "fadeIn",
+        animationDuration = 0.3f
+    )
     // ═══════════════════════════════════════════════════════════
-    //  GROUPING
+    //  MANUAL CAPTIONS — auto-detect fonts per caption
     // ═══════════════════════════════════════════════════════════
 
-    private fun groupSegments(
-        segments: List<CaptionSegment>,
-        mode: GroupingMode
-    ): List<CaptionSegment> {
-        return when (mode) {
-            GroupingMode.SENTENCE -> segments
-            GroupingMode.PHRASE -> segments.flatMap { splitIntoPhrases(it, 3, 5) }
-            GroupingMode.WORD -> segments.flatMap { splitIntoWords(it) }
+    suspend fun generateFromManual(
+        parsedCaptions: List<ManualCaptionParser.ParsedCaption>,
+        grouping: GroupingMode,
+        autoStyle: Boolean,
+        wordsPerLayer: Int = 1,
+        wordsPerLine: Int = 7,
+        viewModel: EditorViewModel,
+        offsetMs: Long = 0L,
+        onProgress: (Float) -> Unit = {}
+    ): Result {
+        if (parsedCaptions.isEmpty()) {
+            return Result(false, 0, "", emptyList(), "No valid captions found")
         }
-    }
 
-    private fun splitIntoWords(seg: CaptionSegment): List<CaptionSegment> {
-        val words = seg.text.split(Regex("\\s+")).filter { it.isNotBlank() }
-        if (words.isEmpty()) return emptyList()
-        if (words.size == 1) return listOf(seg)
+        var totalAdded = 0
+        val allSegments = mutableListOf<CaptionSegment>()
 
-        val totalMs = (seg.endMs - seg.startMs).coerceAtLeast(100L)
-        val perWord = totalMs / words.size
+        parsedCaptions.forEachIndexed { idx, cap ->
+            val segStart = offsetMs + cap.startMs
+            val segEnd = offsetMs + cap.endMs
+            val words = cap.text.split(Regex("\\s+")).filter { it.isNotBlank() }
+            if (words.isEmpty()) return@forEachIndexed
 
-        return words.mapIndexed { i, w ->
-            CaptionSegment(
-                startMs = seg.startMs + i * perWord,
-                endMs = seg.startMs + (i + 1) * perWord,
-                text = w
+            allSegments.add(
+                CaptionSegment(
+                    startMs = cap.startMs,
+                    endMs = cap.endMs,
+                    text = cap.text
+                )
             )
-        }
-    }
 
-    private fun splitIntoPhrases(
-        seg: CaptionSegment,
-        minWords: Int,
-        maxWords: Int
-    ): List<CaptionSegment> {
-        val words = seg.text.split(Regex("\\s+")).filter { it.isNotBlank() }
-        if (words.isEmpty()) return emptyList()
-        if (words.size <= maxWords) return listOf(seg)
+            // Auto-detect language from this caption's text
+            val detectedLang = CaptionLanguage.detectLanguage(cap.text)
+            Log.e(TAG, "Manual caption \"${cap.text.take(30)}\" → lang=$detectedLang")
 
-        val totalMs = (seg.endMs - seg.startMs).coerceAtLeast(100L)
-        val chunks = mutableListOf<List<String>>()
-        var i = 0
-        while (i < words.size) {
-            val remaining = words.size - i
-            val size = when {
-                remaining <= maxWords -> remaining
-                remaining - maxWords < minWords -> remaining
-                else -> maxWords
+            try {
+                if (!autoStyle) {
+                    viewModel.createTextClipAtTime(
+                        textState = simpleCaption(cap.text),
+                        startMs = segStart,
+                        endMs = segEnd
+                    )
+                    totalAdded++
+                } else {
+                    // Use wordsPerLayer = 1 for manual (no layer count)
+                    val clips = when (grouping) {
+                        GroupingMode.WORDS -> CaptionStyleEngine.buildWordsMode(
+                            words = words,
+                            segStartMs = segStart,
+                            segEndMs = segEnd,
+                            language = detectedLang,
+                            wordsPerLayer = wordsPerLayer.coerceIn(1, 7)
+                        )
+                        GroupingMode.LINES -> CaptionStyleEngine.buildLinesMode(
+                            words = words,
+                            segStartMs = segStart,
+                            segEndMs = segEnd,
+                            language = detectedLang,
+                            wordsPerLine = wordsPerLine.coerceIn(3, 7)
+                        )
+                    }
+
+                    clips.forEach { sc ->
+                        viewModel.createTextClipAtTime(
+                            textState = sc.toTextState(),
+                            startMs = sc.startMs,
+                            endMs = sc.endMs
+                        )
+                        totalAdded++
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "Manual caption failed: \"${cap.text}\"", t)
             }
-            chunks.add(words.subList(i, i + size))
-            i += size
+
+            onProgress((idx + 1).toFloat() / parsedCaptions.size)
         }
 
-        val totalWords = words.size
-        var cursor = seg.startMs
-        return chunks.map { chunk ->
-            val dur = (totalMs * chunk.size / totalWords).coerceAtLeast(100L)
-            val r = CaptionSegment(
-                startMs = cursor,
-                endMs = (cursor + dur).coerceAtMost(seg.endMs),
-                text = chunk.joinToString(" ")
-            )
-            cursor += dur
-            r
-        }
+        Log.e(TAG, "✅ Manual: $totalAdded clips from ${parsedCaptions.size} captions")
+
+        return Result(
+            success = totalAdded > 0,
+            segmentsAdded = totalAdded,
+            detectedLanguage = "",
+            segments = allSegments
+        )
     }
 }

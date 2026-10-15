@@ -1738,7 +1738,7 @@ class EditorViewModel : ViewModel() {
 
     fun createTextClipAtTime(textState: TextState, startMs: Long, endMs: Long) {
         val s = _state.value
-        val durMs = (endMs - startMs).coerceAtLeast(500L)
+        val durMs = (endMs - startMs).coerceAtLeast(50L)   // ← 50ms minimum
         val trackIdx = findOrCreateVisualTrack(0, startMs, durMs)
         val clip = EditorClip(
             id = UUID.randomUUID().toString(), uri = Uri.EMPTY,
