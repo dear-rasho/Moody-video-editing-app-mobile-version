@@ -281,6 +281,7 @@ fun PreviewCanvas(
     multiSelectedIds: Set<String> = emptySet(),
     previewFilters: FilterState? = null,
     previewEffectState: EffectState? = null,
+    previewMatte: com.moody.moodyvideoeditor.data.PreviewMatteState? = null,
     isDrawingMode: Boolean = false,
     activeBrushType: BrushType = BrushType.PEN,
     activeBrushColor: Long = 0xFFFF0000,
@@ -316,7 +317,29 @@ fun PreviewCanvas(
 ) {
     val context = LocalContext.current
 
-    val activeClips = clips
+    // 🆕 Virtual preview matte clip (shown at top of the compositing stack)
+    val previewMatteClip: EditorClip? = previewMatte?.let { pm ->
+        EditorClip(
+            id = "__preview_matte__",
+            uri = android.net.Uri.EMPTY,
+            name = "Preview Matte",
+            type = "matte/plain",
+            sourceStartMs = 0L,
+            sourceEndMs = 3_600_000L,        // 🆕 1 hour — always visible
+            timelineStartMs = -1_000_000L,   // 🆕 negative — starts before 0
+            trackIndex = 9999,
+            isAudio = false,
+            sourceTotalMs = Long.MAX_VALUE,
+            matteStyle = pm.style,
+            filters = FilterState(opacity = pm.opacity)
+        )
+    }
+
+    val displayClips: List<EditorClip> = if (previewMatteClip != null)
+        clips + previewMatteClip
+    else clips
+
+    val activeClips = displayClips
         .filter {
             !it.isAudio &&
                     !it.isAdjustmentClip &&

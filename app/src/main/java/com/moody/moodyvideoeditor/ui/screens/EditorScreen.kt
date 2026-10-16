@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Icon
@@ -41,8 +42,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -131,7 +134,7 @@ fun EditorScreen(
     projectId: String = "",
     onBack: () -> Unit,
     startInCodeMode: Boolean = false,
-    initialTemplateId: String? = null,
+    initialSavedTemplateId: String? = null,
     viewModel: EditorViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -144,17 +147,21 @@ fun EditorScreen(
     //  PROJECT LOAD + AUTO-SAVE
     // ═══════════════════════════════════════════════════════════
 
-    LaunchedEffect(projectId, initialTemplateId) {
+    LaunchedEffect(projectId, initialSavedTemplateId) {
         if (projectId.isNotBlank() && viewModel.getProjectId() != projectId) {
-            if (!viewModel.loadProject(context, projectId)) {
-                viewModel.setProjectMeta(
-                    projectId,
-                    if (startInCodeMode) "Code Project" else "New Project"
-                )
-            }
+            viewModel.setProjectMeta(
+                projectId,
+                if (startInCodeMode) "Code Project" else "New Project"
+            )
         }
-        if (!initialTemplateId.isNullOrBlank() && state.clips.isEmpty()) {
-            viewModel.applyTemplate(templateId = initialTemplateId, startMs = 0L)
+
+        if (!initialSavedTemplateId.isNullOrBlank()) {
+            val loaded = viewModel.loadFromTemplate(context, initialSavedTemplateId)
+            if (loaded) {
+                Log.e("EditorScreen", "✅ Loaded saved template")
+            } else {
+                Log.e("EditorScreen", "❌ Failed to load template")
+            }
         }
     }
 
@@ -693,7 +700,7 @@ fun EditorScreen(
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  PANEL HOST — local @Composable
+    //  PANEL HOST
     // ═══════════════════════════════════════════════════════════
     @Composable
     fun EditorPanelHost() {
@@ -806,7 +813,11 @@ fun EditorScreen(
                         ?: com.moody.moodyvideoeditor.data.ColorMatteDefaults.DEFAULT_OPACITY,
                     initialDurationMs = editLayer?.durationMs
                         ?: com.moody.moodyvideoeditor.data.ColorMatteDefaults.DEFAULT_DURATION_MS,
+                    onPreview = { style, opacity, dur ->
+                        viewModel.setPreviewMatte(style, opacity, dur)
+                    },
                     onApply = { style, opacity, durationMs ->
+                        viewModel.clearPreviewMatte()
                         viewModel.createColorMatte(
                             color = style.solidColor,
                             opacity = opacity,
@@ -822,18 +833,20 @@ fun EditorScreen(
                             )
                         }
                     },
+                    // 🆕 Also update previewMatte for live feedback
                     onDelete = {
+                        viewModel.clearPreviewMatte()
                         editLayer?.let { viewModel.removeColorMatte(it.id) }
                         matteEditLayerId = null
                         activePanel = null
                     },
                     onClose = {
+                        viewModel.clearPreviewMatte()
                         matteEditLayerId = null
                         activePanel = null
                     }
                 )
             }
-
             "filters" -> {
                 val editLayer = filterEditLayerId?.let { id ->
                     state.clips.firstOrNull {
@@ -1795,9 +1808,6 @@ fun EditorScreen(
                 onClose = { activePanel = null }
             )
 
-            // ═══════════════════════════════════════════════════════
-            //  AUTO CAPTIONS (Whisper)
-            // ═══════════════════════════════════════════════════════
             "captions" -> AutoCaptionsPanel(
                 isProcessing = isGeneratingCaptions,
                 progress = captionProgress,
@@ -1862,6 +1872,7 @@ fun EditorScreen(
                                 onStatus = { captionStatus = it },
                                 onProgress = { captionProgress = it }
                             )
+
                             if (res.success) {
                                 captionStatus = "✅ ${res.segmentsAdded} clips"
                                 generatedCaptions = res.segments
@@ -1890,12 +1901,6 @@ fun EditorScreen(
                 onClose = { activePanel = null }
             )
 
-            // ═══════════════════════════════════════════════════════
-            //  MANUAL CAPTIONS
-            // ═══════════════════════════════════════════════════════
-            // ═══════════════════════════════════════════════════════
-            //  MANUAL CAPTIONS — works without clip selection
-            // ═══════════════════════════════════════════════════════
             "manual_captions" -> ManualCaptionsPanel(
                 statusMessage = captionStatus,
                 onAddManual = { input, grouping, autoStyle, wordsPerLayer, wordsPerLine ->
@@ -1905,9 +1910,6 @@ fun EditorScreen(
                         captionStatus = "❌ No valid captions — check format"
                         return@ManualCaptionsPanel
                     }
-
-                    // No clip needed — use playhead as offset (0 for absolute timestamps)
-                    val offsetMs = 0L
 
                     captionJob?.cancel()
                     captionJob = coroutineScope.launch {
@@ -1922,7 +1924,7 @@ fun EditorScreen(
                             wordsPerLayer = wordsPerLayer,
                             wordsPerLine = wordsPerLine,
                             viewModel = viewModel,
-                            offsetMs = offsetMs,
+                            offsetMs = 0L,
                             onProgress = { captionProgress = it }
                         )
 
@@ -1946,6 +1948,417 @@ fun EditorScreen(
                 },
                 onClose = { activePanel = null }
             )
+
+            "save_template" -> {
+                var templateName by remember { mutableStateOf("My Template") }
+                var saved by remember { mutableStateOf(false) }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF1A1F3A))
+                        .padding(16.dp)
+                ) {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            "💾 Save as Template",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "Current timeline will be saved. " +
+                                    "Image/video layers become replaceable placeholders.",
+                            color = Color(0xFF888888),
+                            fontSize = 10.sp,
+                            lineHeight = 14.sp
+                        )
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF0A0A0A))
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            BasicTextField(
+                                value = templateName,
+                                onValueChange = { templateName = it },
+                                singleLine = true,
+                                textStyle = TextStyle(
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                cursorBrush = SolidColor(Color(0xFF7C3AED)),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF181818))
+                                    .pointerInput(Unit) {
+                                        detectTapGestures { activePanel = null }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "Cancel",
+                                    color = Color(0xFFAAAAAA),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(2f)
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (saved) Color(0xFF22C55E)
+                                        else Color(0xFF7C3AED)
+                                    )
+                                    .pointerInput(templateName, saved) {
+                                        detectTapGestures {
+                                            if (!saved && templateName.isNotBlank()) {
+                                                val ok = viewModel.saveAsTemplate(
+                                                    context, templateName.trim()
+                                                )
+                                                if (ok) {
+                                                    saved = true
+                                                    captionStatus = "✅ Template saved"
+                                                } else {
+                                                    captionStatus = "❌ Save failed"
+                                                }
+                                            }
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    if (saved) "✓ Saved!" else "💾 Save Template",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        if (saved) {
+                            LaunchedEffect(Unit) {
+                                delay(1000)
+                                activePanel = null
+                                captionStatus = ""
+                            }
+                        }
+                    }
+                }
+            }
+
+            "replace_media" -> {
+                val sel = selected
+
+                when {
+                    sel == null -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF2A0F0F))
+                                .padding(16.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    "⚠️ No layer selected",
+                                    color = Color(0xFFFF6B6B),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "Tap a layer on the timeline first.",
+                                    color = Color(0xFF888888),
+                                    fontSize = 10.sp
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .height(36.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF181818))
+                                        .pointerInput(Unit) {
+                                            detectTapGestures { activePanel = null }
+                                        }
+                                        .padding(horizontal = 20.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        "✕ Back",
+                                        color = Color(0xFFAAAAAA),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    sel.isTextClip -> {
+                        val currentText = sel.textState?.content ?: ""
+                        var newText by remember(sel.id) {
+                            mutableStateOf(currentText)
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF1A1F3A))
+                                .padding(16.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    "📝 Replace Text",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "All fonts, colors, animations, keyframes " +
+                                            "will be preserved.",
+                                    color = Color(0xFF888888),
+                                    fontSize = 10.sp,
+                                    lineHeight = 14.sp
+                                )
+
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 80.dp, max = 160.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF0A0A0A))
+                                        .padding(12.dp)
+                                ) {
+                                    BasicTextField(
+                                        value = newText,
+                                        onValueChange = { newText = it },
+                                        textStyle = TextStyle(
+                                            color = Color.White,
+                                            fontSize = 13.sp,
+                                            lineHeight = 18.sp
+                                        ),
+                                        cursorBrush = SolidColor(Color(0xFF7C3AED)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(44.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color(0xFF181818))
+                                            .pointerInput(Unit) {
+                                                detectTapGestures { activePanel = null }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            "Cancel",
+                                            color = Color(0xFFAAAAAA),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(2f)
+                                            .height(44.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(
+                                                if (newText.isNotBlank() && newText != currentText)
+                                                    Color(0xFF22C55E)
+                                                else Color(0xFF2A2A2A)
+                                            )
+                                            .pointerInput(newText, currentText) {
+                                                detectTapGestures {
+                                                    if (newText.isNotBlank() &&
+                                                        newText != currentText
+                                                    ) {
+                                                        val st = sel.textState
+                                                        if (st != null) {
+                                                            viewModel.updateSelectedText(
+                                                                st.copy(content = newText)
+                                                            )
+                                                            captionStatus =
+                                                                "✅ Text replaced"
+                                                            activePanel = null
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            "✓ Replace Text",
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    sel.type.startsWith("image/") ||
+                            sel.type.startsWith("video/") -> {
+
+                        val mediaPicker = rememberLauncherForActivityResult(
+                            contract = ActivityResultContracts.OpenDocument()
+                        ) { uri: Uri? ->
+                            if (uri != null) {
+                                try {
+                                    context.contentResolver
+                                        .takePersistableUriPermission(
+                                            uri,
+                                            Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                        )
+                                } catch (_: Exception) {}
+                                viewModel.replaceClipUri(sel.id, uri)
+                                captionStatus = "✅ Media replaced"
+                                activePanel = null
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF1A1F3A))
+                                .padding(16.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    "🔄 Replace Media",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "Current: \"${sel.name}\"\n" +
+                                            "All transforms, animations, keyframes will be preserved.",
+                                    color = Color(0xFF888888),
+                                    fontSize = 10.sp,
+                                    lineHeight = 14.sp
+                                )
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(44.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color(0xFF181818))
+                                            .pointerInput(Unit) {
+                                                detectTapGestures { activePanel = null }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            "Cancel",
+                                            color = Color(0xFFAAAAAA),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(2f)
+                                            .height(44.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color(0xFF4F9DFF))
+                                            .pointerInput(Unit) {
+                                                detectTapGestures {
+                                                    mediaPicker.launch(
+                                                        arrayOf("image/*", "video/*")
+                                                    )
+                                                }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            "📷 Pick New Media",
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    else -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF2A1A0F))
+                                .padding(16.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    "⚠️ This layer can't be replaced",
+                                    color = Color(0xFFFFAA33),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "Only image, video, and text layers support replacement.",
+                                    color = Color(0xFF888888),
+                                    fontSize = 10.sp
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .height(36.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF181818))
+                                        .pointerInput(Unit) {
+                                            detectTapGestures { activePanel = null }
+                                        }
+                                        .padding(horizontal = 20.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        "✕ Back",
+                                        color = Color(0xFFAAAAAA),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             else -> FeatureShelf(
                 onFeatureSelected = {
                     if (it == "wheel") viewModel.prepareColorWheelLayer()
@@ -2039,6 +2452,7 @@ fun EditorScreen(
                 aspectMode = state.aspectMode,
                 clips = state.clips,
                 currentPosMs = state.currentPosMs,
+                previewMatte = state.previewMatte,
                 isPlaying = isPlaybackActive,
                 hiddenVisualTracks = state.hiddenVisualTracks,
                 aspectRatioKey = state.aspectRatio,
@@ -2238,6 +2652,17 @@ fun EditorScreen(
                     },
                     onTimelineZoomChange = { zoom ->
                         viewModel.setTimelineZoom(zoom)
+                    },
+                    onReplaceRequested = { clipId ->
+                        val clip = state.clips.firstOrNull { it.id == clipId }
+                        if (clip != null) {
+                            viewModel.selectClip(clip)
+                            activePanel = "replace_media"
+                        }
+                    },
+                    onEmptyAreaTapped = {
+                        // 🆕 CHANGE #1: Khali jagah tap → unselect all
+                        viewModel.clearAllSelection()
                     }
                 )
             }
@@ -2305,7 +2730,7 @@ fun EditorScreen(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 140.dp, max = 320.dp)
+                .heightIn(min = 90.dp, max = 220.dp)
         ) {
             EditorPanelHost()
         }

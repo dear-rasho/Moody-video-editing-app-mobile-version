@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.OverlayLibrary
 import com.moody.moodyvideoeditor.data.OverlayState
+import com.moody.moodyvideoeditor.data.PreviewMatteState
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 
 // Mirrors js/features/overlays.js

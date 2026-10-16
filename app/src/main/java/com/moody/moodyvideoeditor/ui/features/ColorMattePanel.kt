@@ -1,5 +1,5 @@
 package com.moody.moodyvideoeditor.ui.features
-
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -51,6 +51,7 @@ fun ColorMattePanel(
     initialStyle: ColorMatteStyle = ColorMatteStyle(),
     initialOpacity: Float = ColorMatteDefaults.DEFAULT_OPACITY,
     initialDurationMs: Long = ColorMatteDefaults.DEFAULT_DURATION_MS,
+    onPreview: (style: ColorMatteStyle, opacity: Float, durationMs: Long) -> Unit = { _, _, _ -> },
     onApply: (style: ColorMatteStyle, opacity: Float, durationMs: Long) -> Unit,
     onUpdate: (style: ColorMatteStyle, opacity: Float, durationMs: Long) -> Unit = { _, _, _ -> },
     onDelete: () -> Unit = {},
@@ -63,12 +64,22 @@ fun ColorMattePanel(
     var durationMs by remember(editLayerId) { mutableLongStateOf(initialDurationMs) }
 
     fun notifyChange() {
+        // 🆕 Always fire preview (works for both create + edit mode)
+        onPreview(style, opacity, durationMs)
         if (isEditMode) onUpdate(style, opacity, durationMs)
+    }
+
+    // 🆕 Fire initial preview when panel opens
+    LaunchedEffect(Unit) {
+        onPreview(style, opacity, durationMs)
     }
 
     FeaturePanel(
         title = if (isEditMode) "🎨 Edit Color Matte" else "🎨 Color Matte",
-        onClose = onClose
+        onClose = {
+            onPreview(style, opacity, durationMs)  // harmless — caller will clear
+            onClose()
+        }
     ) {
         Column(
             modifier = Modifier

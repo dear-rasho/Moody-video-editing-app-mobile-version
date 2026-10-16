@@ -128,7 +128,9 @@ fun Timeline(
     onSwapTracks: (Int, Int, Boolean) -> Unit = { _, _, _ -> },
     onTransitionDelete: (String) -> Unit = {},
     onTransitionDurationChange: (String, Long) -> Unit = { _, _ -> },
-    onTimelineZoomChange: (Float) -> Unit = {}
+    onTimelineZoomChange: (Float) -> Unit = {},
+    onReplaceRequested: (String) -> Unit = {},
+    onEmptyAreaTapped: () -> Unit = {}   // 🆕 CHANGE #1: khali jagah tap
 ) {
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
@@ -139,7 +141,7 @@ fun Timeline(
     val labelWidthPx = with(density) { TRACK_LABEL_WIDTH.toPx() }
 
     var viewportWidthPx by remember { mutableFloatStateOf(0f) }
-    var viewportHeightPx by remember { mutableFloatStateOf(0f) }   // 🆕 ADD THIS
+    var viewportHeightPx by remember { mutableFloatStateOf(0f) }
     var lastUserScrollMs by remember { mutableLongStateOf(0L) }
 
     var dragVisual by remember { mutableStateOf(DragVisual()) }
@@ -199,7 +201,7 @@ fun Timeline(
         )
         if (target != hScroll.value) hScroll.scrollTo(target)
     }
-    // 🆕 Auto-scroll during drag — reveals higher/lower layers
+
     LaunchedEffect(
         dragVisual.active,
         dragVisual.targetTrack,
@@ -221,55 +223,45 @@ fun Timeline(
         val totalVisual = state.visualLayerCount
         val totalAudio = state.audioLayerCount
 
-        // Compute Y position of the drag target from the TOP of the track stack
         val targetTrackY: Float = if (!dragVisual.isAudio) {
-            // Visual tracks render top-down: V{visualLayerCount-1} at top, V1 at bottom
-            // targetTrack is 0-indexed (V1 = 0)
-            // Visual track at index `i` sits at Y = (topVisualIndex - i) * trackHeight
             val topVisualIndex = totalVisual - 1
             val target = dragVisual.targetTrack.coerceIn(0, topVisualIndex)
             (topVisualIndex - target) * trackHeightPx
         } else {
-            // Audio tracks render below visual tracks
             val visualBlockHeight = totalVisual * trackHeightPx
             val ghostBlockHeight = if (dragVisual.needsNewLayer) ghostHeightPx else 0f
             val target = dragVisual.targetTrack.coerceIn(0, totalAudio)
             visualBlockHeight + ghostBlockHeight + target * trackHeightPx
         }
 
-        // Viewport window
         val viewportTop = vScroll.value.toFloat()
         val viewportBottom = viewportTop + viewportHeightPx
 
-        // Safe margins (20% top, 20% bottom)
         val topMargin = viewportHeightPx * 0.20f
         val bottomMargin = viewportHeightPx * 0.20f
 
         val targetCenterY = targetTrackY + trackHeightPx / 2f
 
-        // Determine scroll direction
         val scrollTarget: Int? = when {
             targetCenterY < viewportTop + topMargin -> {
-                // Above safe zone → scroll up
                 (targetCenterY - topMargin).toInt().coerceAtLeast(0)
             }
 
             targetCenterY > viewportBottom - bottomMargin -> {
-                // Below safe zone → scroll down
                 (targetCenterY - viewportHeightPx + bottomMargin).toInt()
             }
 
-            else -> null  // In safe zone — no scroll
+            else -> null
         }
 
         if (scrollTarget != null) {
             val clamped = scrollTarget.coerceIn(0, vScroll.maxValue)
             if (clamped != vScroll.value) {
-                // Smooth animated scroll
                 vScroll.animateScrollTo(clamped)
             }
         }
     }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -348,7 +340,7 @@ fun Timeline(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .onSizeChanged { viewportHeightPx = it.height.toFloat() }   // 🆕 ADD THIS
+                .onSizeChanged { viewportHeightPx = it.height.toFloat() }
                 .pointerInput(hasAnySelection, pps) {
                     awaitEachGesture {
                         val firstDown = awaitFirstDown(requireUnconsumed = false)
@@ -510,6 +502,8 @@ fun Timeline(
                             selectedTransitionClipId =
                                 if (selectedTransitionClipId == id) null else id
                         },
+                        onReplaceRequested = onReplaceRequested,
+                        onEmptyAreaTapped = onEmptyAreaTapped,   // 🆕 pass through
                         haptic = haptic
                     )
                 }
@@ -598,6 +592,8 @@ fun Timeline(
                             selectedTransitionClipId =
                                 if (selectedTransitionClipId == id) null else id
                         },
+                        onReplaceRequested = onReplaceRequested,
+                        onEmptyAreaTapped = onEmptyAreaTapped,   // 🆕 pass through
                         haptic = haptic
                     )
                 }
@@ -691,6 +687,8 @@ private fun VisualTrackRow(
     onTransitionDurationChange: (String, Long) -> Unit,
     selectedTransitionClipId: String?,
     onTransitionTapped: (String) -> Unit,
+    onReplaceRequested: (String) -> Unit,
+    onEmptyAreaTapped: () -> Unit,
     haptic: HapticFeedback
 ) {
     val density = LocalDensity.current
@@ -817,10 +815,11 @@ private fun VisualTrackRow(
                 onTransitionTapped = onTransitionTapped,
                 visualLayerCount = visualLayerCount,
                 audioLayerCount = audioLayerCount,
-                trackHidden = isHidden,   // ya isMuted
+                trackHidden = isHidden,
                 haptic = haptic,
-
-                )
+                onReplaceRequested = onReplaceRequested,
+                onEmptyAreaTapped = onEmptyAreaTapped
+            )
         }
     }
 }
@@ -870,6 +869,8 @@ private fun AudioTrackRow(
     onTransitionDurationChange: (String, Long) -> Unit,
     selectedTransitionClipId: String?,
     onTransitionTapped: (String) -> Unit,
+    onReplaceRequested: (String) -> Unit,
+    onEmptyAreaTapped: () -> Unit,
     haptic: HapticFeedback
 ) {
     val density = LocalDensity.current
@@ -997,7 +998,9 @@ private fun AudioTrackRow(
                 visualLayerCount = visualLayerCount,
                 audioLayerCount = audioLayerCount,
                 trackHidden = isMuted,
-                haptic = haptic
+                haptic = haptic,
+                onReplaceRequested = onReplaceRequested,
+                onEmptyAreaTapped = onEmptyAreaTapped
             )
         }
     }
@@ -1101,7 +1104,8 @@ private fun TrackContent(
     audioLayerCount: Int,
     trackHidden: Boolean,
     haptic: HapticFeedback,
-    onDragNearEdge: (Float) -> Unit = {}
+    onReplaceRequested: (String) -> Unit = {},
+    onEmptyAreaTapped: () -> Unit = {}
 ) {
     val density = LocalDensity.current
 
@@ -1123,6 +1127,8 @@ private fun TrackContent(
                         offset.x in startPx..endPx
                     }
                     if (tappedClip == null) {
+                        // 🆕 CHANGE #1: Khali jagah tap → unselect all
+                        onEmptyAreaTapped()
                         onSeek(
                             TimelinePlayheadController.seekTimeFromClick(
                                 offset.x, contentWidthPx, totalMs
@@ -1174,8 +1180,8 @@ private fun TrackContent(
                     snapGuideX = x
                     snapLabel = label
                 },
-                haptic = haptic,
-                onDragNearEdge = onDragNearEdge   // 🆕 pass through
+                onReplaceRequested = onReplaceRequested,
+                haptic = haptic
             )
         }
 
@@ -1346,8 +1352,8 @@ private fun ClipCard(
     onDragCancel: () -> Unit,
     onDragVisualUpdate: (DragVisual) -> Unit,
     onSnapGuideUpdate: (Float, String?) -> Unit,
-    haptic: HapticFeedback,
-    onDragNearEdge: (Float) -> Unit = {}   // 🆕
+    onReplaceRequested: (String) -> Unit = {},
+    haptic: HapticFeedback
 ) {
     val density = LocalDensity.current
     val startPx = clip.timelineStartMs.toFloat() / totalMs * contentWidthPx
@@ -1417,7 +1423,6 @@ private fun ClipCard(
                     var totalMove = 0f
                     var longPressSuccess = false
 
-                    // ─── PHASE 1: Wait for long-press ───
                     val startTime = System.currentTimeMillis()
                     while (System.currentTimeMillis() - startTime < LONG_PRESS_MS) {
                         val event = awaitPointerEvent()
@@ -1447,14 +1452,12 @@ private fun ClipCard(
                         return@awaitEachGesture
                     }
 
-                    // ─── PHASE 2: Lifted ───
                     if (com.moody.moodyvideoeditor.utils.SettingsConsumer.hapticFeedback) {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     }
                     clipLifted = true
                     onDragStart()
 
-                    // ─── PHASE 3: Drag ───
                     var continueDrag = true
                     while (continueDrag) {
                         val event = awaitPointerEvent()
@@ -1470,9 +1473,6 @@ private fun ClipCard(
                         val panY = ch.position.y - down.position.y
                         accumDragX = panX
                         accumDragY = panY
-                        // 🆕 Auto-scroll: trigger based on absolute finger position
-                        val absY = ch.position.y
-                        onDragNearEdge(absY)
 
                         val virtualStartMs = (dragStartTimeMs +
                                 (panX / pxPerMs).toLong()).coerceAtLeast(0L)
@@ -1563,7 +1563,6 @@ private fun ClipCard(
                         ch.consume()
                     }
 
-                    // ─── PHASE 4: Drop ───
                     clipLifted = false
                     onSnapGuideUpdate(-1f, null)
 
@@ -1607,6 +1606,32 @@ private fun ClipCard(
             maxLines = 1,
             modifier = Modifier.zIndex(10f)
         )
+
+        // 🆕 REPLACE ICON — top-right corner
+        if (!isDragging && !clipLifted && clip.isReplaceable) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 2.dp, top = 2.dp)
+                    .size(16.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Color(0xFF4F9DFF).copy(alpha = 0.9f))
+                    .pointerInput(clip.id) {
+                        detectTapGestures(
+                            onTap = { onReplaceRequested(clip.id) }
+                        )
+                    }
+                    .zIndex(20f),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "🔄",
+                    color = Color.White,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
 
         if (isSelected && !isDragging && !clipLifted) {
             Box(
@@ -2098,7 +2123,38 @@ private fun AudioWaveformBackground(
 // ═══════════════════════════════════════════════════════════════
 
 private fun clipColor(clip: EditorClip): Color = when {
-    clip.isColorMatteClip -> Color(clip.matteColor)     // 🆕
+    clip.isColorMatteClip -> {
+        // 🆕 Representative color based on matte mode
+        val rawColor = when (clip.matteStyle.mode) {
+            com.moody.moodyvideoeditor.data.ColorMatteMode.SOLID ->
+                clip.matteStyle.solidColor
+
+            com.moody.moodyvideoeditor.data.ColorMatteMode.RAMP ->
+                clip.matteStyle.rampColor1
+
+            com.moody.moodyvideoeditor.data.ColorMatteMode.FOUR_COLOR ->
+                clip.matteStyle.topLeft
+        }
+
+        val r = ((rawColor shr 16) and 0xFF).toInt()
+        val g = ((rawColor shr 8) and 0xFF).toInt()
+        val b = (rawColor and 0xFF).toInt()
+        val luminance = (0.299f * r + 0.587f * g + 0.114f * b) / 255f
+
+        // 🆕 DEBUG — build chalao aur logcat mein dekho ye line
+        android.util.Log.d(
+            "MATTE_COLOR",
+            "mode=${clip.matteStyle.mode} " +
+                    "raw=0x${rawColor.toString(16)} " +
+                    "lum=$luminance " +
+                    "→ ${if (luminance < 0.35f) "YELLOW" else "COLOR"}"
+        )
+
+        // Dark → bright yellow (visible on dark timeline)
+        if (luminance < 0.35f) Color(0xFFFFC107)
+        else Color(r, g, b).copy(alpha = 0.9f)
+    }
+
     clip.isVisualizerClip -> Color(0xFFFFD166)
     clip.isAudioFxClip -> Color(0xFFA855F7)
     clip.isSoundFxClip -> Color(0xFF3B82F6)

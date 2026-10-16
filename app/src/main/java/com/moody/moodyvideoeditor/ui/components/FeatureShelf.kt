@@ -33,14 +33,13 @@ val FEATURES = listOf(
     Feature("speed", "Speed", "⏩"),
     Feature("text", "Text", "📝"),
     Feature("blend", "Blend", "◐"),
-    Feature("captions", "Captions", "📝"),
+    Feature("captions", "Auto Cap", "🎙️"),
     Feature("manual_captions", "Manual Cap", "✍️"),
     Feature("animations", "Animate", "🎞️"),
     Feature("filters", "Filters", "🎨"),
     Feature("effects", "Effects", "✨"),
     Feature("adjustments", "Adjust", "🎚️"),
     Feature("wheel", "Wheels", "🌈"),
-
     Feature("stickers", "Stickers", "😀"),
     Feature("overlays", "Overlays", "🎬"),
     Feature("transitions", "Transitions", "⇄"),
@@ -59,6 +58,8 @@ val FEATURES = listOf(
     Feature("ratio", "Ratio", "🖼️"),
     Feature("duplicate", "Dup", "📋"),
     Feature("delete", "Delete", "🗑"),
+    Feature("save_template", "Save Tpl", "💾"),
+    Feature("replace_media", "Replace", "🔄"),
     Feature("code", "Code", "💻"),
     Feature("export", "Export", "💾")
 )
@@ -73,21 +74,21 @@ fun FeatureShelf(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF0A0A0A))
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         Text(
             "Tools",
             color = Color(0xFF888888),
-            fontSize = 11.sp,
+            fontSize = 9.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(start = 4.dp)
+            modifier = Modifier.padding(start = 2.dp)
         )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(scrollState),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             FEATURES.forEach { feature ->
                 FeatureItem(feature) { onFeatureSelected(feature.key) }

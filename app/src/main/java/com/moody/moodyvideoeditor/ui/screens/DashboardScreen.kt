@@ -38,10 +38,10 @@ import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.EditorState
 import com.moody.moodyvideoeditor.data.ProjectMeta
 import com.moody.moodyvideoeditor.data.ProjectRepository
-import com.moody.moodyvideoeditor.data.templates.HomeTemplatePreset
+import com.moody.moodyvideoeditor.data.SavedTemplateRepository
 import com.moody.moodyvideoeditor.ui.home.CodeBaseShelf
 import com.moody.moodyvideoeditor.ui.home.RecentProjects
-import com.moody.moodyvideoeditor.ui.home.TemplatesShelf
+import com.moody.moodyvideoeditor.ui.home.SavedTemplatesShelf
 import java.util.UUID
 
 @Composable
@@ -51,15 +51,20 @@ fun DashboardScreen(
     onCodeEditor: (String) -> Unit,
     onOpenHelp: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
-    onTemplateProject: (String, String) -> Unit
+    onOpenFromSavedTemplate: (String) -> Unit
 ) {
     val context = LocalContext.current
     var projects by remember { mutableStateOf(ProjectRepository.listProjects(context)) }
+    var savedTemplates by remember {
+        mutableStateOf(SavedTemplateRepository.listTemplates(context))
+    }
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
+    var pendingDeleteTemplateId by remember { mutableStateOf<String?>(null) }
 
-    // Refresh list when screen is composed
+    // Refresh lists
     remember(Unit) {
         projects = ProjectRepository.listProjects(context)
+        savedTemplates = SavedTemplateRepository.listTemplates(context)
     }
 
     fun createNewProject(isCodeMode: Boolean) {
@@ -74,28 +79,11 @@ fun DashboardScreen(
             clipCount = 0,
             durationMs = 0L
         )
-        ProjectRepository.saveProject(
-            context, meta,
-            EditorState()
-        )
+        ProjectRepository.saveProject(context, meta, EditorState())
         if (isCodeMode) onCodeEditor(id) else onNewProject(id)
     }
 
-    fun createTemplateProject(template: HomeTemplatePreset) {
-        val id = UUID.randomUUID().toString()
-        val now = System.currentTimeMillis()
-        val meta = ProjectMeta(
-            id = id,
-            name = template.title,
-            createdAt = now,
-            updatedAt = now,
-            thumbnailPath = null,
-            clipCount = 0,
-            durationMs = 0L
-        )
-        ProjectRepository.saveProject(context, meta, EditorState())
-        onTemplateProject(id, template.id)
-    }
+
 
     Column(
         modifier = Modifier
@@ -127,7 +115,6 @@ fun DashboardScreen(
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // 🆕 Settings button
                 Box(
                     modifier = Modifier
                         .size(48.dp)
@@ -141,7 +128,6 @@ fun DashboardScreen(
                     Text("⚙️", fontSize = 20.sp)
                 }
 
-                // Help button
                 Box(
                     modifier = Modifier
                         .size(48.dp)
@@ -155,7 +141,6 @@ fun DashboardScreen(
                     Text("📖", fontSize = 20.sp)
                 }
 
-                // New Project button
                 IconButton(
                     onClick = { createNewProject(false) },
                     modifier = Modifier
@@ -176,21 +161,23 @@ fun DashboardScreen(
         RecentProjects(
             projects = projects,
             onOpen = { projectId -> onOpenProject(projectId) },
-            onDelete = { projectId ->
-                pendingDeleteId = projectId
-            }
+            onDelete = { projectId -> pendingDeleteId = projectId }
         )
 
-        // TEMPLATES
-        SectionTitle("Templates")
-        TemplatesShelf(onTemplateSelected = ::createTemplateProject)
+        // 🆕 MY TEMPLATES
+        SectionTitle("My Templates")
+        SavedTemplatesShelf(
+            templates = savedTemplates,
+            onOpen = { templateId -> onOpenFromSavedTemplate(templateId) },
+            onDelete = { templateId -> pendingDeleteTemplateId = templateId }
+        )
+
+
 
         // CODE BASE EDITING
         SectionTitle("Code Base Editing")
         CodeBaseShelf(
-            onOpen = { title ->
-                createNewProject(true)
-            }
+            onOpen = { createNewProject(true) }
         )
 
         // HELP CARD
@@ -198,22 +185,17 @@ fun DashboardScreen(
         HelpCard(onOpenHelp)
     }
 
-    // Delete Confirmation Dialog
+    // Project delete dialog
     if (pendingDeleteId != null) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { pendingDeleteId = null },
             title = {
-                Text(
-                    "Delete Project?",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Text("Delete Project?", color = Color.White, fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold)
             },
             text = {
-                val projName = projects
-                    .firstOrNull { it.id == pendingDeleteId }
-                    ?.name ?: "this project"
+                val projName = projects.firstOrNull { it.id == pendingDeleteId }?.name
+                    ?: "this project"
                 Text(
                     "Are you sure you want to delete \"$projName\"? " +
                             "This cannot be undone.",
@@ -239,12 +221,8 @@ fun DashboardScreen(
                         .padding(horizontal = 16.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        "Delete",
-                        color = Color(0xFFFF6B6B),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text("Delete", color = Color(0xFFFF6B6B), fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -254,19 +232,71 @@ fun DashboardScreen(
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color(0xFF181818))
                         .pointerInput(Unit) {
+                            detectTapGestures { pendingDeleteId = null }
+                        }
+                        .padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Cancel", color = Color.White, fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = Color(0xFF1A1A1A),
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    // Template delete dialog
+    if (pendingDeleteTemplateId != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { pendingDeleteTemplateId = null },
+            title = {
+                Text("Delete Template?", color = Color.White, fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    "Are you sure you want to delete this template?",
+                    color = Color(0xFFAAAAAA),
+                    fontSize = 12.sp
+                )
+            },
+            confirmButton = {
+                Box(
+                    modifier = Modifier
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFFF6B6B).copy(alpha = 0.2f))
+                        .pointerInput(Unit) {
                             detectTapGestures {
-                                pendingDeleteId = null
+                                pendingDeleteTemplateId?.let { id ->
+                                    SavedTemplateRepository.delete(context, id)
+                                    savedTemplates = SavedTemplateRepository.listTemplates(context)
+                                }
+                                pendingDeleteTemplateId = null
                             }
                         }
                         .padding(horizontal = 16.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        "Cancel",
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text("Delete", color = Color(0xFFFF6B6B), fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                Box(
+                    modifier = Modifier
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF181818))
+                        .pointerInput(Unit) {
+                            detectTapGestures { pendingDeleteTemplateId = null }
+                        }
+                        .padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Cancel", color = Color.White, fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold)
                 }
             },
             containerColor = Color(0xFF1A1A1A),
@@ -311,7 +341,8 @@ private fun HelpCard(onOpen: () -> Unit) {
                     fontSize = 10.sp
                 )
             }
-            Text("→", color = Color(0xFF7C3AED), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text("→", color = Color(0xFF7C3AED), fontSize = 18.sp,
+                fontWeight = FontWeight.Bold)
         }
     }
 }

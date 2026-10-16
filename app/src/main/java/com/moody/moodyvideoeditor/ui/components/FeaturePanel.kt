@@ -23,7 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
+import androidx.compose.foundation.layout.height
 // Reusable container for all feature panels
 // Har panel isko wrap karega
 @Composable
@@ -35,32 +35,34 @@ fun FeaturePanel(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 140.dp, max = 260.dp)
+            .heightIn(min = 90.dp, max = 200.dp)
             .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
             .background(Color(0xFF0A0A0A))
-            .padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         // Header with back button
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(24.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
                 onClick = onClose,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(24.dp)
             ) {
                 Icon(
                     imageVector = Icons.Filled.ArrowBack,
                     contentDescription = "Close",
                     tint = Color.White,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
             Text(
                 text = title,
                 color = Color.White,
-                fontSize = 13.sp,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f)
             )

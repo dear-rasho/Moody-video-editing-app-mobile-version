@@ -1,16 +1,21 @@
 package com.moody.moodyvideoeditor
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.moody.moodyvideoeditor.data.EditorState
+import com.moody.moodyvideoeditor.data.ProjectMeta
+import com.moody.moodyvideoeditor.data.ProjectRepository
 import com.moody.moodyvideoeditor.ui.screens.DashboardScreen
 import com.moody.moodyvideoeditor.ui.screens.EditorScreen
 import com.moody.moodyvideoeditor.ui.screens.HelpGuideScreen
 import com.moody.moodyvideoeditor.ui.screens.SettingsScreen
+import java.util.UUID
 
 object AppRoutes {
     const val DASHBOARD = "dashboard"
@@ -18,14 +23,17 @@ object AppRoutes {
     const val SETTINGS = "settings"
 
     fun editorWithProject(projectId: String): String = "editor/$projectId"
-    fun editorWithTemplate(projectId: String, templateId: String): String =
-        "editor/$projectId?templateId=$templateId"
+
+    fun editorWithSavedTemplate(projectId: String, savedTemplateId: String): String =
+        "editor/$projectId?savedTemplateId=$savedTemplateId"
 
     fun codeModeWithProject(projectId: String): String = "code_mode/$projectId"
 }
 
 @Composable
 fun AppNavigation(navController: NavHostController = rememberNavController()) {
+    val context = LocalContext.current
+
     NavHost(
         navController = navController,
         startDestination = AppRoutes.DASHBOARD
@@ -47,19 +55,31 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
                 onOpenSettings = {
                     navController.navigate(AppRoutes.SETTINGS)
                 },
-                onTemplateProject = { projectId, templateId ->
+                onOpenFromSavedTemplate = { templateId ->
+                    val projectId = UUID.randomUUID().toString()
+                    val now = System.currentTimeMillis()
+                    val meta = ProjectMeta(
+                        id = projectId,
+                        name = "From Template",
+                        createdAt = now,
+                        updatedAt = now,
+                        thumbnailPath = null,
+                        clipCount = 0,
+                        durationMs = 0L
+                    )
+                    ProjectRepository.saveProject(context, meta, EditorState())
                     navController.navigate(
-                        AppRoutes.editorWithTemplate(projectId, templateId)
+                        AppRoutes.editorWithSavedTemplate(projectId, templateId)
                     )
                 }
             )
         }
 
         composable(
-            route = "editor/{projectId}?templateId={templateId}",
+            route = "editor/{projectId}?savedTemplateId={savedTemplateId}",
             arguments = listOf(
                 navArgument("projectId") { type = NavType.StringType },
-                navArgument("templateId") {
+                navArgument("savedTemplateId") {
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null
@@ -67,11 +87,11 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
             )
         ) { backStackEntry ->
             val projectId = backStackEntry.arguments?.getString("projectId").orEmpty()
-            val templateId = backStackEntry.arguments?.getString("templateId")
+            val savedTemplateId = backStackEntry.arguments?.getString("savedTemplateId")
             EditorScreen(
                 projectId = projectId,
                 onBack = { navController.popBackStack() },
-                initialTemplateId = templateId
+                initialSavedTemplateId = savedTemplateId
             )
         }
 

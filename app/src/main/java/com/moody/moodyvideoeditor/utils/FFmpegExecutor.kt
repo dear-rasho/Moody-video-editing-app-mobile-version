@@ -25,6 +25,25 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.Locale
+// ═══════════════════════════════════════════════════════════════
+//  🆕 LAYERED RENDER ITEM — unified compositing order
+//  Sab layers (matte, visual, sequence) ek list mein hain
+//  aur trackIndex ke hisab se sort hoke composite hote hain.
+// ═══════════════════════════════════════════════════════════════
+private data class LayeredRenderItem(
+    val trackIndex: Int,
+    val timelineStartMs: Long,
+    val kind: Int,                    // 0=matte, 1=clip, 2=sequence
+    val matteClip: EditorClip? = null,
+    val visualClip: EditorClip? = null,
+    val sequence: TextOverlaySequence? = null,
+    val matteIdx: Int = -1,
+    val clipIdx: Int = -1,
+    val sequenceIdx: Int = -1,
+    val inputIndex: Int = -1
+)
+
+
 
 class FFmpegExecutor(
     private val context: Context,
@@ -43,6 +62,85 @@ class FFmpegExecutor(
     // ═══════════════════════════════════════════════════════════
     //  FAST VIDEO ARGS
     // ═══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
+//  🆕 RENDER MATTE TO PNG — guarantees preview parity
+//  Compose PreviewCanvas uses Brush.linearGradient / 2x2 scale
+//  Ye function wahi visual output PNG mein deta hai
+// ═══════════════════════════════════════════════════════════════
+    private fun renderMatteToPng(
+        style: com.moody.moodyvideoeditor.data.ColorMatteStyle,
+        W: Int,
+        H: Int
+    ): File {
+        val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+
+        when (style.mode) {
+            com.moody.moodyvideoeditor.data.ColorMatteMode.SOLID -> {
+                canvas.drawColor(style.solidColor.toInt())
+            }
+
+            com.moody.moodyvideoeditor.data.ColorMatteMode.RAMP -> {
+                val rad = Math.toRadians(style.rampAngleDeg.toDouble())
+                val dx = kotlin.math.cos(rad).toFloat()
+                val dy = kotlin.math.sin(rad).toFloat()
+                val halfDiag = kotlin.math.sqrt(
+                    W.toFloat() * W + H.toFloat() * H
+                ) / 2f
+                val cx = W / 2f
+                val cy = H / 2f
+                val startX = cx - dx * halfDiag
+                val startY = cy - dy * halfDiag
+                val endX = cx + dx * halfDiag
+                val endY = cy + dy * halfDiag
+
+                val paint = android.graphics.Paint(
+                    android.graphics.Paint.ANTI_ALIAS_FLAG
+                ).apply {
+                    isDither = true
+                    shader = android.graphics.LinearGradient(
+                        startX, startY, endX, endY,
+                        style.rampColor1.toInt(),
+                        style.rampColor2.toInt(),
+                        android.graphics.Shader.TileMode.CLAMP
+                    )
+                }
+                canvas.drawRect(0f, 0f, W.toFloat(), H.toFloat(), paint)
+            }
+
+            com.moody.moodyvideoeditor.data.ColorMatteMode.FOUR_COLOR -> {
+                // 2x2 bitmap + bilinear upscale = smooth 4-corner gradient
+                val tiny = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+                tiny.setPixel(0, 0, style.topLeft.toInt())
+                tiny.setPixel(1, 0, style.topRight.toInt())
+                tiny.setPixel(0, 1, style.bottomLeft.toInt())
+                tiny.setPixel(1, 1, style.bottomRight.toInt())
+
+                val paint = android.graphics.Paint().apply {
+                    isFilterBitmap = true
+                    isAntiAlias = true
+                    isDither = true
+                }
+                canvas.drawBitmap(
+                    tiny,
+                    null,
+                    android.graphics.RectF(0f, 0f, W.toFloat(), H.toFloat()),
+                    paint
+                )
+                tiny.recycle()
+            }
+        }
+
+        val file = File(
+            context.cacheDir,
+            "matte_${style.mode.name}_${System.currentTimeMillis()}.png"
+        )
+        FileOutputStream(file).use { out ->
+            bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+        }
+        bmp.recycle()
+        return file
+    }
     private fun buildFastVideoArgs(
         bitrateKbps: Int,
         targetW: Int,
@@ -397,6 +495,13 @@ class FFmpegExecutor(
                 }
             }
             maskSequenceDirectories.clear()
+        }
+    }
+    private fun cleanupMatteTempFiles(files: List<File>) {
+        files.forEach { file ->
+            try {
+                if (file.exists()) file.delete()
+            } catch (_: Throwable) {}
         }
     }
 
@@ -1488,82 +1593,36 @@ class FFmpegExecutor(
                 )
             )
 
+            // ═══════════════════════════════════════════════════
+            //  🆕 MATTE INPUTS — pre-rendered PNGs (guaranteed parity)
+            // ═══════════════════════════════════════════════════
             val matteInputIndices = mutableMapOf<String, Int>()
             var nextMatteIdx = backgroundInputIdx + 1
+            val matteTempFiles = mutableListOf<File>()
+
             colorMettes.forEach { matte ->
                 val dur = (matte.durationMs / 1000.0).coerceAtLeast(0.1)
-                val mode = matte.matteStyle.mode
+                val pngFile = renderMatteToPng(
+                    matte.matteStyle, targetW, targetH
+                )
+                matteTempFiles.add(pngFile)
 
-                when (mode) {
-                    com.moody.moodyvideoeditor.data.ColorMatteMode.SOLID -> {
-                        val rgbHex = String.format(
-                            "0x%06X", matte.matteStyle.solidColor and 0xFFFFFF
-                        )
-                        args.addAll(
-                            listOf(
-                                "-f", "lavfi", "-t", dur.toString(),
-                                "-i", "color=c=$rgbHex:s=${targetW}x${targetH}:r=$fps"
-                            )
-                        )
-                    }
-
-                    com.moody.moodyvideoeditor.data.ColorMatteMode.RAMP -> {
-                        val rad = Math.toRadians(matte.matteStyle.rampAngleDeg.toDouble())
-                        val dx = kotlin.math.cos(rad)
-                        val dy = kotlin.math.sin(rad)
-                        val x0 = (0.5 - dx * 0.5).coerceIn(0.0, 1.0)
-                        val y0 = (0.5 - dy * 0.5).coerceIn(0.0, 1.0)
-                        val x1 = (0.5 + dx * 0.5).coerceIn(0.0, 1.0)
-                        val y1 = (0.5 + dy * 0.5).coerceIn(0.0, 1.0)
-                        val c1 = String.format("0x%06X", matte.matteStyle.rampColor1 and 0xFFFFFF)
-                        val c2 = String.format("0x%06X", matte.matteStyle.rampColor2 and 0xFFFFFF)
-                        args.addAll(
-                            listOf(
-                                "-f", "lavfi", "-t", dur.toString(), "-i",
-                                "gradients=s=${targetW}x${targetH}:" +
-                                        "c0=$c1:c1=$c2:" +
-                                        "x0=${"%.4f".format(x0)}:" +
-                                        "y0=${"%.4f".format(y0)}:" +
-                                        "x1=${"%.4f".format(x1)}:" +
-                                        "y1=${"%.4f".format(y1)}:" +
-                                        "d=$dur:r=$fps:type=linear"
-                            )
-                        )
-                    }
-
-                    com.moody.moodyvideoeditor.data.ColorMatteMode.FOUR_COLOR -> {
-                        val cTL = matte.matteStyle.topLeft
-                        val cTR = matte.matteStyle.topRight
-                        val cBL = matte.matteStyle.bottomLeft
-                        val cBR = matte.matteStyle.bottomRight
-
-                        fun r(c: Long) = ((c shr 16) and 0xFF).toInt()
-                        fun g(c: Long) = ((c shr 8) and 0xFF).toInt()
-                        fun b(c: Long) = (c and 0xFF).toInt()
-
-                        val exprR = "${r(cTL)}*(1-X/W)*(1-Y/H)+" +
-                                "${r(cTR)}*(X/W)*(1-Y/H)+" +
-                                "${r(cBL)}*(1-X/W)*(Y/H)+" +
-                                "${r(cBR)}*(X/W)*(Y/H)"
-                        val exprG = "${g(cTL)}*(1-X/W)*(1-Y/H)+" +
-                                "${g(cTR)}*(X/W)*(1-Y/H)+" +
-                                "${g(cBL)}*(1-X/W)*(Y/H)+" +
-                                "${g(cBR)}*(X/W)*(Y/H)"
-                        val exprB = "${b(cTL)}*(1-X/W)*(1-Y/H)+" +
-                                "${b(cTR)}*(X/W)*(1-Y/H)+" +
-                                "${b(cBL)}*(1-X/W)*(Y/H)+" +
-                                "${b(cBR)}*(X/W)*(Y/H)"
-
-                        val filter = "color=c=black:s=${targetW}x${targetH}:d=$dur:r=$fps," +
-                                "format=rgba," +
-                                "geq=r='$exprR':g='$exprG':b='$exprB':a=255"
-                        args.addAll(listOf("-f", "lavfi", "-t", dur.toString(), "-i", filter))
-                    }
-                }
+                args.addAll(
+                    listOf(
+                        "-loop", "1",
+                        "-framerate", fps.toString(),
+                        "-t", dur.toString(),
+                        "-i", pngFile.absolutePath
+                    )
+                )
                 matteInputIndices[matte.id] = nextMatteIdx
                 nextMatteIdx++
-            }
 
+                Log.e(
+                    "FFMPEG_MATTE",
+                    "Matte ${matte.matteStyle.mode} → ${pngFile.name}"
+                )
+            }
             val silenceInputIdx = nextMatteIdx
             args.addAll(
                 listOf(
@@ -1605,173 +1664,297 @@ class FFmpegExecutor(
             val filterParts = mutableListOf<String>()
             filterParts.add("[$backgroundInputIdx:v]setpts=PTS-STARTPTS,format=rgba[canvas0]")
 
+
+
+            // ═══════════════════════════════════════════════════════
+            //  🆕 UNIFIED COMPOSITING — sort by trackIndex
+            //  Timeline pe jo neeche hai, export mein bhi neeche
+            // ═══════════════════════════════════════════════════════
+
+            val renderList = mutableListOf<LayeredRenderItem>()
+
+            // ─── Mattes collect karo ───
+            colorMettes.forEachIndexed { idx, matte ->
+                val inputIdx = matteInputIndices[matte.id] ?: return@forEachIndexed
+                renderList.add(
+                    LayeredRenderItem(
+                        trackIndex = matte.trackIndex,
+                        timelineStartMs = matte.timelineStartMs,
+                        kind = 0,
+                        matteClip = matte,
+                        matteIdx = idx,
+                        inputIndex = inputIdx
+                    )
+                )
+            }
+
+            // ─── Visual clips collect karo ───
+            orderedClips.forEachIndexed { idx, (clip, _) ->
+                renderList.add(
+                    LayeredRenderItem(
+                        trackIndex = clip.trackIndex,
+                        timelineStartMs = clip.timelineStartMs,
+                        kind = 1,
+                        visualClip = clip,
+                        clipIdx = idx,
+                        inputIndex = idx   // orderedClips input index matches position
+                    )
+                )
+            }
+
+            // ─── Sequences (text / sticker / viz / lightning / particle / fire / dust) ───
+            combinedSequences.forEachIndexed { idx, seq ->
+                renderList.add(
+                    LayeredRenderItem(
+                        trackIndex = seq.trackIndex,
+                        timelineStartMs = (seq.startSec * 1000.0).toLong(),
+                        kind = 2,
+                        sequence = seq,
+                        sequenceIdx = idx,
+                        inputIndex = sequenceStartIdx + idx
+                    )
+                )
+            }
+
+            // ⭐ KEY STEP — sort by trackIndex (bottom → top), phir time
+            renderList.sortWith(
+                compareBy<LayeredRenderItem>(
+                    { it.trackIndex },
+                    { it.timelineStartMs }
+                )
+            )
+
+            Log.e(
+                "FFMPEG_ORDER",
+                "Compositing ${renderList.size} layers:\n" +
+                        renderList.joinToString("\n") { item ->
+                            val name = when (item.kind) {
+                                0 -> "MATTE(${item.matteClip?.name ?: "?"})"
+                                1 -> "CLIP(${item.visualClip?.name ?: "?"})"
+                                else -> "SEQ(${item.sequence?.trackIndex ?: "?"})"
+                            }
+                            "  V${item.trackIndex} @${item.timelineStartMs}ms → $name"
+                        }
+            )
+
+            // ═══════════════════════════════════════════════════════
+            //  COMPOSITE — order preserved
+            // ═══════════════════════════════════════════════════════
+
             var canvasLabel = "canvas0"
 
-            colorMettes.forEachIndexed { idx, matte ->
-                val matteInput = matteInputIndices[matte.id] ?: return@forEachIndexed
-                val startSec = matte.timelineStartMs / 1000.0
-                val endSec = matte.timelineEndMs / 1000.0
-                val alpha = (matte.filters.opacity / 100f).coerceIn(0f, 1f)
+            renderList.forEach { item ->
+                when (item.kind) {
 
-                val startExpr = String.format(Locale.US, "%.4f", startSec)
-                val endExpr = String.format(Locale.US, "%.4f", endSec)
-                val alphaStr = String.format(Locale.US, "%.3f", alpha)
+                    // ═══════ 0 → COLOR MATTE ═══════
+                    0 -> {
+                        val matte = item.matteClip ?: return@forEach
+                        val idx = item.matteIdx
+                        val matteInput = item.inputIndex
+                        val startSec = matte.timelineStartMs / 1000.0
+                        val endSec = matte.timelineEndMs / 1000.0
+                        val alpha = (matte.filters.opacity / 100f).coerceIn(0f, 1f)
 
-                val scaledLabel = "matte_scaled_$idx"
-                val outLabel = "matte_out_$idx"
+                        val startExpr = String.format(Locale.US, "%.4f", startSec)
+                        val endExpr = String.format(Locale.US, "%.4f", endSec)
+                        val alphaStr = String.format(Locale.US, "%.3f", alpha)
 
-                val chain = mutableListOf<String>()
-                chain.add("format=rgba")
-                chain.add("colorchannelmixer=aa=$alphaStr")
-                chain.addAll(buildVisualTransformFilters(matte, targetW, targetH, true, true))
-                chain.add("setpts=PTS-STARTPTS+${startSec}/TB")
+                        val scaledLabel = "matte_scaled_$idx"
+                        val outLabel = "canvas_m$idx"
 
-                filterParts.add("[$matteInput:v]${chain.joinToString(",")}[$scaledLabel]")
-                filterParts.add(
-                    "[$canvasLabel][$scaledLabel]overlay=0:0:" +
-                            "eof_action=pass:repeatlast=0:" +
-                            "enable='between(t,$startExpr,$endExpr)'" +
-                            "[$outLabel]"
-                )
-                canvasLabel = outLabel
-            }
-
-            orderedClips.forEachIndexed { index, (clip, _) ->
-                val startSec = clip.timelineStartMs / 1000.0
-                val endSec = (clip.timelineStartMs + clip.durationMs) / 1000.0
-                val startExpr = String.format(Locale.US, "%.4f", startSec)
-                val endExpr = String.format(Locale.US, "%.4f", endSec)
-                val clipDurationSec = (clip.durationMs / 1000.0).coerceAtLeast(0.1)
-                val filters = mutableListOf("setpts=PTS-STARTPTS")
-                if (!isImage(clip) && clip.speed != 1.0f) {
-                    filters.add("setpts=${1.0f / clip.speed}*PTS")
-                }
-                filters.addAll(buildPerClipFilterChain(clip, allClips))
-                filters.addAll(
-                    buildVisualTransformFilters(clip, targetW, targetH, true, true)
-                )
-                filters.add("fps=$fps")
-                filters.add("trim=duration=$clipDurationSec")
-                filters.add("setpts=PTS-STARTPTS+${startSec}/TB")
-                filters.add("format=rgba")
-                val unmaskedLayerLabel = "layer_unmasked$index"
-                filterParts.add("[${index}:v]${filters.joinToString(",")}[$unmaskedLayerLabel]")
-
-                // MASK
-                val maskInputIdx = maskInputIndices[clip.id]
-                val layerLabel = if (maskInputIdx != null) {
-                    val maskPtsLabel = "mask_pts$index"
-                    val maskReadyLabel = "mask_ready$index"
-                    val layerRgbaLabel = "layer_rgba$index"
-
-                    filterParts.add(
-                        "[$maskInputIdx:v]format=rgba," +
-                                "alphaextract," +
-                                "format=gray," +
-                                "setpts=PTS-STARTPTS+${startSec}/TB" +
-                                "[$maskPtsLabel]"
-                    )
-                    filterParts.add(
-                        "[$unmaskedLayerLabel]format=rgba[$layerRgbaLabel]"
-                    )
-                    filterParts.add(
-                        "[$layerRgbaLabel][$maskPtsLabel]alphamerge[$maskReadyLabel]"
-                    )
-                    maskReadyLabel
-                } else {
-                    unmaskedLayerLabel
-                }
-
-                val outputLabel = "canvas${index + 1}"
-                val x = (clip.offsetX * targetW).toInt()
-                val y = (clip.offsetY * targetH).toInt()
-
-                val blendKey = clip.blendMode.lowercase()
-                if (blendKey == "normal" || blendKey.isBlank()) {
-                    filterParts.add(
-                        "[$canvasLabel][$layerLabel]overlay=$x:$y:" +
-                                "eof_action=pass:repeatlast=0:" +
-                                "enable='between(t,$startExpr,$endExpr)'" +
-                                "[$outputLabel]"
-                    )
-                } else {
-                    // 🎨 Blend mode — force RGB24 space (YUV multiply chroma kills)
-                    val ffmpegMode = ffmpegBlendName(blendKey)
-                    val blendAlpha = (clip.blendOpacity / 100f).coerceIn(0f, 1f)
-                    val blendAlphaStr = String.format(Locale.US, "%.3f", blendAlpha)
-
-                    val baseLbl = "blend_base_$index"
-                    val blendSrcRgbaLbl = "blend_src_rgba_$index"
-                    val blendSrcLbl = "blend_src_$index"
-                    val layerRgbaLbl = "blend_layer_rgba_$index"
-                    val layerRgbLbl = "blend_layer_rgb_$index"
-                    val layerAlphaSrcLbl = "blend_layer_alpha_src_$index"
-                    val maskLbl = "blend_mask_$index"
-                    val blendedRgbLbl = "blend_out_rgb_$index"
-                    val blendedRgbaLbl = "blend_out_rgba_$index"
-                    val fillLbl = "blend_fill_$index"
-
-                    // 1) Canvas → rgba, split: base (rgba) + blend src (will go rgb24)
-                    filterParts.add(
-                        "[$canvasLabel]format=rgba," +
-                                "split=2[$baseLbl][$blendSrcRgbaLbl]"
-                    )
-                    filterParts.add(
-                        "[$blendSrcRgbaLbl]format=rgb24[$blendSrcLbl]"
-                    )
-
-                    // 2) Layer → rgba, split: rgb (rgb24) + alpha src
-                    filterParts.add(
-                        "[$layerLabel]format=rgba," +
-                                "split=2[$layerRgbaLbl][$layerAlphaSrcLbl]"
-                    )
-                    filterParts.add(
-                        "[$layerRgbaLbl]format=rgb24[$layerRgbLbl]"
-                    )
-
-                    // 3) Extract layer alpha mask
-                    filterParts.add(
-                        "[$layerAlphaSrcLbl]alphaextract[$maskLbl]"
-                    )
-
-                    // 4) Blend in pure RGB24 (no YUV chroma distortion)
-                    filterParts.add(
-                        "[$blendSrcLbl][$layerRgbLbl]blend=" +
-                                "all_mode=$ffmpegMode:" +
-                                "all_opacity=1:" +
-                                "shortest=0" +
-                                "[$blendedRgbLbl]"
-                    )
-
-                    // 5) Attach layer's alpha to blend result
-                    filterParts.add(
-                        "[$blendedRgbLbl]format=rgba[$blendedRgbaLbl]"
-                    )
-                    filterParts.add(
-                        "[$blendedRgbaLbl][$maskLbl]alphamerge[$fillLbl]"
-                    )
-
-                    // 6) Apply blend opacity by scaling alpha channel
-                    val finalBlendLbl = if (blendAlpha < 0.995f) {
-                        val scaledLbl = "blend_scaled_$index"
-                        filterParts.add(
-                            "[$fillLbl]colorchannelmixer=aa=$blendAlphaStr[$scaledLbl]"
+                        val chain = mutableListOf<String>()
+                        chain.add("format=rgba")
+                        chain.add("colorchannelmixer=aa=$alphaStr")
+                        chain.addAll(
+                            buildVisualTransformFilters(
+                                matte, targetW, targetH, true, true
+                            )
                         )
-                        scaledLbl
-                    } else fillLbl
+                        chain.add("setpts=PTS-STARTPTS+${startSec}/TB")
 
-                    // 7) Overlay blended on original base — only where layer alpha > 0
-                    filterParts.add(
-                        "[$baseLbl][$finalBlendLbl]overlay=$x:$y:" +
-                                "eof_action=pass:repeatlast=0:" +
-                                "enable='between(t,$startExpr,$endExpr)'" +
-                                "[$outputLabel]"
-                    )
+                        filterParts.add(
+                            "[$matteInput:v]${chain.joinToString(",")}[$scaledLabel]"
+                        )
+                        filterParts.add(
+                            "[$canvasLabel][$scaledLabel]overlay=0:0:" +
+                                    "eof_action=pass:repeatlast=0:" +
+                                    "enable='between(t,$startExpr,$endExpr)'" +
+                                    "[$outLabel]"
+                        )
+                        canvasLabel = outLabel
+                    }
+
+                    // ═══════ 1 → VISUAL CLIP ═══════
+                    1 -> {
+                        val clip = item.visualClip ?: return@forEach
+                        val index = item.clipIdx
+
+                        val startSec = clip.timelineStartMs / 1000.0
+                        val endSec =
+                            (clip.timelineStartMs + clip.durationMs) / 1000.0
+                        val startExpr = String.format(Locale.US, "%.4f", startSec)
+                        val endExpr = String.format(Locale.US, "%.4f", endSec)
+                        val clipDurationSec = (clip.durationMs / 1000.0)
+                            .coerceAtLeast(0.1)
+
+                        val filters = mutableListOf("setpts=PTS-STARTPTS")
+                        if (!isImage(clip) && clip.speed != 1.0f) {
+                            filters.add("setpts=${1.0f / clip.speed}*PTS")
+                        }
+                        filters.addAll(buildPerClipFilterChain(clip, allClips))
+                        filters.addAll(
+                            buildVisualTransformFilters(
+                                clip, targetW, targetH, true, true
+                            )
+                        )
+                        filters.add("fps=$fps")
+                        filters.add("trim=duration=$clipDurationSec")
+                        filters.add("setpts=PTS-STARTPTS+${startSec}/TB")
+                        filters.add("format=rgba")
+
+                        val unmaskedLayerLabel = "layer_unmasked$index"
+                        filterParts.add(
+                            "[${index}:v]${filters.joinToString(",")}[$unmaskedLayerLabel]"
+                        )
+
+                        // ─── MASK ───
+                        val maskInputIdx = maskInputIndices[clip.id]
+                        val layerLabel = if (maskInputIdx != null) {
+                            val maskPtsLabel = "mask_pts$index"
+                            val maskReadyLabel = "mask_ready$index"
+                            val layerRgbaLabel = "layer_rgba$index"
+
+                            filterParts.add(
+                                "[$maskInputIdx:v]format=rgba," +
+                                        "alphaextract," +
+                                        "format=gray," +
+                                        "setpts=PTS-STARTPTS+${startSec}/TB" +
+                                        "[$maskPtsLabel]"
+                            )
+                            filterParts.add(
+                                "[$unmaskedLayerLabel]format=rgba[$layerRgbaLabel]"
+                            )
+                            filterParts.add(
+                                "[$layerRgbaLabel][$maskPtsLabel]alphamerge[$maskReadyLabel]"
+                            )
+                            maskReadyLabel
+                        } else {
+                            unmaskedLayerLabel
+                        }
+
+                        val outputLabel = "canvas_c$index"
+                        val x = (clip.offsetX * targetW).toInt()
+                        val y = (clip.offsetY * targetH).toInt()
+
+                        val blendKey = clip.blendMode.lowercase()
+                        if (blendKey == "normal" || blendKey.isBlank()) {
+                            filterParts.add(
+                                "[$canvasLabel][$layerLabel]overlay=$x:$y:" +
+                                        "eof_action=pass:repeatlast=0:" +
+                                        "enable='between(t,$startExpr,$endExpr)'" +
+                                        "[$outputLabel]"
+                            )
+                        } else {
+                            // 🎨 Blend mode — RGB24 space
+                            val ffmpegMode = ffmpegBlendName(blendKey)
+                            val blendAlpha = (clip.blendOpacity / 100f)
+                                .coerceIn(0f, 1f)
+                            val blendAlphaStr = String.format(
+                                Locale.US, "%.3f", blendAlpha
+                            )
+
+                            val baseLbl = "blend_base_$index"
+                            val blendSrcRgbaLbl = "blend_src_rgba_$index"
+                            val blendSrcLbl = "blend_src_$index"
+                            val layerRgbaLbl = "blend_layer_rgba_$index"
+                            val layerRgbLbl = "blend_layer_rgb_$index"
+                            val layerAlphaSrcLbl = "blend_layer_alpha_src_$index"
+                            val maskLbl = "blend_mask_$index"
+                            val blendedRgbLbl = "blend_out_rgb_$index"
+                            val blendedRgbaLbl = "blend_out_rgba_$index"
+                            val fillLbl = "blend_fill_$index"
+
+                            filterParts.add(
+                                "[$canvasLabel]format=rgba," +
+                                        "split=2[$baseLbl][$blendSrcRgbaLbl]"
+                            )
+                            filterParts.add(
+                                "[$blendSrcRgbaLbl]format=rgb24[$blendSrcLbl]"
+                            )
+                            filterParts.add(
+                                "[$layerLabel]format=rgba," +
+                                        "split=2[$layerRgbaLbl][$layerAlphaSrcLbl]"
+                            )
+                            filterParts.add(
+                                "[$layerRgbaLbl]format=rgb24[$layerRgbLbl]"
+                            )
+                            filterParts.add(
+                                "[$layerAlphaSrcLbl]alphaextract[$maskLbl]"
+                            )
+                            filterParts.add(
+                                "[$blendSrcLbl][$layerRgbLbl]blend=" +
+                                        "all_mode=$ffmpegMode:" +
+                                        "all_opacity=1:" +
+                                        "shortest=0" +
+                                        "[$blendedRgbLbl]"
+                            )
+                            filterParts.add(
+                                "[$blendedRgbLbl]format=rgba[$blendedRgbaLbl]"
+                            )
+                            filterParts.add(
+                                "[$blendedRgbaLbl][$maskLbl]alphamerge[$fillLbl]"
+                            )
+
+                            val finalBlendLbl = if (blendAlpha < 0.995f) {
+                                val scaledLbl = "blend_scaled_$index"
+                                filterParts.add(
+                                    "[$fillLbl]colorchannelmixer=aa=$blendAlphaStr[$scaledLbl]"
+                                )
+                                scaledLbl
+                            } else fillLbl
+
+                            filterParts.add(
+                                "[$baseLbl][$finalBlendLbl]overlay=$x:$y:" +
+                                        "eof_action=pass:repeatlast=0:" +
+                                        "enable='between(t,$startExpr,$endExpr)'" +
+                                        "[$outputLabel]"
+                            )
+                        }
+                        canvasLabel = outputLabel
+                    }
+
+                    // ═══════ 2 → SEQUENCE (text/viz/effects) ═══════
+                    2 -> {
+                        val seq = item.sequence ?: return@forEach
+                        val idx = item.sequenceIdx
+                        val inputIdx = item.inputIndex
+                        val srcLabel = "seqsrc_$idx"
+                        val outLabel = "canvas_s$idx"
+
+                        filterParts.add("[$inputIdx:v]format=rgba[$srcLabel]")
+                        val startS = String.format(
+                            Locale.US, "%.4f", seq.startSec
+                        )
+                        val endS = String.format(
+                            Locale.US, "%.4f", seq.endSec
+                        )
+                        filterParts.add(
+                            "[$canvasLabel][$srcLabel]overlay=0:0:" +
+                                    "enable='between(t,$startS,$endS)'" +
+                                    "[$outLabel]"
+                        )
+                        canvasLabel = outLabel
+                    }
                 }
-                canvasLabel = outputLabel
             }
 
+            // Final format conversion
+            filterParts.add("[$canvasLabel]format=yuv420p[outv]")
+            // ═══════════════════════════════════════════════════════
+            //  AUDIO MIX (restored — must be after video chain)
+            // ═══════════════════════════════════════════════════════
             val audioLabels = mutableListOf<String>()
+
             orderedClips.forEachIndexed { index, (clip, _) ->
                 if (isImage(clip) || !clipHasAudio(clip)) return@forEachIndexed
                 val clipDurationSec = (clip.durationMs / 1000.0).coerceAtLeast(0.1)
@@ -1782,8 +1965,9 @@ class FFmpegExecutor(
                 filters.add("atrim=duration=$clipDurationSec")
                 filters.add("volume=${if (clip.isMuted) 0f else clip.volume}")
                 if (clip.audioFx != "none") {
-                    val audioFilter =
-                        AudioEngine.buildAudioFilter(clip.audioFx, clip.audioFxIntensity)
+                    val audioFilter = AudioEngine.buildAudioFilter(
+                        clip.audioFx, clip.audioFxIntensity
+                    )
                     if (audioFilter.isNotBlank()) filters.add(audioFilter)
                 }
                 val delayMs = clip.timelineStartMs.coerceAtLeast(0L)
@@ -1809,8 +1993,9 @@ class FFmpegExecutor(
                 filters.add("atrim=duration=$clipDurationSec")
                 filters.add("volume=${if (clip.isMuted) 0f else clip.volume}")
                 if (clip.audioFx != "none") {
-                    val audioFilter =
-                        AudioEngine.buildAudioFilter(clip.audioFx, clip.audioFxIntensity)
+                    val audioFilter = AudioEngine.buildAudioFilter(
+                        clip.audioFx, clip.audioFxIntensity
+                    )
                     if (audioFilter.isNotBlank()) filters.add(audioFilter)
                 }
                 val delayMs = clip.timelineStartMs.coerceAtLeast(0L)
@@ -1828,11 +2013,9 @@ class FFmpegExecutor(
                         "inputs=${audioLabels.size}:duration=longest:" +
                         "dropout_transition=0[mixedAudio]"
             )
-
-            val outputVideo = buildOverlayChain(
-                filterParts, combinedSequences, sequenceStartIdx, canvasLabel
+            val finalVideo = enforceOutputDimensions(
+                filterParts, "outv", targetW, targetH
             )
-            val finalVideo = enforceOutputDimensions(filterParts, outputVideo, targetW, targetH)
             args.addAll(
                 listOf(
                     "-filter_complex", filterParts.joinToString(";"),
@@ -2331,6 +2514,8 @@ class FFmpegExecutor(
         } catch (e: Throwable) {
             Log.e("FFMPEG", "Transition export error", e)
             xfadeFallback = null
+
+
             exportWithConcat(
                 clips, allClips, localFiles,
                 audioClips, audioLocalFiles,

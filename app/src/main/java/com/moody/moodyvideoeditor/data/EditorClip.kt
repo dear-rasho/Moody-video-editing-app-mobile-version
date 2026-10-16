@@ -110,6 +110,17 @@ data class EditorClip(
     // Filter layer (adjustment-like visual layer)
     val isFilterLayerClip: Boolean get() = type == "filter/plain"
 
+    // ═══════════════════════════════════════════════════════════
+    //  🆕 REPLACE SUPPORT
+    //  Can this clip be replaced with new media?
+    // ═══════════════════════════════════════════════════════════
+    val isReplaceable: Boolean
+        get() = isTextClip ||
+                isStickerClip ||
+                type.startsWith("image/") ||
+                type.startsWith("video/") ||
+                type.startsWith("audio/")
+
     companion object {
         const val MIN_DURATION_MS = 300L
     }
@@ -143,6 +154,12 @@ data class AdjustmentData(
 ) {
     val isDefault: Boolean get() = this == AdjustmentData()
 }
+// 🆕 Live preview of Color Matte (before applying as layer)
+data class PreviewMatteState(
+    val style: ColorMatteStyle,
+    val opacity: Float,
+    val durationMs: Long
+)
 
 data class EditorState(
     val clips: List<EditorClip> = emptyList(),
@@ -184,7 +201,10 @@ data class EditorState(
     val previewFilters: FilterState? = null,
 
     // Live preview effect (temporary, not committed)
-    val previewEffectState: EffectState? = null
+    val previewEffectState: EffectState? = null,
+
+    // 🆕 Live preview for Color Matte (temporary, not committed)
+    val previewMatte: PreviewMatteState? = null
 ) {
     val totalDurationMs: Long
         get() = clips.maxOfOrNull { it.timelineEndMs } ?: 10000L

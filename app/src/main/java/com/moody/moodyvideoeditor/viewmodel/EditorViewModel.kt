@@ -25,6 +25,7 @@ import com.moody.moodyvideoeditor.data.MaskPoint
 import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.OverlayState
+import com.moody.moodyvideoeditor.data.PreviewMatteState
 import com.moody.moodyvideoeditor.data.RatioState
 import com.moody.moodyvideoeditor.data.StickerState
 import com.moody.moodyvideoeditor.data.TextState
@@ -65,10 +66,8 @@ class EditorViewModel : ViewModel() {
 
     private val history = HistoryManager()
 
-    // Export state from singleton, observed by UI
     val exportState: StateFlow<ExportUiState> = ExportStateHolder.state
 
-    // Starts export in foreground service
     fun startExport(context: Context, config: ExportUiStateBundle) {
         try {
             ExportStateHolder.reset()
@@ -109,7 +108,6 @@ class EditorViewModel : ViewModel() {
         }
     }
 
-    // Cancels running export
     fun cancelExport(context: Context) {
         try {
             val cancelIntent = ExportService.buildCancelIntent(context)
@@ -119,7 +117,6 @@ class EditorViewModel : ViewModel() {
         }
     }
 
-    // Clears export state after user dismisses
     fun clearExportState() {
         ExportStateHolder.reset()
     }
@@ -142,7 +139,6 @@ class EditorViewModel : ViewModel() {
         history.clear()
         _state.value = EditorState()
 
-        // 🆕 Apply "free layer enabled" setting from Settings panel
         if (SettingsConsumer.freeLayerEnabled) {
             _state.update {
                 it.copy(
@@ -485,7 +481,6 @@ class EditorViewModel : ViewModel() {
                     it.endsWith(".jpeg") || it.endsWith(".webp")
         }
 
-        // 🆕 Use default image duration from settings
         val imageDur = SettingsConsumer.defaultImageDurationMs.toLong()
 
         val videoClip = EditorClip(
@@ -511,8 +506,8 @@ class EditorViewModel : ViewModel() {
                 selectedTrackIndex = 0, selectedIsAudio = false,
                 visualLayerCount = maxOf(it.visualLayerCount, 3),
                 audioLayerCount = maxOf(it.audioLayerCount, 2),
-                multiSelectedIds = emptySet(),
-                timelineZoom = 0f
+                multiSelectedIds = emptySet()
+                // 🔧 Zoom preserved — no auto-reset
             )
         }
         updateHistoryFlags()
@@ -542,7 +537,6 @@ class EditorViewModel : ViewModel() {
         val isImage = mediaType.startsWith("image/")
         val isAudioFile = mediaType.startsWith("audio/")
 
-        // 🆕 Use default image duration from settings
         val settingsDefaultImg = SettingsConsumer.defaultImageDurationMs.toLong()
         val finalDurMs = if (isImage && durationMs < 100L) settingsDefaultImg else durMs
 
@@ -576,8 +570,8 @@ class EditorViewModel : ViewModel() {
                     selectedClipId = clip.id,
                     selectedTrackIndex = audioPlacement.trackIndex,
                     selectedIsAudio = true,
-                    multiSelectedIds = emptySet(),
-                    timelineZoom = 0f
+                    multiSelectedIds = emptySet()
+                    // 🔧 Zoom preserved — no auto-reset
                 )
             }
             updateHistoryFlags()
@@ -639,8 +633,8 @@ class EditorViewModel : ViewModel() {
                 selectedClipId = videoClip.id,
                 selectedTrackIndex = visualPlacement.trackIndex,
                 selectedIsAudio = false,
-                multiSelectedIds = emptySet(),
-                timelineZoom = 0f
+                multiSelectedIds = emptySet()
+                // 🔧 Zoom preserved — no auto-reset
             )
         }
         updateHistoryFlags()
@@ -1003,7 +997,7 @@ class EditorViewModel : ViewModel() {
         val s = _state.value
         val endMs = startMs + durMs
         val startFrom = preferredTrack.coerceAtLeast(0)
-        for (t in startFrom until s.visualLayerCount) {   // ✅ ab respect karega
+        for (t in startFrom until s.visualLayerCount) {
             val hasOverlap = s.clips.any { c ->
                 !c.isAudio && c.trackIndex == t &&
                         c.timelineStartMs < endMs && startMs < c.timelineEndMs
@@ -1738,7 +1732,7 @@ class EditorViewModel : ViewModel() {
 
     fun createTextClipAtTime(textState: TextState, startMs: Long, endMs: Long) {
         val s = _state.value
-        val durMs = (endMs - startMs).coerceAtLeast(50L)   // ← 50ms minimum
+        val durMs = (endMs - startMs).coerceAtLeast(50L)
         val trackIdx = findOrCreateVisualTrack(0, startMs, durMs)
         val clip = EditorClip(
             id = UUID.randomUUID().toString(), uri = Uri.EMPTY,
@@ -1761,7 +1755,6 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
-    // 🆕 Bulk update text clip by ID (used by alltext command)
     fun updateClipTextState(clipId: String, newState: TextState) {
         updateClipDirect(clipId) { clip ->
             if (clip.isTextClip) {
@@ -1772,6 +1765,7 @@ class EditorViewModel : ViewModel() {
             } else clip
         }
     }
+
     fun updateSelectedText(newState: TextState) {
         forEachSelectedClip { clip ->
             if (clip.isTextClip) {
@@ -1979,25 +1973,12 @@ class EditorViewModel : ViewModel() {
             ?: s.selectedClip?.takeIf { it.isBrushClip }?.id
             ?: s.clips.lastOrNull { it.isBrushClip }?.id
 
-        android.util.Log.d(
-            "BRUSH_DEBUG",
-            "addStrokeToBrushClip: targetId=$targetId, " +
-                    "selected=${s.selectedClip?.id}, " +
-                    "brushClips=${s.clips.filter { it.isBrushClip }.size}"
-        )
-
         if (targetId == null) {
-            android.util.Log.d("BRUSH_DEBUG", "No brush clip found, creating new")
             createBrushClip(BrushState(strokes = listOf(stroke)))
             return
         }
         updateClipDirect(targetId) { clip ->
             val newStrokes = clip.brush.strokes + stroke
-            android.util.Log.d(
-                "BRUSH_DEBUG",
-                "Adding stroke. Old count=${clip.brush.strokes.size}, " +
-                        "New count=${newStrokes.size}"
-            )
             clip.copy(brush = clip.brush.copy(strokes = newStrokes))
         }
     }
@@ -2439,7 +2420,6 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
-
     fun setPreviewEffect(presetKey: String?, intensity: Float) {
         if (presetKey == null) {
             _state.update { it.copy(previewEffectState = null) }
@@ -2453,8 +2433,25 @@ class EditorViewModel : ViewModel() {
     fun setPreviewEffectFull(state: EffectState?) {
         _state.update { it.copy(previewEffectState = state) }
     }
+
     fun clearPreviewEffect() {
         _state.update { it.copy(previewEffectState = null) }
+    }
+    // 🆕 Color Matte preview
+    fun setPreviewMatte(style: ColorMatteStyle, opacity: Float, durationMs: Long) {
+        _state.update {
+            it.copy(
+                previewMatte = PreviewMatteState(
+                    style = style,
+                    opacity = opacity.coerceIn(0f, 100f),
+                    durationMs = durationMs.coerceAtLeast(100L)
+                )
+            )
+        }
+    }
+
+    fun clearPreviewMatte() {
+        _state.update { it.copy(previewMatte = null) }
     }
 
     fun createEffectLayerAt(presetKey: String, intensity: Float) {
@@ -2478,6 +2475,7 @@ class EditorViewModel : ViewModel() {
         addClipOnNewLayer(clip, baseTrack + 1)
         updateHistoryFlags()
     }
+
     fun createEffectLayerAtWithConfig(
         presetKey: String,
         intensity: Float,
@@ -2504,6 +2502,7 @@ class EditorViewModel : ViewModel() {
         addClipOnNewLayer(clip, baseTrack + 1)
         updateHistoryFlags()
     }
+
     fun createBlurLayer(
         presetKey: String,
         intensity: Float,
@@ -2535,6 +2534,7 @@ class EditorViewModel : ViewModel() {
         addClipOnNewLayer(clip, baseTrack + 1)
         updateHistoryFlags()
     }
+
     fun updateClipEffectDust(
         clipId: String,
         config: com.moody.moodyvideoeditor.data.DustConfig
@@ -2546,6 +2546,7 @@ class EditorViewModel : ViewModel() {
             } else clip
         }
     }
+
     fun updateClipEffectParticle(
         clipId: String,
         config: com.moody.moodyvideoeditor.data.ParticleConfig
@@ -2557,6 +2558,7 @@ class EditorViewModel : ViewModel() {
             } else clip
         }
     }
+
     fun updateClipEffectFire(
         clipId: String,
         config: com.moody.moodyvideoeditor.data.FireConfig
@@ -2568,11 +2570,11 @@ class EditorViewModel : ViewModel() {
             } else clip
         }
     }
-    // Force autosave trigger — call this after particle/lightning updates
+
     fun markDirtyForAutosave() {
-        // Just touch the state to trigger LaunchedEffect in EditorScreen
         _state.update { it.copy(currentPosMs = it.currentPosMs) }
     }
+
     fun updateClipEffectLightning(
         clipId: String,
         config: com.moody.moodyvideoeditor.data.LightningConfig
@@ -2584,6 +2586,7 @@ class EditorViewModel : ViewModel() {
             } else clip
         }
     }
+
     fun updateEffectLayerIntensity(layerId: String, intensity: Float) {
         val clip = _state.value.clips.firstOrNull { it.id == layerId } ?: return
         if (!clip.isEffectClip) return
@@ -2592,11 +2595,6 @@ class EditorViewModel : ViewModel() {
         val scaled = buildScaledEffectState(preset, intensity)
         updateClipDirect(layerId) { it.copy(effectState = scaled) }
     }
-
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 LIGHT LEAK
-    // ═══════════════════════════════════════════════════════════
-
 
     fun removeEffectLayer(layerId: String) {
         val clip = _state.value.clips.firstOrNull { it.id == layerId } ?: return
@@ -2644,11 +2642,9 @@ class EditorViewModel : ViewModel() {
                 )
             }
 
-        // 🆕 Animated color — scale intensity
         val scaledAnimatedColor = preset.animatedColor?.let { ac ->
             ac.copy(intensity = (ac.intensity * t).coerceIn(0f, 200f))
         }
-        // scale dust intensity
         val scaledDust = preset.dust?.let { dc ->
             dc.copy(
                 masterIntensity = (dc.masterIntensity * (intensity / 100f))
@@ -2656,7 +2652,6 @@ class EditorViewModel : ViewModel() {
             )
         }
 
-// 🆕 Blur — scale intensity
         val scaledBlur = preset.blur?.let { bc ->
             bc.copy(intensity = (bc.intensity * t).coerceIn(0f, 100f))
         }
@@ -2675,7 +2670,6 @@ class EditorViewModel : ViewModel() {
             )
         }
 
-        // ⚡ Lightning — scale intensity (only brightness scales, timing stays)
         val scaledLightning = preset.lightning?.let { lc ->
             lc.copy(
                 intensity = (lc.intensity * (intensity / 100f))
@@ -2712,6 +2706,7 @@ class EditorViewModel : ViewModel() {
             masterIntensity = intensity
         )
     }
+
     fun removeSelectedEffect() {
         val sel = _state.value.selectedClip ?: return
         if (!sel.isEffectClip) return
@@ -2973,16 +2968,6 @@ class EditorViewModel : ViewModel() {
             if (c.isFilterLayerClip) c.copy(filters = filters) else c
         }
     }
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 COLOR MATTE
-    //  Solid-color layers that behave like Premiere Pro color mattes.
-    //  Use trackIndex as Z-index. Use filters.opacity as alpha.
-    // ═══════════════════════════════════════════════════════════
-
-    // ═══════════════════════════════════════════════════════════
-    //  🆕 COLOR MATTE — Full featured
-    //  Behaves like a real visual layer (crop/scale/rotation/etc.)
-    // ═══════════════════════════════════════════════════════════
 
     fun createColorMatte(
         color: Long = ColorMatteDefaults.DEFAULT_COLOR,
@@ -3045,7 +3030,6 @@ class EditorViewModel : ViewModel() {
         }
     }
 
-    // Legacy wrapper — keeps PromptExecutor working
     fun updateColorMatte(
         layerId: String,
         color: Long,
@@ -3072,7 +3056,6 @@ class EditorViewModel : ViewModel() {
         }
         updateHistoryFlags()
     }
-
 
     fun removeFilterLayer(layerId: String) {
         val clip = _state.value.clips.firstOrNull { it.id == layerId } ?: return
@@ -3517,6 +3500,7 @@ class EditorViewModel : ViewModel() {
     fun setClipOffset(x: Float, y: Float) {
         forEachSelectedClip { it.copy(offsetX = x, offsetY = y) }
     }
+
     fun setBlendMode(blendKey: String) {
         pushHistory()
         val targetIds: Set<String> = if (_state.value.multiSelectedIds.isNotEmpty()) {
@@ -3549,6 +3533,7 @@ class EditorViewModel : ViewModel() {
         }
         _state.update { it.copy(clips = list) }
     }
+
     fun setCrop(l: Float, r: Float, t: Float, b: Float) {
         val cl = l.coerceIn(0f, 0.45f)
         val cr = r.coerceIn(0f, 0.45f)
@@ -3947,9 +3932,78 @@ class EditorViewModel : ViewModel() {
         _state.update { it.copy(clips = next) }
         updateHistoryFlags()
     }
+
+    fun saveAsTemplate(
+        context: Context,
+        name: String
+    ): Boolean {
+        val s = _state.value
+        if (s.clips.isEmpty()) return false
+
+        val id = java.util.UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+
+        val imageSlots = s.clips.count {
+            it.type.startsWith("image/") && !it.isTextClip && !it.isStickerClip
+        }
+        val textSlots = s.clips.count { it.isTextClip }
+
+        val meta = com.moody.moodyvideoeditor.data.SavedTemplateMeta(
+            id = id,
+            name = name.ifBlank { "Untitled Template" },
+            createdAt = now,
+            updatedAt = now,
+            aspectRatio = s.aspectRatio,
+            clipCount = s.clips.size,
+            durationMs = s.totalDurationMs,
+            imageSlotCount = imageSlots,
+            textSlotCount = textSlots
+        )
+
+        return com.moody.moodyvideoeditor.data.SavedTemplateRepository
+            .save(context, meta, s)
+    }
+
+    fun loadFromTemplate(context: Context, templateId: String): Boolean {
+        val loaded = com.moody.moodyvideoeditor.data.SavedTemplateRepository
+            .load(context, templateId) ?: return false
+
+        val fixedClips = loaded.clips.map { clip ->
+            if (clip.isTextClip || clip.isStickerClip || clip.isBrushClip ||
+                clip.isEffectClip || clip.isAdjustmentClip ||
+                clip.isOverlayClip || clip.isChromaClip ||
+                clip.isColorMatteClip || clip.isFilterLayerClip ||
+                clip.isVisualizerClip
+            ) {
+                clip
+            } else if (clip.type.startsWith("image/") &&
+                clip.uri.toString().isBlank()
+            ) {
+                clip.copy(sourceTotalMs = Long.MAX_VALUE)
+            } else clip
+        }
+
+        val fixedState = loaded.copy(clips = fixedClips)
+
+        history.clear()
+        _state.value = fixedState
+        updateHistoryFlags()
+        return true
+    }
+
+    fun replaceClipUri(clipId: String, newUri: Uri) {
+        val clip = _state.value.clips.firstOrNull { it.id == clipId } ?: return
+        pushHistory()
+        updateClipDirect(clipId) {
+            it.copy(
+                uri = newUri,
+                sourceTotalMs = Long.MAX_VALUE
+            )
+        }
+        updateHistoryFlags()
+    }
 }
 
-// Bundle of config passed from UI to ViewModel when starting export
 data class ExportUiStateBundle(
     val fileName: String,
     val mode: String,
@@ -3971,7 +4025,6 @@ data class ExportUiStateBundle(
     val clips: List<EditorClip>
 )
 
-// Holds clips in memory between ViewModel and Service
 object ExportClipsHolder {
     @Volatile
     var clips: List<EditorClip> = emptyList()
