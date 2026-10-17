@@ -628,7 +628,7 @@ object TextBitmapRenderer {
 
         val sampled = TransformApplier.resolveLive(clip, localTimeSec)
 
-        val baseSize = 48f * (W / REFERENCE_WIDTH_PX)
+        val baseSize = 48f * (minOf(W, H).toFloat() / REFERENCE_WIDTH_PX)
         val combinedScale = (sampled.scale / 100f) * frame.scaleX
         val fontSize = baseSize * combinedScale
 
@@ -639,9 +639,9 @@ object TextBitmapRenderer {
             color = Color.WHITE
         }
 
-        val cx = sampled.x.coerceIn(0f, 100f) / 100f * W
-        val cy = sampled.y.coerceIn(0f, 100f) / 100f * H
-
+        val minDim = minOf(W, H).toFloat()
+        val cx = W / 2f + (sampled.x.coerceIn(0f, 100f) - 50f) / 100f * minDim
+        val cy = H / 2f + (sampled.y.coerceIn(0f, 100f) - 50f) / 100f * minDim
         val fm = paint.fontMetrics
         val baseline = cy - (fm.ascent + fm.descent) / 2f
 
@@ -785,11 +785,12 @@ object TextBitmapRenderer {
             }
 
             val lines = content.split('\n')
-            val scale = W.toFloat() / REFERENCE_WIDTH_PX
+            val scale = minOf(W, H).toFloat() / REFERENCE_WIDTH_PX
             val fontSize = TextRenderContract.fittedFontSizePx(
                 content = content,
                 baseSizePx = st.fontSize.toFloat(),
                 canvasWidthPx = W.toFloat(),
+                canvasHeightPx = H.toFloat(),
                 maxWidthPercent = st.maxWidth,
                 typeface = typeface
             )
@@ -809,8 +810,9 @@ object TextBitmapRenderer {
             val clampedX = sampled.x.coerceIn(-50f, 150f)
             val clampedY = sampled.y.coerceIn(0f, 100f)
 
-            val cx = clampedX / 100f * W
-            val cy = clampedY / 100f * H
+            val minDim = minOf(W, H).toFloat()
+            val cx = W / 2f + (clampedX - 50f) / 100f * minDim
+            val cy = H / 2f + (clampedY - 50f) / 100f * minDim
 
             val fm = basePaint.fontMetrics
             val lineHeightPx = (fm.descent - fm.ascent) * st.lineHeight

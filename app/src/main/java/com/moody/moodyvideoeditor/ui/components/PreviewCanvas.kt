@@ -1,7 +1,7 @@
 @file:OptIn(UnstableApi::class)
 
 package com.moody.moodyvideoeditor.ui.components
-
+import androidx.compose.ui.text.withStyle
 import android.graphics.Bitmap
 import android.graphics.BlurMaskFilter
 import android.graphics.Paint
@@ -1073,6 +1073,7 @@ fun PreviewCanvas(
                                         // 🎨 Blend mode
                                         compositingStrategy =
                                             CompositingStrategy.Offscreen
+                                        blendMode = blendKeyToCompose(clip.blendMode) // 🆕 BLEND MODE ADD KIYA
                                         alpha = matteAlpha * opacityAlpha * blendOpacityFactor(clip)
 
                                         val w = size.width
@@ -3152,6 +3153,9 @@ private fun InteractiveTextOverlay(
         rawFrame.copy(translateX = 0f, translateY = 0f)
     } else rawFrame
 
+    val currentSampled by rememberUpdatedState(sampled)
+    val currentFrame by rememberUpdatedState(frame)
+
     val displayContent =
         if (textState.animation.equals("typewriter", ignoreCase = true)) {
             val total = textState.content.length
@@ -3172,13 +3176,15 @@ private fun InteractiveTextOverlay(
         textState.fontWeight == "bold",
         textState.fontStyle == "italic"
     )
+    val refPx = minOf(canvasWpx, canvasHpx)
     val effFontSizePx = TextRenderContract.scaledFontSize(
         baseSizePx = textState.fontSize.toFloat(),
-        canvasWidthPx = canvasWpx
+        canvasWidthPx = canvasWpx,
+        canvasHeightPx = canvasHpx
     )
     val effLetterSpacingPx = TextScaler.letterSpacing(
         base = textState.letterSpacing,
-        canvasWidthPx = canvasWpx
+        canvasWidthPx = refPx
     )
     val effLineHeightPx = TextScaler.lineHeight(effFontSizePx, textState.lineHeight)
     val family = FontLibrary.familyFor(textState.fontFamily)
@@ -3187,12 +3193,13 @@ private fun InteractiveTextOverlay(
         androidx.compose.ui.text.font.FontStyle.Italic
     else androidx.compose.ui.text.font.FontStyle.Normal
 
-    val userStrokePx = textState.strokeWidth.coerceAtLeast(0f) * 2f * (canvasWpx / 720f)
+    val userStrokePx = textState.strokeWidth.coerceAtLeast(0f) * 2f * (refPx / 720f)
 
     val finalFontSizePx = TextRenderContract.fittedFontSizePx(
         content = displayContent,
         baseSizePx = textState.fontSize.toFloat(),
         canvasWidthPx = canvasWpx,
+        canvasHeightPx = canvasHpx,
         maxWidthPercent = textState.maxWidth,
         typeface = textTypeface
     )
@@ -3248,10 +3255,10 @@ private fun InteractiveTextOverlay(
             androidx.compose.ui.graphics.Shadow(
                 color = Color(textState.shadowColor),
                 offset = Offset(
-                    textState.shadowOffsetX * (canvasWpx / 720f),
-                    textState.shadowOffsetY * (canvasWpx / 720f)
+                    textState.shadowOffsetX * (refPx / 720f),
+                    textState.shadowOffsetY * (refPx / 720f)
                 ),
-                blurRadius = textState.shadowBlur * (canvasWpx / 720f)
+                blurRadius = textState.shadowBlur * (refPx / 720f)
             )
         } else null
 
@@ -3261,39 +3268,36 @@ private fun InteractiveTextOverlay(
         else -> androidx.compose.ui.text.style.TextAlign.Center
     }
 
-    val borderColor = when {
-        isSelected -> Color(0xFF60EFFF)
-        isMulti -> Color(0xFFFFD166)
-        else -> Color.Transparent
-    }
-
-    val glowPadDp = if (textState.glowEnabled && textState.glowRadius > 0f) {
-        val glowPadPx = textState.glowRadius * (canvasWpx / 720f) * 3.0f
-        with(density) { glowPadPx.toDp().value }
-    } else 0f
-
     val blurDp = with(density) { frame.blurRadiusPx.toDp() }
         .coerceAtLeast(0.dp)
         .coerceAtMost(20.dp)
 
     val bgPadX = if (textState.backgroundEnabled) textState.backgroundPaddingX else 4f
-    val bgPadY = if (textState.backgroundEnabled) textState.backgroundPaddingY else 4f
+    // 🆕 bgPadY = 0f (tight box)
+    val bgPadY = if (textState.backgroundEnabled) textState.backgroundPaddingY else 2f
 
     val selectionWidthDp = (textWidthDp + bgPadX * 2f).coerceAtLeast(20f)
     val selectionHeightDp = (textHeightDp + bgPadY * 2f).coerceAtLeast(20f)
 
-    val outerWidthDp = selectionWidthDp + glowPadDp * 2f
-    val outerHeightDp = selectionHeightDp + glowPadDp * 2f
+    // 🆕 Glow padding hata di taaki box size badhe na
+    val outerWidthDp = selectionWidthDp
+    val outerHeightDp = selectionHeightDp
+
+    // 🆕 Scale factor for handles (icons won't scale, but container will resize)
+    val scaleFactor = sampled.scale / 100f
+    val handleW = (outerWidthDp * scaleFactor).dp
+    val handleH = (outerHeightDp * scaleFactor).dp
 
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
+        // 1. TEXT CONTENT (Scaled & Rotated)
         Box(
             modifier = Modifier
                 .graphicsLayer {
-                    val posTx = (sampled.x - 50f) / 100f * canvasWpx
-                    val posTy = (sampled.y - 50f) / 100f * canvasHpx
+                    val posTx = (sampled.x - 50f) / 100f * refPx
+                    val posTy = (sampled.y - 50f) / 100f * refPx
                     translationX = posTx + frame.translateX
                     translationY = posTy + frame.translateY
                     scaleX = (sampled.scale / 100f) * frame.scaleX
@@ -3315,14 +3319,18 @@ private fun InteractiveTextOverlay(
                 .pointerInput(clip.id, canvasW, canvasH, isDrawingMode) {
                     if (isDrawingMode) return@pointerInput
                     awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        if (down.isConsumed) return@awaitEachGesture // Handles ne touch le liya, toh drag mat karo
+
                         isDragging = true
                         onGroupGestureStart()
 
-                        val baseX = sampled.x
-                        val baseY = sampled.y
-                        val baseScale = sampled.scale
-                        val baseRot = sampled.rotation
+                        val baseX = currentSampled.x
+                        val baseY = currentSampled.y
+                        val baseScale = currentSampled.scale
+                        val baseRot = currentSampled.rotation
+                        val baseFrame = currentFrame
+
                         var accumPanX = 0f
                         var accumPanY = 0f
                         var accumZoom = 1f
@@ -3330,6 +3338,7 @@ private fun InteractiveTextOverlay(
                         var lastDist = 0f
                         var lastAngle = 0f
                         var hasMultiGesture = false
+                        var hasMoved = false
 
                         if (!isSelected && !isMulti) onSelect()
 
@@ -3344,11 +3353,9 @@ private fun InteractiveTextOverlay(
                                 if (pressed.size == 1) {
                                     val ch = pressed.first()
                                     val pan = ch.position - ch.previousPosition
-                                    val rotation = Math.toRadians(
-                                        (sampled.rotation + frame.rotationZ).toDouble()
-                                    )
-                                    val scaleX = (sampled.scale / 100f) * frame.scaleX
-                                    val scaleY = (sampled.scale / 100f) * frame.scaleY
+                                    val rotation = Math.toRadians((baseRot + baseFrame.rotationZ).toDouble())
+                                    val scaleX = (baseScale / 100f) * baseFrame.scaleX
+                                    val scaleY = (baseScale / 100f) * baseFrame.scaleY
                                     accumPanX += (
                                             pan.x * scaleX * kotlin.math.cos(rotation) -
                                                     pan.y * scaleY * kotlin.math.sin(rotation)
@@ -3357,6 +3364,7 @@ private fun InteractiveTextOverlay(
                                             pan.x * scaleX * kotlin.math.sin(rotation) +
                                                     pan.y * scaleY * kotlin.math.cos(rotation)
                                             ).toFloat()
+                                    if (kotlin.math.abs(accumPanX) > 5f || kotlin.math.abs(accumPanY) > 5f) hasMoved = true
                                     ch.consume()
                                 } else if (pressed.size >= 2) {
                                     val c1 = pressed[0]
@@ -3375,6 +3383,7 @@ private fun InteractiveTextOverlay(
                                     hasMultiGesture = true
                                     c1.consume()
                                     c2.consume()
+                                    hasMoved = true
                                 }
                                 val rawX = baseX + accumPanX / canvasWpx * 100f
                                 val rawY = baseY + accumPanY / canvasHpx * 100f
@@ -3388,17 +3397,15 @@ private fun InteractiveTextOverlay(
                                 }
                             }
                         }
+                        if (!hasMoved && !isMulti) onSelect()
                         onGroupGestureEnd()
                     }
-                }
-                .pointerInput(clip.id, isMulti, isDrawingMode) {
-                    if (isDrawingMode) return@pointerInput
-                    detectTapGestures { if (!isMulti) onSelect() }
                 },
             contentAlignment = Alignment.Center
         ) {
             Box(contentAlignment = Alignment.Center) {
-                if (textState.backgroundEnabled) {
+                // 🆕 Character background ke liye TextBackgroundRenderer skip karo
+                if (textState.backgroundEnabled && textState.backgroundType != "character") {
                     TextBackgroundRenderer(
                         state = textState,
                         textWidthDp = textWidthDp,
@@ -3419,7 +3426,7 @@ private fun InteractiveTextOverlay(
                             val textSizePx = finalFontSizePx
                             val letterSpacingEm = if (finalFontSizePx <= 0f) 0f
                             else (effLetterSpacingPx / finalFontSizePx).coerceIn(-0.3f, 0.3f)
-                            val glowRadiusPx = textState.glowRadius * (canvasWpx / 720f)
+                            val glowRadiusPx = textState.glowRadius * (refPx / 720f)
 
                             val lines = displayContent.split('\n')
                             val lineCount = lines.size
@@ -3494,8 +3501,25 @@ private fun InteractiveTextOverlay(
                     )
                 }
 
+                // 🆕 Character Background ke liye AnnotatedString banao
+                val annotatedDisplay = if (textState.backgroundEnabled && textState.backgroundType == "character") {
+                    androidx.compose.ui.text.buildAnnotatedString {
+                        withStyle(
+                            androidx.compose.ui.text.SpanStyle(
+                                background = Color(textState.backgroundColor1).copy(
+                                    alpha = textState.backgroundOpacity / 100f
+                                )
+                            )
+                        ) {
+                            append(displayContent)
+                        }
+                    }
+                } else {
+                    androidx.compose.ui.text.AnnotatedString(displayContent)
+                }
+
                 Text(
-                    text = displayContent,
+                    text = annotatedDisplay, // 🆕 AnnotatedString use karo
                     color = if (gradient != null) Color.Unspecified else solidColor,
                     fontSize = finalFontSizeSp,
                     fontWeight = weight,
@@ -3513,37 +3537,42 @@ private fun InteractiveTextOverlay(
                         lineHeight = finalLineHeightSp
                     )
                 )
+            }
+        }
 
-                if (isSelected && !isDrawingMode) {
-                    Box(
-                        modifier = Modifier
-                            .width(selectionWidthDp.dp)
-                            .height(selectionHeightDp.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        LayerTransformHandles(
-                            clipId = clip.id,
-                            scale = sampled.scale,
-                            rotation = sampled.rotation,
-                            positionX = sampled.x,
-                            positionY = sampled.y,
-                            onPositionChanged = onPositionChanged,
-                            onGestureStart = onGroupGestureStart,
-                            onGestureEnd = onGroupGestureEnd,
-                            onTransformChanged = onTransformChanged,
-                            onDelete = onDeleteLayer,
-                        )
+        // 2. HANDLES (Fixed Size, Draw on top)
+        if (isSelected && !isDrawingMode) {
+            Box(
+                modifier = Modifier
+                    .graphicsLayer {
+                        val posTx = (sampled.x - 50f) / 100f * refPx
+                        val posTy = (sampled.y - 50f) / 100f * refPx
+                        translationX = posTx + frame.translateX
+                        translationY = posTy + frame.translateY
+                        rotationZ = sampled.rotation + frame.rotationZ
                     }
-                }
+                    .width(handleW.coerceAtLeast(20.dp))
+                    .height(handleH.coerceAtLeast(20.dp))
+            ) {
+                LayerTransformHandles(
+                    clipId = clip.id,
+                    scale = sampled.scale,
+                    rotation = sampled.rotation,
+                    positionX = sampled.x,
+                    positionY = sampled.y,
+                    onPositionChanged = onPositionChanged,
+                    onGestureStart = onGroupGestureStart,
+                    onGestureEnd = onGroupGestureEnd,
+                    onTransformChanged = onTransformChanged,
+                    onDelete = onDeleteLayer,
+                )
             }
         }
     }
 }
-
 // ═══════════════════════════════════════════════════════════════
 //  INTERACTIVE STICKER OVERLAY
 // ═══════════════════════════════════════════════════════════════
-
 @Composable
 private fun InteractiveStickerOverlay(
     clip: EditorClip,
@@ -3574,35 +3603,45 @@ private fun InteractiveStickerOverlay(
         com.moody.moodyvideoeditor.utils.AnimationsEngine.Frame()
     }
 
+    var stickerSize by remember { mutableStateOf(IntSize.Zero) }
+
     val density = LocalDensity.current
     val canvasWpx = with(density) { canvasW.dp.toPx() }
     val canvasHpx = with(density) { canvasH.dp.toPx() }
+    val refPx = minOf(canvasWpx, canvasHpx)
 
     val effStickerSizePx = TextScaler.fontSize(
-        baseSize = 48, canvasWidthPx = canvasWpx
+        baseSize = 48, canvasWidthPx = refPx
     )
     val clampedX = sampled.x.coerceIn(0f, 100f)
     val clampedY = sampled.y.coerceIn(0f, 100f)
-    val borderColor = when {
-        isSelected -> Color(0xFF60EFFF)
-        isMulti -> Color(0xFFFFD166)
-        else -> Color.Transparent
-    }
+
     val effStickerSizeSp = (effStickerSizePx / density.density).sp
 
     val blurDp = with(density) { frame.blurRadiusPx.toDp() }
         .coerceAtLeast(0.dp)
         .coerceAtMost(20.dp)
 
+    val currentSampled by rememberUpdatedState(sampled)
+    val currentClampedX by rememberUpdatedState(clampedX)
+    val currentClampedY by rememberUpdatedState(clampedY)
+
+    val scaleFactor = sampled.scale / 100f
+    val wDp = with(density) { stickerSize.width.toDp() }
+    val hDp = with(density) { stickerSize.height.toDp() }
+    val handleW = (wDp * scaleFactor).coerceAtLeast(20.dp)
+    val handleH = (hDp * scaleFactor).coerceAtLeast(20.dp)
+
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
+        // 1. STICKER CONTENT
         Box(
             modifier = Modifier
                 .graphicsLayer {
-                    val posTx = (clampedX - 50f) / 100f * canvasWpx
-                    val posTy = (clampedY - 50f) / 100f * canvasHpx
+                    val posTx = (clampedX - 50f) / 100f * refPx
+                    val posTy = (clampedY - 50f) / 100f * refPx
                     translationX = posTx + frame.translateX
                     translationY = posTy + frame.translateY
                     scaleX = (sampled.scale / 100f) * frame.scaleX
@@ -3619,24 +3658,20 @@ private fun InteractiveStickerOverlay(
                         Modifier.blur(blurDp, BlurredEdgeTreatment.Unbounded)
                     } else Modifier
                 )
-                .then(
-                    if (isSelected || isMulti) Modifier.border(
-                        width = if (isSelected) 1.5.dp else 1.dp,
-                        color = borderColor,
-                        shape = RoundedCornerShape(6.dp)
-                    ) else Modifier
-                )
                 .padding(6.dp)
                 .pointerInput(clip.id, isSelected, isMulti, canvasW, canvasH, isDrawingMode) {
                     if (isDrawingMode) return@pointerInput
                     awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = true)
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        if (down.isConsumed) return@awaitEachGesture
+
                         onGroupGestureStart()
 
-                        val baseX = clampedX
-                        val baseY = clampedY
-                        val baseScale = sampled.scale
-                        val baseRot = sampled.rotation
+                        val baseX = currentClampedX
+                        val baseY = currentClampedY
+                        val baseScale = currentSampled.scale
+                        val baseRot = currentSampled.rotation
+
                         var accumPanX = 0f
                         var accumPanY = 0f
                         var accumZoom = 1f
@@ -3644,6 +3679,7 @@ private fun InteractiveStickerOverlay(
                         var lastDist = 0f
                         var lastAngle = 0f
                         var hasMultiGesture = false
+                        var hasMoved = false
 
                         if (!isSelected && !isMulti) onSelect()
 
@@ -3659,6 +3695,7 @@ private fun InteractiveStickerOverlay(
                                     val pan = ch.position - ch.previousPosition
                                     accumPanX += pan.x
                                     accumPanY += pan.y
+                                    if (kotlin.math.abs(accumPanX) > 5f || kotlin.math.abs(accumPanY) > 5f) hasMoved = true
                                     ch.consume()
                                 } else if (pressed.size >= 2) {
                                     val c1 = pressed[0]
@@ -3677,6 +3714,7 @@ private fun InteractiveStickerOverlay(
                                     hasMultiGesture = true
                                     c1.consume()
                                     c2.consume()
+                                    hasMoved = true
                                 }
                                 val rawX = baseX + accumPanX / canvasWpx * 100f
                                 val rawY = baseY + accumPanY / canvasHpx * 100f
@@ -3693,17 +3731,33 @@ private fun InteractiveStickerOverlay(
                                 }
                             }
                         }
+                        if (!hasMoved && !isMulti) onSelect()
                         onGroupGestureEnd()
                     }
-                }
-                .pointerInput(clip.id, isMulti, isDrawingMode) {
-                    if (isDrawingMode) return@pointerInput
-                    detectTapGestures { if (!isMulti) onSelect() }
                 },
             contentAlignment = Alignment.Center
         ) {
-            Text(text = stickerState.emoji, fontSize = effStickerSizeSp)
-            if (isSelected && !isDrawingMode) {
+            Text(
+                text = stickerState.emoji,
+                fontSize = effStickerSizeSp,
+                modifier = Modifier.onSizeChanged { stickerSize = it }
+            )
+        }
+
+        // 2. HANDLES (Fixed Size)
+        if (isSelected && !isDrawingMode) {
+            Box(
+                modifier = Modifier
+                    .graphicsLayer {
+                        val posTx = (clampedX - 50f) / 100f * refPx
+                        val posTy = (clampedY - 50f) / 100f * refPx
+                        translationX = posTx + frame.translateX
+                        translationY = posTy + frame.translateY
+                        rotationZ = sampled.rotation + frame.rotationZ
+                    }
+                    .width(handleW)
+                    .height(handleH)
+            ) {
                 LayerTransformHandles(
                     clipId = clip.id,
                     scale = sampled.scale,
@@ -3720,7 +3774,6 @@ private fun InteractiveStickerOverlay(
         }
     }
 }
-
 // ═══════════════════════════════════════════════════════════════
 //  TRANSFORM HANDLES
 // ═══════════════════════════════════════════════════════════════
@@ -3742,17 +3795,19 @@ private fun BoxScope.LayerTransformHandles(
             .align(Alignment.Center)
             .fillMaxWidth(widthFraction.coerceIn(0.01f, 1f))
             .fillMaxHeight(heightFraction.coerceIn(0.01f, 1f))
-            .border(1.5.dp, Color(0xFF60EFFF), RoundedCornerShape(4.dp))
+            .border(1.dp, Color(0xFF60EFFF), RoundedCornerShape(4.dp))
     ) {
         val density = LocalDensity.current
         val boundsWidthPx = with(density) { maxWidth.toPx() }
         val boundsHeightPx = with(density) { maxHeight.toPx() }
-        val handleSizePx = with(density) { 22.dp.toPx() }
+
+        // 🆕 CHOTA ICON SIZE (14.dp)
+        val handleSizePx = with(density) { 14.dp.toPx() }
 
         TransformHandle(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .offset(x = (-11).dp, y = (-11).dp),
+                .offset(x = (-7).dp, y = (-7).dp), // 🆕 Size ka aadha (-7.dp)
             clipId = clipId,
             corner = TransformHandleCorner.Delete,
             boundsWidthPx = boundsWidthPx,
@@ -3769,7 +3824,7 @@ private fun BoxScope.LayerTransformHandles(
         TransformHandle(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .offset(x = (-11).dp, y = 11.dp),
+                .offset(x = (-7).dp, y = 7.dp),
             clipId = clipId,
             corner = TransformHandleCorner.Rotate,
             boundsWidthPx = boundsWidthPx,
@@ -3786,7 +3841,7 @@ private fun BoxScope.LayerTransformHandles(
         TransformHandle(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .offset(x = 11.dp, y = 11.dp),
+                .offset(x = 7.dp, y = 7.dp),
             clipId = clipId,
             corner = TransformHandleCorner.Scale,
             boundsWidthPx = boundsWidthPx,
@@ -3827,9 +3882,13 @@ private fun TransformHandle(
     val currentOnGestureEnd = rememberUpdatedState(onGestureEnd)
     val currentOnDelete = rememberUpdatedState(onDelete)
 
+    // 🆕 BUG FIX: Bounds ko state mein rakho taaki drag cancel na ho
+    val currentBoundsWidth by rememberUpdatedState(boundsWidthPx)
+    val currentBoundsHeight by rememberUpdatedState(boundsHeightPx)
+
     Box(
         modifier = modifier
-            .size(22.dp)
+            .size(14.dp)
             .clip(CircleShape)
             .background(
                 when (corner) {
@@ -3839,7 +3898,8 @@ private fun TransformHandle(
                 }
             )
             .border(1.dp, Color(0xFF60EFFF), CircleShape)
-            .pointerInput(clipId, corner, boundsWidthPx, boundsHeightPx) {
+            // 🆕 FIX: boundsWidthPx aur boundsHeightPx ko keys se hata diya
+            .pointerInput(clipId, corner) {
                 when (corner) {
                     TransformHandleCorner.Delete -> detectTapGestures {
                         currentOnDelete.value()
@@ -3851,18 +3911,22 @@ private fun TransformHandle(
                         down.consume()
                         currentOnGestureStart.value()
 
-                        val handleCenterOffsetX = if (
-                            corner == TransformHandleCorner.Scale
-                        ) boundsWidthPx - handleSizePx / 2f else -handleSizePx / 2f
-                        val startX = handleCenterOffsetX + down.position.x -
-                                boundsWidthPx / 2f
-                        val startY = boundsHeightPx - handleSizePx + down.position.y -
-                                boundsHeightPx / 2f
+                        // 🆕 Initial bounds capture karo drag start pe
+                        val startBoundsW = currentBoundsWidth
+                        val startBoundsH = currentBoundsHeight
+
+                        val handleCenterX = if (corner == TransformHandleCorner.Scale) startBoundsW else 0f
+                        val handleCenterY = if (corner == TransformHandleCorner.Scale || corner == TransformHandleCorner.Rotate) startBoundsH else 0f
+
+                        val startX = handleCenterX + (down.position.x - handleSizePx / 2f) - startBoundsW / 2f
+                        val startY = handleCenterY + (down.position.y - handleSizePx / 2f) - startBoundsH / 2f
+
                         val startDistance = kotlin.math.hypot(startX.toDouble(), startY.toDouble())
                             .toFloat().coerceAtLeast(1f)
                         val startAngle = kotlin.math.atan2(startY, startX)
                         val startScale = currentScale.value
                         val startRotation = currentRotation.value
+
                         var previousAngle = startAngle
                         var accumulatedRotation = 0f
                         var dragX = 0f
@@ -3872,6 +3936,7 @@ private fun TransformHandle(
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull()
                             if (change == null || !change.pressed) break
+
                             val delta = change.position - change.previousPosition
                             dragX += delta.x
                             dragY += delta.y
@@ -3885,6 +3950,7 @@ private fun TransformHandle(
                             val currentAngle = kotlin.math.atan2(currentY, currentX)
                             accumulatedRotation += normalizeAngle(currentAngle - previousAngle)
                             previousAngle = currentAngle
+
                             if (corner == TransformHandleCorner.Scale) {
                                 currentOnTransformChanged.value(
                                     (startScale * currentDistance / startDistance)
@@ -3913,12 +3979,11 @@ private fun TransformHandle(
                 TransformHandleCorner.Scale -> "⤢"
             },
             color = Color.White,
-            fontSize = 12.sp,
+            fontSize = 8.sp,
             fontWeight = FontWeight.Bold
         )
     }
 }
-
 private fun normalizeAngle(radians: Float): Float {
     val twoPi = (Math.PI * 2.0).toFloat()
     var normalized = radians

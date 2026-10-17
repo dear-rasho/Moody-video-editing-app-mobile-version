@@ -34,8 +34,7 @@ object ProjectRepository {
     }
 
     fun saveProject(context: Context, meta: ProjectMeta, state: EditorState): Boolean {
-        if (state.clips.isEmpty()) return false
-
+        // 🆕 Empty save allow karo
         try {
             val stateFile = File(getProjectsDir(context), "${meta.id}.json")
             stateFile.writeText(editorStateToJson(state).toString())

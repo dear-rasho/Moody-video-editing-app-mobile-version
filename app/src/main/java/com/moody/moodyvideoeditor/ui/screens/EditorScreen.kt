@@ -149,10 +149,16 @@ fun EditorScreen(
 
     LaunchedEffect(projectId, initialSavedTemplateId) {
         if (projectId.isNotBlank() && viewModel.getProjectId() != projectId) {
-            viewModel.setProjectMeta(
-                projectId,
-                if (startInCodeMode) "Code Project" else "New Project"
-            )
+            // 🆕 1. Pehle disk se project load karo
+            val loaded = viewModel.loadProject(context, projectId)
+
+            // 2. Agar naya project hai (file nahi mili), toh bas meta set karo
+            if (!loaded) {
+                viewModel.setProjectMeta(
+                    projectId,
+                    if (startInCodeMode) "Code Project" else "New Project"
+                )
+            }
         }
 
         if (!initialSavedTemplateId.isNullOrBlank()) {
@@ -164,7 +170,6 @@ fun EditorScreen(
             }
         }
     }
-
     DisposableEffect(Unit) {
         onDispose {
             try {
@@ -735,7 +740,7 @@ fun EditorScreen(
                 playheadMs = state.currentPosMs,
                 sourceInMs = selected?.sourceStartMs ?: 0L,
                 sourceOutMs = selected?.sourceEndMs ?: 0L,
-                hasClipSelected = selected?.isVisualClip == true,
+                hasClipSelected = selected != null, // 🆕 Sab layers support karo
                 playheadInsideClip = selected?.let {
                     state.currentPosMs > it.timelineStartMs &&
                             state.currentPosMs < it.timelineEndMs

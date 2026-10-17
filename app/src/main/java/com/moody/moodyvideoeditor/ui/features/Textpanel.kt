@@ -46,6 +46,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.geometry.Offset
 import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.ui.components.ColorPickerField
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
@@ -71,6 +75,8 @@ fun TextPanel(
     var subView by remember(startInEdit) {
         mutableStateOf(if (startInEdit) "addText" else "options")
     }
+    // 🆕 Scroll state ko yahan rakho taaki back aane pe reset na ho
+    val optionsScrollState = rememberScrollState()
     var draftClipCreated by remember(hasTextClipSelected) {
         mutableStateOf(hasTextClipSelected)
     }
@@ -79,6 +85,7 @@ fun TextPanel(
         when (subView) {
             "options" -> OptionsShelf(
                 hasText = hasTextClipSelected,
+                scrollState = optionsScrollState,
                 onSelect = { key ->
                     if (key == "removeText") onRemove()
                     else subView = key
@@ -236,31 +243,33 @@ fun TextPanel(
 // ═══════════════════════════════════════════════════════════════
 
 @Composable
-private fun OptionsShelf(hasText: Boolean, onSelect: (String) -> Unit) {
+private fun OptionsShelf(
+    hasText: Boolean,
+    scrollState: androidx.compose.foundation.ScrollState,
+    onSelect: (String) -> Unit
+) {
     val options = listOf(
         Triple("addText", "➕", "Add"),
-        Triple("templates", "🎭", "Templates"),
-        Triple("fonts", "🔤", "Fonts"),
-        Triple("size", "🅰️", "Size"),
-        Triple("letterSpacing", "⇔", "Spacing"),
-        Triple("lineHeight", "↕️", "Lines"),
-        Triple("tracking", "⇿", "Tracking"),
-        Triple("maxWidth", "⬌", "Width"),
-        Triple("stroke", "🖊️", "Stroke"),
-        Triple("glow", "💡", "Glow"),
-        Triple("color", "🎨", "Color"),
-        Triple("gradient", "🌈", "Gradient"),
-        Triple("shadows", "🌑", "Shadow"),
-        Triple("background", "🟦", "BG"),
+        Triple("fonts", "Aa", "Fonts"),
+        Triple("size", "aA", "Size"),
+        Triple("letterSpacing", "ab", "Spacing"),
+        Triple("lineHeight", "ab", "Lines"),
+        Triple("stroke", "A", "Stroke"),
+        Triple("glow", "A", "Glow"),
+        Triple("color", "ABC", "Color"),
+        Triple("gradient", "ABC", "Gradient"),
+        Triple("shadows", "A", "Shadow"),
+        Triple("background", "A", "BG"),
         Triple("alignment", "🔀", "Align"),
-        Triple("opacity", "👁️", "Opacity"),
+        Triple("opacity", "A", "Opacity"),
+        Triple("templates", "📄", "Templates"), // 🆕 End mein move kiya, icon change kiya
         Triple("removeText", "🗑️", "Remove")
     )
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
+            .horizontalScroll(scrollState), // 🆕 Passed state use karo
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         options.forEach { (key, icon, label) ->
@@ -275,8 +284,8 @@ private fun OptionsShelf(hasText: Boolean, onSelect: (String) -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Text(icon, fontSize = 22.sp)
-                Spacer(Modifier.height(4.dp))
+                TextOptionIcon(key = key, defaultIcon = icon)
+                Spacer(Modifier.height(6.dp))
                 Text(
                     label,
                     color = Color.White,
@@ -287,7 +296,141 @@ private fun OptionsShelf(hasText: Boolean, onSelect: (String) -> Unit) {
         }
     }
 }
+// 🆕 Custom Icon Renderer
+@Composable
+private fun TextOptionIcon(key: String, defaultIcon: String) {
+    Box(
+        modifier = Modifier
+            .size(34.dp) // Fixed size background for all icons
+            .background(Color(0xFF0F0F0F), RoundedCornerShape(6.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        when (key) {
+            // ─── Fonts (Aa in Serif) ───
+            "fonts" -> Text(
+                "Aa",
+                color = Color.White,
+                fontSize = 16.sp,
+                fontFamily = FontFamily.Serif,
+                fontWeight = FontWeight.Bold
+            )
 
+            // ─── Size (a ➔ A) ───
+            "size" -> Row(verticalAlignment = Alignment.Bottom) {
+                Text("a", color = Color.White, fontSize = 10.sp)
+                Text("➔", color = Color.Gray, fontSize = 8.sp, modifier = Modifier.padding(horizontal = 1.dp))
+                Text("A", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+
+            // ─── Spacing (a ↔ b) ───
+            "letterSpacing" -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("a", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("↔", color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 1.dp))
+                Text("b", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+
+            // ─── Lines (a ↕ b) ───
+            "lineHeight" -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("a", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("↕", color = Color.Gray, fontSize = 8.sp)
+                Text("b", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+
+            // ─── Stroke (White A with Black outline) ───
+            "stroke" -> Box(contentAlignment = Alignment.Center) {
+                // Black Outline
+                Text(
+                    "A",
+                    color = Color.Black,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    style = androidx.compose.ui.text.TextStyle(
+                        drawStyle = Stroke(
+                            width = 6f,
+                            join = androidx.compose.ui.graphics.StrokeJoin.Round
+                        )
+                    )
+                )
+                // White Fill
+                Text(
+                    "A",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            // ─── Glow (Blue Blur) ───
+            "glow" -> Text(
+                "A",
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                style = androidx.compose.ui.text.TextStyle(
+                    shadow = androidx.compose.ui.graphics.Shadow(
+                        color = Color(0xFF00E5FF),
+                        blurRadius = 8f
+                    )
+                )
+            )
+
+            // ─── Color (Multi-color letters) ───
+            "color" -> {
+                val text = androidx.compose.ui.text.buildAnnotatedString {
+                    withStyle(androidx.compose.ui.text.SpanStyle(color = Color(0xFFFF0066))) { append("A") }
+                    withStyle(androidx.compose.ui.text.SpanStyle(color = Color(0xFF00E5FF))) { append("B") }
+                    withStyle(androidx.compose.ui.text.SpanStyle(color = Color(0xFFFFCC00))) { append("C") }
+                }
+                Text(text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+
+            // ─── Gradient (Pink to Blue Gradient) ───
+            "gradient" -> Text(
+                "ABC",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                style = androidx.compose.ui.text.TextStyle(
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(Color(0xFFFF0066), Color(0xFF00E5FF))
+                    )
+                )
+            )
+
+            // ─── Shadow (Dark drop shadow) ───
+            "shadows" -> Text(
+                "A",
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                style = androidx.compose.ui.text.TextStyle(
+                    shadow = androidx.compose.ui.graphics.Shadow(
+                        color = Color.Black,
+                        offset = Offset(3f, 3f),
+                        blurRadius = 4f
+                    )
+                )
+            )
+
+            // ─── Background (Word with colored box) ───
+            "background" -> Box(
+                modifier = Modifier
+                    .background(Color(0xFFFF0066), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+            ) {
+                Text("A", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+
+            // ─── Opacity (Full vs Half) ───
+            "opacity" -> Row {
+                Text("A", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("A", color = Color.White.copy(alpha = 0.3f), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+
+            // ─── Default (Emojis for Add, Templates, Align, Remove) ───
+            else -> Text(defaultIcon, fontSize = 18.sp)
+        }
+    }
+}
 // ═══════════════════════════════════════════════════════════════
 //  ADD TEXT SUB
 // ═══════════════════════════════════════════════════════════════

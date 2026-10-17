@@ -1775,15 +1775,46 @@ class FFmpegExecutor(
                         filterParts.add(
                             "[$matteInput:v]${chain.joinToString(",")}[$scaledLabel]"
                         )
-                        filterParts.add(
-                            "[$canvasLabel][$scaledLabel]overlay=0:0:" +
-                                    "eof_action=pass:repeatlast=0:" +
-                                    "enable='between(t,$startExpr,$endExpr)'" +
-                                    "[$outLabel]"
-                        )
+
+                        // 🆕 CHECK BLEND MODE
+                        val blendKey = matte.blendMode.lowercase()
+                        if (blendKey == "normal" || blendKey.isBlank()) {
+                            filterParts.add(
+                                "[$canvasLabel][$scaledLabel]overlay=0:0:" +
+                                        "eof_action=pass:repeatlast=0:" +
+                                        "enable='between(t,$startExpr,$endExpr)'" +
+                                        "[$outLabel]"
+                            )
+                        } else {
+                            // 🆕 Blend mode — RGBA space (transparent support)
+                            val ffmpegMode = ffmpegBlendName(blendKey)
+                            val blendAlpha = (matte.blendOpacity / 100f).coerceIn(0f, 1f)
+                            val blendAlphaStr = String.format(Locale.US, "%.3f", blendAlpha)
+
+                            val baseLbl = "matte_blend_base_$idx"
+                            val layerRgbaLbl = "matte_blend_layer_rgba_$idx"
+                            val blendedLbl = "matte_blend_out_$idx"
+
+                            filterParts.add("[$canvasLabel]format=rgba[$baseLbl]")
+                            filterParts.add("[$scaledLabel]format=rgba[$layerRgbaLbl]")
+
+                            filterParts.add(
+                                "[$baseLbl][$layerRgbaLbl]blend=" +
+                                        "all_mode=$ffmpegMode:" +
+                                        "all_opacity=$blendAlphaStr:" +
+                                        "shortest=0" +
+                                        "[$blendedLbl]"
+                            )
+
+                            filterParts.add(
+                                "[$baseLbl][$blendedLbl]overlay=0:0:" +
+                                        "eof_action=pass:repeatlast=0:" +
+                                        "enable='between(t,$startExpr,$endExpr)'" +
+                                        "[$outLabel]"
+                            )
+                        }
                         canvasLabel = outLabel
                     }
-
                     // ═══════ 1 → VISUAL CLIP ═══════
                     1 -> {
                         val clip = item.visualClip ?: return@forEach
@@ -1797,14 +1828,21 @@ class FFmpegExecutor(
                         val clipDurationSec = (clip.durationMs / 1000.0)
                             .coerceAtLeast(0.1)
 
+                        // 🆕 1. Blend mode pehle check karo
+                        val blendKey = clip.blendMode.lowercase()
+                        val isBlendActive = blendKey != "normal" && blendKey.isNotBlank()
+
                         val filters = mutableListOf("setpts=PTS-STARTPTS")
                         if (!isImage(clip) && clip.speed != 1.0f) {
                             filters.add("setpts=${1.0f / clip.speed}*PTS")
                         }
                         filters.addAll(buildPerClipFilterChain(clip, allClips))
+
+                        // 🆕 2. Position ko filter ke andar handle karo agar blend active hai
                         filters.addAll(
                             buildVisualTransformFilters(
-                                clip, targetW, targetH, true, true
+                                clip, targetW, targetH, true,
+                                positionByOverlay = !isBlendActive
                             )
                         )
                         filters.add("fps=$fps")
@@ -1843,11 +1881,12 @@ class FFmpegExecutor(
                         }
 
                         val outputLabel = "canvas_c$index"
-                        val x = (clip.offsetX * targetW).toInt()
-                        val y = (clip.offsetY * targetH).toInt()
 
-                        val blendKey = clip.blendMode.lowercase()
-                        if (blendKey == "normal" || blendKey.isBlank()) {
+                        // 🆕 3. Overlay x, y (agar blend hai toh 0,0 kyunki filter ne handle kar liya)
+                        val x = if (isBlendActive) 0 else (clip.offsetX * targetW).toInt()
+                        val y = if (isBlendActive) 0 else (clip.offsetY * targetH).toInt()
+
+                        if (!isBlendActive) {
                             filterParts.add(
                                 "[$canvasLabel][$layerLabel]overlay=$x:$y:" +
                                         "eof_action=pass:repeatlast=0:" +
@@ -1855,66 +1894,28 @@ class FFmpegExecutor(
                                         "[$outputLabel]"
                             )
                         } else {
-                            // 🎨 Blend mode — RGB24 space
+                            // 🆕 4. Blend mode — RGBA space (transparent support)
                             val ffmpegMode = ffmpegBlendName(blendKey)
-                            val blendAlpha = (clip.blendOpacity / 100f)
-                                .coerceIn(0f, 1f)
-                            val blendAlphaStr = String.format(
-                                Locale.US, "%.3f", blendAlpha
-                            )
+                            val blendAlpha = (clip.blendOpacity / 100f).coerceIn(0f, 1f)
+                            val blendAlphaStr = String.format(Locale.US, "%.3f", blendAlpha)
 
                             val baseLbl = "blend_base_$index"
-                            val blendSrcRgbaLbl = "blend_src_rgba_$index"
-                            val blendSrcLbl = "blend_src_$index"
                             val layerRgbaLbl = "blend_layer_rgba_$index"
-                            val layerRgbLbl = "blend_layer_rgb_$index"
-                            val layerAlphaSrcLbl = "blend_layer_alpha_src_$index"
-                            val maskLbl = "blend_mask_$index"
-                            val blendedRgbLbl = "blend_out_rgb_$index"
-                            val blendedRgbaLbl = "blend_out_rgba_$index"
-                            val fillLbl = "blend_fill_$index"
+                            val blendedLbl = "blend_out_$index"
+
+                            filterParts.add("[$canvasLabel]format=rgba[$baseLbl]")
+                            filterParts.add("[$layerLabel]format=rgba[$layerRgbaLbl]")
 
                             filterParts.add(
-                                "[$canvasLabel]format=rgba," +
-                                        "split=2[$baseLbl][$blendSrcRgbaLbl]"
-                            )
-                            filterParts.add(
-                                "[$blendSrcRgbaLbl]format=rgb24[$blendSrcLbl]"
-                            )
-                            filterParts.add(
-                                "[$layerLabel]format=rgba," +
-                                        "split=2[$layerRgbaLbl][$layerAlphaSrcLbl]"
-                            )
-                            filterParts.add(
-                                "[$layerRgbaLbl]format=rgb24[$layerRgbLbl]"
-                            )
-                            filterParts.add(
-                                "[$layerAlphaSrcLbl]alphaextract[$maskLbl]"
-                            )
-                            filterParts.add(
-                                "[$blendSrcLbl][$layerRgbLbl]blend=" +
+                                "[$baseLbl][$layerRgbaLbl]blend=" +
                                         "all_mode=$ffmpegMode:" +
-                                        "all_opacity=1:" +
+                                        "all_opacity=$blendAlphaStr:" +
                                         "shortest=0" +
-                                        "[$blendedRgbLbl]"
-                            )
-                            filterParts.add(
-                                "[$blendedRgbLbl]format=rgba[$blendedRgbaLbl]"
-                            )
-                            filterParts.add(
-                                "[$blendedRgbaLbl][$maskLbl]alphamerge[$fillLbl]"
+                                        "[$blendedLbl]"
                             )
 
-                            val finalBlendLbl = if (blendAlpha < 0.995f) {
-                                val scaledLbl = "blend_scaled_$index"
-                                filterParts.add(
-                                    "[$fillLbl]colorchannelmixer=aa=$blendAlphaStr[$scaledLbl]"
-                                )
-                                scaledLbl
-                            } else fillLbl
-
                             filterParts.add(
-                                "[$baseLbl][$finalBlendLbl]overlay=$x:$y:" +
+                                "[$baseLbl][$blendedLbl]overlay=0:0:" +
                                         "eof_action=pass:repeatlast=0:" +
                                         "enable='between(t,$startExpr,$endExpr)'" +
                                         "[$outputLabel]"

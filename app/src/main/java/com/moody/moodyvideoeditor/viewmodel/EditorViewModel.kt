@@ -155,7 +155,7 @@ class EditorViewModel : ViewModel() {
     fun saveCurrentProject(context: Context): Boolean {
         val id = currentProjectId ?: return false
         val s = _state.value
-        if (s.clips.isEmpty()) return false
+        // 🆕 Allow saving empty projects (so deletes are saved)
         val now = System.currentTimeMillis()
 
         val meta = com.moody.moodyvideoeditor.data.ProjectMeta(
@@ -1517,43 +1517,82 @@ class EditorViewModel : ViewModel() {
 
     fun trimLeft() {
         val sel = _state.value.selectedClip ?: return
-        val playheadInSource = sel.sourceStartMs +
-                (_state.value.currentPosMs * sel.speed).toLong()
-        if (playheadInSource <= sel.sourceStartMs + EditorClip.MIN_DURATION_MS) return
-        if (playheadInSource >= sel.sourceEndMs - EditorClip.MIN_DURATION_MS) return
-        val cutAmount = playheadInSource - sel.sourceStartMs
+        // 🆕 Correct math: offset from clip start, not absolute timeline
+        val localOffsetMs = (_state.value.currentPosMs - sel.timelineStartMs).coerceAtLeast(0L)
+        if (localOffsetMs <= 0L) return
+
+        val sourceCutMs = (localOffsetMs * sel.speed).toLong()
+        val newSourceStart = sel.sourceStartMs + sourceCutMs
+        if (newSourceStart >= sel.sourceEndMs - EditorClip.MIN_DURATION_MS) return
+
         pushHistory()
         updateClipDirect(sel.id) {
             it.copy(
-                sourceStartMs = playheadInSource,
-                timelineStartMs = (it.timelineStartMs + cutAmount).coerceAtLeast(0L)
+                sourceStartMs = newSourceStart,
+                timelineStartMs = it.timelineStartMs + localOffsetMs
             )
         }
-        syncLinkedTrim(_state.value.clips.first { it.id == sel.id })
+        if (sel.linkedId != null) {
+            val linkedClips = _state.value.clips.filter {
+                it.linkedId == sel.linkedId && it.id != sel.id
+            }
+            linkedClips.forEach { linked ->
+                updateClipDirect(linked.id) { clip ->
+                    if (clip.isVisualizerClip) {
+                        val newDur = (sel.sourceEndMs - newSourceStart).coerceAtLeast(100L)
+                        clip.copy(
+                            timelineStartMs = (clip.timelineStartMs + localOffsetMs).coerceAtLeast(0L),
+                            sourceStartMs = 0L, sourceEndMs = newDur
+                        )
+                    } else {
+                        clip.copy(
+                            sourceStartMs = newSourceStart,
+                            timelineStartMs = (clip.timelineStartMs + localOffsetMs).coerceAtLeast(0L)
+                        )
+                    }
+                }
+            }
+        }
         updateHistoryFlags()
     }
 
     fun trimRight() {
         val sel = _state.value.selectedClip ?: return
-        val playheadInSource = sel.sourceStartMs +
-                (_state.value.currentPosMs * sel.speed).toLong()
-        if (playheadInSource <= sel.sourceStartMs + EditorClip.MIN_DURATION_MS) return
-        if (playheadInSource >= sel.sourceEndMs - EditorClip.MIN_DURATION_MS) return
+        // 🆕 Correct math
+        val localOffsetMs = (_state.value.currentPosMs - sel.timelineStartMs).coerceAtLeast(0L)
+        if (localOffsetMs >= sel.durationMs) return
+
+        val newSourceEnd = sel.sourceStartMs + (localOffsetMs * sel.speed).toLong()
+        if (newSourceEnd <= sel.sourceStartMs + EditorClip.MIN_DURATION_MS) return
+
         pushHistory()
-        updateClipDirect(sel.id) { it.copy(sourceEndMs = playheadInSource) }
-        syncLinkedTrim(_state.value.clips.first { it.id == sel.id })
+        updateClipDirect(sel.id) { it.copy(sourceEndMs = newSourceEnd) }
+        if (sel.linkedId != null) {
+            val linkedClips = _state.value.clips.filter {
+                it.linkedId == sel.linkedId && it.id != sel.id
+            }
+            linkedClips.forEach { linked ->
+                updateClipDirect(linked.id) { clip ->
+                    if (clip.isVisualizerClip) {
+                        val newDur = (newSourceEnd - sel.sourceStartMs).coerceAtLeast(100L)
+                        clip.copy(sourceStartMs = 0L, sourceEndMs = newDur)
+                    } else {
+                        clip.copy(sourceEndMs = newSourceEnd)
+                    }
+                }
+            }
+        }
         updateHistoryFlags()
     }
-
     fun splitCurrentClip() {
         val sel = _state.value.selectedClip ?: return
         val s = _state.value
-        pushHistory()
-        val splitMs = sel.sourceStartMs + (s.currentPosMs * sel.speed).toLong()
-        if (splitMs <= sel.sourceStartMs + EditorClip.MIN_DURATION_MS ||
-            splitMs >= sel.sourceEndMs - EditorClip.MIN_DURATION_MS
-        ) return
 
+        // 🆕 Correct local offset
+        val localOffsetMs = (s.currentPosMs - sel.timelineStartMs).coerceAtLeast(0L)
+        if (localOffsetMs <= EditorClip.MIN_DURATION_MS || localOffsetMs >= sel.durationMs - EditorClip.MIN_DURATION_MS) return
+
+        pushHistory()
         val groupId = sel.linkGroupId
         val list = s.clips.toMutableList()
 
@@ -1566,11 +1605,9 @@ class EditorViewModel : ViewModel() {
             group.forEach { c ->
                 val idx = list.indexOfFirst { it.id == c.id }
                 if (idx < 0) return@forEach
-                if (s.currentPosMs <= c.timelineStartMs ||
-                    s.currentPosMs >= c.timelineEndMs
-                ) return@forEach
-                val localSplitMs = c.sourceStartMs +
-                        ((s.currentPosMs - c.timelineStartMs) * c.speed).toLong()
+                if (s.currentPosMs <= c.timelineStartMs || s.currentPosMs >= c.timelineEndMs) return@forEach
+
+                val localSplitMs = c.sourceStartMs + ((s.currentPosMs - c.timelineStartMs) * c.speed).toLong()
                 if (localSplitMs <= c.sourceStartMs + EditorClip.MIN_DURATION_MS ||
                     localSplitMs >= c.sourceEndMs - EditorClip.MIN_DURATION_MS
                 ) return@forEach
@@ -1581,7 +1618,8 @@ class EditorViewModel : ViewModel() {
                 )
                 val second = c.copy(
                     id = "${c.id}-B", sourceStartMs = localSplitMs,
-                    linkGroupId = groupB
+                    linkGroupId = groupB,
+                    timelineStartMs = s.currentPosMs // 🆕 FIXED
                 )
                 if (c.id == sel.id) firstIdOfSel = first.id
                 list.removeAt(idx)
@@ -1598,15 +1636,22 @@ class EditorViewModel : ViewModel() {
                 )
             }
         } else {
+            val splitMs = sel.sourceStartMs + (localOffsetMs * sel.speed).toLong()
+            if (splitMs <= sel.sourceStartMs + EditorClip.MIN_DURATION_MS ||
+                splitMs >= sel.sourceEndMs - EditorClip.MIN_DURATION_MS
+            ) return
+
             val first = sel.copy(id = "${sel.id}-A", sourceEndMs = splitMs)
             val second = sel.copy(
-                id = "${sel.id}-B", sourceStartMs = splitMs, linkedId = null
+                id = "${sel.id}-B", sourceStartMs = splitMs, linkedId = null,
+                timelineStartMs = s.currentPosMs // 🆕 FIXED
             )
             val idx = list.indexOfFirst { it.id == sel.id }
             list.removeAt(idx)
             list.add(idx, second)
             list.add(idx, first)
-            TimelineEngine.recalcTrackTimings(list, sel.trackIndex, sel.isAudio)
+
+            // ❌ Removed TimelineEngine.recalcTrackTimings (magnet bug)
             _state.update { it.copy(clips = list, selectedClipId = first.id) }
         }
         updateHistoryFlags()
