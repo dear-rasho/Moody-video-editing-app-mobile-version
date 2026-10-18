@@ -72,27 +72,17 @@ fun AutoCaptionsPanel(
     }
     var autoStyle by remember { mutableStateOf(CaptionGenerator.autoStyleEnabled) }
     var selectedLanguage by remember { mutableStateOf(CaptionLanguage.AUTO) }
-    var selectedModel by remember { mutableStateOf(WhisperModelManager.MODEL_TINY) }
-    var wordsPerLayer by remember { mutableIntStateOf(1) }
+    var selectedModel by remember { mutableStateOf(WhisperModelManager.MODEL_BASE) }
+
+    // ✅ Default 2 words per layer (user can change 1-7)
+    var wordsPerLayer by remember { mutableIntStateOf(2) }
 
     var copiedAll by remember { mutableStateOf(false) }
     var copiedItemIdx by remember { mutableStateOf(-1) }
 
     var downloadTick by remember { mutableStateOf(0) }
 
-    val tinyReady = remember(downloadTick) { WhisperModelManager.isTinyReady(context) }
     val baseReady = remember(downloadTick) { WhisperModelManager.isBaseReady(context) }
-
-    LaunchedEffect(selectedLanguage) {
-        val needsBase = selectedLanguage == CaptionLanguage.URDU ||
-                selectedLanguage == CaptionLanguage.HINDI ||
-                selectedLanguage == CaptionLanguage.ARABIC
-        if (needsBase && baseReady) {
-            selectedModel = WhisperModelManager.MODEL_BASE
-        } else if (!needsBase && tinyReady) {
-            selectedModel = WhisperModelManager.MODEL_TINY
-        }
-    }
 
     val currentModelReady = remember(selectedModel, downloadTick) {
         WhisperModelManager.isModelDownloaded(context, selectedModel)
@@ -140,7 +130,7 @@ fun AutoCaptionsPanel(
                     .background(Color(0xFF1F1438))
                     .padding(10.dp)
             ) {
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
                         "🎙️ Offline Speech-to-Text",
                         color = Color(0xFFA78BFA),
@@ -148,9 +138,15 @@ fun AutoCaptionsPanel(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "Whisper AI · Works offline after download · Language-aware",
+                        "Whisper AI · Supports 90+ languages",
                         color = Color(0xFF888888),
                         fontSize = 10.sp
+                    )
+                    Text(
+                        "⬇️ Download once · Works fully offline · No internet needed after",
+                        color = Color(0xFF22C55E),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
@@ -411,12 +407,8 @@ fun AutoCaptionsPanel(
                     }
                 }
 
-                // ─── Warning: needs base model ───
-                val needsBaseModel = selectedLanguage == CaptionLanguage.URDU ||
-                        selectedLanguage == CaptionLanguage.HINDI ||
-                        selectedLanguage == CaptionLanguage.ARABIC
-
-                if (needsBaseModel && !baseReady) {
+                // ─── Warning: model not downloaded ───
+                if (!baseReady) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -426,14 +418,14 @@ fun AutoCaptionsPanel(
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
-                                "⚠️ ${selectedLanguage.label} needs Base Model",
+                                "⬇️ Download Required",
                                 color = Color(0xFFFFAA33),
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                "Tiny model produces poor ${selectedLanguage.label} output. " +
-                                        "Download Base model (142 MB) below.",
+                                "Multilingual Base model (142 MB) is required for transcription.\n" +
+                                        "Download once — works offline forever.",
                                 color = Color(0xFFAAAAAA),
                                 fontSize = 9.sp,
                                 lineHeight = 13.sp
@@ -443,7 +435,7 @@ fun AutoCaptionsPanel(
                 }
 
                 // ═══════════════════════════════════════════════════
-                //  MODEL PICKER
+                //  MODEL PICKER (single model — Base)
                 // ═══════════════════════════════════════════════════
                 Text(
                     "Model",
@@ -652,6 +644,7 @@ fun AutoCaptionsPanel(
 
                 // ═══════════════════════════════════════════════════
                 //  WORDS PER LAYER — only for WORDS mode
+                //  Default = 2 (user can change 1-7)
                 // ═══════════════════════════════════════════════════
                 if (selectedGrouping == CaptionGenerator.GroupingMode.WORDS) {
                     Text(

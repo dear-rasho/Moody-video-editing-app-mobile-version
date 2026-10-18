@@ -197,12 +197,16 @@ object CaptionGenerator {
         color = 0xFFFFFFFF,
         alignment = "center",
         positionY = 82f,
+        // 🆕 TIGHT LAYOUT — box height = character height
+        lineHeight = 1.0f,           // ← default 1.2 → 1.0
+        letterSpacing = 0f,
+        maxWidth = 100f,             // ← full width (text wrap hoga but tight)
         backgroundEnabled = true,
         backgroundType = "rounded",
         backgroundColor1 = 0xFF000000L,
-        backgroundPaddingX = 16f,
-        backgroundPaddingY = 8f,
-        backgroundCornerRadius = 12f,
+        backgroundPaddingX = 8f,     // ← pehle 16f
+        backgroundPaddingY = 2f,     // ← pehle 8f (YEH sabse important)
+        backgroundCornerRadius = 6f, // ← pehle 12f
         animation = "fadeIn",
         animationDuration = 0.3f
     )

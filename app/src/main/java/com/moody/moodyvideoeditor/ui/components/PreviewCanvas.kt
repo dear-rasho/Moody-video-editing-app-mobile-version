@@ -3209,6 +3209,7 @@ private fun InteractiveTextOverlay(
     val finalLineHeightSp = with(density) { effLineHeightPx.toSp() }
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
 
+    // Measure without maxWidth constraint for TIGHT natural text bounds
     val finalMeasure = remember(
         displayContent, finalFontSizeSp, finalLetterSpacingSp,
         finalLineHeightSp, family, weight, fontSty, canvasWpx, textState.maxWidth
@@ -3231,9 +3232,33 @@ private fun InteractiveTextOverlay(
         )
     }
 
-    val textWidthDp = with(density) { finalMeasure.size.width.toDp().value }
-    val textHeightDp = with(density) { finalMeasure.size.height.toDp().value }
-    val textWidthConstraintDp = with(density) { finalMeasure.size.width.toDp() }
+    // 🆕 Measure TIGHT character bounds (no line-height inflation)
+    val tightMeasure = remember(
+        displayContent, finalFontSizeSp, finalLetterSpacingSp,
+        family, weight, fontSty
+    ) {
+        measurer.measure(
+            text = displayContent,
+            style = androidx.compose.ui.text.TextStyle(
+                fontSize = finalFontSizeSp,
+                letterSpacing = finalLetterSpacingSp,
+                // 🆕 NO lineHeight — actual character height only
+                fontFamily = family,
+                fontWeight = weight,
+                fontStyle = fontSty
+            ),
+            constraints = androidx.compose.ui.unit.Constraints(
+                maxWidth = (canvasWpx * (textState.maxWidth / 100f))
+                    .toInt().coerceAtLeast(50)
+            ),
+            softWrap = true
+        )
+    }
+
+    val textWidthDp = with(density) { tightMeasure.size.width.toDp().value }
+    // 🆕 Use tight height — character ink height, not line-height em-box
+    val textHeightDp = with(density) { tightMeasure.size.height.toDp().value }
+    val textWidthConstraintDp = with(density) { tightMeasure.size.width.toDp() }
 
     val solidColor = Color(textState.color)
     val gradient: Brush? = if (textState.gradientEnabled) {
@@ -3272,14 +3297,14 @@ private fun InteractiveTextOverlay(
         .coerceAtLeast(0.dp)
         .coerceAtMost(20.dp)
 
-    val bgPadX = if (textState.backgroundEnabled) textState.backgroundPaddingX else 4f
-    // 🆕 bgPadY = 0f (tight box)
+    // Selection box = tight around actual text
+    val bgPadX = if (textState.backgroundEnabled) textState.backgroundPaddingX else 2f
     val bgPadY = if (textState.backgroundEnabled) textState.backgroundPaddingY else 2f
 
-    val selectionWidthDp = (textWidthDp + bgPadX * 2f).coerceAtLeast(20f)
-    val selectionHeightDp = (textHeightDp + bgPadY * 2f).coerceAtLeast(20f)
+    // Tight box — padding counted once, not doubled
+    val selectionWidthDp = (textWidthDp + bgPadX).coerceAtLeast(20f)
+    val selectionHeightDp = (textHeightDp + bgPadY).coerceAtLeast(20f)
 
-    // 🆕 Glow padding hata di taaki box size badhe na
     val outerWidthDp = selectionWidthDp
     val outerHeightDp = selectionHeightDp
 

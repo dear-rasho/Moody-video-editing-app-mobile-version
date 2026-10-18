@@ -678,21 +678,54 @@ object TextBitmapRenderer {
     ) {
         if (!state.backgroundEnabled) return
         if (lines.isEmpty()) return
+        // Padding counted once
+        val padX = state.backgroundPaddingX * scale
+        val padY = state.backgroundPaddingY * scale
 
-        val padX = state.backgroundPaddingX * scale * 1.5f
-        val padY = state.backgroundPaddingY * scale * 1.5f
-
+        // Measure only the ACTUAL text ink width — not full em box
         var measuredW = 0f
         lines.forEach { line ->
             val w = basePaint.measureText(line)
             if (w > measuredW) measuredW = w
         }
-        val metrics = basePaint.fontMetrics
-        val lineHeightPx = (metrics.descent - metrics.ascent) * state.lineHeight
-        val measuredH = lineHeightPx * lines.size
 
-        val boxW = measuredW + padX * 2
-        val boxH = measuredH + padY * 2
+        // 🆕 Measure ACTUAL character heights using tight bounds
+        // (not ascent/descent which includes font internal padding)
+        var maxCharH = 0f
+        val inkRect = android.graphics.Rect()
+        val tempPaint = Paint(basePaint).apply {
+            textSize = basePaint.textSize
+            // Sample representative characters to get real ink height
+        }
+
+        // Draw sample chars off-screen and measure ink bounds
+        val sampleChars = "AiygjpqHOXabcdefgh".toCharArray()
+        sampleChars.forEach { ch ->
+            val text = ch.toString()
+            val textW = tempPaint.measureText(text)
+            tempPaint.getTextBounds(text, 0, text.length, inkRect)
+            val chH = inkRect.height().toFloat()
+            if (chH > maxCharH) maxCharH = chH
+        }
+
+        // Fallback if measurement failed
+        if (maxCharH <= 0f) {
+            val metrics = basePaint.fontMetrics
+            // Use 72% of em-height as approximate character height
+            maxCharH = (metrics.descent - metrics.ascent) * 0.72f
+        }
+
+        // Line spacing between multiple lines
+        val metrics = basePaint.fontMetrics
+        val lineGap = (metrics.descent - metrics.ascent) * (state.lineHeight - 1f)
+        val lineCount = lines.size.coerceAtLeast(1)
+
+        // Final height = char height + gaps between lines
+        val measuredH = maxCharH + (lineGap * (lineCount - 1).coerceAtLeast(0))
+
+        // 🆕 Tight box — only +pad, no doubling
+        val boxW = measuredW + padX * 2f
+        val boxH = measuredH + padY * 2f
 
         val boxLeft = -boxW / 2f
         val boxTop = -boxH / 2f

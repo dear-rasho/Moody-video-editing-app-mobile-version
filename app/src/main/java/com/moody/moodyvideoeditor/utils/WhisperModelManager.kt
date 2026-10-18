@@ -30,20 +30,12 @@ object WhisperModelManager {
 
     val MODELS = listOf(
         ModelInfo(
-            fileName = MODEL_TINY,
-            label = "Fast",
-            sizeBytes = 75L * 1024 * 1024,
-            speedLabel = "~10x faster",
-            qualityLabel = "Basic accuracy",
-            bestFor = "English only"
-        ),
-        ModelInfo(
             fileName = MODEL_BASE,
             label = "Multilingual",
             sizeBytes = 142L * 1024 * 1024,
             speedLabel = "~3x faster",
             qualityLabel = "Good accuracy",
-            bestFor = "Urdu, Hindi, Arabic, etc."
+            bestFor = "English, Urdu, Hindi, Arabic, and 90+ languages"
         )
     )
 
