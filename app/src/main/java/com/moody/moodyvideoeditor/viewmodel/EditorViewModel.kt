@@ -2846,13 +2846,25 @@ class EditorViewModel : ViewModel() {
             return
         }
         val sel = s.selectedClip
-        if (sel == null || !sel.isAdjustmentClip) {
+        if (sel == null) {
             applyAdjustment(newAdj)
             return
         }
-        updateClipDirect(sel.id) { it.copy(adjustments = newAdj) }
+        if (sel.isAdjustmentClip) {
+            updateClipDirect(sel.id) { it.copy(adjustments = newAdj) }
+            return
+        }
+        // Image / video selected — find existing adjustment layer near it
+        val existingAdj = s.clips.firstOrNull {
+            it.isAdjustmentClip &&
+                    abs(it.timelineStartMs - sel.timelineStartMs) < 200
+        }
+        if (existingAdj != null) {
+            updateClipDirect(existingAdj.id) { it.copy(adjustments = newAdj) }
+        } else {
+            applyAdjustment(newAdj)
+        }
     }
-
     fun updateClipAdjustment(clipId: String, newAdj: AdjustmentData) {
         updateClipDirect(clipId) { it.copy(adjustments = newAdj) }
     }

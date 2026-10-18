@@ -1,7 +1,8 @@
 @file:OptIn(UnstableApi::class)
 
 package com.moody.moodyvideoeditor.ui.components
-import androidx.compose.ui.text.withStyle
+import com.moody.moodyvideoeditor.utils.ImageAdjustmentProcessor
+import androidx.compose.ui.graphics.asImageBitmap
 import android.graphics.Bitmap
 import android.graphics.BlurMaskFilter
 import android.graphics.Paint
@@ -71,6 +72,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
@@ -116,6 +119,227 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 // ═══════════════════════════════════════════════════════════════
+//  🎨 UPGRADED HSL + SHARPEN SHADER (API 33+)
+//  Color channels: 0.85 lum, 0.60 sat (2x stronger than before)
+//  Sharpen: 9-point unsharp kernel
+//  ⚠️ DUPLICATE REMOVED — sirf ye ek definition hai
+// ═══════════════════════════════════════════════════════════════
+private const val HSL_SHARPEN_SHADER = """
+uniform shader input;
+uniform float2 uResolution;
+uniform float uReds;
+uniform float uOranges;
+uniform float uYellows;
+uniform float uGreens;
+uniform float uCyans;
+uniform float uBlues;
+uniform float uPurples;
+uniform float uMagentas;
+uniform float uSkinTones;
+uniform float uSharpen;
+
+float3 rgb2hsv(float3 c) {
+    float4 K = float4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+    float4 p = mix(float4(c.bg, K.wz), float4(c.gb, K.xy), step(c.b, c.g));
+    float4 q = mix(float4(p.xyw, c.r), float4(c.r, p.yzx), step(p.x, c.r));
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return float3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
+float hueWeight(float hue, float targetHue, float range, float sat) {
+    float diff = abs(hue - targetHue);
+    diff = min(diff, 1.0 - diff);
+    float hueMatch = 1.0 - smoothstep(range * 0.25, range, diff);
+    float satWeight = smoothstep(0.02, 0.15, sat);
+    return hueMatch * satWeight;
+}
+
+half4 main(float2 fragCoord) {
+    half4 pixel = input.eval(fragCoord);
+    if (pixel.a < 0.01) return pixel;
+    
+    float3 rgb = float3(pixel.rgb) * 255.0;
+    float3 hsv = rgb2hsv(float3(pixel.rgb));
+    float h = hsv.x;
+    float s = hsv.y;
+    float r = rgb.r;
+    float g = rgb.g;
+    float b = rgb.b;
+    
+    // REDS
+    if (abs(uReds) > 0.001) {
+        float w = hueWeight(h, 0.0, 0.083, s);
+        if (w > 0.001) {
+            float amount = uReds * w;
+            if (amount > 0.0) {
+                r = r + (255.0 - r) * amount * 0.9;
+                g = g * (1.0 - amount * 0.45);
+                b = b * (1.0 - amount * 0.45);
+            } else {
+                float avg = (r + g + b) / 3.0;
+                r = r + (avg - r) * (-amount) * 0.9;
+                g = g + (avg - g) * (-amount) * 0.5;
+                b = b + (avg - b) * (-amount) * 0.5;
+            }
+        }
+    }
+    
+    // ORANGES
+    if (abs(uOranges) > 0.001) {
+        float w = hueWeight(h, 0.083, 0.070, s);
+        if (w > 0.001) {
+            float amount = uOranges * w;
+            if (amount > 0.0) {
+                r = r + (255.0 - r) * amount * 0.7;
+                g = g + (180.0 - g) * amount * 0.5;
+                b = b * (1.0 - amount * 0.5);
+            } else {
+                float avg = (r + g + b) / 3.0;
+                r = r + (avg - r) * (-amount) * 0.7;
+                g = g + (avg - g) * (-amount) * 0.7;
+            }
+        }
+    }
+    
+    // YELLOWS
+    if (abs(uYellows) > 0.001) {
+        float w = hueWeight(h, 0.167, 0.083, s);
+        if (w > 0.001) {
+            float amount = uYellows * w;
+            if (amount > 0.0) {
+                r = r + (255.0 - r) * amount * 0.75;
+                g = g + (255.0 - g) * amount * 0.75;
+                b = b * (1.0 - amount * 0.6);
+            } else {
+                float avg = (r + g + b) / 3.0;
+                r = r + (avg - r) * (-amount) * 0.7;
+                g = g + (avg - g) * (-amount) * 0.7;
+            }
+        }
+    }
+    
+    // GREENS
+    if (abs(uGreens) > 0.001) {
+        float w = hueWeight(h, 0.333, 0.125, s);
+        if (w > 0.001) {
+            float amount = uGreens * w;
+            if (amount > 0.0) {
+                g = g + (255.0 - g) * amount * 0.9;
+                r = r * (1.0 - amount * 0.45);
+                b = b * (1.0 - amount * 0.45);
+            } else {
+                float avg = (r + g + b) / 3.0;
+                g = g + (avg - g) * (-amount) * 0.9;
+                r = r + (avg - r) * (-amount) * 0.5;
+                b = b + (avg - b) * (-amount) * 0.5;
+            }
+        }
+    }
+    
+    // CYANS
+    if (abs(uCyans) > 0.001) {
+        float w = hueWeight(h, 0.5, 0.083, s);
+        if (w > 0.001) {
+            float amount = uCyans * w;
+            if (amount > 0.0) {
+                g = g + (255.0 - g) * amount * 0.7;
+                b = b + (255.0 - b) * amount * 0.7;
+                r = r * (1.0 - amount * 0.6);
+            } else {
+                float avg = (r + g + b) / 3.0;
+                g = g + (avg - g) * (-amount) * 0.7;
+                b = b + (avg - b) * (-amount) * 0.7;
+            }
+        }
+    }
+    
+    // BLUES
+    if (abs(uBlues) > 0.001) {
+        float w = hueWeight(h, 0.667, 0.083, s);
+        if (w > 0.001) {
+            float amount = uBlues * w;
+            if (amount > 0.0) {
+                b = b + (255.0 - b) * amount * 0.9;
+                r = r * (1.0 - amount * 0.45);
+                g = g * (1.0 - amount * 0.45);
+            } else {
+                float avg = (r + g + b) / 3.0;
+                b = b + (avg - b) * (-amount) * 0.9;
+                r = r + (avg - r) * (-amount) * 0.5;
+                g = g + (avg - g) * (-amount) * 0.5;
+            }
+        }
+    }
+    
+    // PURPLES
+    if (abs(uPurples) > 0.001) {
+        float w = hueWeight(h, 0.778, 0.070, s);
+        if (w > 0.001) {
+            float amount = uPurples * w;
+            if (amount > 0.0) {
+                r = r + (220.0 - r) * amount * 0.7;
+                b = b + (255.0 - b) * amount * 0.7;
+                g = g * (1.0 - amount * 0.6);
+            } else {
+                float avg = (r + g + b) / 3.0;
+                r = r + (avg - r) * (-amount) * 0.7;
+                b = b + (avg - b) * (-amount) * 0.7;
+            }
+        }
+    }
+    
+    // MAGENTAS
+    if (abs(uMagentas) > 0.001) {
+        float w = hueWeight(h, 0.833, 0.070, s);
+        if (w > 0.001) {
+            float amount = uMagentas * w;
+            if (amount > 0.0) {
+                r = r + (255.0 - r) * amount * 0.75;
+                b = b + (255.0 - b) * amount * 0.75;
+                g = g * (1.0 - amount * 0.6);
+            } else {
+                float avg = (r + g + b) / 3.0;
+                r = r + (avg - r) * (-amount) * 0.7;
+                b = b + (avg - b) * (-amount) * 0.7;
+            }
+        }
+    }
+    
+    // SKIN TONES
+    if (abs(uSkinTones) > 0.001) {
+        float w = hueWeight(h, 0.069, 0.055, s);
+        if (w > 0.001) {
+            float amount = uSkinTones * w;
+            r = clamp(r + amount * w * 30.0, 0.0, 255.0);
+            g = clamp(g + amount * w * 15.0, 0.0, 255.0);
+        }
+    }
+    
+    float3 result = clamp(float3(r, g, b) / 255.0, 0.0, 1.0);
+    
+    // SHARPEN — stronger kernel
+    if (uSharpen > 0.001) {
+        float radius = 1.0 + uSharpen * 3.0;
+        half4 l  = input.eval(fragCoord + float2(-radius, 0.0));
+        half4 rr = input.eval(fragCoord + float2( radius, 0.0));
+        half4 u  = input.eval(fragCoord + float2(0.0, -radius));
+        half4 d  = input.eval(fragCoord + float2(0.0,  radius));
+        half4 tl = input.eval(fragCoord + float2(-radius, -radius));
+        half4 tr = input.eval(fragCoord + float2( radius, -radius));
+        half4 bl = input.eval(fragCoord + float2(-radius,  radius));
+        half4 br = input.eval(fragCoord + float2( radius,  radius));
+        
+        half4 sharpened = pixel * 9.0 - l - rr - u - d - tl - tr - bl - br;
+        float strength = clamp(uSharpen * 2.0, 0.0, 3.0);
+        result = mix(result, float3(sharpened.rgb), strength);
+    }
+    
+    return half4(result * pixel.a, pixel.a);
+}
+"""
+
+// ═══════════════════════════════════════════════════════════════
 //  🎨 BLEND MODE HELPER
 // ═══════════════════════════════════════════════════════════════
 
@@ -148,10 +372,10 @@ private fun blendKeyToCompose(key: String): BlendMode = when (key.lowercase()) {
 // ═══════════════════════════════════════════════════════════════
 //  HELPER — Per-clip color matrix
 // ═══════════════════════════════════════════════════════════════
-// 🎨 Blend opacity → alpha multiplier
 private fun blendOpacityFactor(clip: EditorClip): Float =
     if (clip.blendMode.lowercase() == "normal") 1f
     else (clip.blendOpacity / 100f).coerceIn(0f, 1f)
+
 private fun buildClipMatrix(
     clip: EditorClip,
     globalMatrix: android.graphics.ColorMatrix,
@@ -317,7 +541,6 @@ fun PreviewCanvas(
 ) {
     val context = LocalContext.current
 
-    // 🆕 Virtual preview matte clip (shown at top of the compositing stack)
     val previewMatteClip: EditorClip? = previewMatte?.let { pm ->
         EditorClip(
             id = "__preview_matte__",
@@ -325,8 +548,8 @@ fun PreviewCanvas(
             name = "Preview Matte",
             type = "matte/plain",
             sourceStartMs = 0L,
-            sourceEndMs = 3_600_000L,        // 🆕 1 hour — always visible
-            timelineStartMs = -1_000_000L,   // 🆕 negative — starts before 0
+            sourceEndMs = 3_600_000L,
+            timelineStartMs = -1_000_000L,
             trackIndex = 9999,
             isAudio = false,
             sourceTotalMs = Long.MAX_VALUE,
@@ -445,7 +668,6 @@ fun PreviewCanvas(
     }
     val combinedMotion = EffectsEngine.combineMotions(motionFrames)
 
-    // 🆕 Preview blur (live in Effects panel before Apply)
     val previewBlurDp = remember(previewEffectState?.blur) {
         previewEffectState?.blur?.let { cfg ->
             val i = cfg.intensity.coerceIn(0f, 100f) / 100f
@@ -559,6 +781,71 @@ fun PreviewCanvas(
 
     val opacityAlpha = EffectsEngine.opacityAlpha(combinedFilter)
 
+    // ═══════════════════════════════════════════════════════════════
+    //  🎨 ADJUSTMENT SHADER — HSL + Sharpen (API 33+)
+    //  ⚠️ FIX: video aur image clips pe apply hoga (.then modifier)
+    // ═══════════════════════════════════════════════════════════════
+    val adjustmentEffectModifier = remember(
+        activeAdjustment?.reds, activeAdjustment?.oranges,
+        activeAdjustment?.yellows, activeAdjustment?.greens,
+        activeAdjustment?.cyans, activeAdjustment?.blues,
+        activeAdjustment?.purples, activeAdjustment?.magentas,
+        activeAdjustment?.skinTones,
+        activeAdjustment?.sharpen
+    ) {
+        val adj = activeAdjustment
+        val needsShader = adj != null && (
+                adj.reds != 0f || adj.oranges != 0f || adj.yellows != 0f ||
+                        adj.greens != 0f || adj.cyans != 0f || adj.blues != 0f ||
+                        adj.purples != 0f || adj.magentas != 0f || adj.skinTones != 0f ||
+                        adj.sharpen > 0f
+                )
+
+        if (needsShader && Build.VERSION.SDK_INT >= 33) {
+            try {
+                val shader = android.graphics.RuntimeShader(HSL_SHARPEN_SHADER)
+                shader.setFloatUniform("uReds", (adj!!.reds / 100f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uOranges", (adj.oranges / 100f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uYellows", (adj.yellows / 100f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uGreens", (adj.greens / 100f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uCyans", (adj.cyans / 100f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uBlues", (adj.blues / 100f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uPurples", (adj.purples / 100f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uMagentas", (adj.magentas / 100f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uSkinTones", (adj.skinTones / 100f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uSharpen", (adj.sharpen / 100f).coerceIn(0f, 5f))
+                android.util.Log.d(
+                    "ADJ_SHADER",
+                    "HSL/Sharpen ACTIVE: Reds=${adj.reds} Blues=${adj.blues} Sharpen=${adj.sharpen}"
+                )
+
+                Modifier.graphicsLayer {
+                    shader.setFloatUniform(
+                        "uResolution",
+                        size.width,
+                        size.height
+                    )
+                    renderEffect = android.graphics.RenderEffect
+                        .createRuntimeShaderEffect(shader, "input")
+                        .asComposeRenderEffect()
+                }
+            } catch (t: Throwable) {
+                android.util.Log.e("ADJ_SHADER", "Shader failed: ${t.message}", t)
+                Modifier
+            }
+        } else {
+            if (needsShader) {
+                android.util.Log.w(
+                    "ADJ_SHADER",
+                    "HSL/Sharpen preview requires API 33+. " +
+                            "Current: ${Build.VERSION.SDK_INT}. " +
+                            "Export will still apply them."
+                )
+            }
+            Modifier
+        }
+    }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -651,8 +938,9 @@ fun PreviewCanvas(
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    // ✅ FIX: adjustment shader apply (sharpen + color channels)
+                                    .then(adjustmentEffectModifier)
                                     .graphicsLayer {
-                                        // 🎨 Blend mode
                                         compositingStrategy =
                                             CompositingStrategy.Offscreen
                                         blendMode = blendKeyToCompose(clip.blendMode)
@@ -790,7 +1078,6 @@ fun PreviewCanvas(
                             }
                         }
                     }
-
                     // ─── IMAGE ───
                     clip.isVisualClip && clip.type.startsWith("image/") -> {
                         val imgLocalSec =
@@ -815,12 +1102,67 @@ fun PreviewCanvas(
                             )
                         }
 
+                        // ✅ CPU processing for sharpen + color channels
+                        val adjForImage = activeAdjustment ?: clip.adjustments
+                        val needsCpuAdj = ImageAdjustmentProcessor
+                            .hasSharpenOrColorChannels(adjForImage)
+
+                        val adjKey = remember(
+                            adjForImage.reds, adjForImage.oranges,
+                            adjForImage.yellows, adjForImage.greens,
+                            adjForImage.cyans, adjForImage.blues,
+                            adjForImage.purples, adjForImage.magentas,
+                            adjForImage.skinTones, adjForImage.sharpen
+                        ) {
+                            "${adjForImage.reds}_${adjForImage.oranges}_${adjForImage.yellows}_" +
+                                    "${adjForImage.greens}_${adjForImage.cyans}_${adjForImage.blues}_" +
+                                    "${adjForImage.purples}_${adjForImage.magentas}_" +
+                                    "${adjForImage.skinTones}_${adjForImage.sharpen}"
+                        }
+
+                        var loadedBitmap by remember(clip.uri) {
+                            mutableStateOf<android.graphics.Bitmap?>(null)
+                        }
+                        var processedImageBitmap by remember(clip.uri) {
+                            mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
+                        }
+
+                        LaunchedEffect(clip.uri) {
+                            loadedBitmap = withContext(Dispatchers.IO) {
+                                try {
+                                    context.contentResolver.openInputStream(clip.uri)?.use {
+                                        android.graphics.BitmapFactory.decodeStream(it)
+                                    }
+                                } catch (_: Throwable) {
+                                    null
+                                }
+                            }
+                        }
+
+                        LaunchedEffect(loadedBitmap, adjKey, needsCpuAdj) {
+                            val src = loadedBitmap ?: return@LaunchedEffect
+                            if (!needsCpuAdj) {
+                                processedImageBitmap = src.asImageBitmap()
+                                return@LaunchedEffect
+                            }
+                            kotlinx.coroutines.delay(70)
+                            processedImageBitmap = withContext(Dispatchers.IO) {
+                                ImageAdjustmentProcessor.process(src, adjForImage)
+                                    .asImageBitmap()
+                            }
+                        }
+
+                        DisposableEffect(clip.uri) {
+                            onDispose {
+                                loadedBitmap?.takeIf { !it.isRecycled }?.recycle()
+                            }
+                        }
+
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
                             Box(
                                 modifier = Modifier
                                     .matchParentSize()
                                     .graphicsLayer {
-                                        // 🎨 Blend mode
                                         compositingStrategy =
                                             CompositingStrategy.Offscreen
                                         blendMode = blendKeyToCompose(clip.blendMode)
@@ -961,17 +1303,13 @@ fun PreviewCanvas(
                                         }
                                     }
                             ) {
-                                val imageRequest = remember(clip.uri) {
-                                    ImageRequest.Builder(context)
-                                        .data(clip.uri)
-                                        .decoderFactory(BitmapFactoryDecoder.Factory())
-                                        .allowHardware(false)
-                                        .crossfade(false)
-                                        .build()
+                                val imageIntrinsicSize = processedImageBitmap?.let {
+                                    androidx.compose.ui.geometry.Size(
+                                        it.width.toFloat(),
+                                        it.height.toFloat()
+                                    )
                                 }
-                                val imgPainter = rememberAsyncImagePainter(imageRequest)
-                                val imageIntrinsicSize = imgPainter.intrinsicSize
-                                val imageAspect = if (
+                                val imageAspect = if (imageIntrinsicSize != null &&
                                     imageIntrinsicSize.width > 0f &&
                                     imageIntrinsicSize.height > 0f
                                 ) {
@@ -1012,17 +1350,42 @@ fun PreviewCanvas(
                                         androidx.compose.ui.graphics.ColorMatrix(cm.array)
                                     )
                                 }
-                                Image(
-                                    painter = imgPainter,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Fit,
-                                    colorFilter = imgColorFilter,
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .graphicsLayer {
-                                            renderEffect = imageWheelEffect
-                                        }
-                                )
+
+                                if (processedImageBitmap != null) {
+                                    Image(
+                                        bitmap = processedImageBitmap!!,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Fit,
+                                        colorFilter = imgColorFilter,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .graphicsLayer {
+                                                renderEffect = imageWheelEffect
+                                            }
+                                    )
+                                } else {
+                                    val imageRequest = remember(clip.uri) {
+                                        ImageRequest.Builder(context)
+                                            .data(clip.uri)
+                                            .decoderFactory(BitmapFactoryDecoder.Factory())
+                                            .allowHardware(false)
+                                            .crossfade(false)
+                                            .build()
+                                    }
+                                    val imgPainter = rememberAsyncImagePainter(imageRequest)
+                                    Image(
+                                        painter = imgPainter,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Fit,
+                                        colorFilter = imgColorFilter,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .graphicsLayer {
+                                                renderEffect = imageWheelEffect
+                                            }
+                                    )
+                                }
+
                                 if (isSelected && !isDrawingMode) {
                                     LayerTransformHandles(
                                         clipId = clip.id,
@@ -1070,10 +1433,9 @@ fun PreviewCanvas(
                                 modifier = Modifier
                                     .matchParentSize()
                                     .graphicsLayer {
-                                        // 🎨 Blend mode
                                         compositingStrategy =
                                             CompositingStrategy.Offscreen
-                                        blendMode = blendKeyToCompose(clip.blendMode) // 🆕 BLEND MODE ADD KIYA
+                                        blendMode = blendKeyToCompose(clip.blendMode)
                                         alpha = matteAlpha * opacityAlpha * blendOpacityFactor(clip)
 
                                         val w = size.width
@@ -1222,7 +1584,6 @@ fun PreviewCanvas(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .graphicsLayer {
-                                        // 🎨 Blend mode
                                         compositingStrategy =
                                             CompositingStrategy.Offscreen
                                         blendMode = blendKeyToCompose(clip.blendMode)
@@ -1262,7 +1623,6 @@ fun PreviewCanvas(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .graphicsLayer {
-                                        // 🎨 Blend mode
                                         compositingStrategy =
                                             CompositingStrategy.Offscreen
                                         blendMode = blendKeyToCompose(clip.blendMode)
@@ -1490,7 +1850,6 @@ fun PreviewCanvas(
                                 modifier = Modifier
                                     .matchParentSize()
                                     .graphicsLayer {
-                                        // 🎨 Blend mode
                                         compositingStrategy =
                                             CompositingStrategy.Offscreen
                                         blendMode = blendKeyToCompose(clip.blendMode)
@@ -1624,7 +1983,6 @@ fun PreviewCanvas(
                     }
                 }
             }
-
             if (allOverlays.isNotEmpty()) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     allOverlays.forEach { ov -> OverlayEngine.draw(this, timeSec, ov) }
@@ -1747,9 +2105,6 @@ fun PreviewCanvas(
                 }
             }
 
-            // ═══════════════════════════════════════════════════════
-            //  ⚡ LIGHTNING — bolt drawing + screen flash
-            // ═══════════════════════════════════════════════════════
             val activeLightning = clips
                 .filter { c ->
                     c.isEffectClip &&
@@ -1850,9 +2205,6 @@ fun PreviewCanvas(
                 }
             }
 
-            // ═══════════════════════════════════════════════════════
-            //  ✨💥 PARTICLE / BLAST PREVIEW
-            // ═══════════════════════════════════════════════════════
             val activeParticles = clips
                 .filter { c ->
                     c.isEffectClip &&
@@ -1894,9 +2246,6 @@ fun PreviewCanvas(
                 }
             }
 
-            // ═══════════════════════════════════════════════════════
-            //  🔥 FIRE PREVIEW
-            // ═══════════════════════════════════════════════════════
             val activeFire = clips
                 .filter { c ->
                     c.isEffectClip &&
@@ -1942,9 +2291,6 @@ fun PreviewCanvas(
                 }
             }
 
-            // ═══════════════════════════════════════════════════════
-            //  🌀 DUST PREVIEW
-            // ═══════════════════════════════════════════════════════
             val activeDust = clips
                 .filter { c ->
                     c.isEffectClip &&
@@ -1990,25 +2336,115 @@ fun PreviewCanvas(
                 }
             }
 
+            // ═══════════════════════════════════════════════════════════
+            //  🎨 VIGNETTE + NOISE — Canvas overlays (all Android)
+            // ═══════════════════════════════════════════════════════════
             activeAdjustment?.let { adj ->
-                if (adj.vignette > 0f) {
-                    val alpha = (adj.vignette / 100f).coerceIn(0f, 1f)
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.radialGradient(
-                                    colors = listOf(
-                                        Color.Transparent,
-                                        Color.Black.copy(alpha = alpha * 0.9f)
+                if (adj.vignette != 0f) {
+                    val intensity = (adj.vignette / 100f).coerceIn(-1f, 1f)
+                    val absIntensity = kotlin.math.abs(intensity)
+
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val W = size.width
+                        val H = size.height
+                        val cx = W / 2f
+                        val cy = H / 2f
+
+                        val maxR = kotlin.math.sqrt(
+                            (W / 2f) * (W / 2f) + (H / 2f) * (H / 2f)
+                        )
+                        val innerFrac = 0.35f
+                        val outerFrac = 0.98f
+
+                        if (intensity < 0f) {
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    colorStops = arrayOf(
+                                        0.0f to Color.Transparent,
+                                        innerFrac to Color.Transparent,
+                                        outerFrac to Color.Black.copy(alpha = absIntensity * 0.75f),
+                                        1.0f to Color.Black.copy(alpha = absIntensity * 0.95f)
                                     ),
-                                    radius = 800f
-                                )
+                                    center = Offset(cx, cy),
+                                    radius = maxR
+                                ),
+                                radius = maxR,
+                                center = Offset(cx, cy)
                             )
-                    )
+                        } else {
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    colorStops = arrayOf(
+                                        0.0f to Color.Transparent,
+                                        innerFrac to Color.Transparent,
+                                        outerFrac to Color.White.copy(alpha = absIntensity * 0.35f),
+                                        1.0f to Color.White.copy(alpha = absIntensity * 0.5f)
+                                    ),
+                                    center = Offset(cx, cy),
+                                    radius = maxR
+                                ),
+                                radius = maxR,
+                                center = Offset(cx, cy)
+                            )
+                        }
+                    }
+                }
+
+                if (adj.noise > 0f) {
+                    val intensity = (adj.noise / 100f).coerceIn(0f, 1f)
+                    val frameSeed = (currentPosMs / 33).toLong()
+
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val W = size.width
+                        val H = size.height
+
+                        fun hashPixel(x: Int, y: Int, seed: Long): Float {
+                            var h = seed
+                            h = h * 31 + x
+                            h = h * 31 + y
+                            h = h xor (h ushr 13)
+                            h = h * 0x5bd1e995
+                            h = h xor (h ushr 15)
+                            return ((h and 0xFFFF).toFloat() / 65535f)
+                        }
+
+                        val grainSize = 2.0f
+                        val cols = (W / grainSize).toInt().coerceAtLeast(1)
+                        val rows = (H / grainSize).toInt().coerceAtLeast(1)
+
+                        for (row in 0 until rows) {
+                            for (col in 0 until cols) {
+                                val rnd = hashPixel(col, row, frameSeed)
+                                if (rnd > 0.45f - intensity * 0.30f) {
+                                    val rnd2 = hashPixel(
+                                        col + 1000, row + 1000, frameSeed
+                                    )
+                                    val brightness = (rnd2 * 255).toInt()
+                                    val alpha = (intensity * 0.7f *
+                                            (0.4f + rnd2 * 0.6f))
+                                        .coerceIn(0f, 0.85f)
+
+                                    drawRect(
+                                        color = Color(
+                                            brightness, brightness, brightness,
+                                            (alpha * 255).toInt().coerceIn(0, 255)
+                                        ),
+                                        topLeft = Offset(
+                                            col * grainSize,
+                                            row * grainSize
+                                        ),
+                                        size = Size(grainSize, grainSize)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
+            // ═══════════════════════════════════════════════════════════
+            //  TRANSITION — ⚠️ FIXED: duplicate `if` block deleted
+            // ═══════════════════════════════════════════════════════════
             if (activeTransitionClip != null && outgoingBitmap != null) {
                 val ts = activeTransitionClip.transition!!
                 val progress = (
@@ -2496,7 +2932,6 @@ private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
         }
     }
 }
-
 // ═══════════════════════════════════════════════════════════════
 //  MASK PEN OVERLAY
 // ═══════════════════════════════════════════════════════════════
@@ -3209,7 +3644,6 @@ private fun InteractiveTextOverlay(
     val finalLineHeightSp = with(density) { effLineHeightPx.toSp() }
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
 
-    // Measure without maxWidth constraint for TIGHT natural text bounds
     val finalMeasure = remember(
         displayContent, finalFontSizeSp, finalLetterSpacingSp,
         finalLineHeightSp, family, weight, fontSty, canvasWpx, textState.maxWidth
@@ -3232,7 +3666,6 @@ private fun InteractiveTextOverlay(
         )
     }
 
-    // 🆕 Measure TIGHT character bounds (no line-height inflation)
     val tightMeasure = remember(
         displayContent, finalFontSizeSp, finalLetterSpacingSp,
         family, weight, fontSty
@@ -3242,7 +3675,6 @@ private fun InteractiveTextOverlay(
             style = androidx.compose.ui.text.TextStyle(
                 fontSize = finalFontSizeSp,
                 letterSpacing = finalLetterSpacingSp,
-                // 🆕 NO lineHeight — actual character height only
                 fontFamily = family,
                 fontWeight = weight,
                 fontStyle = fontSty
@@ -3256,7 +3688,6 @@ private fun InteractiveTextOverlay(
     }
 
     val textWidthDp = with(density) { tightMeasure.size.width.toDp().value }
-    // 🆕 Use tight height — character ink height, not line-height em-box
     val textHeightDp = with(density) { tightMeasure.size.height.toDp().value }
     val textWidthConstraintDp = with(density) { tightMeasure.size.width.toDp() }
 
@@ -3297,18 +3728,15 @@ private fun InteractiveTextOverlay(
         .coerceAtLeast(0.dp)
         .coerceAtMost(20.dp)
 
-    // Selection box = tight around actual text
     val bgPadX = if (textState.backgroundEnabled) textState.backgroundPaddingX else 2f
     val bgPadY = if (textState.backgroundEnabled) textState.backgroundPaddingY else 2f
 
-    // Tight box — padding counted once, not doubled
     val selectionWidthDp = (textWidthDp + bgPadX).coerceAtLeast(20f)
     val selectionHeightDp = (textHeightDp + bgPadY).coerceAtLeast(20f)
 
     val outerWidthDp = selectionWidthDp
     val outerHeightDp = selectionHeightDp
 
-    // 🆕 Scale factor for handles (icons won't scale, but container will resize)
     val scaleFactor = sampled.scale / 100f
     val handleW = (outerWidthDp * scaleFactor).dp
     val handleH = (outerHeightDp * scaleFactor).dp
@@ -3317,7 +3745,6 @@ private fun InteractiveTextOverlay(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        // 1. TEXT CONTENT (Scaled & Rotated)
         Box(
             modifier = Modifier
                 .graphicsLayer {
@@ -3345,7 +3772,7 @@ private fun InteractiveTextOverlay(
                     if (isDrawingMode) return@pointerInput
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
-                        if (down.isConsumed) return@awaitEachGesture // Handles ne touch le liya, toh drag mat karo
+                        if (down.isConsumed) return@awaitEachGesture
 
                         isDragging = true
                         onGroupGestureStart()
@@ -3429,7 +3856,6 @@ private fun InteractiveTextOverlay(
             contentAlignment = Alignment.Center
         ) {
             Box(contentAlignment = Alignment.Center) {
-                // 🆕 Character background ke liye TextBackgroundRenderer skip karo
                 if (textState.backgroundEnabled && textState.backgroundType != "character") {
                     TextBackgroundRenderer(
                         state = textState,
@@ -3526,25 +3952,27 @@ private fun InteractiveTextOverlay(
                     )
                 }
 
-                // 🆕 Character Background ke liye AnnotatedString banao
                 val annotatedDisplay = if (textState.backgroundEnabled && textState.backgroundType == "character") {
-                    androidx.compose.ui.text.buildAnnotatedString {
-                        withStyle(
-                            androidx.compose.ui.text.SpanStyle(
-                                background = Color(textState.backgroundColor1).copy(
-                                    alpha = textState.backgroundOpacity / 100f
-                                )
+                    AnnotatedString(
+                        text = displayContent,
+                        spanStyles = listOf(
+                            AnnotatedString.Range(
+                                item = SpanStyle(
+                                    background = Color(textState.backgroundColor1).copy(
+                                        alpha = textState.backgroundOpacity / 100f
+                                    )
+                                ),
+                                start = 0,
+                                end = displayContent.length
                             )
-                        ) {
-                            append(displayContent)
-                        }
-                    }
+                        )
+                    )
                 } else {
-                    androidx.compose.ui.text.AnnotatedString(displayContent)
+                    AnnotatedString(displayContent)
                 }
 
                 Text(
-                    text = annotatedDisplay, // 🆕 AnnotatedString use karo
+                    text = annotatedDisplay,
                     color = if (gradient != null) Color.Unspecified else solidColor,
                     fontSize = finalFontSizeSp,
                     fontWeight = weight,
@@ -3565,7 +3993,6 @@ private fun InteractiveTextOverlay(
             }
         }
 
-        // 2. HANDLES (Fixed Size, Draw on top)
         if (isSelected && !isDrawingMode) {
             Box(
                 modifier = Modifier
@@ -3595,9 +4022,11 @@ private fun InteractiveTextOverlay(
         }
     }
 }
+
 // ═══════════════════════════════════════════════════════════════
 //  INTERACTIVE STICKER OVERLAY
 // ═══════════════════════════════════════════════════════════════
+
 @Composable
 private fun InteractiveStickerOverlay(
     clip: EditorClip,
@@ -3661,7 +4090,6 @@ private fun InteractiveStickerOverlay(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        // 1. STICKER CONTENT
         Box(
             modifier = Modifier
                 .graphicsLayer {
@@ -3769,7 +4197,6 @@ private fun InteractiveStickerOverlay(
             )
         }
 
-        // 2. HANDLES (Fixed Size)
         if (isSelected && !isDrawingMode) {
             Box(
                 modifier = Modifier
@@ -3826,13 +4253,12 @@ private fun BoxScope.LayerTransformHandles(
         val boundsWidthPx = with(density) { maxWidth.toPx() }
         val boundsHeightPx = with(density) { maxHeight.toPx() }
 
-        // 🆕 CHOTA ICON SIZE (14.dp)
         val handleSizePx = with(density) { 14.dp.toPx() }
 
         TransformHandle(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .offset(x = (-7).dp, y = (-7).dp), // 🆕 Size ka aadha (-7.dp)
+                .offset(x = (-7).dp, y = (-7).dp),
             clipId = clipId,
             corner = TransformHandleCorner.Delete,
             boundsWidthPx = boundsWidthPx,
@@ -3907,7 +4333,6 @@ private fun TransformHandle(
     val currentOnGestureEnd = rememberUpdatedState(onGestureEnd)
     val currentOnDelete = rememberUpdatedState(onDelete)
 
-    // 🆕 BUG FIX: Bounds ko state mein rakho taaki drag cancel na ho
     val currentBoundsWidth by rememberUpdatedState(boundsWidthPx)
     val currentBoundsHeight by rememberUpdatedState(boundsHeightPx)
 
@@ -3923,7 +4348,6 @@ private fun TransformHandle(
                 }
             )
             .border(1.dp, Color(0xFF60EFFF), CircleShape)
-            // 🆕 FIX: boundsWidthPx aur boundsHeightPx ko keys se hata diya
             .pointerInput(clipId, corner) {
                 when (corner) {
                     TransformHandleCorner.Delete -> detectTapGestures {
@@ -3936,7 +4360,6 @@ private fun TransformHandle(
                         down.consume()
                         currentOnGestureStart.value()
 
-                        // 🆕 Initial bounds capture karo drag start pe
                         val startBoundsW = currentBoundsWidth
                         val startBoundsH = currentBoundsHeight
 
@@ -4009,6 +4432,11 @@ private fun TransformHandle(
         )
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  UTILITY
+// ═══════════════════════════════════════════════════════════════
+
 private fun normalizeAngle(radians: Float): Float {
     val twoPi = (Math.PI * 2.0).toFloat()
     var normalized = radians

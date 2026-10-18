@@ -10,6 +10,7 @@ import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegSession
 import com.arthenica.ffmpegkit.ReturnCode
+import com.moody.moodyvideoeditor.data.AdjustmentData // ✅ ADDED
 import com.moody.moodyvideoeditor.data.ColorFilterValues
 import com.moody.moodyvideoeditor.data.ColorWheelState
 import com.moody.moodyvideoeditor.data.EditorClip
@@ -25,25 +26,20 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.Locale
-// ═══════════════════════════════════════════════════════════════
-//  🆕 LAYERED RENDER ITEM — unified compositing order
-//  Sab layers (matte, visual, sequence) ek list mein hain
-//  aur trackIndex ke hisab se sort hoke composite hote hain.
-// ═══════════════════════════════════════════════════════════════
+
 private data class LayeredRenderItem(
     val trackIndex: Int,
     val timelineStartMs: Long,
-    val kind: Int,                    // 0=matte, 1=clip, 2=sequence
+    val kind: Int,                    // 0=matte, 1=clip, 2=sequence, 3=adjustment
     val matteClip: EditorClip? = null,
     val visualClip: EditorClip? = null,
+    val adjustmentClip: EditorClip? = null, // ✅ ADDED
     val sequence: TextOverlaySequence? = null,
     val matteIdx: Int = -1,
     val clipIdx: Int = -1,
     val sequenceIdx: Int = -1,
     val inputIndex: Int = -1
 )
-
-
 
 class FFmpegExecutor(
     private val context: Context,
@@ -59,14 +55,6 @@ class FFmpegExecutor(
 
     private var xfadeFallback: (() -> Unit)? = null
 
-    // ═══════════════════════════════════════════════════════════
-    //  FAST VIDEO ARGS
-    // ═══════════════════════════════════════════════════════════
-    // ═══════════════════════════════════════════════════════════════
-//  🆕 RENDER MATTE TO PNG — guarantees preview parity
-//  Compose PreviewCanvas uses Brush.linearGradient / 2x2 scale
-//  Ye function wahi visual output PNG mein deta hai
-// ═══════════════════════════════════════════════════════════════
     private fun renderMatteToPng(
         style: com.moody.moodyvideoeditor.data.ColorMatteStyle,
         W: Int,
@@ -84,9 +72,7 @@ class FFmpegExecutor(
                 val rad = Math.toRadians(style.rampAngleDeg.toDouble())
                 val dx = kotlin.math.cos(rad).toFloat()
                 val dy = kotlin.math.sin(rad).toFloat()
-                val halfDiag = kotlin.math.sqrt(
-                    W.toFloat() * W + H.toFloat() * H
-                ) / 2f
+                val halfDiag = kotlin.math.sqrt(W.toFloat() * W + H.toFloat() * H) / 2f
                 val cx = W / 2f
                 val cy = H / 2f
                 val startX = cx - dx * halfDiag
@@ -94,9 +80,7 @@ class FFmpegExecutor(
                 val endX = cx + dx * halfDiag
                 val endY = cy + dy * halfDiag
 
-                val paint = android.graphics.Paint(
-                    android.graphics.Paint.ANTI_ALIAS_FLAG
-                ).apply {
+                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
                     isDither = true
                     shader = android.graphics.LinearGradient(
                         startX, startY, endX, endY,
@@ -109,7 +93,6 @@ class FFmpegExecutor(
             }
 
             com.moody.moodyvideoeditor.data.ColorMatteMode.FOUR_COLOR -> {
-                // 2x2 bitmap + bilinear upscale = smooth 4-corner gradient
                 val tiny = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
                 tiny.setPixel(0, 0, style.topLeft.toInt())
                 tiny.setPixel(1, 0, style.topRight.toInt())
@@ -131,16 +114,13 @@ class FFmpegExecutor(
             }
         }
 
-        val file = File(
-            context.cacheDir,
-            "matte_${style.mode.name}_${System.currentTimeMillis()}.png"
-        )
-        FileOutputStream(file).use { out ->
-            bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
-        }
+        val file =
+            File(context.cacheDir, "matte_${style.mode.name}_${System.currentTimeMillis()}.png")
+        FileOutputStream(file).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
         bmp.recycle()
         return file
     }
+
     private fun buildFastVideoArgs(
         bitrateKbps: Int,
         targetW: Int,
@@ -159,9 +139,6 @@ class FFmpegExecutor(
         )
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  MAIN EXPORT
-    // ═══════════════════════════════════════════════════════════
     suspend fun export(
         clips: List<EditorClip>,
         allClips: List<EditorClip>,
@@ -177,9 +154,7 @@ class FFmpegExecutor(
     ) {
         isCancelled = false
         try {
-            if (clips.isEmpty() && audioOnlyClips.isEmpty() &&
-                matteClips.isEmpty()
-            ) {
+            if (clips.isEmpty() && audioOnlyClips.isEmpty() && matteClips.isEmpty()) {
                 onError("No clips to export")
                 return
             }
@@ -187,8 +162,7 @@ class FFmpegExecutor(
             val computedTotal = (clips.maxOfOrNull { it.timelineEndMs } ?: 0L)
                 .coerceAtLeast(audioOnlyClips.maxOfOrNull { it.timelineEndMs } ?: 0L)
                 .coerceAtLeast(matteClips.maxOfOrNull { it.timelineEndMs } ?: 0L)
-            val totalDurationMs = if (explicitDurationMs > 0L)
-                explicitDurationMs else computedTotal
+            val totalDurationMs = if (explicitDurationMs > 0L) explicitDurationMs else computedTotal
 
             val (localFiles, audioLocalFiles) = withContext(Dispatchers.IO) {
                 currentCoroutineContext().ensureActive()
@@ -211,127 +185,82 @@ class FFmpegExecutor(
                 videoFiles to audioFiles
             }
 
-            // ═══════════════════════════════════════════════════════
-            //  RENDER PNG SEQUENCES (masks, lightning, particle, fire, dust)
-            // ═══════════════════════════════════════════════════════
             val maskSequences = renderMaskSequences(clips, targetW, targetH, fps)
 
-            // ⚡ Lightning
             val lightningClips = allClips.filter { c ->
-                c.isEffectClip &&
-                        c.effectState?.lightning != null &&
-                        c.timelineEndMs > 0L &&
-                        c.timelineStartMs < totalDurationMs
+                c.isEffectClip && c.effectState?.lightning != null &&
+                        c.timelineEndMs > 0L && c.timelineStartMs < totalDurationMs
             }
             val lightningSequences = if (lightningClips.isNotEmpty()) {
                 try {
                     LightningBitmapRenderer.renderLightningStrikes(
-                        context = context,
-                        lightningClips = lightningClips,
-                        W = targetW, H = targetH,
-                        fps = fps,
-                        totalDurationMs = totalDurationMs,
+                        context, lightningClips, targetW, targetH, fps, totalDurationMs,
                         onProgress = { p -> onProgress(p * 0.15f) },
                         shouldCancel = { isCancelled }
                     )
-                } catch (e: CancellationException) {
-                    cleanupMaskSequences()
-                    throw e
                 } catch (e: Exception) {
-                    Log.e("FFMPEG", "Lightning render failed", e)
                     emptyList()
                 }
             } else emptyList()
 
-            // ✨💥 Particles
             val particleClips = allClips.filter { c ->
-                c.isEffectClip &&
-                        c.effectState?.particle != null &&
-                        c.timelineEndMs > 0L &&
-                        c.timelineStartMs < totalDurationMs
+                c.isEffectClip && c.effectState?.particle != null &&
+                        c.timelineEndMs > 0L && c.timelineStartMs < totalDurationMs
             }
             val particleSequences = if (particleClips.isNotEmpty()) {
                 try {
                     ParticleBitmapRenderer.renderParticleSequences(
-                        context = context,
-                        particleClips = particleClips,
-                        W = targetW, H = targetH,
-                        fps = fps,
-                        totalDurationMs = totalDurationMs,
+                        context, particleClips, targetW, targetH, fps, totalDurationMs,
                         onProgress = { p -> onProgress(p * 0.15f) },
                         shouldCancel = { isCancelled }
                     )
-                } catch (e: CancellationException) {
-                    cleanupMaskSequences()
-                    throw e
                 } catch (e: Exception) {
-                    Log.e("FFMPEG", "Particle render failed", e)
                     emptyList()
                 }
             } else emptyList()
 
-            // 🔥 Fire
             val fireClips = allClips.filter { c ->
-                c.isEffectClip &&
-                        c.effectState?.fire != null &&
-                        c.timelineEndMs > 0L &&
-                        c.timelineStartMs < totalDurationMs
+                c.isEffectClip && c.effectState?.fire != null &&
+                        c.timelineEndMs > 0L && c.timelineStartMs < totalDurationMs
             }
             val fireSequences = if (fireClips.isNotEmpty()) {
                 try {
                     FireBitmapRenderer.renderFireSequences(
-                        context = context,
-                        fireClips = fireClips,
-                        W = targetW, H = targetH,
-                        fps = fps,
-                        totalDurationMs = totalDurationMs,
+                        context, fireClips, targetW, targetH, fps, totalDurationMs,
                         onProgress = { p -> onProgress(p * 0.15f) },
                         shouldCancel = { isCancelled }
                     )
-                } catch (e: CancellationException) {
-                    cleanupMaskSequences()
-                    throw e
                 } catch (e: Exception) {
-                    Log.e("FFMPEG", "Fire render failed", e)
                     emptyList()
                 }
             } else emptyList()
 
-            // 🌀 Dust
             val dustClips = allClips.filter { c ->
-                c.isEffectClip &&
-                        c.effectState?.dust != null &&
-                        c.timelineEndMs > 0L &&
-                        c.timelineStartMs < totalDurationMs
+                c.isEffectClip && c.effectState?.dust != null &&
+                        c.timelineEndMs > 0L && c.timelineStartMs < totalDurationMs
             }
             val dustSequences = if (dustClips.isNotEmpty()) {
                 try {
                     DustBitmapRenderer.renderDustSequences(
-                        context = context,
-                        dustClips = dustClips,
-                        W = targetW, H = targetH,
-                        fps = fps,
-                        totalDurationMs = totalDurationMs,
+                        context, dustClips, targetW, targetH, fps, totalDurationMs,
                         onProgress = { p -> onProgress(p * 0.15f) },
                         shouldCancel = { isCancelled }
                     )
-                } catch (e: CancellationException) {
-                    cleanupMaskSequences()
-                    throw e
                 } catch (e: Exception) {
-                    Log.e("FFMPEG", "Dust render failed", e)
                     emptyList()
                 }
             } else emptyList()
 
-            val allExtraSequences = lightningSequences + particleSequences +
-                    fireSequences + dustSequences
+            val allExtraSequences =
+                lightningSequences + particleSequences + fireSequences + dustSequences
+            val adjustmentClips = allClips.filter { it.isAdjustmentClip }
 
             val needsLayered =
                 clips.map { it.trackIndex }.distinct().size > 1 ||
                         maskSequences.isNotEmpty() ||
                         matteClips.isNotEmpty() ||
-                        allExtraSequences.isNotEmpty()
+                        allExtraSequences.isNotEmpty() ||
+                        adjustmentClips.isNotEmpty()
 
             if (needsLayered) {
                 exportLayeredTracks(
@@ -393,9 +322,6 @@ class FFmpegExecutor(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  MASK RENDERING
-    // ═══════════════════════════════════════════════════════════
     private data class MaskFrameSequence(
         val clipId: String,
         val pattern: String,
@@ -412,16 +338,8 @@ class FFmpegExecutor(
     ): List<MaskFrameSequence> = withContext(Dispatchers.IO) {
         val maskedClips = clips.filter { clip ->
             val mask = clip.mask
-            mask.isActive && (
-                    mask.type != MaskType.CUSTOM ||
-                            (mask.customPoints.size >= 3 && mask.customClosed)
-                    )
+            mask.isActive && (mask.type != MaskType.CUSTOM || (mask.customPoints.size >= 3 && mask.customClosed))
         }
-
-        Log.e(
-            "MASK_RENDER",
-            "Total clips=${clips.size}, masked=${maskedClips.size}"
-        )
 
         if (maskedClips.isEmpty()) return@withContext emptyList()
 
@@ -429,20 +347,14 @@ class FFmpegExecutor(
         try {
             maskedClips.forEach { clip ->
                 currentCoroutineContext().ensureActive()
-                val directory = File(
-                    context.cacheDir,
-                    "mask_${clip.id}_${System.nanoTime()}"
-                )
-                if (!directory.mkdirs()) {
-                    throw java.io.IOException("Could not create mask render directory")
-                }
+                val directory = File(context.cacheDir, "mask_${clip.id}_${System.nanoTime()}")
+                if (!directory.mkdirs()) throw java.io.IOException("Could not create mask render directory")
                 maskSequenceDirectories.add(directory)
 
                 val hasAnimation = clip.mask.keyframes.isNotEmpty()
                 val frameCount = if (hasAnimation) {
-                    ((clip.durationMs.toDouble() * fps) / 1000.0)
-                        .toLong().coerceAtMost(Int.MAX_VALUE.toLong())
-                        .toInt().coerceAtLeast(1)
+                    ((clip.durationMs.toDouble() * fps) / 1000.0).toLong()
+                        .coerceAtMost(Int.MAX_VALUE.toLong()).toInt().coerceAtLeast(1)
                 } else 1
                 val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
                 try {
@@ -457,10 +369,8 @@ class FFmpegExecutor(
                             viewWidth = width.toFloat(),
                             viewHeight = height.toFloat()
                         )
-                        val frameFile = File(
-                            directory,
-                            "mask_%05d.png".format(Locale.US, frameIndex + 1)
-                        )
+                        val frameFile =
+                            File(directory, "mask_%05d.png".format(Locale.US, frameIndex + 1))
                         FileOutputStream(frameFile).use { stream ->
                             if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
                                 throw java.io.IOException("Could not encode mask frame")
@@ -497,17 +407,20 @@ class FFmpegExecutor(
             maskSequenceDirectories.clear()
         }
     }
+
+
+
+
+
     private fun cleanupMatteTempFiles(files: List<File>) {
         files.forEach { file ->
             try {
                 if (file.exists()) file.delete()
-            } catch (_: Throwable) {}
+            } catch (_: Throwable) {
+            }
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  AUDIO ONLY EXPORT
-    // ═══════════════════════════════════════════════════════════
     suspend fun exportAudioOnly(
         allClips: List<EditorClip>,
         outputFile: File,
@@ -520,8 +433,8 @@ class FFmpegExecutor(
         isCancelled = false
         try {
             val audioClips = allClips.filter {
-                it.isAudio && !it.isAudioEffectClip &&
-                        it.uri.toString().isNotBlank() && it.uri != Uri.EMPTY
+                it.isAudio && !it.isAudioEffectClip && it.uri.toString()
+                    .isNotBlank() && it.uri != Uri.EMPTY
             }
 
             if (audioClips.isEmpty()) {
@@ -572,8 +485,8 @@ class FFmpegExecutor(
                 val rightCut = (clipEnd - effectiveEnd).coerceAtLeast(0L)
                 val speed = clip.speed.coerceAtLeast(0.01f)
                 val srcStartMs = clip.sourceStartMs + (leftCut * speed).toLong()
-                val srcEndMs = (clip.sourceEndMs - (rightCut * speed).toLong())
-                    .coerceAtLeast(srcStartMs + 100L)
+                val srcEndMs =
+                    (clip.sourceEndMs - (rightCut * speed).toLong()).coerceAtLeast(srcStartMs + 100L)
                 val durSec = ((srcEndMs - srcStartMs) / 1000.0).coerceAtLeast(0.1)
                 val delayMs = ((clipStart - effectiveStart).coerceAtLeast(0L)).toInt()
 
@@ -644,8 +557,10 @@ class FFmpegExecutor(
                         try {
                             val t = stats.time
                             if (t > 0) {
-                                val p = ((t / (effectiveDurMs.toDouble() * 1.2))
-                                    .coerceIn(0.0, 0.95)).toFloat()
+                                val p = ((t / (effectiveDurMs.toDouble() * 1.2)).coerceIn(
+                                    0.0,
+                                    0.95
+                                )).toFloat()
                                 onProgress(p)
                             }
                         } catch (_: Exception) {
@@ -661,9 +576,6 @@ class FFmpegExecutor(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  IMAGE SEQUENCE EXPORT
-    // ═══════════════════════════════════════════════════════════
     suspend fun exportImageSequence(
         allClips: List<EditorClip>,
         outputDir: File,
@@ -685,8 +597,7 @@ class FFmpegExecutor(
             val effectiveEnd = if (rangeEndMs > effectiveStart) rangeEndMs else durationMs
             val effectiveDurMs = (effectiveEnd - effectiveStart).coerceAtLeast(500L)
 
-            val totalFrames = ((effectiveDurMs.toDouble() * fps / 1000.0).toInt())
-                .coerceAtLeast(1)
+            val totalFrames = ((effectiveDurMs.toDouble() * fps / 1000.0).toInt()).coerceAtLeast(1)
 
             val ext = if (imageFormat == "jpeg") "jpg" else "png"
             val pattern = File(outputDir, "MoodyExport_frame_%05d.$ext").absolutePath
@@ -698,27 +609,25 @@ class FFmpegExecutor(
                 it.isVisualClip && it.type.startsWith("image/") && it.trackIndex > 0
             }
             val overlayClips = trimmedAllClips.filter {
-                it.isOverlayClip ||
-                        (it.isEffectClip && it.effectState?.overlay != null)
+                it.isOverlayClip || (it.isEffectClip && it.effectState?.overlay != null)
             }
             val vizClips = trimmedAllClips.filter { it.isVisualizerClip }
 
-            val textSequences = if (textClips.isNotEmpty() ||
-                overlayImageClips.isNotEmpty() || overlayClips.isNotEmpty()
-            ) {
-                TextBitmapRenderer.renderCombinedOverlays(
-                    context = context,
-                    textClips = textClips,
-                    imageClips = overlayImageClips,
-                    overlayClips = overlayClips,
-                    W = targetW, H = targetH, fps = fps,
-                    totalDurationMs = effectiveDurMs,
-                    onProgress = { p -> onProgress(p * 0.25f) },
-                    shouldCancel = { isCancelled },
-                    imageFormat = imageFormat,
-                    jpegQuality = jpegQuality
-                )
-            } else emptyList()
+            val textSequences =
+                if (textClips.isNotEmpty() || overlayImageClips.isNotEmpty() || overlayClips.isNotEmpty()) {
+                    TextBitmapRenderer.renderCombinedOverlays(
+                        context = context,
+                        textClips = textClips,
+                        imageClips = overlayImageClips,
+                        overlayClips = overlayClips,
+                        W = targetW, H = targetH, fps = fps,
+                        totalDurationMs = effectiveDurMs,
+                        onProgress = { p -> onProgress(p * 0.25f) },
+                        shouldCancel = { isCancelled },
+                        imageFormat = imageFormat,
+                        jpegQuality = jpegQuality
+                    )
+                } else emptyList()
 
             val vizSequences = if (vizClips.isNotEmpty()) {
                 VisualizerBitmapRenderer.renderCombinedOverlays(
@@ -738,10 +647,8 @@ class FFmpegExecutor(
             val allSequences = (textSequences + vizSequences).sortedBy { it.trackIndex }
 
             val baseVisualClips = trimmedAllClips.filter {
-                it.isVisualClip &&
-                        it.uri.toString().isNotBlank() &&
-                        it.uri != Uri.EMPTY &&
-                        it.trackIndex == 0
+                it.isVisualClip && it.uri.toString()
+                    .isNotBlank() && it.uri != Uri.EMPTY && it.trackIndex == 0
             }
 
             if (baseVisualClips.isEmpty() && allSequences.isEmpty()) {
@@ -776,8 +683,8 @@ class FFmpegExecutor(
                         args.add("-framerate"); args.add(fps.toString())
                         args.add("-t"); args.add((clip.durationMs / 1000.0).toString())
                     } else {
-                        val srcDurSec = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
-                            .coerceAtLeast(0.1)
+                        val srcDurSec =
+                            ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0).coerceAtLeast(0.1)
                         if (clip.sourceStartMs > 0) {
                             args.add("-ss")
                             args.add((clip.sourceStartMs / 1000.0).toString())
@@ -829,8 +736,7 @@ class FFmpegExecutor(
                     filterParts.add("[$idx:v]${vf.joinToString(",")}[v$idx]")
                 }
 
-                val concatInputs = (0 until baseVisualClips.size)
-                    .joinToString("") { "[v$it]" }
+                val concatInputs = (0 until baseVisualClips.size).joinToString("") { "[v$it]" }
                 filterParts.add("${concatInputs}concat=n=${baseVisualClips.size}:v=1:a=0[basev]")
             }
 
@@ -891,8 +797,10 @@ class FFmpegExecutor(
                         try {
                             val t = stats.time
                             if (t > 0) {
-                                val p = 0.5f + ((t / (effectiveDurMs.toDouble() * 1.2))
-                                    .coerceIn(0.0, 0.45)).toFloat()
+                                val p = 0.5f + ((t / (effectiveDurMs.toDouble() * 1.2)).coerceIn(
+                                    0.0,
+                                    0.45
+                                )).toFloat()
                                 onProgress(p)
                             }
                         } catch (_: Exception) {
@@ -908,11 +816,7 @@ class FFmpegExecutor(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  HELPERS
-    // ═══════════════════════════════════════════════════════════
     private fun isImage(clip: EditorClip): Boolean = clip.type.startsWith("image/")
-
     private fun trimClipsToRange(
         clips: List<EditorClip>,
         rangeStart: Long,
@@ -1047,10 +951,9 @@ class FFmpegExecutor(
     private fun saveToCustomFolder(sourceFile: File, folderUriString: String): Uri? {
         return try {
             val treeUri = Uri.parse(folderUriString)
-            val parentDocId = android.provider.DocumentsContract
-                .getTreeDocumentId(treeUri)
-            val parentDocUri = android.provider.DocumentsContract
-                .buildDocumentUriUsingTree(treeUri, parentDocId)
+            val parentDocId = android.provider.DocumentsContract.getTreeDocumentId(treeUri)
+            val parentDocUri =
+                android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, parentDocId)
 
             val mimeType = when {
                 sourceFile.name.endsWith(".mov") -> "video/quicktime"
@@ -1058,8 +961,7 @@ class FFmpegExecutor(
                 sourceFile.name.endsWith(".mp3") -> "audio/mpeg"
                 sourceFile.name.endsWith(".m4a") -> "audio/mp4"
                 sourceFile.name.endsWith(".png") -> "image/png"
-                sourceFile.name.endsWith(".jpg") ||
-                        sourceFile.name.endsWith(".jpeg") -> "image/jpeg"
+                sourceFile.name.endsWith(".jpg") || sourceFile.name.endsWith(".jpeg") -> "image/jpeg"
                 else -> "application/octet-stream"
             }
 
@@ -1104,25 +1006,15 @@ class FFmpegExecutor(
             val file = File(context.cacheDir, realFileName)
 
             if (file.exists() && file.length() > 0) return file
-            val tempFile = File(
-                context.cacheDir,
-                "$realFileName.${java.util.UUID.randomUUID()}.part"
-            )
+            val tempFile =
+                File(context.cacheDir, "$realFileName.${java.util.UUID.randomUUID()}.part")
             try {
                 val input = context.contentResolver.openInputStream(uri)
                     ?: throw java.io.IOException("Could not open media URI")
-                input.use {
-                    tempFile.outputStream().use { output -> it.copyTo(output) }
-                }
-                if (tempFile.length() <= 0L) {
-                    throw java.io.IOException("Media URI produced empty file")
-                }
-                if (file.exists() && !file.delete()) {
-                    throw java.io.IOException("Could not replace cached file")
-                }
-                if (!tempFile.renameTo(file)) {
-                    throw java.io.IOException("Could not finalize cached file")
-                }
+                input.use { tempFile.outputStream().use { output -> it.copyTo(output) } }
+                if (tempFile.length() <= 0L) throw java.io.IOException("Media URI produced empty file")
+                if (file.exists() && !file.delete()) throw java.io.IOException("Could not replace cached file")
+                if (!tempFile.renameTo(file)) throw java.io.IOException("Could not finalize cached file")
             } finally {
                 tempFile.delete()
             }
@@ -1145,8 +1037,7 @@ class FFmpegExecutor(
                     val fmt = extractor.getTrackFormat(i)
                     val mime = fmt.getString(android.media.MediaFormat.KEY_MIME) ?: ""
                     if (mime.startsWith("audio/")) {
-                        found = true
-                        break
+                        found = true; break
                     }
                 }
                 found
@@ -1206,15 +1097,11 @@ class FFmpegExecutor(
         targetH: Int
     ): String {
         filterParts.add(
-            "[$inputLabel]scale=$targetW:$targetH:flags=lanczos," +
-                    "setsar=1[exportv]"
+            "[$inputLabel]scale=$targetW:$targetH:flags=lanczos,setsar=1[exportv]"
         )
         return "exportv"
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  VISUAL TRANSFORM FILTERS
-    // ═══════════════════════════════════════════════════════════
     private fun buildVisualTransformFilters(
         clip: EditorClip,
         targetW: Int,
@@ -1250,24 +1137,15 @@ class FFmpegExecutor(
             val scaleStr = String.format(Locale.US, "%.4f", userScale)
             filters.add("scale=iw*$scaleStr:ih*$scaleStr")
             if (userScale < 1f) {
-                filters.add(
-                    "pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:" +
-                            "color=${if (transparentPadding) "black@0" else "black"}"
-                )
+                filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=${if (transparentPadding) "black@0" else "black"}")
             } else {
                 filters.add("crop=$targetW:$targetH")
             }
         }
 
         if (kotlin.math.abs(clip.rotation) > 0.1f) {
-            val rad = String.format(
-                Locale.US, "%.4f",
-                Math.toRadians(clip.rotation.toDouble())
-            )
-            filters.add(
-                "rotate=$rad:c=${if (transparentPadding) "black@0" else "black"}:" +
-                        "ow=$targetW:oh=$targetH"
-            )
+            val rad = String.format(Locale.US, "%.4f", Math.toRadians(clip.rotation.toDouble()))
+            filters.add("rotate=$rad:c=${if (transparentPadding) "black@0" else "black"}:ow=$targetW:oh=$targetH")
         }
 
         val offsetXpx = (clip.offsetX * targetW).toInt()
@@ -1288,9 +1166,6 @@ class FFmpegExecutor(
         return filters
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  AUDIO ONLY MIX
-    // ═══════════════════════════════════════════════════════════
     private fun buildAudioOnlyMix(
         filterParts: MutableList<String>,
         audioLocalFiles: List<File>,
@@ -1304,8 +1179,7 @@ class FFmpegExecutor(
         val audioLabels = mutableListOf<String>()
         audioClips.forEachIndexed { idx, clip ->
             val inputIdx = firstInputIdx + idx
-            val durSec = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
-                .coerceAtLeast(0.1)
+            val durSec = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0).coerceAtLeast(0.1)
             val startSec = clip.timelineStartMs / 1000.0
             val delayMs = (startSec * 1000).toInt()
             val speed = clip.speed.coerceAtLeast(0.01f)
@@ -1335,9 +1209,6 @@ class FFmpegExecutor(
         return true
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  ANIMATED COLOR → FFmpeg
-    // ═══════════════════════════════════════════════════════════
     private fun animatedColorToFfmpeg(
         cfg: com.moody.moodyvideoeditor.utils.AnimatedColorConfig
     ): List<String> {
@@ -1351,7 +1222,6 @@ class FFmpegExecutor(
             "hueFast" -> listOf("hue=h=${f(200f * I * sp)}*t")
             "hueReverse" -> listOf("hue=h=-${f(60f * I * sp)}*t")
             "sunsetShift" -> listOf("hue=h=${f(300f * sp)}*t")
-
             "rainbowFlow" -> listOf(
                 "hue=h=${f(90f * sp)}*t",
                 "eq=saturation=1+${f(0.4f * I)}*sin(t*${f(2f * sp)}):eval=frame"
@@ -1362,69 +1232,71 @@ class FFmpegExecutor(
                 "eq=saturation=1+${f(0.3f * I)}*abs(sin(t*${f(1.5f * sp)})):eval=frame"
             )
 
-            "satPulse" -> listOf(
-                "eq=saturation=1+${f(0.6f * I)}*sin(t*${f(3f * sp)}):eval=frame"
-            )
-            "satFade" -> listOf(
-                "eq=saturation=1-${f(0.7f * I)}*abs(sin(t*${f(2f * sp)})):eval=frame"
-            )
-            "brightPulse" -> listOf(
-                "eq=brightness=${f(0.30f * I)}*sin(t*${f(3f * sp)}):eval=frame"
-            )
-            "brightFlicker" -> listOf(
-                "eq=brightness=${f(0.30f * I)}*sin(t*${f(20f * sp)}):eval=frame"
-            )
-
+            "satPulse" -> listOf("eq=saturation=1+${f(0.6f * I)}*sin(t*${f(3f * sp)}):eval=frame")
+            "satFade" -> listOf("eq=saturation=1-${f(0.7f * I)}*abs(sin(t*${f(2f * sp)})):eval=frame")
+            "brightPulse" -> listOf("eq=brightness=${f(0.30f * I)}*sin(t*${f(3f * sp)}):eval=frame")
+            "brightFlicker" -> listOf("eq=brightness=${f(0.30f * I)}*sin(t*${f(20f * sp)}):eval=frame")
             "chromaWave" -> listOf(
                 "hue=h=${f(90f * I)}*sin(t*${f(2f * sp)})",
                 "eq=brightness=${f(0.15f * I)}*cos(t*${f(3f * sp)}):eval=frame"
             )
+
             "cyberShift" -> listOf(
                 "hue=h=${f(120f * I)}*sin(t*${f(1.5f * sp)})",
                 "eq=saturation=1.5:eval=frame",
                 "eq=contrast=1.2:eval=frame"
             )
+
             "oceanWave" -> listOf(
                 "hue=h=${f(40f * I)}*sin(t*${f(0.8f * sp)})",
                 "eq=saturation=1+${f(0.4f * I)}*sin(t*${f(0.8f * sp)}):eval=frame",
                 "eq=brightness=${f(0.15f * I)}*sin(t*${f(0.8f * sp)}):eval=frame"
             )
+
             "icePulse" -> listOf(
                 "hue=h=${f(40f * I)}*sin(t*${f(2f * sp)})",
                 "eq=brightness=${f(0.20f * I)}*sin(t*${f(2f * sp)}):eval=frame",
                 "eq=saturation=1+${f(0.5f * I)}*sin(t*${f(2f * sp)}):eval=frame"
             )
+
             "purpleHaze" -> listOf(
                 "hue=h=${f(40f * I)}*sin(t*${f(0.7f * sp)})",
                 "eq=saturation=1+${f(0.3f * I)}*sin(t*${f(0.7f * sp)}):eval=frame"
             )
+
             "toxicGreen" -> listOf(
                 "hue=h=${f(30f * I)}*sin(t*${f(2.5f * sp)})",
                 "eq=saturation=1+${f(0.4f * I)}*sin(t*${f(2.5f * sp)}):eval=frame",
                 "eq=contrast=1.15:eval=frame"
             )
+
             "goldShimmer" -> listOf(
                 "hue=h=${f(20f * I)}*sin(t*${f(3f * sp)})",
                 "eq=brightness=${f(0.15f * I)}*sin(t*${f(3f * sp)}):eval=frame",
                 "eq=saturation=1+${f(0.4f * I)}*sin(t*${f(3f * sp)}):eval=frame"
             )
+
             "neonPulse" -> listOf(
                 "eq=saturation=1+${f(0.5f * I)}*sin(t*${f(4f * sp)}):eval=frame",
                 "eq=brightness=${f(0.20f * I)}*sin(t*${f(4f * sp)}):eval=frame"
             )
+
             "fireFlicker" -> listOf(
                 "hue=h=-${f(20f * I)}*sin(t*${f(10f * sp)})",
                 "eq=brightness=${f(0.20f * I)}*sin(t*${f(15f * sp)}):eval=frame"
             )
+
             "heartbeatColor" -> listOf(
                 "eq=saturation=1+${f(0.8f * I)}*abs(sin(t*${f(3f * sp)})):eval=frame",
                 "eq=brightness=${f(0.15f * I)}*abs(sin(t*${f(3f * sp)})):eval=frame",
                 "eq=contrast=1.1:eval=frame"
             )
+
             "bloodPulse" -> listOf(
                 "eq=saturation=1+${f(0.6f * I)}*sin(t*${f(2f * sp)}):eval=frame",
                 "eq=contrast=1+${f(0.2f * I)}*sin(t*${f(2f * sp)}):eval=frame"
             )
+
             "vividBreath" -> listOf(
                 "eq=saturation=1+${f(0.8f * I)}*sin(t*${f(1.2f * sp)}):eval=frame",
                 "eq=contrast=1+${f(0.2f * I)}*sin(t*${f(1.2f * sp)}):eval=frame"
@@ -1434,13 +1306,9 @@ class FFmpegExecutor(
                 "eq=saturation=1.4+${f(0.4f * I)}*sin(t*${f(24f * sp)}):eval=frame",
                 "eq=brightness=${f(0.20f * I)}*sin(t*${f(24f * sp)}):eval=frame"
             )
-            "invertFlash" -> listOf(
-                "hue=h=${f(180f * I)}*abs(sin(t*${f(2f * sp)}))"
-            )
-            "disco" -> listOf(
-                "hue=h=${f(90f * sp)}*t",
-                "eq=saturation=1.4:eval=frame"
-            )
+
+            "invertFlash" -> listOf("hue=h=${f(180f * I)}*abs(sin(t*${f(2f * sp)}))")
+            "disco" -> listOf("hue=h=${f(90f * sp)}*t", "eq=saturation=1.4:eval=frame")
             "sepiaPulse" -> listOf(
                 "hue=h=${f(20f * I)}*sin(t*${f(2f * sp)})",
                 "eq=saturation=1-${f(0.30f * I)}*sin(t*${f(2f * sp)}):eval=frame"
@@ -1450,9 +1318,6 @@ class FFmpegExecutor(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  ANIMATED BLUR — staircase of gblur filters with enable
-    // ═══════════════════════════════════════════════════════════
     private fun buildAnimatedBlurFilters(
         cfg: com.moody.moodyvideoeditor.utils.BlurConfig,
         effectRelStartSec: Double,
@@ -1465,18 +1330,12 @@ class FFmpegExecutor(
         val startStr = String.format(loc, "%.4f", effectRelStartSec)
         val endStr = String.format(loc, "%.4f", effectRelEndSec)
 
-        // Mosaic — pixelate only
         if (cfg.type == "mosaic") {
             val bs = cfg.blockSize.coerceIn(4f, 100f).toInt()
-            return listOf(
-                "pixelize=w=$bs:h=$bs:enable='between(t,$startStr,$endStr)'"
-            )
+            return listOf("pixelize=w=$bs:h=$bs:enable='between(t,$startStr,$endStr)'")
         }
 
-        val isAnimated = cfg.type == "blurIn" ||
-                cfg.type == "blurOut" ||
-                cfg.type == "halo"
-
+        val isAnimated = cfg.type == "blurIn" || cfg.type == "blurOut" || cfg.type == "halo"
         if (!isAnimated) return emptyList()
 
         val I = cfg.intensity.coerceIn(0f, 100f) / 100f
@@ -1493,11 +1352,9 @@ class FFmpegExecutor(
 
         for (i in 0 until steps) {
             val tStart = effectRelStartSec + i * stepDur
-
             val tEnd = if (i == steps - 1) {
                 when (cfg.type) {
-                    "blurOut" -> effectRelEndSec
-                    else -> effectRelStartSec + effAnim
+                    "blurOut" -> effectRelEndSec; else -> effectRelStartSec + effAnim
                 }
             } else {
                 effectRelStartSec + (i + 1) * stepDur
@@ -1515,18 +1372,12 @@ class FFmpegExecutor(
             val tStartStr = String.format(loc, "%.4f", tStart)
             val tEndStr = String.format(loc, "%.4f", tEnd)
 
-            filters.add(
-                "gblur=sigma=${f(sigma)}:steps=1:" +
-                        "enable='between(t,$tStartStr,$tEndStr)'"
-            )
+            filters.add("gblur=sigma=${f(sigma)}:steps=1:enable='between(t,$tStartStr,$tEndStr)'")
         }
 
         return filters
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  LAYERED TRACK EXPORT
-    // ═══════════════════════════════════════════════════════════
     private fun exportLayeredTracks(
         clips: List<EditorClip>,
         allClips: List<EditorClip>,
@@ -1551,8 +1402,7 @@ class FFmpegExecutor(
                 .sortedWith(
                     compareBy<Pair<EditorClip, File>>(
                         { it.first.trackIndex },
-                        { it.first.timelineStartMs }
-                    )
+                        { it.first.timelineStartMs })
                 )
             val args = mutableListOf("-y")
 
@@ -1560,75 +1410,78 @@ class FFmpegExecutor(
                 if (isImage(clip)) {
                     args.addAll(
                         listOf(
-                            "-loop", "1",
-                            "-framerate", fps.toString(),
-                            "-t", (clip.durationMs / 1000.0).toString()
+                            "-loop",
+                            "1",
+                            "-framerate",
+                            fps.toString(),
+                            "-t",
+                            (clip.durationMs / 1000.0).toString()
                         )
                     )
                 } else {
-                    if (clip.sourceStartMs > 0L) {
-                        args.addAll(listOf("-ss", (clip.sourceStartMs / 1000.0).toString()))
-                    }
+                    if (clip.sourceStartMs > 0L) args.addAll(
+                        listOf(
+                            "-ss",
+                            (clip.sourceStartMs / 1000.0).toString()
+                        )
+                    )
                     args.addAll(
                         listOf(
                             "-t",
-                            ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
-                                .coerceAtLeast(0.1).toString()
+                            ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0).coerceAtLeast(0.1)
+                                .toString()
                         )
                     )
                 }
                 args.addAll(listOf("-i", file.absolutePath))
             }
 
-            audioLocalFiles.forEach { file ->
-                args.addAll(listOf("-i", file.absolutePath))
-            }
+            audioLocalFiles.forEach { file -> args.addAll(listOf("-i", file.absolutePath)) }
 
             val backgroundInputIdx = orderedClips.size + audioLocalFiles.size
             args.addAll(
                 listOf(
-                    "-f", "lavfi",
-                    "-t", durationSec.toString(),
-                    "-i", "color=c=black:s=${targetW}x${targetH}:r=$fps"
+                    "-f",
+                    "lavfi",
+                    "-t",
+                    durationSec.toString(),
+                    "-i",
+                    "color=c=black:s=${targetW}x${targetH}:r=$fps"
                 )
             )
 
-            // ═══════════════════════════════════════════════════
-            //  🆕 MATTE INPUTS — pre-rendered PNGs (guaranteed parity)
-            // ═══════════════════════════════════════════════════
             val matteInputIndices = mutableMapOf<String, Int>()
             var nextMatteIdx = backgroundInputIdx + 1
             val matteTempFiles = mutableListOf<File>()
 
             colorMettes.forEach { matte ->
                 val dur = (matte.durationMs / 1000.0).coerceAtLeast(0.1)
-                val pngFile = renderMatteToPng(
-                    matte.matteStyle, targetW, targetH
-                )
+                val pngFile = renderMatteToPng(matte.matteStyle, targetW, targetH)
                 matteTempFiles.add(pngFile)
-
                 args.addAll(
                     listOf(
-                        "-loop", "1",
-                        "-framerate", fps.toString(),
-                        "-t", dur.toString(),
-                        "-i", pngFile.absolutePath
+                        "-loop",
+                        "1",
+                        "-framerate",
+                        fps.toString(),
+                        "-t",
+                        dur.toString(),
+                        "-i",
+                        pngFile.absolutePath
                     )
                 )
                 matteInputIndices[matte.id] = nextMatteIdx
                 nextMatteIdx++
-
-                Log.e(
-                    "FFMPEG_MATTE",
-                    "Matte ${matte.matteStyle.mode} → ${pngFile.name}"
-                )
             }
             val silenceInputIdx = nextMatteIdx
             args.addAll(
                 listOf(
-                    "-f", "lavfi",
-                    "-t", durationSec.toString(),
-                    "-i", "anullsrc=r=44100:cl=stereo"
+                    "-f",
+                    "lavfi",
+                    "-t",
+                    durationSec.toString(),
+                    "-i",
+                    "anullsrc=r=44100:cl=stereo"
                 )
             )
 
@@ -1642,18 +1495,25 @@ class FFmpegExecutor(
                 if (sequence.staticFile != null) {
                     args.addAll(
                         listOf(
-                            "-loop", "1",
-                            "-framerate", fps.toString(),
-                            "-t", durationSec.toString(),
-                            "-i", sequence.staticFile.absolutePath
+                            "-loop",
+                            "1",
+                            "-framerate",
+                            fps.toString(),
+                            "-t",
+                            durationSec.toString(),
+                            "-i",
+                            sequence.staticFile.absolutePath
                         )
                     )
                 } else {
                     args.addAll(
                         listOf(
-                            "-framerate", sequence.fps.toString(),
-                            "-start_number", "1",
-                            "-i", sequence.pattern
+                            "-framerate",
+                            sequence.fps.toString(),
+                            "-start_number",
+                            "1",
+                            "-i",
+                            sequence.pattern
                         )
                     )
                 }
@@ -1664,16 +1524,8 @@ class FFmpegExecutor(
             val filterParts = mutableListOf<String>()
             filterParts.add("[$backgroundInputIdx:v]setpts=PTS-STARTPTS,format=rgba[canvas0]")
 
-
-
-            // ═══════════════════════════════════════════════════════
-            //  🆕 UNIFIED COMPOSITING — sort by trackIndex
-            //  Timeline pe jo neeche hai, export mein bhi neeche
-            // ═══════════════════════════════════════════════════════
-
             val renderList = mutableListOf<LayeredRenderItem>()
 
-            // ─── Mattes collect karo ───
             colorMettes.forEachIndexed { idx, matte ->
                 val inputIdx = matteInputIndices[matte.id] ?: return@forEachIndexed
                 renderList.add(
@@ -1688,7 +1540,6 @@ class FFmpegExecutor(
                 )
             }
 
-            // ─── Visual clips collect karo ───
             orderedClips.forEachIndexed { idx, (clip, _) ->
                 renderList.add(
                     LayeredRenderItem(
@@ -1697,12 +1548,11 @@ class FFmpegExecutor(
                         kind = 1,
                         visualClip = clip,
                         clipIdx = idx,
-                        inputIndex = idx   // orderedClips input index matches position
+                        inputIndex = idx
                     )
                 )
             }
 
-            // ─── Sequences (text / sticker / viz / lightning / particle / fire / dust) ───
             combinedSequences.forEachIndexed { idx, seq ->
                 renderList.add(
                     LayeredRenderItem(
@@ -1716,37 +1566,30 @@ class FFmpegExecutor(
                 )
             }
 
-            // ⭐ KEY STEP — sort by trackIndex (bottom → top), phir time
+            val adjClips = allClips.filter { it.isAdjustmentClip }
+            adjClips.forEachIndexed { idx, adj ->
+                renderList.add(
+                    LayeredRenderItem(
+                        trackIndex = adj.trackIndex,
+                        timelineStartMs = adj.timelineStartMs,
+                        kind = 3,
+                        adjustmentClip = adj,
+                        clipIdx = 10000 + idx,
+                        inputIndex = -1
+                    )
+                )
+            }
+
             renderList.sortWith(
                 compareBy<LayeredRenderItem>(
                     { it.trackIndex },
-                    { it.timelineStartMs }
-                )
+                    { it.timelineStartMs })
             )
-
-            Log.e(
-                "FFMPEG_ORDER",
-                "Compositing ${renderList.size} layers:\n" +
-                        renderList.joinToString("\n") { item ->
-                            val name = when (item.kind) {
-                                0 -> "MATTE(${item.matteClip?.name ?: "?"})"
-                                1 -> "CLIP(${item.visualClip?.name ?: "?"})"
-                                else -> "SEQ(${item.sequence?.trackIndex ?: "?"})"
-                            }
-                            "  V${item.trackIndex} @${item.timelineStartMs}ms → $name"
-                        }
-            )
-
-            // ═══════════════════════════════════════════════════════
-            //  COMPOSITE — order preserved
-            // ═══════════════════════════════════════════════════════
 
             var canvasLabel = "canvas0"
 
             renderList.forEach { item ->
                 when (item.kind) {
-
-                    // ═══════ 0 → COLOR MATTE ═══════
                     0 -> {
                         val matte = item.matteClip ?: return@forEach
                         val idx = item.matteIdx
@@ -1754,7 +1597,6 @@ class FFmpegExecutor(
                         val startSec = matte.timelineStartMs / 1000.0
                         val endSec = matte.timelineEndMs / 1000.0
                         val alpha = (matte.filters.opacity / 100f).coerceIn(0f, 1f)
-
                         val startExpr = String.format(Locale.US, "%.4f", startSec)
                         val endExpr = String.format(Locale.US, "%.4f", endSec)
                         val alphaStr = String.format(Locale.US, "%.3f", alpha)
@@ -1767,81 +1609,57 @@ class FFmpegExecutor(
                         chain.add("colorchannelmixer=aa=$alphaStr")
                         chain.addAll(
                             buildVisualTransformFilters(
-                                matte, targetW, targetH, true, true
+                                matte,
+                                targetW,
+                                targetH,
+                                true,
+                                true
                             )
                         )
                         chain.add("setpts=PTS-STARTPTS+${startSec}/TB")
 
-                        filterParts.add(
-                            "[$matteInput:v]${chain.joinToString(",")}[$scaledLabel]"
-                        )
+                        filterParts.add("[$matteInput:v]${chain.joinToString(",")}[$scaledLabel]")
 
-                        // 🆕 CHECK BLEND MODE
                         val blendKey = matte.blendMode.lowercase()
                         if (blendKey == "normal" || blendKey.isBlank()) {
-                            filterParts.add(
-                                "[$canvasLabel][$scaledLabel]overlay=0:0:" +
-                                        "eof_action=pass:repeatlast=0:" +
-                                        "enable='between(t,$startExpr,$endExpr)'" +
-                                        "[$outLabel]"
-                            )
+                            filterParts.add("[$canvasLabel][$scaledLabel]overlay=0:0:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
                         } else {
-                            // 🆕 Blend mode — RGBA space (transparent support)
                             val ffmpegMode = ffmpegBlendName(blendKey)
                             val blendAlpha = (matte.blendOpacity / 100f).coerceIn(0f, 1f)
                             val blendAlphaStr = String.format(Locale.US, "%.3f", blendAlpha)
-
                             val baseLbl = "matte_blend_base_$idx"
                             val layerRgbaLbl = "matte_blend_layer_rgba_$idx"
                             val blendedLbl = "matte_blend_out_$idx"
 
                             filterParts.add("[$canvasLabel]format=rgba[$baseLbl]")
                             filterParts.add("[$scaledLabel]format=rgba[$layerRgbaLbl]")
-
-                            filterParts.add(
-                                "[$baseLbl][$layerRgbaLbl]blend=" +
-                                        "all_mode=$ffmpegMode:" +
-                                        "all_opacity=$blendAlphaStr:" +
-                                        "shortest=0" +
-                                        "[$blendedLbl]"
-                            )
-
-                            filterParts.add(
-                                "[$baseLbl][$blendedLbl]overlay=0:0:" +
-                                        "eof_action=pass:repeatlast=0:" +
-                                        "enable='between(t,$startExpr,$endExpr)'" +
-                                        "[$outLabel]"
-                            )
+                            filterParts.add("[$baseLbl][$layerRgbaLbl]blend=all_mode=$ffmpegMode:all_opacity=$blendAlphaStr:shortest=0[$blendedLbl]")
+                            filterParts.add("[$baseLbl][$blendedLbl]overlay=0:0:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
                         }
                         canvasLabel = outLabel
                     }
-                    // ═══════ 1 → VISUAL CLIP ═══════
+
                     1 -> {
                         val clip = item.visualClip ?: return@forEach
                         val index = item.clipIdx
-
                         val startSec = clip.timelineStartMs / 1000.0
-                        val endSec =
-                            (clip.timelineStartMs + clip.durationMs) / 1000.0
+                        val endSec = (clip.timelineStartMs + clip.durationMs) / 1000.0
                         val startExpr = String.format(Locale.US, "%.4f", startSec)
                         val endExpr = String.format(Locale.US, "%.4f", endSec)
-                        val clipDurationSec = (clip.durationMs / 1000.0)
-                            .coerceAtLeast(0.1)
+                        val clipDurationSec = (clip.durationMs / 1000.0).coerceAtLeast(0.1)
 
-                        // 🆕 1. Blend mode pehle check karo
                         val blendKey = clip.blendMode.lowercase()
                         val isBlendActive = blendKey != "normal" && blendKey.isNotBlank()
 
                         val filters = mutableListOf("setpts=PTS-STARTPTS")
-                        if (!isImage(clip) && clip.speed != 1.0f) {
-                            filters.add("setpts=${1.0f / clip.speed}*PTS")
-                        }
+                        if (!isImage(clip) && clip.speed != 1.0f) filters.add("setpts=${1.0f / clip.speed}*PTS")
                         filters.addAll(buildPerClipFilterChain(clip, allClips))
-
-                        // 🆕 2. Position ko filter ke andar handle karo agar blend active hai
                         filters.addAll(
                             buildVisualTransformFilters(
-                                clip, targetW, targetH, true,
+                                clip,
+                                targetW,
+                                targetH,
+                                true,
                                 positionByOverlay = !isBlendActive
                             )
                         )
@@ -1851,109 +1669,80 @@ class FFmpegExecutor(
                         filters.add("format=rgba")
 
                         val unmaskedLayerLabel = "layer_unmasked$index"
-                        filterParts.add(
-                            "[${index}:v]${filters.joinToString(",")}[$unmaskedLayerLabel]"
-                        )
+                        filterParts.add("[${index}:v]${filters.joinToString(",")}[$unmaskedLayerLabel]")
 
-                        // ─── MASK ───
                         val maskInputIdx = maskInputIndices[clip.id]
                         val layerLabel = if (maskInputIdx != null) {
                             val maskPtsLabel = "mask_pts$index"
                             val maskReadyLabel = "mask_ready$index"
                             val layerRgbaLabel = "layer_rgba$index"
-
-                            filterParts.add(
-                                "[$maskInputIdx:v]format=rgba," +
-                                        "alphaextract," +
-                                        "format=gray," +
-                                        "setpts=PTS-STARTPTS+${startSec}/TB" +
-                                        "[$maskPtsLabel]"
-                            )
-                            filterParts.add(
-                                "[$unmaskedLayerLabel]format=rgba[$layerRgbaLabel]"
-                            )
-                            filterParts.add(
-                                "[$layerRgbaLabel][$maskPtsLabel]alphamerge[$maskReadyLabel]"
-                            )
+                            filterParts.add("[$maskInputIdx:v]format=rgba,alphaextract,format=gray,setpts=PTS-STARTPTS+${startSec}/TB[$maskPtsLabel]")
+                            filterParts.add("[$unmaskedLayerLabel]format=rgba[$layerRgbaLabel]")
+                            filterParts.add("[$layerRgbaLabel][$maskPtsLabel]alphamerge[$maskReadyLabel]")
                             maskReadyLabel
-                        } else {
-                            unmaskedLayerLabel
-                        }
+                        } else unmaskedLayerLabel
 
                         val outputLabel = "canvas_c$index"
-
-                        // 🆕 3. Overlay x, y (agar blend hai toh 0,0 kyunki filter ne handle kar liya)
                         val x = if (isBlendActive) 0 else (clip.offsetX * targetW).toInt()
                         val y = if (isBlendActive) 0 else (clip.offsetY * targetH).toInt()
 
                         if (!isBlendActive) {
-                            filterParts.add(
-                                "[$canvasLabel][$layerLabel]overlay=$x:$y:" +
-                                        "eof_action=pass:repeatlast=0:" +
-                                        "enable='between(t,$startExpr,$endExpr)'" +
-                                        "[$outputLabel]"
-                            )
+                            filterParts.add("[$canvasLabel][$layerLabel]overlay=$x:$y:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outputLabel]")
                         } else {
-                            // 🆕 4. Blend mode — RGBA space (transparent support)
                             val ffmpegMode = ffmpegBlendName(blendKey)
                             val blendAlpha = (clip.blendOpacity / 100f).coerceIn(0f, 1f)
                             val blendAlphaStr = String.format(Locale.US, "%.3f", blendAlpha)
-
                             val baseLbl = "blend_base_$index"
                             val layerRgbaLbl = "blend_layer_rgba_$index"
                             val blendedLbl = "blend_out_$index"
 
                             filterParts.add("[$canvasLabel]format=rgba[$baseLbl]")
                             filterParts.add("[$layerLabel]format=rgba[$layerRgbaLbl]")
-
-                            filterParts.add(
-                                "[$baseLbl][$layerRgbaLbl]blend=" +
-                                        "all_mode=$ffmpegMode:" +
-                                        "all_opacity=$blendAlphaStr:" +
-                                        "shortest=0" +
-                                        "[$blendedLbl]"
-                            )
-
-                            filterParts.add(
-                                "[$baseLbl][$blendedLbl]overlay=0:0:" +
-                                        "eof_action=pass:repeatlast=0:" +
-                                        "enable='between(t,$startExpr,$endExpr)'" +
-                                        "[$outputLabel]"
-                            )
+                            filterParts.add("[$baseLbl][$layerRgbaLbl]blend=all_mode=$ffmpegMode:all_opacity=$blendAlphaStr:shortest=0[$blendedLbl]")
+                            filterParts.add("[$baseLbl][$blendedLbl]overlay=0:0:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outputLabel]")
                         }
                         canvasLabel = outputLabel
                     }
 
-                    // ═══════ 2 → SEQUENCE (text/viz/effects) ═══════
                     2 -> {
                         val seq = item.sequence ?: return@forEach
                         val idx = item.sequenceIdx
                         val inputIdx = item.inputIndex
                         val srcLabel = "seqsrc_$idx"
                         val outLabel = "canvas_s$idx"
-
                         filterParts.add("[$inputIdx:v]format=rgba[$srcLabel]")
-                        val startS = String.format(
-                            Locale.US, "%.4f", seq.startSec
-                        )
-                        val endS = String.format(
-                            Locale.US, "%.4f", seq.endSec
-                        )
-                        filterParts.add(
-                            "[$canvasLabel][$srcLabel]overlay=0:0:" +
-                                    "enable='between(t,$startS,$endS)'" +
-                                    "[$outLabel]"
-                        )
+                        val startS = String.format(Locale.US, "%.4f", seq.startSec)
+                        val endS = String.format(Locale.US, "%.4f", seq.endSec)
+                        filterParts.add("[$canvasLabel][$srcLabel]overlay=0:0:enable='between(t,$startS,$endS)'[$outLabel]")
                         canvasLabel = outLabel
+                    }
+
+                    3 -> {
+                        val adj = item.adjustmentClip ?: return@forEach
+                        val adjFilter = buildFullAdjustmentFilter(adj.adjustments)
+                        if (adjFilter.isNotBlank()) {
+                            val startSec = adj.timelineStartMs / 1000.0
+                            val endSec = adj.timelineEndMs / 1000.0
+                            if (endSec > startSec + 0.01) {
+                                val startExpr = String.format(Locale.US, "%.4f", startSec)
+                                val endExpr = String.format(Locale.US, "%.4f", endSec)
+                                val uid = "adj_${item.clipIdx}"
+                                val baseLabel = "canvas_${uid}_base"
+                                val adjSrcLabel = "canvas_${uid}_src"
+                                val adjOutLabel = "canvas_${uid}_out"
+                                val outLabel = "canvas_${uid}_final"
+                                filterParts.add("[$canvasLabel]split=2[$baseLabel][$adjSrcLabel]")
+                                filterParts.add("[$adjSrcLabel]$adjFilter[$adjOutLabel]")
+                                filterParts.add("[$baseLabel][$adjOutLabel]overlay=0:0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
+                                canvasLabel = outLabel
+                            }
+                        }
                     }
                 }
             }
-
             // Final format conversion
             filterParts.add("[$canvasLabel]format=yuv420p[outv]")
-            // ═══════════════════════════════════════════════════════
-            //  AUDIO MIX (restored — must be after video chain)
-            // ═══════════════════════════════════════════════════════
+
             val audioLabels = mutableListOf<String>()
 
             orderedClips.forEachIndexed { index, (clip, _) ->
@@ -1966,9 +1755,8 @@ class FFmpegExecutor(
                 filters.add("atrim=duration=$clipDurationSec")
                 filters.add("volume=${if (clip.isMuted) 0f else clip.volume}")
                 if (clip.audioFx != "none") {
-                    val audioFilter = AudioEngine.buildAudioFilter(
-                        clip.audioFx, clip.audioFxIntensity
-                    )
+                    val audioFilter =
+                        AudioEngine.buildAudioFilter(clip.audioFx, clip.audioFxIntensity)
                     if (audioFilter.isNotBlank()) filters.add(audioFilter)
                 }
                 val delayMs = clip.timelineStartMs.coerceAtLeast(0L)
@@ -1981,8 +1769,7 @@ class FFmpegExecutor(
 
             audioOnlyClips.forEachIndexed { index, clip ->
                 val inputIdx = orderedClips.size + index
-                val duration = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
-                    .coerceAtLeast(0.1)
+                val duration = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0).coerceAtLeast(0.1)
                 val clipDurationSec = (clip.durationMs / 1000.0).coerceAtLeast(0.1)
                 val filters = mutableListOf(
                     "atrim=start=${clip.sourceStartMs / 1000.0}:duration=$duration",
@@ -1994,9 +1781,8 @@ class FFmpegExecutor(
                 filters.add("atrim=duration=$clipDurationSec")
                 filters.add("volume=${if (clip.isMuted) 0f else clip.volume}")
                 if (clip.audioFx != "none") {
-                    val audioFilter = AudioEngine.buildAudioFilter(
-                        clip.audioFx, clip.audioFxIntensity
-                    )
+                    val audioFilter =
+                        AudioEngine.buildAudioFilter(clip.audioFx, clip.audioFxIntensity)
                     if (audioFilter.isNotBlank()) filters.add(audioFilter)
                 }
                 val delayMs = clip.timelineStartMs.coerceAtLeast(0L)
@@ -2042,9 +1828,6 @@ class FFmpegExecutor(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  SINGLE CLIP
-    // ═══════════════════════════════════════════════════════════
     private fun exportSingleClip(
         clip: EditorClip,
         allClips: List<EditorClip>,
@@ -2278,9 +2061,6 @@ class FFmpegExecutor(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  MULTIPLE CLIPS
-    // ═══════════════════════════════════════════════════════════
     private fun exportMultipleClips(
         clips: List<EditorClip>,
         allClips: List<EditorClip>,
@@ -2340,9 +2120,6 @@ class FFmpegExecutor(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  TRANSITIONS
-    // ═══════════════════════════════════════════════════════════
     private fun exportWithTransitions(
         clips: List<EditorClip>,
         allClips: List<EditorClip>,
@@ -2368,8 +2145,8 @@ class FFmpegExecutor(
                     args.add("-framerate"); args.add(fps.toString())
                     args.add("-t"); args.add((clip.durationMs / 1000.0).toString())
                 } else {
-                    val srcDurSec = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
-                        .coerceAtLeast(0.1)
+                    val srcDurSec =
+                        ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0).coerceAtLeast(0.1)
                     if (clip.sourceStartMs > 0) {
                         args.add("-ss"); args.add((clip.sourceStartMs / 1000.0).toString())
                     }
@@ -2515,8 +2292,6 @@ class FFmpegExecutor(
         } catch (e: Throwable) {
             Log.e("FFMPEG", "Transition export error", e)
             xfadeFallback = null
-
-
             exportWithConcat(
                 clips, allClips, localFiles,
                 audioClips, audioLocalFiles,
@@ -2673,9 +2448,6 @@ class FFmpegExecutor(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  PER-CLIP FILTER CHAIN
-    // ═══════════════════════════════════════════════════════════
     private fun buildPerClipFilterChain(
         clip: EditorClip,
         allClips: List<EditorClip>
@@ -2714,19 +2486,15 @@ class FFmpegExecutor(
         }.sortedBy { it.trackIndex }
 
         effectClipsAbove.forEach { effClip ->
-            val relStartSec = ((effClip.timelineStartMs - clip.timelineStartMs)
-                .coerceAtLeast(0L)) / 1000.0
-            val relEndSec = ((effClip.timelineEndMs - clip.timelineStartMs)
-                .coerceAtMost(clip.durationMs)) / 1000.0
+            val relStartSec =
+                ((effClip.timelineStartMs - clip.timelineStartMs).coerceAtLeast(0L)) / 1000.0
+            val relEndSec =
+                ((effClip.timelineEndMs - clip.timelineStartMs).coerceAtMost(clip.durationMs)) / 1000.0
 
             if (relEndSec <= relStartSec) return@forEach
 
-            val enableExpr = String.format(
-                Locale.US,
-                ":enable='between(t,%.4f,%.4f)'",
-                relStartSec,
-                relEndSec
-            )
+            val enableExpr =
+                String.format(Locale.US, ":enable='between(t,%.4f,%.4f)'", relStartSec, relEndSec)
 
             fun addChain(chain: String) {
                 if (chain.isBlank()) return
@@ -2749,20 +2517,19 @@ class FFmpegExecutor(
                     list.forEach { filters.add("$it$enableExpr") }
                 } else {
                     val midSec = (relStartSec + relEndSec) / 2.0
-                    val dyn = com.moody.moodyvideoeditor.utils.AnimatedColorEngine
-                        .compute(acCfg, midSec.toFloat())
+                    val dyn = com.moody.moodyvideoeditor.utils.AnimatedColorEngine.compute(
+                        acCfg,
+                        midSec.toFloat()
+                    )
                     addChain(colorFilterValuesToFfmpeg(dyn))
                 }
             }
 
             val blurCfg = effClip.effectState?.blur
             if (blurCfg != null) {
-                val instanceName = "blur${
-                    kotlin.math.abs(effClip.id.hashCode()) % 9999
-                }"
-                val blurFilters = buildAnimatedBlurFilters(
-                    blurCfg, relStartSec, relEndSec, instanceName
-                )
+                val instanceName = "blur${kotlin.math.abs(effClip.id.hashCode()) % 9999}"
+                val blurFilters =
+                    buildAnimatedBlurFilters(blurCfg, relStartSec, relEndSec, instanceName)
                 filters.addAll(blurFilters)
             }
 
@@ -2792,9 +2559,11 @@ class FFmpegExecutor(
 
         val adj = clip.adjustments
         if (!adj.isDefault) {
-            val adjFilter = FFmpegFilters.build(adj)
+            // ✅ FIX: Use full adjustment filter (includes LUT for color channels)
+            val adjFilter = buildFullAdjustmentFilter(adj)
             if (adjFilter.isNotBlank()) filters.add(adjFilter)
         }
+
         if (clip.colorWheel.hasAnyChange) {
             filters.add(buildColorWheelFilter(clip.colorWheel))
         }
@@ -2807,10 +2576,14 @@ class FFmpegExecutor(
                     wheel.timelineStartMs < clip.timelineEndMs
         }.sortedBy { it.trackIndex }
         colorWheelLayers.forEach { wheel ->
-            val startSec = ((wheel.timelineStartMs - clip.timelineStartMs)
-                .coerceAtLeast(0L) / 1000.0) / clip.speed.coerceAtLeast(0.01f)
-            val endSec = ((wheel.timelineEndMs - clip.timelineStartMs)
-                .coerceAtLeast(0L) / 1000.0) / clip.speed.coerceAtLeast(0.01f)
+            val startSec =
+                ((wheel.timelineStartMs - clip.timelineStartMs).coerceAtLeast(0L) / 1000.0) / clip.speed.coerceAtLeast(
+                    0.01f
+                )
+            val endSec =
+                ((wheel.timelineEndMs - clip.timelineStartMs).coerceAtLeast(0L) / 1000.0) / clip.speed.coerceAtLeast(
+                    0.01f
+                )
             filters.add(buildColorWheelFilter(wheel.colorWheel, startSec, endSec))
         }
 
@@ -2845,9 +2618,6 @@ class FFmpegExecutor(
         return filters
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  EDGE GLOW
-    // ═══════════════════════════════════════════════════════════
     private fun buildEdgeGlowDrawboxFilter(
         glow: com.moody.moodyvideoeditor.data.EdgeGlowConfig
     ): String {
@@ -2870,9 +2640,6 @@ class FFmpegExecutor(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  COLOR WHEEL LUT
-    // ═══════════════════════════════════════════════════════════
     @Synchronized
     private fun ensureColorWheelLut(state: ColorWheelState): File {
         val key = MessageDigest.getInstance("SHA-256")
@@ -2905,12 +2672,7 @@ class FFmpegExecutor(
                         }
                         append(
                             """%.6f %.6f %.6f
-""".format(
-                                Locale.US,
-                                output.first / 255f,
-                                output.second / 255f,
-                                output.third / 255f
-                            )
+""".format(Locale.US, output.first / 255f, output.second / 255f, output.third / 255f)
                         )
                     }
                 }
@@ -2930,7 +2692,10 @@ class FFmpegExecutor(
         return Triple(
             (values[0] * red + values[1] * green + values[2] * blue + values[4]).coerceIn(0f, 255f),
             (values[5] * red + values[6] * green + values[7] * blue + values[9]).coerceIn(0f, 255f),
-            (values[10] * red + values[11] * green + values[12] * blue + values[14]).coerceIn(0f, 255f)
+            (values[10] * red + values[11] * green + values[12] * blue + values[14]).coerceIn(
+                0f,
+                255f
+            )
         )
     }
 
@@ -2943,15 +2708,16 @@ class FFmpegExecutor(
             .replace("\\", "\\\\")
             .replace("'", "\\'")
         val enable = if (startSec != null && endSec != null) {
-            ":enable='between(t,${"%.4f".format(Locale.US, startSec)}," +
-                    "${"%.4f".format(Locale.US, endSec)})'"
+            ":enable='between(t,${"%.4f".format(Locale.US, startSec)},${
+                "%.4f".format(
+                    Locale.US,
+                    endSec
+                )
+            })'"
         } else ""
         return "lut3d=file='$lutPath':interp=tetrahedral$enable"
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  AUDIO EFFECT LAYERS
-    // ═══════════════════════════════════════════════════════════
     private fun applyAudioEffectLayers(
         filterParts: MutableList<String>,
         allClips: List<EditorClip>,
@@ -2959,31 +2725,23 @@ class FFmpegExecutor(
         baseLabel: String,
         outLabel: String
     ): Boolean {
-        val layers = allClips
-            .filter { it.isAudioEffectClip }
-            .sortedBy { it.timelineStartMs }
+        val layers = allClips.filter { it.isAudioEffectClip }.sortedBy { it.timelineStartMs }
 
         if (layers.isEmpty()) return false
 
         val n = layers.size
         val splitLabels = (0..n).map { "fxsplt$it" }
 
-        filterParts.add(
-            "[$baseLabel]asplit=${n + 1}" +
-                    splitLabels.joinToString("") { "[$it]" }
-        )
+        filterParts.add("[$baseLabel]asplit=${n + 1}" + splitLabels.joinToString("") { "[$it]" })
 
         val baseChainParts = mutableListOf<String>()
         layers.forEach { layer ->
             val s = ((layer.timelineStartMs - rangeStartMs).coerceAtLeast(0L)) / 1000.0
             val e = (layer.timelineEndMs - rangeStartMs) / 1000.0
             if (e - s < 0.02) return@forEach
-            baseChainParts.add(
-                "volume=enable=between(t,%.3f,%.3f):volume=0".format(s, e)
-            )
+            baseChainParts.add("volume=enable=between(t,%.3f,%.3f):volume=0".format(s, e))
         }
-        val baseChain = if (baseChainParts.isEmpty()) "anull"
-        else baseChainParts.joinToString(",")
+        val baseChain = if (baseChainParts.isEmpty()) "anull" else baseChainParts.joinToString(",")
         filterParts.add("[${splitLabels[0]}]$baseChain[fxn0]")
 
         layers.forEachIndexed { i, layer ->
@@ -2995,8 +2753,8 @@ class FFmpegExecutor(
             }
 
             val fxKey = if (layer.isAudioFxClip) layer.audioFx else layer.soundFx
-            val intensity = if (layer.isAudioFxClip) layer.audioFxIntensity
-            else layer.soundFxIntensity
+            val intensity =
+                if (layer.isAudioFxClip) layer.audioFxIntensity else layer.soundFxIntensity
 
             val gate = "volume=enable=not(between(t,%.3f,%.3f)):volume=0".format(s, e)
             val fxFilter = AudioEngine.buildAudioFilter(fxKey, intensity)
@@ -3010,66 +2768,36 @@ class FFmpegExecutor(
         return true
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  MOTION → FFMPEG
-    // ═══════════════════════════════════════════════════════════
     private fun motionToFfmpeg(m: MotionConfig): String {
         val I = (m.intensity / 100f).coerceIn(0.1f, 3.0f)
         val S = m.speed.coerceIn(0.2f, 10f)
 
-        // ═══════════════════════════════════════════════════════════
-        //  FFmpeg-safe motion filters
-        //  - NO enable='...' on scale/crop (not supported)
-        //  - NO single quotes (breaks executeWithArgumentsAsync)
-        //  - Use rotate (supports t) for shake-like motion
-        //  - Use scale with eval=frame (works, no enable needed)
-        // ═══════════════════════════════════════════════════════════
-
         return when (m.type) {
-            // ─── SHAKE: Use rotate with angle jitter (t is supported) ───
             "shake" -> {
                 val amp = (2f * I).coerceIn(0.5f, 5f)
-                "rotate=$amp*sin($S*t*37)*PI/180:" +
-                        "c=none:" +
-                        "ow=iw:oh=ih"
+                "rotate=$amp*sin($S*t*37)*PI/180:c=none:ow=iw:oh=ih"
             }
 
-            // ─── BOUNCE: Scale with eval=frame (no enable) ───
             "bounce" -> {
                 val amp = (0.12f * I).coerceIn(0.02f, 0.25f)
-                "scale=" +
-                        "w=iw*(1+$amp*abs(sin($S*t*4))):" +
-                        "h=ih*(1+$amp*abs(sin($S*t*4))):" +
-                        "eval=frame"
+                "scale=w=iw*(1+$amp*abs(sin($S*t*4))):h=ih*(1+$amp*abs(sin($S*t*4))):eval=frame"
             }
 
-            // ─── PULSE: Same, tighter amplitude ───
             "pulse" -> {
                 val amp = (0.08f * I).coerceIn(0.02f, 0.15f)
-                "scale=" +
-                        "w=iw*(1+$amp*sin($S*t*3)):" +
-                        "h=ih*(1+$amp*sin($S*t*3)):" +
-                        "eval=frame"
+                "scale=w=iw*(1+$amp*sin($S*t*3)):h=ih*(1+$amp*sin($S*t*3)):eval=frame"
             }
 
-            // ─── ZOOM PULSE: Stronger zoom ───
             "zoomPulse" -> {
                 val amp = (0.35f * I).coerceIn(0.05f, 0.6f)
-                "scale=" +
-                        "w=iw*(1+$amp*0.5*(1+sin($S*t*2))):" +
-                        "h=ih*(1+$amp*0.5*(1+sin($S*t*2))):" +
-                        "eval=frame"
+                "scale=w=iw*(1+$amp*0.5*(1+sin($S*t*2))):h=ih*(1+$amp*0.5*(1+sin($S*t*2))):eval=frame"
             }
 
-            // ─── ROTATE: Slight oscillating rotation ───
             "rotate" -> {
                 val amp = (5f * I).coerceIn(1f, 15f)
-                "rotate=$amp*sin($S*t*2)*PI/180:" +
-                        "c=none:" +
-                        "ow=iw:oh=ih"
+                "rotate=$amp*sin($S*t*2)*PI/180:c=none:ow=iw:oh=ih"
             }
 
-            // ─── GLITCH: Noise ───
             "glitch" -> {
                 "noise=alls=${(20 * I).toInt().coerceIn(5, 80)}:allf=t+u"
             }
@@ -3077,9 +2805,7 @@ class FFmpegExecutor(
             else -> ""
         }
     }
-    // ═══════════════════════════════════════════════════════════
-    //  COLOR FILTER VALUES → FFMPEG
-    // ═══════════════════════════════════════════════════════════
+
     private fun colorFilterValuesToFfmpeg(cf: ColorFilterValues): String {
         val parts = mutableListOf<String>()
 
@@ -3104,14 +2830,14 @@ class FFmpegExecutor(
         }
         if (cf.sepia > 0f) {
             val a = (cf.sepia / 100f).coerceIn(0f, 1f)
-            val sr = 0.393f
-            val sg = 0.769f
+            val sr = 0.393f;
+            val sg = 0.769f;
             val sb = 0.189f
-            val mr = 0.349f
-            val mg = 0.686f
+            val mr = 0.349f;
+            val mg = 0.686f;
             val mb = 0.168f
-            val hr = 0.272f
-            val hg = 0.534f
+            val hr = 0.272f;
+            val hg = 0.534f;
             val hb = 0.131f
             val rr = (1f - a) + a * sr
             val rg = a * sg
@@ -3125,15 +2851,24 @@ class FFmpegExecutor(
             val f = Locale.US
             parts.add(
                 "colorchannelmixer=" +
-                        "rr=${"%.4f".format(f, rr)}:" +
-                        "rg=${"%.4f".format(f, rg)}:" +
-                        "rb=${"%.4f".format(f, rb)}:ra=0:" +
-                        "gr=${"%.4f".format(f, gr)}:" +
-                        "gg=${"%.4f".format(f, gg)}:" +
-                        "gb=${"%.4f".format(f, gb)}:ga=0:" +
-                        "br=${"%.4f".format(f, br)}:" +
-                        "bg=${"%.4f".format(f, bg)}:" +
-                        "bb=${"%.4f".format(f, bb)}:ba=0"
+                        "rr=${"%.4f".format(f, rr)}:rg=${"%.4f".format(f, rg)}:rb=${
+                            "%.4f".format(
+                                f,
+                                rb
+                            )
+                        }:ra=0:" +
+                        "gr=${"%.4f".format(f, gr)}:gg=${"%.4f".format(f, gg)}:gb=${
+                            "%.4f".format(
+                                f,
+                                gb
+                            )
+                        }:ga=0:" +
+                        "br=${"%.4f".format(f, br)}:bg=${"%.4f".format(f, bg)}:bb=${
+                            "%.4f".format(
+                                f,
+                                bb
+                            )
+                        }:ba=0"
             )
         }
         if (cf.invert > 0f) {
@@ -3142,9 +2877,6 @@ class FFmpegExecutor(
         return parts.joinToString(",")
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  🎨 BLEND MODE KEY → FFmpeg blend name
-    // ═══════════════════════════════════════════════════════════
     private fun ffmpegBlendName(key: String): String = when (key.lowercase()) {
         "multiply" -> "multiply"
         "screen" -> "screen"
@@ -3171,9 +2903,6 @@ class FFmpegExecutor(
         else -> "overlay"
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  EXECUTE FFMPEG SESSION
-    // ═══════════════════════════════════════════════════════════
     private fun execute(args: List<String>, outputFile: File) {
         try {
             val argsArray = args.toTypedArray()
@@ -3192,8 +2921,7 @@ class FFmpegExecutor(
                             if (outputFile.exists()) {
                                 Log.e(
                                     "FFMPEG_RESULT",
-                                    "SUCCESS: ${outputFile.absolutePath} " +
-                                            "(${outputFile.length()} bytes)"
+                                    "SUCCESS: ${outputFile.absolutePath} (${outputFile.length()} bytes)"
                                 )
                                 cleanupMaskSequences()
                                 onSuccess(outputFile)
@@ -3222,10 +2950,9 @@ class FFmpegExecutor(
                                 }
                             } else {
                                 cleanupMaskSequences()
-                                val lastLines = output.lines()
-                                    .filter { it.isNotBlank() }
-                                    .takeLast(20)
-                                    .joinToString("\n")
+                                val lastLines =
+                                    output.lines().filter { it.isNotBlank() }.takeLast(20)
+                                        .joinToString("\n")
                                 onError("FFmpeg error:\n$lastLines")
                             }
                         }
@@ -3256,14 +2983,199 @@ class FFmpegExecutor(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  CANCEL
-    // ═══════════════════════════════════════════════════════════
     fun cancel() {
         isCancelled = true
         try {
             currentSession?.let { FFmpegKit.cancel(it.sessionId) }
         } catch (_: Throwable) {
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  ✅ LUT GENERATOR FOR ADJUSTMENTS (Exact match to Preview)
+    // ═══════════════════════════════════════════════════════════
+    private fun buildFullAdjustmentFilter(adj: AdjustmentData): String {
+        val parts = mutableListOf<String>()
+        val stdFilter = FFmpegFilters.build(adj)
+        if (stdFilter.isNotBlank()) parts.add(stdFilter)
+
+        val hasColor = adj.reds != 0f || adj.oranges != 0f || adj.yellows != 0f ||
+                adj.greens != 0f || adj.cyans != 0f || adj.blues != 0f ||
+                adj.purples != 0f || adj.magentas != 0f || adj.skinTones != 0f
+
+        if (hasColor) {
+            val lutPath = ensureAdjustmentLut(adj).absolutePath
+                .replace("\\", "\\\\").replace("'", "\\'")
+            parts.add("lut3d=file='$lutPath':interp=tetrahedral")
+        }
+        return parts.joinToString(",")
+    }
+
+    @Synchronized
+    private fun ensureAdjustmentLut(adj: AdjustmentData): File {
+        val keyData =
+            "${adj.reds}_${adj.oranges}_${adj.yellows}_${adj.greens}_${adj.cyans}_${adj.blues}_${adj.purples}_${adj.magentas}_${adj.skinTones}"
+        val key = MessageDigest.getInstance("SHA-256")
+            .digest(keyData.toByteArray(Charsets.UTF_8))
+            .take(12).joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
+
+        val file = File(context.cacheDir, "adjustment-hsl-$key.cube")
+        if (file.exists() && file.length() > 0L) return file
+
+        val gridSize = 33
+        val contents = buildString {
+            appendLine("TITLE \"Moody Adjustment HSL\"")
+            appendLine("LUT_3D_SIZE $gridSize")
+            appendLine("DOMAIN_MIN 0.0 0.0 0.0")
+            appendLine("DOMAIN_MAX 1.0 1.0 1.0")
+            for (blueIndex in 0 until gridSize) {
+                for (greenIndex in 0 until gridSize) {
+                    for (redIndex in 0 until gridSize) {
+                        val red = redIndex * 255f / (gridSize - 1)
+                        val green = greenIndex * 255f / (gridSize - 1)
+                        val blue = blueIndex * 255f / (gridSize - 1)
+                        val output = applyAdjustmentPixel(red, green, blue, adj)
+                        append(
+                            """%.6f %.6f %.6f
+""".format(Locale.US, output.first / 255f, output.second / 255f, output.third / 255f)
+                        )
+                    }
+                }
+            }
+        }
+        file.writeText(contents)
+        return file
+    }
+
+    private fun applyAdjustmentPixel(
+        rIn: Float,
+        gIn: Float,
+        bIn: Float,
+        adj: AdjustmentData
+    ): Triple<Float, Float, Float> {
+        val rn = rIn / 255f
+        val gn = gIn / 255f
+        val bn = bIn / 255f
+
+        val maxC = maxOf(rn, gn, bn)
+        val minC = minOf(rn, gn, bn)
+        var h = 0f
+        var s = 0f
+        val v = maxC
+
+        if (maxC != minC) {
+            val d = maxC - minC
+            s = d / maxC
+            h = when (maxC) {
+                rn -> ((gn - bn) / d + (if (gn < bn) 6f else 0f)) * 60f
+                gn -> ((bn - rn) / d + 2f) * 60f
+                else -> ((rn - gn) / d + 4f) * 60f
+            }
+        }
+
+        var lumDelta = 0f
+        var satDelta = 0f
+
+        if (adj.reds != 0f) {
+            val w = hueWeight(h, 0f, 30f, s)
+            lumDelta += (adj.reds / 100f) * w
+            satDelta += (adj.reds / 100f) * w
+        }
+        if (adj.oranges != 0f) {
+            val w = hueWeight(h, 30f, 25f, s)
+            lumDelta += (adj.oranges / 100f) * w
+            satDelta += (adj.oranges / 100f) * w
+        }
+        if (adj.yellows != 0f) {
+            val w = hueWeight(h, 60f, 30f, s)
+            lumDelta += (adj.yellows / 100f) * w
+            satDelta += (adj.yellows / 100f) * w
+        }
+        if (adj.greens != 0f) {
+            val w = hueWeight(h, 120f, 45f, s)
+            lumDelta += (adj.greens / 100f) * w
+            satDelta += (adj.greens / 100f) * w
+        }
+        if (adj.cyans != 0f) {
+            val w = hueWeight(h, 180f, 30f, s)
+            lumDelta += (adj.cyans / 100f) * w
+            satDelta += (adj.cyans / 100f) * w
+        }
+        if (adj.blues != 0f) {
+            val w = hueWeight(h, 240f, 30f, s)
+            lumDelta += (adj.blues / 100f) * w
+            satDelta += (adj.blues / 100f) * w
+        }
+        if (adj.purples != 0f) {
+            val w = hueWeight(h, 280f, 25f, s)
+            lumDelta += (adj.purples / 100f) * w
+            satDelta += (adj.purples / 100f) * w
+        }
+        if (adj.magentas != 0f) {
+            val w = hueWeight(h, 300f, 25f, s)
+            lumDelta += (adj.magentas / 100f) * w
+            satDelta += (adj.magentas / 100f) * w
+        }
+        if (adj.skinTones != 0f) {
+            val w = hueWeight(h, 25f, 20f, s)
+            lumDelta += (adj.skinTones / 100f) * w
+            satDelta += (adj.skinTones / 100f) * w
+        }
+
+        val newV = (v + lumDelta * 0.85f).coerceIn(0f, 1f)
+        val newS = (s + satDelta * 0.60f).coerceIn(0f, 1f)
+
+        val c = newV * newS
+        val x = c * (1f - kotlin.math.abs((h / 60f) % 2f - 1f))
+        val m = newV - c
+
+        var r2 = 0f
+        var g2 = 0f
+        var b2 = 0f
+
+        when {
+            h < 60f -> {
+                r2 = c; g2 = x; b2 = 0f
+            }
+
+            h < 120f -> {
+                r2 = x; g2 = c; b2 = 0f
+            }
+
+            h < 180f -> {
+                r2 = 0f; g2 = c; b2 = x
+            }
+
+            h < 240f -> {
+                r2 = 0f; g2 = x; b2 = c
+            }
+
+            h < 300f -> {
+                r2 = x; g2 = 0f; b2 = c
+            }
+
+            else -> {
+                r2 = c; g2 = 0f; b2 = x
+            }
+        }
+
+        return Triple(
+            (r2 + m).coerceIn(0f, 1f) * 255f,
+            (g2 + m).coerceIn(0f, 1f) * 255f,
+            (b2 + m).coerceIn(0f, 1f) * 255f
+        )
+    }
+
+    private fun hueWeight(hue: Float, targetHue: Float, range: Float, sat: Float): Float {
+        var diff = kotlin.math.abs(hue - targetHue)
+        diff = kotlin.math.min(diff, 360f - diff)
+        val hueMatch = 1f - smoothstep(range * 0.25f, range, diff)
+        val satWeight = smoothstep(0.02f, 0.15f, sat)
+        return hueMatch * satWeight
+    }
+
+    private fun smoothstep(edge0: Float, edge1: Float, x: Float): Float {
+        val t = ((x - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
+        return t * t * (3f - 2f * t)
     }
 }

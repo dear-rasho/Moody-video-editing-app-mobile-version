@@ -135,13 +135,24 @@ object ColorMatrixBuilder {
             )))
         }
 
+        // ═══════════════════════════════════════════════════════════
+        //  NOTE: HSL color channels (Reds, Oranges, etc.) CANNOT be
+        //  done via ColorMatrix. They need per-pixel hue checking.
+        //
+        //  → Preview: RuntimeShader (see PreviewCanvas.kt HSL shader)
+        //  → Export: FFmpeg selectivecolor filter (see FFmpegFilters.kt)
+        // ═══════════════════════════════════════════════════════════
+
         return cm
     }
-
     fun hasRealTimeAdjustments(adj: AdjustmentData): Boolean {
         return adj.brightness != 0f || adj.contrast != 0f || adj.exposure != 0f ||
                 adj.whites != 0f || adj.blacks != 0f || adj.shadows != 0f ||
                 adj.highlights != 0f || adj.saturation != 0f || adj.vibrance != 0f ||
-                adj.clarity != 0f || adj.temperature != 0f || adj.tint != 0f
+                adj.clarity != 0f || adj.temperature != 0f || adj.tint != 0f ||
+                // 🆕 HSL channels
+                adj.reds != 0f || adj.oranges != 0f || adj.yellows != 0f ||
+                adj.greens != 0f || adj.cyans != 0f || adj.blues != 0f ||
+                adj.purples != 0f || adj.magentas != 0f || adj.skinTones != 0f
     }
 }
