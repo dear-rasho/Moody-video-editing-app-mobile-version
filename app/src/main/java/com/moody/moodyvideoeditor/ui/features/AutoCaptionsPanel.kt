@@ -59,7 +59,8 @@ fun AutoCaptionsPanel(
         autoStyle: Boolean,
         language: String,
         modelFile: String,
-        wordsPerLayer: Int
+        wordsPerLayer: Int,
+        wordsPerLine: Int
     ) -> Unit,
     onCancel: () -> Unit,
     onClearCaptions: () -> Unit = {},
@@ -76,6 +77,8 @@ fun AutoCaptionsPanel(
 
     // ✅ Default 2 words per layer (user can change 1-7)
     var wordsPerLayer by remember { mutableIntStateOf(2) }
+    // ✅ Default 1 line (user can change 1-5)
+    var wordsPerLine by remember { mutableIntStateOf(1) }
 
     var copiedAll by remember { mutableStateOf(false) }
     var copiedItemIdx by remember { mutableStateOf(-1) }
@@ -691,6 +694,55 @@ fun AutoCaptionsPanel(
                     )
                 }
 
+                // ═══════════════════════════════════════════════════
+                //  WORDS PER LINE — only for LINES mode
+                //  Default = 1 (user can change 1-5)
+                // ═══════════════════════════════════════════════════
+                if (selectedGrouping == CaptionGenerator.GroupingMode.LINES) {
+                    Text(
+                        "Words per line: $wordsPerLine",
+                        color = Color(0xFF888888),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        for (n in 1..5) {
+                            val isActive = wordsPerLine == n
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(40.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(
+                                        if (isActive) Color(0xFF7C3AED)
+                                        else Color(0xFF181818)
+                                    )
+                                    .pointerInput(n) {
+                                        detectTapGestures { wordsPerLine = n }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "$n",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        "1 = single line · 5 = up to five lines",
+                        color = Color(0xFF666666),
+                        fontSize = 9.sp,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                }
+
                 // ─── Generate button ───
                 Box(
                     modifier = Modifier
@@ -713,7 +765,8 @@ fun AutoCaptionsPanel(
                                         autoStyle,
                                         selectedLanguage.code,
                                         selectedModel,
-                                        wordsPerLayer
+                                        wordsPerLayer,
+                                        wordsPerLine
                                     )
                                 }
                             }

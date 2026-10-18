@@ -33,7 +33,8 @@ object CaptionGenerator {
         language: String,
         modelFile: String,
         grouping: GroupingMode,
-        wordsPerLayer: Int = 1,
+        wordsPerLayer: Int = 2,
+        wordsPerLine: Int = 1,
         viewModel: EditorViewModel,
         onStatus: (String) -> Unit,
         onProgress: (Float) -> Unit
@@ -150,7 +151,8 @@ object CaptionGenerator {
                                 words = words,
                                 segStartMs = segStart,
                                 segEndMs = segEnd,
-                                language = effectiveLanguage
+                                language = effectiveLanguage,
+                                wordsPerLine = wordsPerLine.coerceIn(1, 5)
                             )
                         }
 
@@ -218,8 +220,8 @@ object CaptionGenerator {
         parsedCaptions: List<ManualCaptionParser.ParsedCaption>,
         grouping: GroupingMode,
         autoStyle: Boolean,
-        wordsPerLayer: Int = 1,
-        wordsPerLine: Int = 7,
+        wordsPerLayer: Int = 2,
+        wordsPerLine: Int = 1,
         viewModel: EditorViewModel,
         offsetMs: Long = 0L,
         onProgress: (Float) -> Unit = {}
@@ -272,7 +274,7 @@ object CaptionGenerator {
                             segStartMs = segStart,
                             segEndMs = segEnd,
                             language = detectedLang,
-                            wordsPerLine = wordsPerLine.coerceIn(3, 7)
+                            wordsPerLine = wordsPerLine.coerceIn(1, 5)
                         )
                     }
 

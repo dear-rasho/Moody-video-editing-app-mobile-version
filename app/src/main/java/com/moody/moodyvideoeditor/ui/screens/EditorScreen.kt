@@ -1855,7 +1855,7 @@ fun EditorScreen(
                 onDeleteModel = { modelFile ->
                     WhisperModelManager.deleteModel(context, modelFile)
                 },
-                onGenerateCaptions = { grouping, autoStyle, language, modelFile, wpl ->
+                onGenerateCaptions = { grouping, autoStyle, language, modelFile, wpl, wpline ->
                     val sel = selected
                     if (sel != null) {
                         captionJob?.cancel()
@@ -1873,6 +1873,7 @@ fun EditorScreen(
                                 modelFile = modelFile,
                                 grouping = grouping,
                                 wordsPerLayer = wpl,
+                                wordsPerLine = wpline,
                                 viewModel = viewModel,
                                 onStatus = { captionStatus = it },
                                 onProgress = { captionProgress = it }

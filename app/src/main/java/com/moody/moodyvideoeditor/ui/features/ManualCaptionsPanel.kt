@@ -57,8 +57,8 @@ fun ManualCaptionsPanel(
         mutableStateOf(CaptionGenerator.GroupingMode.WORDS)
     }
     var autoStyle by remember { mutableStateOf(true) }
-    var wordsPerLayer by remember { mutableIntStateOf(1) }
-    var wordsPerLine by remember { mutableIntStateOf(7) }
+    var wordsPerLayer by remember { mutableIntStateOf(2) }
+    var wordsPerLine by remember { mutableIntStateOf(1) }
     var localStatus by remember { mutableStateOf("") }
 
     LaunchedEffect(statusMessage) {
@@ -326,7 +326,7 @@ fun ManualCaptionsPanel(
             // ═══════════════════════════════════════════════════════
             if (selectedGrouping == CaptionGenerator.GroupingMode.LINES) {
                 Text(
-                    "Words per line: $wordsPerLine",
+                    "Lines per caption: $wordsPerLine",
                     color = Color(0xFF888888),
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Bold,
@@ -336,7 +336,7 @@ fun ManualCaptionsPanel(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    for (n in 3..7) {
+                    for (n in 1..5) {
                         val isActive = wordsPerLine == n
                         Box(
                             modifier = Modifier
@@ -360,7 +360,7 @@ fun ManualCaptionsPanel(
                     }
                 }
                 Text(
-                    "Selected: $wordsPerLine word(s) per line",
+                    "Selected: $wordsPerLine line(s) per caption",
                     color = Color(0xFF666666),
                     fontSize = 9.sp,
                     modifier = Modifier.padding(start = 4.dp)

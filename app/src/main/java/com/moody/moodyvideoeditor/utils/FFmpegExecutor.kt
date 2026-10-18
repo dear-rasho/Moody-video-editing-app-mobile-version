@@ -2979,7 +2979,7 @@ class FFmpegExecutor(
             val e = (layer.timelineEndMs - rangeStartMs) / 1000.0
             if (e - s < 0.02) return@forEach
             baseChainParts.add(
-                "volume=enable='between(t,%.3f,%.3f)':volume=0".format(s, e)
+                "volume=enable=between(t,%.3f,%.3f):volume=0".format(s, e)
             )
         }
         val baseChain = if (baseChainParts.isEmpty()) "anull"
@@ -2998,7 +2998,7 @@ class FFmpegExecutor(
             val intensity = if (layer.isAudioFxClip) layer.audioFxIntensity
             else layer.soundFxIntensity
 
-            val gate = "volume=enable='not(between(t,%.3f,%.3f))':volume=0".format(s, e)
+            val gate = "volume=enable=not(between(t,%.3f,%.3f)):volume=0".format(s, e)
             val fxFilter = AudioEngine.buildAudioFilter(fxKey, intensity)
 
             val chain = if (fxFilter.isNotBlank()) "$gate,$fxFilter" else gate
@@ -3016,40 +3016,60 @@ class FFmpegExecutor(
     private fun motionToFfmpeg(m: MotionConfig): String {
         val I = (m.intensity / 100f).coerceIn(0.1f, 3.0f)
         val S = m.speed.coerceIn(0.2f, 10f)
-        val PI = "3.141592653589793"
+
+        // ═══════════════════════════════════════════════════════════
+        //  FFmpeg-safe motion filters
+        //  - NO enable='...' on scale/crop (not supported)
+        //  - NO single quotes (breaks executeWithArgumentsAsync)
+        //  - Use rotate (supports t) for shake-like motion
+        //  - Use scale with eval=frame (works, no enable needed)
+        // ═══════════════════════════════════════════════════════════
 
         return when (m.type) {
+            // ─── SHAKE: Use rotate with angle jitter (t is supported) ───
             "shake" -> {
-                val ampX = (6f * I).toInt().coerceAtLeast(2)
-                val ampY = (6f * I).toInt().coerceAtLeast(2)
-                "crop=iw-$ampX:ih-$ampY:" +
-                        "'(iw-ow)/2+$ampX*sin($S*t*37)':" +
-                        "'(ih-oh)/2+$ampY*cos($S*t*41)'"
+                val amp = (2f * I).coerceIn(0.5f, 5f)
+                "rotate=$amp*sin($S*t*37)*PI/180:" +
+                        "c=none:" +
+                        "ow=iw:oh=ih"
             }
 
+            // ─── BOUNCE: Scale with eval=frame (no enable) ───
             "bounce" -> {
-                val amp = 0.12f * I
-                "scale=iw*(1+$amp*abs(sin($S*t*4))):" +
-                        "ih*(1+$amp*abs(sin($S*t*4))):eval=frame"
+                val amp = (0.12f * I).coerceIn(0.02f, 0.25f)
+                "scale=" +
+                        "w=iw*(1+$amp*abs(sin($S*t*4))):" +
+                        "h=ih*(1+$amp*abs(sin($S*t*4))):" +
+                        "eval=frame"
             }
 
+            // ─── PULSE: Same, tighter amplitude ───
             "pulse" -> {
-                val amp = 0.08f * I
-                "scale=iw*(1+$amp*sin($S*t*3)):" +
-                        "ih*(1+$amp*sin($S*t*3)):eval=frame"
+                val amp = (0.08f * I).coerceIn(0.02f, 0.15f)
+                "scale=" +
+                        "w=iw*(1+$amp*sin($S*t*3)):" +
+                        "h=ih*(1+$amp*sin($S*t*3)):" +
+                        "eval=frame"
             }
 
+            // ─── ZOOM PULSE: Stronger zoom ───
             "zoomPulse" -> {
-                val amp = 0.35f * I
-                "scale=iw*(1+$amp*0.5*(1+sin($S*t*2))):" +
-                        "ih*(1+$amp*0.5*(1+sin($S*t*2))):eval=frame"
+                val amp = (0.35f * I).coerceIn(0.05f, 0.6f)
+                "scale=" +
+                        "w=iw*(1+$amp*0.5*(1+sin($S*t*2))):" +
+                        "h=ih*(1+$amp*0.5*(1+sin($S*t*2))):" +
+                        "eval=frame"
             }
 
+            // ─── ROTATE: Slight oscillating rotation ───
             "rotate" -> {
-                val amp = 0.05f * I
-                "rotate=$S*t*$amp*sin($S*t*2)*$PI/180:c=none:ow=iw:oh=ih"
+                val amp = (5f * I).coerceIn(1f, 15f)
+                "rotate=$amp*sin($S*t*2)*PI/180:" +
+                        "c=none:" +
+                        "ow=iw:oh=ih"
             }
 
+            // ─── GLITCH: Noise ───
             "glitch" -> {
                 "noise=alls=${(20 * I).toInt().coerceIn(5, 80)}:allf=t+u"
             }
@@ -3057,7 +3077,6 @@ class FFmpegExecutor(
             else -> ""
         }
     }
-
     // ═══════════════════════════════════════════════════════════
     //  COLOR FILTER VALUES → FFMPEG
     // ═══════════════════════════════════════════════════════════

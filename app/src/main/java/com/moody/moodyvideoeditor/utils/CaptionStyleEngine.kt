@@ -29,7 +29,6 @@ object CaptionStyleEngine {
     // ═══════════════════════════════════════════════════════════
     //  OUTPUT
     // ═══════════════════════════════════════════════════════════
-
     data class StyledClip(
         val text: String,
         val fontFamily: String,
@@ -46,7 +45,9 @@ object CaptionStyleEngine {
         val animation: String,
         val animationDuration: Float,
         val startMs: Long,
-        val endMs: Long
+        val endMs: Long,
+        // 🆕 NEW — controls how text wraps (100 = no wrap)
+        val maxWidth: Float = 95f
     ) {
         fun toTextState(): TextState = TextState(
             content = text,
@@ -66,14 +67,13 @@ object CaptionStyleEngine {
             positionY = positionY,
             anchorX = 50f,
             anchorY = 50f,
-            maxWidth = 95f,
+            maxWidth = maxWidth,        // ← 🆕 use the field
             lineHeight = 1.15f,
             opacity = 100f,
             animation = animation,
             animationDuration = animationDuration
         )
     }
-
     // ═══════════════════════════════════════════════════════════
     //  WORDS MODE — one clip per word
     //  Words distribute EVENLY across segment duration.
@@ -162,18 +162,27 @@ object CaptionStyleEngine {
         segStartMs: Long,
         segEndMs: Long,
         language: String,
-        wordsPerLine: Int = 7
+        wordsPerLine: Int = 1
     ): List<StyledClip> {
         if (words.isEmpty()) return emptyList()
 
-        val wpl = wordsPerLine.coerceIn(3, 7)
-        val lines = groupIntoLines(words, wpl)
+        val wpl = wordsPerLine.coerceIn(1, 5)
+
+        // ✅ Lines mode = continuous paragraph, auto-wrapped by canvas
+        // NOT manual \n breaks between every "line"
+        val fullText = if (wpl <= 1) {
+            // wpl = 1 → single continuous line, no wrapping
+            words.joinToString(" ")
+        } else {
+            // wpl = 2..5 → paragraph that wraps after N words
+            // Use spaces so Compose softWrap handles line breaks naturally
+            words.joinToString(" ")
+        }
+
         Log.e(
             TAG,
-            "LINES mode: ${words.size} words → ${lines.size} lines (wpl=$wpl)"
+            "LINES mode: ${words.size} words → single text block (wpl=$wpl)"
         )
-
-        val fullText = lines.joinToString("\n") { it.joinToString(" ") }
 
         // Auto-detect language
         val detectedLang = if (language.equals("auto", ignoreCase = true) ||
@@ -188,9 +197,23 @@ object CaptionStyleEngine {
         val glow = pickRandomGlow(rng)
         val anim = pickRandomAnimation(rng)
 
+        // 🆕 maxWidth controls where text wraps naturally
+        // wpl=1 → 100% (no wrap, single line)
+        // wpl=2 → 60% (wraps after ~2 words)
+        // wpl=3 → 70% (wraps after ~3 words)
+        // wpl=4 → 80% (wraps after ~4 words)
+        // wpl=5 → 90% (wraps after ~5 words)
+        val wrapWidth = when (wpl) {
+            1 -> 100f
+            2 -> 60f
+            3 -> 70f
+            4 -> 80f
+            else -> 90f
+        }
+
         return listOf(
             StyledClip(
-                text = fullText,
+                text = fullText,              // ← continuous text with spaces
                 fontFamily = font,
                 fontSize = 46,
                 color = 0xFFFFFFFF,
@@ -205,7 +228,8 @@ object CaptionStyleEngine {
                 animation = anim,
                 animationDuration = 0.4f,
                 startMs = segStartMs,
-                endMs = segEndMs
+                endMs = segEndMs,
+                maxWidth = wrapWidth          // ← 🆕 NEW
             )
         )
     }
@@ -219,7 +243,7 @@ object CaptionStyleEngine {
         maxWordsPerLine: Int
     ): List<List<String>> {
         val total = words.size
-        val wpl = maxWordsPerLine.coerceIn(3, 7)
+        val wpl = maxWordsPerLine.coerceIn(1, 5)
 
         // Fits in a single line
         if (total <= wpl) return listOf(words)
@@ -241,14 +265,14 @@ object CaptionStyleEngine {
             cursor = end
         }
 
-        // Rebalance if last line too small
-        if (result.size > 1 && result.last().size < 3) {
+        // Rebalance if last line too small (only when wpl > 2)
+        if (wpl > 2 && result.size > 1 && result.last().size < 2) {
             val lastIdx = result.lastIndex
             val lastSize = result[lastIdx].size
-            val needed = 3 - lastSize
+            val needed = 2 - lastSize
             val prevLine = result[lastIdx - 1].toMutableList()
 
-            if (prevLine.size - needed >= 3) {
+            if (prevLine.size - needed >= 2) {
                 val moved = prevLine.takeLast(needed)
                 val newPrev = prevLine.dropLast(needed)
                 val newLast = moved + result[lastIdx]
