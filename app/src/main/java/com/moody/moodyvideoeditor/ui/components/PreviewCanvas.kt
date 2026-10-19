@@ -3555,7 +3555,6 @@ private fun TextBackgroundRenderer(
 // ═══════════════════════════════════════════════════════════════
 //  INTERACTIVE TEXT OVERLAY
 // ═══════════════════════════════════════════════════════════════
-
 @Composable
 private fun InteractiveTextOverlay(
     clip: EditorClip,
@@ -3576,6 +3575,11 @@ private fun InteractiveTextOverlay(
 
     val localTimeSec = ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
     val sampled = TransformApplier.resolveLive(clip, localTimeSec)
+
+    // ✅ CLAMP WIDENED to -50..150 for portrait mode dragging
+    val clampedX = sampled.x.coerceIn(-50f, 150f)
+    val clampedY = sampled.y.coerceIn(-50f, 150f)
+
     val animDur = textState.animationDuration.coerceAtLeast(0.1f)
     val progress = (localTimeSec / animDur).coerceIn(0f, 1f)
 
@@ -3598,45 +3602,31 @@ private fun InteractiveTextOverlay(
             textState.content.substring(0, visible)
         } else textState.content
 
-    if (displayContent.isEmpty() &&
-        textState.animation.equals("typewriter", ignoreCase = true)
-    ) return
+    if (displayContent.isEmpty() && textState.animation.equals("typewriter", ignoreCase = true)) return
 
     val density = LocalDensity.current
     val canvasWpx = with(density) { canvasW.dp.toPx() }
     val canvasHpx = with(density) { canvasH.dp.toPx() }
 
     val textTypeface = TextRenderContract.androidTypefaceFor(
-        textState.fontFamily,
-        textState.fontWeight == "bold",
-        textState.fontStyle == "italic"
+        textState.fontFamily, textState.fontWeight == "bold", textState.fontStyle == "italic"
     )
     val refPx = minOf(canvasWpx, canvasHpx)
     val effFontSizePx = TextRenderContract.scaledFontSize(
-        baseSizePx = textState.fontSize.toFloat(),
-        canvasWidthPx = canvasWpx,
-        canvasHeightPx = canvasHpx
+        baseSizePx = textState.fontSize.toFloat(), canvasWidthPx = canvasWpx, canvasHeightPx = canvasHpx
     )
-    val effLetterSpacingPx = TextScaler.letterSpacing(
-        base = textState.letterSpacing,
-        canvasWidthPx = refPx
-    )
+    val effLetterSpacingPx = TextScaler.letterSpacing(base = textState.letterSpacing, canvasWidthPx = refPx)
     val effLineHeightPx = TextScaler.lineHeight(effFontSizePx, textState.lineHeight)
     val family = FontLibrary.familyFor(textState.fontFamily)
     val weight = if (textState.fontWeight == "bold") FontWeight.Bold else FontWeight.Normal
-    val fontSty = if (textState.fontStyle == "italic")
-        androidx.compose.ui.text.font.FontStyle.Italic
-    else androidx.compose.ui.text.font.FontStyle.Normal
+    val fontSty = if (textState.fontStyle == "italic") androidx.compose.ui.text.font.FontStyle.Italic else androidx.compose.ui.text.font.FontStyle.Normal
 
     val userStrokePx = textState.strokeWidth.coerceAtLeast(0f) * 2f * (refPx / 720f)
 
     val finalFontSizePx = TextRenderContract.fittedFontSizePx(
-        content = displayContent,
-        baseSizePx = textState.fontSize.toFloat(),
-        canvasWidthPx = canvasWpx,
-        canvasHeightPx = canvasHpx,
-        maxWidthPercent = textState.maxWidth,
-        typeface = textTypeface
+        content = displayContent, baseSizePx = textState.fontSize.toFloat(),
+        canvasWidthPx = canvasWpx, canvasHeightPx = canvasHpx,
+        maxWidthPercent = textState.maxWidth, typeface = textTypeface
     )
 
     val finalFontSizeSp = with(density) { finalFontSizePx.toSp() }
@@ -3651,37 +3641,26 @@ private fun InteractiveTextOverlay(
         measurer.measure(
             text = displayContent,
             style = androidx.compose.ui.text.TextStyle(
-                fontSize = finalFontSizeSp,
-                letterSpacing = finalLetterSpacingSp,
-                lineHeight = finalLineHeightSp,
-                fontFamily = family,
-                fontWeight = weight,
-                fontStyle = fontSty
+                fontSize = finalFontSizeSp, letterSpacing = finalLetterSpacingSp,
+                lineHeight = finalLineHeightSp, fontFamily = family,
+                fontWeight = weight, fontStyle = fontSty
             ),
             constraints = androidx.compose.ui.unit.Constraints(
-                maxWidth = (canvasWpx * (textState.maxWidth / 100f))
-                    .toInt().coerceAtLeast(50)
+                maxWidth = (canvasWpx * (textState.maxWidth / 100f)).toInt().coerceAtLeast(50)
             ),
             softWrap = true
         )
     }
 
-    val tightMeasure = remember(
-        displayContent, finalFontSizeSp, finalLetterSpacingSp,
-        family, weight, fontSty
-    ) {
+    val tightMeasure = remember(displayContent, finalFontSizeSp, finalLetterSpacingSp, family, weight, fontSty) {
         measurer.measure(
             text = displayContent,
             style = androidx.compose.ui.text.TextStyle(
-                fontSize = finalFontSizeSp,
-                letterSpacing = finalLetterSpacingSp,
-                fontFamily = family,
-                fontWeight = weight,
-                fontStyle = fontSty
+                fontSize = finalFontSizeSp, letterSpacing = finalLetterSpacingSp,
+                fontFamily = family, fontWeight = weight, fontStyle = fontSty
             ),
             constraints = androidx.compose.ui.unit.Constraints(
-                maxWidth = (canvasWpx * (textState.maxWidth / 100f))
-                    .toInt().coerceAtLeast(50)
+                maxWidth = (canvasWpx * (textState.maxWidth / 100f)).toInt().coerceAtLeast(50)
             ),
             softWrap = true
         )
@@ -3697,26 +3676,18 @@ private fun InteractiveTextOverlay(
         val dx = kotlin.math.cos(rad).toFloat()
         val dy = kotlin.math.sin(rad).toFloat()
         Brush.linearGradient(
-            colors = listOf(
-                Color(textState.gradientColor1),
-                Color(textState.gradientColor2)
-            ),
-            start = Offset(-dx * 600f, -dy * 600f),
-            end = Offset(dx * 600f, dy * 600f)
+            colors = listOf(Color(textState.gradientColor1), Color(textState.gradientColor2)),
+            start = Offset(-dx * 600f, -dy * 600f), end = Offset(dx * 600f, dy * 600f)
         )
     } else null
 
-    val shadowStyle: androidx.compose.ui.graphics.Shadow? =
-        if (textState.shadowEnabled) {
-            androidx.compose.ui.graphics.Shadow(
-                color = Color(textState.shadowColor),
-                offset = Offset(
-                    textState.shadowOffsetX * (refPx / 720f),
-                    textState.shadowOffsetY * (refPx / 720f)
-                ),
-                blurRadius = textState.shadowBlur * (refPx / 720f)
-            )
-        } else null
+    val shadowStyle: androidx.compose.ui.graphics.Shadow? = if (textState.shadowEnabled) {
+        androidx.compose.ui.graphics.Shadow(
+            color = Color(textState.shadowColor),
+            offset = Offset(textState.shadowOffsetX * (refPx / 720f), textState.shadowOffsetY * (refPx / 720f)),
+            blurRadius = textState.shadowBlur * (refPx / 720f)
+        )
+    } else null
 
     val textAlignValue = when (textState.alignment) {
         "left" -> androidx.compose.ui.text.style.TextAlign.Left
@@ -3724,9 +3695,7 @@ private fun InteractiveTextOverlay(
         else -> androidx.compose.ui.text.style.TextAlign.Center
     }
 
-    val blurDp = with(density) { frame.blurRadiusPx.toDp() }
-        .coerceAtLeast(0.dp)
-        .coerceAtMost(20.dp)
+    val blurDp = with(density) { frame.blurRadiusPx.toDp() }.coerceAtLeast(0.dp).coerceAtMost(20.dp)
 
     val bgPadX = if (textState.backgroundEnabled) textState.backgroundPaddingX else 2f
     val bgPadY = if (textState.backgroundEnabled) textState.backgroundPaddingY else 2f
@@ -3741,15 +3710,12 @@ private fun InteractiveTextOverlay(
     val handleW = (outerWidthDp * scaleFactor).dp
     val handleH = (outerHeightDp * scaleFactor).dp
 
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Box(
             modifier = Modifier
                 .graphicsLayer {
-                    val posTx = (sampled.x - 50f) / 100f * refPx
-                    val posTy = (sampled.y - 50f) / 100f * refPx
+                    val posTx = (clampedX - 50f) / 100f * refPx
+                    val posTy = (clampedY - 50f) / 100f * refPx
                     translationX = posTx + frame.translateX
                     translationY = posTy + frame.translateY
                     scaleX = (sampled.scale / 100f) * frame.scaleX
@@ -3763,11 +3729,7 @@ private fun InteractiveTextOverlay(
                 }
                 .width(outerWidthDp.dp)
                 .height(outerHeightDp.dp)
-                .then(
-                    if (blurDp > 0.dp) {
-                        Modifier.blur(blurDp, BlurredEdgeTreatment.Unbounded)
-                    } else Modifier
-                )
+                .then(if (blurDp > 0.dp) Modifier.blur(blurDp, BlurredEdgeTreatment.Unbounded) else Modifier)
                 .pointerInput(clip.id, canvasW, canvasH, isDrawingMode) {
                     if (isDrawingMode) return@pointerInput
                     awaitEachGesture {
@@ -3783,14 +3745,10 @@ private fun InteractiveTextOverlay(
                         val baseRot = currentSampled.rotation
                         val baseFrame = currentFrame
 
-                        var accumPanX = 0f
-                        var accumPanY = 0f
-                        var accumZoom = 1f
-                        var accumRot = 0f
-                        var lastDist = 0f
-                        var lastAngle = 0f
-                        var hasMultiGesture = false
-                        var hasMoved = false
+                        var accumPanX = 0f; var accumPanY = 0f
+                        var accumZoom = 1f; var accumRot = 0f
+                        var lastDist = 0f; var lastAngle = 0f
+                        var hasMultiGesture = false; var hasMoved = false
 
                         if (!isSelected && !isMulti) onSelect()
 
@@ -3808,43 +3766,36 @@ private fun InteractiveTextOverlay(
                                     val rotation = Math.toRadians((baseRot + baseFrame.rotationZ).toDouble())
                                     val scaleX = (baseScale / 100f) * baseFrame.scaleX
                                     val scaleY = (baseScale / 100f) * baseFrame.scaleY
-                                    accumPanX += (
-                                            pan.x * scaleX * kotlin.math.cos(rotation) -
-                                                    pan.y * scaleY * kotlin.math.sin(rotation)
-                                            ).toFloat()
-                                    accumPanY += (
-                                            pan.x * scaleX * kotlin.math.sin(rotation) +
-                                                    pan.y * scaleY * kotlin.math.cos(rotation)
-                                            ).toFloat()
+                                    accumPanX += (pan.x * scaleX * kotlin.math.cos(rotation) - pan.y * scaleY * kotlin.math.sin(rotation)).toFloat()
+                                    accumPanY += (pan.x * scaleX * kotlin.math.sin(rotation) + pan.y * scaleY * kotlin.math.cos(rotation)).toFloat()
                                     if (kotlin.math.abs(accumPanX) > 5f || kotlin.math.abs(accumPanY) > 5f) hasMoved = true
                                     ch.consume()
                                 } else if (pressed.size >= 2) {
-                                    val c1 = pressed[0]
-                                    val c2 = pressed[1]
+                                    val c1 = pressed[0]; val c2 = pressed[1]
                                     val d = c1.position - c2.position
                                     val dist = kotlin.math.sqrt(d.x * d.x + d.y * d.y)
                                     val angle = kotlin.math.atan2(d.y, d.x)
                                     if (hasMultiGesture && lastDist > 1f) {
                                         accumZoom *= dist / lastDist
-                                        accumRot += Math.toDegrees(
-                                            normalizeAngle(angle - lastAngle).toDouble()
-                                        ).toFloat()
+                                        accumRot += Math.toDegrees(normalizeAngle(angle - lastAngle).toDouble()).toFloat()
                                     }
-                                    lastDist = dist
-                                    lastAngle = angle
-                                    hasMultiGesture = true
-                                    c1.consume()
-                                    c2.consume()
-                                    hasMoved = true
+                                    lastDist = dist; lastAngle = angle; hasMultiGesture = true
+                                    c1.consume(); c2.consume(); hasMoved = true
                                 }
                                 val rawX = baseX + accumPanX / canvasWpx * 100f
                                 val rawY = baseY + accumPanY / canvasHpx * 100f
+
+                                // ✅ CLAMP WIDENED HERE TOO
+                                val cx = rawX.coerceIn(-50f, 150f)
+                                val cy = rawY.coerceIn(-50f, 150f)
+
                                 val newScale = (baseScale * accumZoom).coerceIn(10f, 500f)
                                 val newRot = baseRot + accumRot
+
                                 if (isMulti) {
-                                    onGroupGesture(clip.id, rawX, rawY, newScale, newRot)
+                                    onGroupGesture(clip.id, cx, cy, newScale, newRot)
                                 } else {
-                                    onPositionChanged(rawX, rawY)
+                                    onPositionChanged(cx, cy)
                                     onTransformChanged(newScale, newRot)
                                 }
                             }
@@ -3857,11 +3808,7 @@ private fun InteractiveTextOverlay(
         ) {
             Box(contentAlignment = Alignment.Center) {
                 if (textState.backgroundEnabled && textState.backgroundType != "character") {
-                    TextBackgroundRenderer(
-                        state = textState,
-                        textWidthDp = textWidthDp,
-                        textHeightDp = textHeightDp
-                    )
+                    TextBackgroundRenderer(state = textState, textWidthDp = textWidthDp, textHeightDp = textHeightDp)
                 }
 
                 if (textState.glowEnabled && textState.glowRadius > 0f) {
@@ -3875,8 +3822,7 @@ private fun InteractiveTextOverlay(
                                 else -> Paint.Align.CENTER
                             }
                             val textSizePx = finalFontSizePx
-                            val letterSpacingEm = if (finalFontSizePx <= 0f) 0f
-                            else (effLetterSpacingPx / finalFontSizePx).coerceIn(-0.3f, 0.3f)
+                            val letterSpacingEm = if (finalFontSizePx <= 0f) 0f else (effLetterSpacingPx / finalFontSizePx).coerceIn(-0.3f, 0.3f)
                             val glowRadiusPx = textState.glowRadius * (refPx / 720f)
 
                             val lines = displayContent.split('\n')
@@ -3890,8 +3836,7 @@ private fun InteractiveTextOverlay(
                             val fm = measurePaint.fontMetrics
 
                             val totalTextH = lineHeightPx * lineCount
-                            val firstBaseline = (size.height - totalTextH) / 2f +
-                                    lineHeightPx / 2f - (fm.ascent + fm.descent) / 2f
+                            val firstBaseline = (size.height - totalTextH) / 2f + lineHeightPx / 2f - (fm.ascent + fm.descent) / 2f
 
                             val textW = finalMeasure.size.width.toFloat()
                             val textLeft = (size.width - textW) / 2f
@@ -3912,10 +3857,7 @@ private fun InteractiveTextOverlay(
                                     this.typeface = textTypeface
                                     this.letterSpacing = letterSpacingEm
                                     alpha = (layer.alpha * 255).toInt().coerceIn(0, 255)
-                                    maskFilter = android.graphics.BlurMaskFilter(
-                                        (glowRadiusPx * layer.blurScale).coerceIn(1f, 250f),
-                                        android.graphics.BlurMaskFilter.Blur.NORMAL
-                                    )
+                                    maskFilter = android.graphics.BlurMaskFilter((glowRadiusPx * layer.blurScale).coerceIn(1f, 250f), android.graphics.BlurMaskFilter.Blur.NORMAL)
                                 }
                                 lines.forEachIndexed { i, line ->
                                     val y = firstBaseline + i * lineHeightPx
@@ -3940,12 +3882,7 @@ private fun InteractiveTextOverlay(
                         overflow = TextOverflow.Visible,
                         modifier = Modifier.width(textWidthConstraintDp),
                         style = androidx.compose.ui.text.TextStyle(
-                            drawStyle = Stroke(
-                                userStrokePx,
-                                join = androidx.compose.ui.graphics.StrokeJoin.Round,
-                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                                miter = 4f
-                            ),
+                            drawStyle = Stroke(userStrokePx, join = androidx.compose.ui.graphics.StrokeJoin.Round, cap = androidx.compose.ui.graphics.StrokeCap.Round, miter = 4f),
                             letterSpacing = finalLetterSpacingSp,
                             lineHeight = finalLineHeightSp
                         )
@@ -3957,13 +3894,8 @@ private fun InteractiveTextOverlay(
                         text = displayContent,
                         spanStyles = listOf(
                             AnnotatedString.Range(
-                                item = SpanStyle(
-                                    background = Color(textState.backgroundColor1).copy(
-                                        alpha = textState.backgroundOpacity / 100f
-                                    )
-                                ),
-                                start = 0,
-                                end = displayContent.length
+                                item = SpanStyle(background = Color(textState.backgroundColor1).copy(alpha = textState.backgroundOpacity / 100f)),
+                                start = 0, end = displayContent.length
                             )
                         )
                     )
@@ -3997,8 +3929,8 @@ private fun InteractiveTextOverlay(
             Box(
                 modifier = Modifier
                     .graphicsLayer {
-                        val posTx = (sampled.x - 50f) / 100f * refPx
-                        val posTy = (sampled.y - 50f) / 100f * refPx
+                        val posTx = (clampedX - 50f) / 100f * refPx
+                        val posTy = (clampedY - 50f) / 100f * refPx
                         translationX = posTx + frame.translateX
                         translationY = posTy + frame.translateY
                         rotationZ = sampled.rotation + frame.rotationZ
@@ -4022,7 +3954,6 @@ private fun InteractiveTextOverlay(
         }
     }
 }
-
 // ═══════════════════════════════════════════════════════════════
 //  INTERACTIVE STICKER OVERLAY
 // ═══════════════════════════════════════════════════════════════
@@ -4047,6 +3978,11 @@ private fun InteractiveStickerOverlay(
 
     val localTimeSec = ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
     val sampled = TransformApplier.resolveLive(clip, localTimeSec)
+
+    // ✅ ONLY ONE DECLARATION HERE
+    val clampedX = sampled.x.coerceIn(0f, 100f)
+    val clampedY = sampled.y.coerceIn(0f, 100f)
+
     val animDur = stickerState.animationDuration.coerceAtLeast(0.1f)
     val progress = (localTimeSec / animDur).coerceIn(0f, 1f)
     val frame = try {
@@ -4067,8 +4003,6 @@ private fun InteractiveStickerOverlay(
     val effStickerSizePx = TextScaler.fontSize(
         baseSize = 48, canvasWidthPx = refPx
     )
-    val clampedX = sampled.x.coerceIn(0f, 100f)
-    val clampedY = sampled.y.coerceIn(0f, 100f)
 
     val effStickerSizeSp = (effStickerSizePx / density.density).sp
 
@@ -4093,6 +4027,7 @@ private fun InteractiveStickerOverlay(
         Box(
             modifier = Modifier
                 .graphicsLayer {
+                    // ✅ USE THE CLAMPED VALUES HERE
                     val posTx = (clampedX - 50f) / 100f * refPx
                     val posTy = (clampedY - 50f) / 100f * refPx
                     translationX = posTx + frame.translateX
@@ -4171,8 +4106,11 @@ private fun InteractiveStickerOverlay(
                                 }
                                 val rawX = baseX + accumPanX / canvasWpx * 100f
                                 val rawY = baseY + accumPanY / canvasHpx * 100f
+
+                                // ✅ FIX: Clamp during drag
                                 val cx = rawX.coerceIn(0f, 100f)
                                 val cy = rawY.coerceIn(0f, 100f)
+
                                 val newScale = (baseScale * accumZoom).coerceIn(10f, 500f)
                                 val newRot = baseRot + accumRot
 
@@ -4201,6 +4139,7 @@ private fun InteractiveStickerOverlay(
             Box(
                 modifier = Modifier
                     .graphicsLayer {
+                        // ✅ USE THE CLAMPED VALUES HERE
                         val posTx = (clampedX - 50f) / 100f * refPx
                         val posTy = (clampedY - 50f) / 100f * refPx
                         translationX = posTx + frame.translateX
