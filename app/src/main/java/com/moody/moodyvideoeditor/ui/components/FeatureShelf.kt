@@ -1,15 +1,19 @@
 package com.moody.moodyvideoeditor.ui.components
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,6 +22,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
@@ -39,7 +45,7 @@ val FEATURES = listOf(
     Feature("filters", "Filters", "🎨"),
     Feature("effects", "Effects", "✨"),
     Feature("adjustments", "Adjust", "🎚️"),
-    Feature("wheel", "Wheels", "🌈"),
+    Feature("wheel", "Wheels", "🎨"), // Icon text replaced by Canvas draw
     Feature("stickers", "Stickers", "😀"),
     Feature("overlays", "Overlays", "🎬"),
     Feature("transitions", "Transitions", "⇄"),
@@ -67,8 +73,7 @@ val FEATURES = listOf(
 @Composable
 fun FeatureShelf(
     onFeatureSelected: (String) -> Unit,
-    scrollState: androidx.compose.foundation.ScrollState =
-        rememberScrollState()
+    scrollState: androidx.compose.foundation.ScrollState = rememberScrollState()
 ) {
     Column(
         modifier = Modifier
@@ -109,7 +114,34 @@ private fun FeatureItem(feature: Feature, onClick: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(feature.icon, fontSize = 22.sp)
+        // ✅ FIX: Draw an actual Color Wheel for the "wheel" feature
+        if (feature.key == "wheel") {
+            Box(
+                modifier = Modifier.size(22.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val radius = size.minDimension / 2f
+                    val center = Offset(size.width / 2f, size.height / 2f)
+
+                    // Pure Hue Wheel (No white center, just like your image)
+                    val hueColors = listOf(
+                        Color.Red,
+                        Color.Yellow,
+                        Color.Green,
+                        Color.Cyan,
+                        Color.Blue,
+                        Color.Magenta,
+                        Color.Red
+                    )
+                    val sweep = Brush.sweepGradient(colors = hueColors, center = center)
+                    drawCircle(brush = sweep, radius = radius, center = center)
+                }
+            }
+        } else {
+            // Normal emojis for other features
+            Text(feature.icon, fontSize = 22.sp)
+        }
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             feature.label,

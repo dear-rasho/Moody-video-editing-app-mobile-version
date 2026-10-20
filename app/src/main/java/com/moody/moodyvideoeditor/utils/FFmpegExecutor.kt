@@ -10,7 +10,7 @@ import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegSession
 import com.arthenica.ffmpegkit.ReturnCode
-import com.moody.moodyvideoeditor.data.AdjustmentData // ✅ ADDED
+import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.ColorFilterValues
 import com.moody.moodyvideoeditor.data.ColorWheelState
 import com.moody.moodyvideoeditor.data.EditorClip
@@ -30,10 +30,10 @@ import java.util.Locale
 private data class LayeredRenderItem(
     val trackIndex: Int,
     val timelineStartMs: Long,
-    val kind: Int,                    // 0=matte, 1=clip, 2=sequence, 3=adjustment
+    val kind: Int,
     val matteClip: EditorClip? = null,
     val visualClip: EditorClip? = null,
-    val adjustmentClip: EditorClip? = null, // ✅ ADDED
+    val adjustmentClip: EditorClip? = null,
     val sequence: TextOverlaySequence? = null,
     val matteIdx: Int = -1,
     val clipIdx: Int = -1,
@@ -321,7 +321,6 @@ class FFmpegExecutor(
             onError("Export failed: ${e.message}")
         }
     }
-
     private data class MaskFrameSequence(
         val clipId: String,
         val pattern: String,
@@ -405,19 +404,6 @@ class FFmpegExecutor(
                 }
             }
             maskSequenceDirectories.clear()
-        }
-    }
-
-
-
-
-
-    private fun cleanupMatteTempFiles(files: List<File>) {
-        files.forEach { file ->
-            try {
-                if (file.exists()) file.delete()
-            } catch (_: Throwable) {
-            }
         }
     }
 
@@ -817,6 +803,7 @@ class FFmpegExecutor(
     }
 
     private fun isImage(clip: EditorClip): Boolean = clip.type.startsWith("image/")
+
     private fun trimClipsToRange(
         clips: List<EditorClip>,
         rangeStart: Long,
@@ -891,7 +878,6 @@ class FFmpegExecutor(
         }
         return File(dir, "$fileName.$ext")
     }
-
     private fun completeExport(
         file: File,
         customFolderUri: String?,
@@ -1377,7 +1363,6 @@ class FFmpegExecutor(
 
         return filters
     }
-
     private fun exportLayeredTracks(
         clips: List<EditorClip>,
         allClips: List<EditorClip>,
@@ -1719,28 +1704,55 @@ class FFmpegExecutor(
 
                     3 -> {
                         val adj = item.adjustmentClip ?: return@forEach
-                        val adjFilter = buildFullAdjustmentFilter(adj.adjustments)
-                        if (adjFilter.isNotBlank()) {
+                        val hasAdj = !adj.adjustments.isDefault
+                        val hasWheel = adj.colorWheel.hasAnyChange
+
+                        if (hasAdj || hasWheel) {
                             val startSec = adj.timelineStartMs / 1000.0
                             val endSec = adj.timelineEndMs / 1000.0
+
                             if (endSec > startSec + 0.01) {
                                 val startExpr = String.format(Locale.US, "%.4f", startSec)
                                 val endExpr = String.format(Locale.US, "%.4f", endSec)
+
                                 val uid = "adj_${item.clipIdx}"
                                 val baseLabel = "canvas_${uid}_base"
                                 val adjSrcLabel = "canvas_${uid}_src"
-                                val adjOutLabel = "canvas_${uid}_out"
                                 val outLabel = "canvas_${uid}_final"
+
                                 filterParts.add("[$canvasLabel]split=2[$baseLabel][$adjSrcLabel]")
-                                filterParts.add("[$adjSrcLabel]$adjFilter[$adjOutLabel]")
-                                filterParts.add("[$baseLabel][$adjOutLabel]overlay=0:0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
-                                canvasLabel = outLabel
+
+                                var currentChainLabel = adjSrcLabel
+
+                                if (hasAdj) {
+                                    val adjFilter = buildFullAdjustmentFilter(adj.adjustments)
+                                    if (adjFilter.isNotBlank()) {
+                                        val adjStepLabel = "canvas_${uid}_adjstep"
+                                        filterParts.add("[$currentChainLabel]$adjFilter[$adjStepLabel]")
+                                        currentChainLabel = adjStepLabel
+                                    }
+                                }
+
+                                if (hasWheel) {
+                                    val wheelStepLabel = "canvas_${uid}_wheelstep"
+                                    val wheelFilter = buildColorWheelFilter(adj.colorWheel)
+
+                                    filterParts.add(
+                                        "[$currentChainLabel]scale=in_color_matrix=bt709:out_color_matrix=bt709:flags=bilinear,format=rgb24,$wheelFilter,format=rgba,colorchannelmixer=aa=1.0[$wheelStepLabel]"
+                                    )
+                                    currentChainLabel = wheelStepLabel
+                                }
+
+                                if (currentChainLabel != adjSrcLabel) {
+                                    filterParts.add("[$baseLabel][$currentChainLabel]overlay=0:0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
+                                    canvasLabel = outLabel
+                                }
                             }
                         }
                     }
                 }
             }
-            // Final format conversion
+
             filterParts.add("[$canvasLabel]format=yuv420p[outv]")
 
             val audioLabels = mutableListOf<String>()
@@ -2119,7 +2131,6 @@ class FFmpegExecutor(
             )
         }
     }
-
     private fun exportWithTransitions(
         clips: List<EditorClip>,
         allClips: List<EditorClip>,
@@ -2559,32 +2570,15 @@ class FFmpegExecutor(
 
         val adj = clip.adjustments
         if (!adj.isDefault) {
-            // ✅ FIX: Use full adjustment filter (includes LUT for color channels)
             val adjFilter = buildFullAdjustmentFilter(adj)
             if (adjFilter.isNotBlank()) filters.add(adjFilter)
         }
 
         if (clip.colorWheel.hasAnyChange) {
+            filters.add("scale=in_color_matrix=bt709:out_color_matrix=bt709:flags=bilinear")
+            filters.add("format=rgb24")
             filters.add(buildColorWheelFilter(clip.colorWheel))
-        }
-
-        val colorWheelLayers = allClips.filter { wheel ->
-            wheel.isAdjustmentClip &&
-                    wheel.trackIndex > clip.trackIndex &&
-                    wheel.colorWheel.hasAnyChange &&
-                    wheel.timelineEndMs > clip.timelineStartMs &&
-                    wheel.timelineStartMs < clip.timelineEndMs
-        }.sortedBy { it.trackIndex }
-        colorWheelLayers.forEach { wheel ->
-            val startSec =
-                ((wheel.timelineStartMs - clip.timelineStartMs).coerceAtLeast(0L) / 1000.0) / clip.speed.coerceAtLeast(
-                    0.01f
-                )
-            val endSec =
-                ((wheel.timelineEndMs - clip.timelineStartMs).coerceAtLeast(0L) / 1000.0) / clip.speed.coerceAtLeast(
-                    0.01f
-                )
-            filters.add(buildColorWheelFilter(wheel.colorWheel, startSec, endSec))
+            filters.add("format=yuv420p")
         }
 
         val lightLeakLayers = allClips.filter { e ->
@@ -2638,84 +2632,6 @@ class FFmpegExecutor(
         } catch (_: Throwable) {
             ""
         }
-    }
-
-    @Synchronized
-    private fun ensureColorWheelLut(state: ColorWheelState): File {
-        val key = MessageDigest.getInstance("SHA-256")
-            .digest(state.toString().toByteArray(Charsets.UTF_8))
-            .take(12)
-            .joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
-        val previewVersion = if (Build.VERSION.SDK_INT >= 33) "exact" else "matrix"
-        val file = File(context.cacheDir, "color-wheel-v33-$previewVersion-$key.cube")
-        if (file.exists() && file.length() > 0L) return file
-
-        val gridSize = 33
-        val fallbackMatrix = if (Build.VERSION.SDK_INT < 33) {
-            ColorWheelEngine.buildColorMatrix(state)?.array
-        } else null
-        val contents = buildString {
-            appendLine("TITLE \"Moody Color Wheel\"")
-            appendLine("LUT_3D_SIZE $gridSize")
-            appendLine("DOMAIN_MIN 0.0 0.0 0.0")
-            appendLine("DOMAIN_MAX 1.0 1.0 1.0")
-            for (blueIndex in 0 until gridSize) {
-                for (greenIndex in 0 until gridSize) {
-                    for (redIndex in 0 until gridSize) {
-                        val red = redIndex * 255f / (gridSize - 1)
-                        val green = greenIndex * 255f / (gridSize - 1)
-                        val blue = blueIndex * 255f / (gridSize - 1)
-                        val output = if (Build.VERSION.SDK_INT >= 33) {
-                            ColorWheelEngine.applyPixel(red, green, blue, state)
-                        } else {
-                            applyColorWheelMatrix(red, green, blue, fallbackMatrix)
-                        }
-                        append(
-                            """%.6f %.6f %.6f
-""".format(Locale.US, output.first / 255f, output.second / 255f, output.third / 255f)
-                        )
-                    }
-                }
-            }
-        }
-        file.writeText(contents)
-        return file
-    }
-
-    private fun applyColorWheelMatrix(
-        red: Float,
-        green: Float,
-        blue: Float,
-        values: FloatArray?
-    ): Triple<Float, Float, Float> {
-        if (values == null) return Triple(red, green, blue)
-        return Triple(
-            (values[0] * red + values[1] * green + values[2] * blue + values[4]).coerceIn(0f, 255f),
-            (values[5] * red + values[6] * green + values[7] * blue + values[9]).coerceIn(0f, 255f),
-            (values[10] * red + values[11] * green + values[12] * blue + values[14]).coerceIn(
-                0f,
-                255f
-            )
-        )
-    }
-
-    private fun buildColorWheelFilter(
-        state: ColorWheelState,
-        startSec: Double? = null,
-        endSec: Double? = null
-    ): String {
-        val lutPath = ensureColorWheelLut(state).absolutePath
-            .replace("\\", "\\\\")
-            .replace("'", "\\'")
-        val enable = if (startSec != null && endSec != null) {
-            ":enable='between(t,${"%.4f".format(Locale.US, startSec)},${
-                "%.4f".format(
-                    Locale.US,
-                    endSec
-                )
-            })'"
-        } else ""
-        return "lut3d=file='$lutPath':interp=tetrahedral$enable"
     }
 
     private fun applyAudioEffectLayers(
@@ -2830,15 +2746,9 @@ class FFmpegExecutor(
         }
         if (cf.sepia > 0f) {
             val a = (cf.sepia / 100f).coerceIn(0f, 1f)
-            val sr = 0.393f;
-            val sg = 0.769f;
-            val sb = 0.189f
-            val mr = 0.349f;
-            val mg = 0.686f;
-            val mb = 0.168f
-            val hr = 0.272f;
-            val hg = 0.534f;
-            val hb = 0.131f
+            val sr = 0.393f; val sg = 0.769f; val sb = 0.189f
+            val mr = 0.349f; val mg = 0.686f; val mb = 0.168f
+            val hr = 0.272f; val hg = 0.534f; val hb = 0.131f
             val rr = (1f - a) + a * sr
             val rg = a * sg
             val rb = a * sb
@@ -2991,9 +2901,128 @@ class FFmpegExecutor(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  ✅ LUT GENERATOR FOR ADJUSTMENTS (Exact match to Preview)
-    // ═══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
+    //  COLOR WHEEL LUT — exactly ONE copy
+    // ═══════════════════════════════════════════════════════════════
+
+    @Synchronized
+    private fun ensureColorWheelLut(state: ColorWheelState): File {
+        val key = MessageDigest.getInstance("SHA-256")
+            .digest(state.toString().toByteArray(Charsets.UTF_8))
+            .take(12)
+            .joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
+
+        val file = File(context.cacheDir, "color-wheel-v10-exact-$key.cube")
+        if (file.exists() && file.length() > 0L) {
+            Log.e("CW_LUT", "♻️ Reusing existing LUT: ${file.name} (${file.length()} bytes)")
+            return file
+        }
+
+        val gridSize = 33
+        val contents = buildString {
+            appendLine("TITLE \"Moody Color Wheel\"")
+            appendLine("LUT_3D_SIZE $gridSize")
+            appendLine("DOMAIN_MIN 0.0 0.0 0.0")
+            appendLine("DOMAIN_MAX 1.0 1.0 1.0")
+            for (blueIndex in 0 until gridSize) {
+                for (greenIndex in 0 until gridSize) {
+                    for (redIndex in 0 until gridSize) {
+                        val red = redIndex * 255f / (gridSize - 1)
+                        val green = greenIndex * 255f / (gridSize - 1)
+                        val blue = blueIndex * 255f / (gridSize - 1)
+                        val output = ColorWheelEngine.applyPixel(red, green, blue, state)
+                        append("""%.6f %.6f %.6f
+""".format(Locale.US, output.first / 255f, output.second / 255f, output.third / 255f))
+                    }
+                }
+            }
+        }
+
+        try {
+            file.writeText(contents)
+            Log.e(
+                "CW_LUT",
+                "✅ Generated LUT: ${file.absolutePath} (${file.length()} bytes)"
+            )
+        } catch (t: Throwable) {
+            Log.e("CW_LUT", "❌ Failed to write LUT file", t)
+        }
+
+        return file
+    }
+
+    private fun buildColorWheelFilter(
+        state: ColorWheelState,
+        startSec: Double? = null,
+        endSec: Double? = null
+    ): String {
+        // ═══════════════════════════════════════════════════════════
+        //  PRIMARY: Try LUT (exact match with preview)
+        // ═══════════════════════════════════════════════════════════
+        try {
+            val lutFile = ensureColorWheelLut(state)
+            if (lutFile.exists() && lutFile.length() > 10000L) {
+                // Use absolute path WITHOUT quotes (avoid parser issues)
+                // Escape colons since : is FFmpeg filter option separator
+                val safePath = lutFile.absolutePath
+                    .replace("\\", "/")
+                    .replace(":", "\\:")
+                    .replace("'", "\\'")
+                    .replace(" ", "\\ ")
+
+                Log.e(
+                    "CW_EXPORT",
+                    "✅ Using LUT: ${lutFile.absolutePath} (${lutFile.length()} bytes)"
+                )
+
+                val enable = if (startSec != null && endSec != null) {
+                    ":enable='between(t,${"%.4f".format(Locale.US, startSec)},${"%.4f".format(Locale.US, endSec)})'"
+                } else ""
+                return "lut3d=file=$safePath:interp=tetrahedral$enable"
+            } else {
+                Log.e(
+                    "CW_EXPORT",
+                    "⚠️ LUT file invalid: exists=${lutFile.exists()}, size=${
+                        if (lutFile.exists()) lutFile.length() else -1L
+                    }"
+                )
+            }
+        } catch (e: Throwable) {
+            Log.e("CW_EXPORT", "❌ LUT generation failed", e)
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        //  FALLBACK: colorbalance filter (guaranteed to work on all
+        //  FFmpeg builds — close approximation of preview shader math)
+        // ═══════════════════════════════════════════════════════════
+        Log.e("CW_EXPORT", "🔄 Falling back to colorbalance filter")
+
+        val (sR, sG, sB) = ColorWheelEngine.getRGBShift(state.shadows)
+        val (mR, mG, mB) = ColorWheelEngine.getRGBShift(state.midtones)
+        val (hR, hG, hB) = ColorWheelEngine.getRGBShift(state.highlights)
+
+        val loc = Locale.US
+        fun f(v: Float): String = String.format(loc, "%.4f", v)
+
+        val enable = if (startSec != null && endSec != null) {
+            ":enable='between(t,${"%.4f".format(Locale.US, startSec)},${"%.4f".format(Locale.US, endSec)})'"
+        } else ""
+
+        // Scale down by 0.7 to match preview shader intensity
+        // FFmpeg colorbalance is ~30-40% more aggressive than lum-weighted shader
+        val scale = 0.7f
+
+        return "colorbalance=" +
+                "rs=${f(sR * scale)}:gs=${f(sG * scale)}:bs=${f(sB * scale)}:" +
+                "rm=${f(mR * scale)}:gm=${f(mG * scale)}:bm=${f(mB * scale)}:" +
+                "rh=${f(hR * scale)}:gh=${f(hG * scale)}:bh=${f(hB * scale)}:" +
+                "pl=1" +
+                enable
+    }
+    // ═══════════════════════════════════════════════════════════════
+    //  ADJUSTMENT LUT — exactly ONE copy of each function
+    // ═══════════════════════════════════════════════════════════════
+
     private fun buildFullAdjustmentFilter(adj: AdjustmentData): String {
         val parts = mutableListOf<String>()
         val stdFilter = FFmpegFilters.build(adj)
@@ -3006,20 +3035,21 @@ class FFmpegExecutor(
         if (hasColor) {
             val lutPath = ensureAdjustmentLut(adj).absolutePath
                 .replace("\\", "\\\\").replace("'", "\\'")
+            parts.add("format=rgb24")
             parts.add("lut3d=file='$lutPath':interp=tetrahedral")
+            parts.add("format=yuv420p")
         }
         return parts.joinToString(",")
     }
 
     @Synchronized
     private fun ensureAdjustmentLut(adj: AdjustmentData): File {
-        val keyData =
-            "${adj.reds}_${adj.oranges}_${adj.yellows}_${adj.greens}_${adj.cyans}_${adj.blues}_${adj.purples}_${adj.magentas}_${adj.skinTones}"
+        val keyData = "${adj.reds}_${adj.oranges}_${adj.yellows}_${adj.greens}_${adj.cyans}_${adj.blues}_${adj.purples}_${adj.magentas}_${adj.skinTones}"
         val key = MessageDigest.getInstance("SHA-256")
             .digest(keyData.toByteArray(Charsets.UTF_8))
             .take(12).joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
 
-        val file = File(context.cacheDir, "adjustment-hsl-$key.cube")
+        val file = File(context.cacheDir, "adjustment-hsl-v3-$key.cube")
         if (file.exists() && file.length() > 0L) return file
 
         val gridSize = 33
@@ -3035,10 +3065,8 @@ class FFmpegExecutor(
                         val green = greenIndex * 255f / (gridSize - 1)
                         val blue = blueIndex * 255f / (gridSize - 1)
                         val output = applyAdjustmentPixel(red, green, blue, adj)
-                        append(
-                            """%.6f %.6f %.6f
-""".format(Locale.US, output.first / 255f, output.second / 255f, output.third / 255f)
-                        )
+                        append("""%.6f %.6f %.6f
+""".format(Locale.US, output.first / 255f, output.second / 255f, output.third / 255f))
                     }
                 }
             }
@@ -3134,29 +3162,12 @@ class FFmpegExecutor(
         var b2 = 0f
 
         when {
-            h < 60f -> {
-                r2 = c; g2 = x; b2 = 0f
-            }
-
-            h < 120f -> {
-                r2 = x; g2 = c; b2 = 0f
-            }
-
-            h < 180f -> {
-                r2 = 0f; g2 = c; b2 = x
-            }
-
-            h < 240f -> {
-                r2 = 0f; g2 = x; b2 = c
-            }
-
-            h < 300f -> {
-                r2 = x; g2 = 0f; b2 = c
-            }
-
-            else -> {
-                r2 = c; g2 = 0f; b2 = x
-            }
+            h < 60f -> { r2 = c; g2 = x; b2 = 0f }
+            h < 120f -> { r2 = x; g2 = c; b2 = 0f }
+            h < 180f -> { r2 = 0f; g2 = c; b2 = x }
+            h < 240f -> { r2 = 0f; g2 = x; b2 = c }
+            h < 300f -> { r2 = x; g2 = 0f; b2 = c }
+            else -> { r2 = c; g2 = 0f; b2 = x }
         }
 
         return Triple(

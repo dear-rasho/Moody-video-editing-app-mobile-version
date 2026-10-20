@@ -13,11 +13,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -25,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,8 +45,6 @@ import com.moody.moodyvideoeditor.data.ToneValue
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.ColorWheelEngine
 
-// Mirrors js/features/colorWheel.js
-// 3 interactive wheels (Shadows/Midtones/Highlights) + HDR White slider.
 @Composable
 fun ColorWheelPanel(
     state: ColorWheelState,
@@ -52,8 +53,10 @@ fun ColorWheelPanel(
     onRemove: () -> Unit,
     onClose: () -> Unit
 ) {
-    FeaturePanel(title = "🌈 Color Wheels", onClose = onClose) {
+    val currentState by rememberUpdatedState(state)
+    val currentOnStateChanged by rememberUpdatedState(onStateChanged)
 
+    FeaturePanel(title = "🎨 Color Wheels", onClose = onClose) {
         if (!hasClipSelected) {
             EmptyState(
                 icon = "👆",
@@ -63,9 +66,13 @@ fun ColorWheelPanel(
             return@FeaturePanel
         }
 
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-
-            // 3 WHEELS ROW (horizontal scroll)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 280.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -77,16 +84,15 @@ fun ColorWheelPanel(
                         label = ColorWheelState.TONE_LABELS[index],
                         value = state.toneFor(key),
                         onChange = { newVal ->
-                            onStateChanged(state.setTone(key, newVal))
+                            currentOnStateChanged(currentState.setTone(key, newVal))
                         },
                         onReset = {
-                            onStateChanged(state.setTone(key, ToneValue.ZERO))
+                            currentOnStateChanged(currentState.setTone(key, ToneValue.ZERO))
                         }
                     )
                 }
             }
 
-            // HDR WHITE
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -101,7 +107,7 @@ fun ColorWheelPanel(
                 )
                 Slider(
                     value = state.hdrWhite,
-                    onValueChange = { onStateChanged(state.copy(hdrWhite = it)) },
+                    onValueChange = { currentOnStateChanged(currentState.copy(hdrWhite = it)) },
                     valueRange = 0f..200f,
                     modifier = Modifier.weight(1f),
                     colors = SliderDefaults.colors(
@@ -119,7 +125,6 @@ fun ColorWheelPanel(
                 )
             }
 
-            // REMOVE
             if (state.hasAnyChange) {
                 Spacer(Modifier.height(2.dp))
                 Box(
@@ -143,9 +148,6 @@ fun ColorWheelPanel(
     }
 }
 
-
-//  SINGLE WHEEL COLUMN — label + wheel + intensity slider
-
 @Composable
 private fun WheelColumn(
     label: String,
@@ -153,11 +155,12 @@ private fun WheelColumn(
     onChange: (ToneValue) -> Unit,
     onReset: () -> Unit
 ) {
+    val currentValue by rememberUpdatedState(value)
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        // Header
         Row(
             modifier = Modifier.width(130.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -181,13 +184,11 @@ private fun WheelColumn(
             }
         }
 
-        // Interactive Wheel
         InteractiveWheel(
             value = value,
             onChange = onChange
         )
 
-        // Intensity Slider
         Row(
             modifier = Modifier.width(130.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -195,7 +196,7 @@ private fun WheelColumn(
         ) {
             Slider(
                 value = value.intensity,
-                onValueChange = { onChange(value.copy(intensity = it)) },
+                onValueChange = { onChange(currentValue.copy(intensity = it)) },
                 valueRange = 0f..100f,
                 modifier = Modifier.weight(1f),
                 colors = SliderDefaults.colors(
@@ -215,15 +216,12 @@ private fun WheelColumn(
     }
 }
 
-
-//  INTERACTIVE WHEEL — mirrors JS `.cw-wheel` + puck
-
 @Composable
 private fun InteractiveWheel(
     value: ToneValue,
     onChange: (ToneValue) -> Unit
 ) {
-    var wheelSizePx by remember { mutableStateOf(0f) }
+    val currentValue by rememberUpdatedState(value)
 
     Box(
         modifier = Modifier
@@ -237,10 +235,10 @@ private fun InteractiveWheel(
                         val y = (offset.y - center.y) / (size.height / 2f)
                         val (hue, sat) = ColorWheelEngine.positionToHueSat(x, y)
                         onChange(
-                            value.copy(
+                            currentValue.copy(
                                 hue = hue,
                                 saturation = sat,
-                                intensity = if (value.intensity == 0f) 50f else value.intensity
+                                intensity = if (currentValue.intensity == 0f) 50f else currentValue.intensity
                             )
                         )
                     },
@@ -252,10 +250,10 @@ private fun InteractiveWheel(
                         val y = (pos.y - center.y) / (size.height / 2f)
                         val (hue, sat) = ColorWheelEngine.positionToHueSat(x, y)
                         onChange(
-                            value.copy(
+                            currentValue.copy(
                                 hue = hue,
                                 saturation = sat,
-                                intensity = if (value.intensity == 0f) 50f else value.intensity
+                                intensity = if (currentValue.intensity == 0f) 50f else currentValue.intensity
                             )
                         )
                     }
@@ -268,21 +266,19 @@ private fun InteractiveWheel(
                     val y = (offset.y - center.y) / (size.height / 2f)
                     val (hue, sat) = ColorWheelEngine.positionToHueSat(x, y)
                     onChange(
-                        value.copy(
+                        currentValue.copy(
                             hue = hue,
                             saturation = sat,
-                            intensity = if (value.intensity == 0f) 50f else value.intensity
+                            intensity = if (currentValue.intensity == 0f) 50f else currentValue.intensity
                         )
                     )
                 }
             }
     ) {
         Canvas(modifier = Modifier.matchParentSize()) {
-            wheelSizePx = size.width
             val radius = size.minDimension / 2f
             val center = Offset(size.width / 2f, size.height / 2f)
 
-            // 1) Conic gradient (hue ring) via sweep gradient
             val hueColors = listOf(
                 Color.Red, Color.Yellow, Color.Green,
                 Color.Cyan, Color.Blue, Color.Magenta, Color.Red
@@ -290,7 +286,6 @@ private fun InteractiveWheel(
             val sweep = Brush.sweepGradient(colors = hueColors, center = center)
             drawCircle(brush = sweep, radius = radius, center = center)
 
-            // 2) Radial white overlay (center → white, edges → color)
             val radial = Brush.radialGradient(
                 colors = listOf(Color.White, Color.Transparent),
                 center = center,
@@ -298,7 +293,6 @@ private fun InteractiveWheel(
             )
             drawCircle(brush = radial, radius = radius, center = center)
 
-            // 3) Subtle inner shadow ring
             drawCircle(
                 color = Color(0x33000000),
                 radius = radius - 1f,
@@ -306,20 +300,17 @@ private fun InteractiveWheel(
                 style = Stroke(width = 2f)
             )
 
-            // 4) Puck — mirrors JS `.cw-puck`
             val (px, py) = ColorWheelEngine.puckOffset(value.hue, value.saturation)
             val puckX = center.x + px * radius * 0.9f
             val puckY = center.y + py * radius * 0.9f
             val puckR = 9f
 
-            // Outer white ring
             drawCircle(
                 color = Color.White,
                 radius = puckR,
                 center = Offset(puckX, puckY),
                 style = Stroke(width = 3f)
             )
-            // Center dot
             drawCircle(
                 color = Color.White,
                 radius = 2f,

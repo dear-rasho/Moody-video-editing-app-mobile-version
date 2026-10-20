@@ -1,87 +1,17 @@
 package com.moody.moodyvideoeditor.utils
 
-import android.graphics.ColorMatrix
 import com.moody.moodyvideoeditor.data.ColorWheelState
+import com.moody.moodyvideoeditor.data.ToneValue
 import kotlin.math.abs
-import kotlin.math.cos
 import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.sin
-import kotlin.math.sqrt
 
-// Mirrors js/workspace/effectRenderer.js applyColorWheel()
-// RGB ↔ HSL helpers + tone-based color grading math.
 object ColorWheelEngine {
 
-
-    //  RGB ↔ HSL — mirrors effectRenderer.js
-
-    data class Hsl(val h: Float, val s: Float, val l: Float)
-    data class Rgb(val r: Float, val g: Float, val b: Float)
-
-    fun rgbToHsl(r: Float, g: Float, b: Float): Hsl {
-        val rn = r / 255f
-        val gn = g / 255f
-        val bn = b / 255f
-        val maxC = maxOf(rn, gn, bn)
-        val minC = minOf(rn, gn, bn)
-        var h = 0f
-        var s = 0f
-        val l = (maxC + minC) / 2f
-
-        if (maxC != minC) {
-            val d = maxC - minC
-            s = if (l > 0.5f) d / (2f - maxC - minC) else d / (maxC + minC)
-            h = when (maxC) {
-                rn -> ((gn - bn) / d + (if (gn < bn) 6f else 0f)) * 60f
-                gn -> ((bn - rn) / d + 2f) * 60f
-                else -> ((rn - gn) / d + 4f) * 60f
-            }
-        }
-        return Hsl(h, s * 100f, l * 100f)
-    }
-
-    fun hslToRgb(h: Float, s: Float, l: Float): Rgb {
-        var hh = ((h % 360f) + 360f) % 360f
-        val ss = (s.coerceIn(0f, 100f)) / 100f
-        val ll = (l.coerceIn(0f, 100f)) / 100f
-
-        val k = { n: Float -> (n + hh / 30f) % 12f }
-        val a = ss * minOf(ll, 1f - ll)
-        val f = { n: Float ->
-            val kn = k(n)
-            ll - a * maxOf(-1f, minOf(kn - 3f, minOf(9f - kn, 1f)))
-        }
-        return Rgb(
-            (f(0f) * 255f),
-            (f(8f) * 255f),
-            (f(4f) * 255f)
-        )
-    }
-
-
-    //  TONE WEIGHTS — mirrors effectRenderer.js applyColorWheel
-    //  Shadows: weight from luminance (higher at dark)
-    //  Midtones: peak at 0.5
-    //  Highlights: peak at 1.0
-
-    private fun shadowWeight(lum: Float): Float = max(0f, 1f - lum * 2f)
-    private fun midtoneWeight(lum: Float): Float = max(0f, 1f - abs(lum - 0.5f) * 2f)
-    private fun highlightWeight(lum: Float): Float = max(0f, lum * 2f - 1f)
-
-    // Apply color wheel grading to a single pixel.
-    // Returns adjusted RGB.
-    fun applyPixel(
-        rIn: Float,
-        gIn: Float,
-        bIn: Float,
-        state: ColorWheelState
-    ): Triple<Float, Float, Float> {
+    fun applyPixel(rIn: Float, gIn: Float, bIn: Float, state: ColorWheelState): Triple<Float, Float, Float> {
         var r = rIn
         var g = gIn
         var b = bIn
 
-        // 1) HDR White adjustment, weighted toward highlights rather than a full-frame wash.
         val hdr = state.hdrWhite / 100f
         if (hdr != 1f) {
             val inputLum = (0.299f * r + 0.587f * g + 0.114f * b) / 255f
@@ -92,121 +22,99 @@ object ColorWheelEngine {
             b = (b + whiteShift).coerceIn(0f, 255f)
         }
 
-        // 2) Tone weight contribution
         val lum = (0.299f * r + 0.587f * g + 0.114f * b) / 255f
+        val sW = max(0f, 1f - lum * 2f)
+        val mW = max(0f, 1f - abs(lum - 0.5f) * 2f)
+        val hW = max(0f, lum * 2f - 1f)
 
-        var weightSum = 0f
-        var targetHueSum = 0f
-        var targetSatSum = 0f
+        val (sR, sG, sB) = getRGBShift(state.shadows)
+        val (mR, mG, mB) = getRGBShift(state.midtones)
+        val (hR, hG, hB) = getRGBShift(state.highlights)
 
-        if (state.shadows.isActive) {
-            val w = shadowWeight(lum) * (state.shadows.intensity / 100f)
-            if (w > 0f) {
-                targetHueSum += state.shadows.hue * w
-                targetSatSum += state.shadows.saturation * w
-                weightSum += w
-            }
-        }
-        if (state.midtones.isActive) {
-            val w = midtoneWeight(lum) * (state.midtones.intensity / 100f)
-            if (w > 0f) {
-                targetHueSum += state.midtones.hue * w
-                targetSatSum += state.midtones.saturation * w
-                weightSum += w
-            }
-        }
-        if (state.highlights.isActive) {
-            val w = highlightWeight(lum) * (state.highlights.intensity / 100f)
-            if (w > 0f) {
-                targetHueSum += state.highlights.hue * w
-                targetSatSum += state.highlights.saturation * w
-                weightSum += w
-            }
-        }
+        r = (r + (sR * sW + mR * mW + hR * hW) * 255f).coerceIn(0f, 255f)
+        g = (g + (sG * sW + mG * mW + hG * hW) * 255f).coerceIn(0f, 255f)
+        b = (b + (sB * sW + mB * mW + hB * hW) * 255f).coerceIn(0f, 255f)
 
-        if (weightSum > 0.001f) {
-            val avgHue = ((targetHueSum / weightSum) % 360f + 360f) % 360f
-            val avgSat = min(100f, targetSatSum / weightSum)
-            val strength = min(1f, weightSum)
-
-            val hsl = rgbToHsl(r, g, b)
-            val ph = hsl.h
-            val ps = hsl.s
-            val pl = hsl.l
-
-            var hDiff = avgHue - ph
-            while (hDiff > 180f) hDiff -= 360f
-            while (hDiff < -180f) hDiff += 360f
-            val newHue = ph + hDiff * strength * 0.85f
-            val satMul = 1f + (avgSat / 100f) * strength * 0.9f
-            val newSat = min(100f, ps * satMul)
-
-            val rgb = hslToRgb(newHue, newSat, pl)
-            r = rgb.r; g = rgb.g; b = rgb.b
-        }
-
-        return Triple(
-            r.coerceIn(0f, 255f),
-            g.coerceIn(0f, 255f),
-            b.coerceIn(0f, 255f)
-        )
+        return Triple(r, g, b)
     }
 
-    // Whether the wheel should be applied at all.
+    fun getRGBShift(tone: ToneValue): Triple<Float, Float, Float> {
+        if (!tone.isActive) return Triple(0f, 0f, 0f)
+        val intensity = (tone.intensity / 100f).coerceIn(0f, 1f)
+        if (intensity <= 0.01f) return Triple(0f, 0f, 0f)
+
+        val rad = Math.toRadians(tone.hue.toDouble())
+        val sat = (tone.saturation / 100f).coerceIn(0f, 1f)
+
+        val r = (kotlin.math.cos(rad) * 0.5f + 0.5f).toFloat()
+        val g = (kotlin.math.cos(rad - 2.094f) * 0.5f + 0.5f).toFloat()
+        val b = (kotlin.math.cos(rad + 2.094f) * 0.5f + 0.5f).toFloat()
+
+        val rs = ((r - 0.5f) * 2f * sat * intensity * 1.2f).coerceIn(-1f, 1f)
+        val gs = ((g - 0.5f) * 2f * sat * intensity * 1.2f).coerceIn(-1f, 1f)
+        val bs = ((b - 0.5f) * 2f * sat * intensity * 1.2f).coerceIn(-1f, 1f)
+
+        return Triple(rs, gs, bs)
+    }
+
     fun isActive(state: ColorWheelState): Boolean = state.hasAnyChange
 
-    fun buildColorMatrix(state: ColorWheelState): ColorMatrix? {
-        if (!isActive(state)) return null
-
-        val black = applyPixel(0f, 0f, 0f, state)
-        val red = applyPixel(255f, 0f, 0f, state)
-        val green = applyPixel(0f, 255f, 0f, state)
-        val blue = applyPixel(0f, 0f, 255f, state)
-
-        fun coefficient(value: Float, origin: Float): Float =
-            (value - origin) / 255f
-
-        return ColorMatrix(
-            floatArrayOf(
-                coefficient(red.first, black.first),
-                coefficient(green.first, black.first),
-                coefficient(blue.first, black.first),
-                0f,
-                black.first,
-                coefficient(red.second, black.second),
-                coefficient(green.second, black.second),
-                coefficient(blue.second, black.second),
-                0f,
-                black.second,
-                coefficient(red.third, black.third),
-                coefficient(green.third, black.third),
-                coefficient(blue.third, black.third),
-                0f,
-                black.third,
-                0f, 0f, 0f, 1f, 0f
-            )
-        )
-    }
-
-
-    //  PUCK POSITION — for the wheel UI
-    //  Mirrors JS updatePuck()
-
-    // Convert (hue, sat) → normalized (x, y) in [-1, 1] range.
-    // Hue: angle (0..360). Sat: distance (0..1).
     fun puckOffset(hue: Float, saturation: Float): Pair<Float, Float> {
         val angleRad = (hue / 360f) * 2f * Math.PI.toFloat()
         val dist = (saturation / 100f).coerceIn(0f, 1f)
         return Pair(
-            cos(angleRad) * dist,
-            sin(angleRad) * dist
+            kotlin.math.cos(angleRad) * dist,
+            kotlin.math.sin(angleRad) * dist
         )
     }
+    /**
+     * Approximate ColorMatrix fallback for API < 33 (RuntimeShader unavailable).
+     * ⚠️ This is an APPROXIMATION — exact match requires API 33+ with shader.
+     */
+    fun buildColorMatrix(state: ColorWheelState): android.graphics.ColorMatrix? {
+        if (!state.hasAnyChange) return null
+        val cm = android.graphics.ColorMatrix()
 
-    // Convert drag position (x, y) in wheel → (hue, sat).
-    // x, y are in range [-1, 1] relative to wheel center.
+        val (sR, sG, sB) = getRGBShift(state.shadows)
+        val (mR, mG, mB) = getRGBShift(state.midtones)
+        val (hR, hG, hB) = getRGBShift(state.highlights)
+
+        // Weighted average of all tone shifts
+        val avgR = (sR + mR + hR) / 3f
+        val avgG = (sG + mG + hG) / 3f
+        val avgB = (sB + mB + hB) / 3f
+
+        cm.postConcat(
+            android.graphics.ColorMatrix(
+                floatArrayOf(
+                    1f, 0f, 0f, 0f, avgR * 255f,
+                    0f, 1f, 0f, 0f, avgG * 255f,
+                    0f, 0f, 1f, 0f, avgB * 255f,
+                    0f, 0f, 0f, 1f, 0f
+                )
+            )
+        )
+
+        // HDR approximation (highlight-weighted)
+        val hdr = state.hdrWhite / 100f
+        if (hdr != 1f) {
+            val offset = (hdr - 1f) * 127f * 0.45f
+            cm.postConcat(
+                android.graphics.ColorMatrix(
+                    floatArrayOf(
+                        1f, 0f, 0f, 0f, offset,
+                        0f, 1f, 0f, 0f, offset,
+                        0f, 0f, 1f, 0f, offset,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+            )
+        }
+
+        return cm
+    }
     fun positionToHueSat(x: Float, y: Float): Pair<Float, Float> {
-        val dist = sqrt(x * x + y * y).coerceIn(0f, 1f)
+        val dist = kotlin.math.sqrt(x * x + y * y).coerceIn(0f, 1f)
         val sat = dist * 100f
         var angle = Math.toDegrees(kotlin.math.atan2(y.toDouble(), x.toDouble())).toFloat()
         if (angle < 0f) angle += 360f
