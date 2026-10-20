@@ -787,19 +787,14 @@ fun EditorScreen(
                     openTextEditor = false
                 }
             )
-
             "animations" -> AnimationsPanel(
-                currentAnimation = selected?.textState?.animation ?: "none",
-                currentDuration = selected?.textState?.animationDuration ?: 0.6f,
+                currentAnimation = viewModel.getSelectedAnimation(),
+                currentDuration = viewModel.getSelectedAnimationDuration(),
                 hasTextClipSelected = selected?.isTextClip == true ||
+                        selected?.isStickerClip == true ||
                         state.multiSelectedIds.isNotEmpty(),
-                onAnimationSelected = { viewModel.setTextAnimation(it) },
-                onDurationChanged = {
-                    val st = viewModel.getSelectedTextState()
-                    viewModel.updateSelectedText(
-                        st.copy(animationDuration = it)
-                    )
-                },
+                onAnimationSelected = { viewModel.setSelectedAnimation(it) },
+                onDurationChanged = { viewModel.setSelectedAnimationDuration(it) },
                 onPreview = { exoPlayer.seekTo(0) },
                 onClose = { activePanel = null }
             )

@@ -3585,9 +3585,13 @@ private fun InteractiveTextOverlay(
 
     var isDragging by remember { mutableStateOf(false) }
 
-    val rawFrame = com.moody.moodyvideoeditor.utils.AnimationsEngine.computeFrame(
-        textState.animation, progress, localTimeSec
-    )
+    val rawFrame = try {
+        com.moody.moodyvideoeditor.utils.AnimationsEngine.computeFrame(
+            textState.animation, progress, localTimeSec // ✅ Yahan textState aayega
+        )
+    } catch (_: Throwable) {
+        com.moody.moodyvideoeditor.utils.AnimationsEngine.Frame()
+    }
     val frame = if (isDragging) {
         rawFrame.copy(translateX = 0f, translateY = 0f)
     } else rawFrame
@@ -3736,7 +3740,7 @@ private fun InteractiveTextOverlay(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         if (down.isConsumed) return@awaitEachGesture
 
-                        isDragging = true
+                        isDragging = true // <-- YEH ADD KARO
                         onGroupGestureStart()
 
                         val baseX = currentSampled.x
@@ -3745,10 +3749,14 @@ private fun InteractiveTextOverlay(
                         val baseRot = currentSampled.rotation
                         val baseFrame = currentFrame
 
-                        var accumPanX = 0f; var accumPanY = 0f
-                        var accumZoom = 1f; var accumRot = 0f
-                        var lastDist = 0f; var lastAngle = 0f
-                        var hasMultiGesture = false; var hasMoved = false
+                        var accumPanX = 0f;
+                        var accumPanY = 0f
+                        var accumZoom = 1f;
+                        var accumRot = 0f
+                        var lastDist = 0f;
+                        var lastAngle = 0f
+                        var hasMultiGesture = false;
+                        var hasMoved = false
 
                         if (!isSelected && !isMulti) onSelect()
 
@@ -3763,21 +3771,29 @@ private fun InteractiveTextOverlay(
                                 if (pressed.size == 1) {
                                     val ch = pressed.first()
                                     val pan = ch.position - ch.previousPosition
-                                    val rotation = Math.toRadians((baseRot + baseFrame.rotationZ).toDouble())
+                                    val rotation =
+                                        Math.toRadians((baseRot + baseFrame.rotationZ).toDouble())
                                     val scaleX = (baseScale / 100f) * baseFrame.scaleX
                                     val scaleY = (baseScale / 100f) * baseFrame.scaleY
-                                    accumPanX += (pan.x * scaleX * kotlin.math.cos(rotation) - pan.y * scaleY * kotlin.math.sin(rotation)).toFloat()
-                                    accumPanY += (pan.x * scaleX * kotlin.math.sin(rotation) + pan.y * scaleY * kotlin.math.cos(rotation)).toFloat()
-                                    if (kotlin.math.abs(accumPanX) > 5f || kotlin.math.abs(accumPanY) > 5f) hasMoved = true
+                                    accumPanX += (pan.x * scaleX * kotlin.math.cos(rotation) - pan.y * scaleY * kotlin.math.sin(
+                                        rotation
+                                    )).toFloat()
+                                    accumPanY += (pan.x * scaleX * kotlin.math.sin(rotation) + pan.y * scaleY * kotlin.math.cos(
+                                        rotation
+                                    )).toFloat()
+                                    if (kotlin.math.abs(accumPanX) > 5f || kotlin.math.abs(accumPanY) > 5f) hasMoved =
+                                        true
                                     ch.consume()
                                 } else if (pressed.size >= 2) {
-                                    val c1 = pressed[0]; val c2 = pressed[1]
+                                    val c1 = pressed[0];
+                                    val c2 = pressed[1]
                                     val d = c1.position - c2.position
                                     val dist = kotlin.math.sqrt(d.x * d.x + d.y * d.y)
                                     val angle = kotlin.math.atan2(d.y, d.x)
                                     if (hasMultiGesture && lastDist > 1f) {
                                         accumZoom *= dist / lastDist
-                                        accumRot += Math.toDegrees(normalizeAngle(angle - lastAngle).toDouble()).toFloat()
+                                        accumRot += Math.toDegrees(normalizeAngle(angle - lastAngle).toDouble())
+                                            .toFloat()
                                     }
                                     lastDist = dist; lastAngle = angle; hasMultiGesture = true
                                     c1.consume(); c2.consume(); hasMoved = true
@@ -3802,6 +3818,7 @@ private fun InteractiveTextOverlay(
                         }
                         if (!hasMoved && !isMulti) onSelect()
                         onGroupGestureEnd()
+                        isDragging = false // <-- YEH ADD KARO
                     }
                 },
             contentAlignment = Alignment.Center
@@ -3957,11 +3974,10 @@ private fun InteractiveTextOverlay(
 // ═══════════════════════════════════════════════════════════════
 //  INTERACTIVE STICKER OVERLAY
 // ═══════════════════════════════════════════════════════════════
-
 @Composable
 private fun InteractiveStickerOverlay(
     clip: EditorClip,
-    stickerState: com.moody.moodyvideoeditor.data.StickerState,
+    stickerState: com.moody.moodyvideoeditor.data.StickerState, // <-- Yahan stickerState define hota hai
     canvasW: Float, canvasH: Float,
     currentPosMs: Long,
     isSelected: Boolean, isMulti: Boolean = false,
@@ -3979,19 +3995,26 @@ private fun InteractiveStickerOverlay(
     val localTimeSec = ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
     val sampled = TransformApplier.resolveLive(clip, localTimeSec)
 
-    // ✅ ONLY ONE DECLARATION HERE
     val clampedX = sampled.x.coerceIn(0f, 100f)
     val clampedY = sampled.y.coerceIn(0f, 100f)
 
+    var isDragging by remember { mutableStateOf(false) }
+
     val animDur = stickerState.animationDuration.coerceAtLeast(0.1f)
     val progress = (localTimeSec / animDur).coerceIn(0f, 1f)
-    val frame = try {
+
+    // Yahan stickerState.animation use ho raha hai, jo upar parameter mein defined hai
+    val rawFrame = try {
         com.moody.moodyvideoeditor.utils.AnimationsEngine.computeFrame(
             stickerState.animation, progress, localTimeSec
         )
     } catch (_: Throwable) {
         com.moody.moodyvideoeditor.utils.AnimationsEngine.Frame()
     }
+
+    val frame = if (isDragging) {
+        rawFrame.copy(translateX = 0f, translateY = 0f)
+    } else rawFrame
 
     var stickerSize by remember { mutableStateOf(IntSize.Zero) }
 
@@ -4027,7 +4050,6 @@ private fun InteractiveStickerOverlay(
         Box(
             modifier = Modifier
                 .graphicsLayer {
-                    // ✅ USE THE CLAMPED VALUES HERE
                     val posTx = (clampedX - 50f) / 100f * refPx
                     val posTy = (clampedY - 50f) / 100f * refPx
                     translationX = posTx + frame.translateX
@@ -4053,6 +4075,7 @@ private fun InteractiveStickerOverlay(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         if (down.isConsumed) return@awaitEachGesture
 
+                        isDragging = true
                         onGroupGestureStart()
 
                         val baseX = currentClampedX
@@ -4107,7 +4130,6 @@ private fun InteractiveStickerOverlay(
                                 val rawX = baseX + accumPanX / canvasWpx * 100f
                                 val rawY = baseY + accumPanY / canvasHpx * 100f
 
-                                // ✅ FIX: Clamp during drag
                                 val cx = rawX.coerceIn(0f, 100f)
                                 val cy = rawY.coerceIn(0f, 100f)
 
@@ -4124,6 +4146,7 @@ private fun InteractiveStickerOverlay(
                         }
                         if (!hasMoved && !isMulti) onSelect()
                         onGroupGestureEnd()
+                        isDragging = false
                     }
                 },
             contentAlignment = Alignment.Center
@@ -4139,7 +4162,6 @@ private fun InteractiveStickerOverlay(
             Box(
                 modifier = Modifier
                     .graphicsLayer {
-                        // ✅ USE THE CLAMPED VALUES HERE
                         val posTx = (clampedX - 50f) / 100f * refPx
                         val posTy = (clampedY - 50f) / 100f * refPx
                         translationX = posTx + frame.translateX

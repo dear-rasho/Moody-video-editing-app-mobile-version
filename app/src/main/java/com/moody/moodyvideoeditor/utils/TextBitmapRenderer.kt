@@ -521,11 +521,9 @@ object TextBitmapRenderer {
 
         val sampled = TransformApplier.resolveLive(clip, localTimeSec)
         val baseSize = 48f * (minOf(W, H).toFloat() / REFERENCE_WIDTH_PX)
-        val combinedScale = (sampled.scale / 100f) * frame.scaleX
-        val fontSize = baseSize * combinedScale
 
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = fontSize
+            textSize = baseSize
             textAlign = Paint.Align.CENTER
             typeface = Typeface.DEFAULT
             color = Color.WHITE
@@ -535,7 +533,7 @@ object TextBitmapRenderer {
         val cx = W / 2f + (sampled.x.coerceIn(0f, 100f) - 50f) / 100f * minDim
         val cy = H / 2f + (sampled.y.coerceIn(0f, 100f) - 50f) / 100f * minDim
         val fm = paint.fontMetrics
-        val baseline = cy - (fm.ascent + fm.descent) / 2f
+        val baseline = -(fm.ascent + fm.descent) / 2f
 
         val alphaTotal = (ss.opacity / 100f * frame.alpha).coerceIn(0f, 1f)
         val alphaInt = (alphaTotal * 255).toInt().coerceIn(0, 255)
@@ -546,10 +544,27 @@ object TextBitmapRenderer {
             paint.maskFilter = BlurMaskFilter(frame.blurRadiusPx.coerceIn(0.5f, 40f), BlurMaskFilter.Blur.NORMAL)
         }
 
+        // 3D Flip Approximation (jaisa text mein hota hai)
+        val flipScaleY = if (frame.rotationX != 0f) {
+            kotlin.math.abs(kotlin.math.cos(Math.toRadians(frame.rotationX.toDouble()))).toFloat().coerceAtLeast(0.05f)
+        } else 1f
+
+        val flipScaleX = if (frame.rotationY != 0f) {
+            kotlin.math.abs(kotlin.math.cos(Math.toRadians(frame.rotationY.toDouble()))).toFloat().coerceAtLeast(0.05f)
+        } else 1f
+
         canvas.save()
+        // Apply Translation (Animation + User Position)
         canvas.translate(cx + frame.translateX, cy + frame.translateY)
+        // Apply Rotation (Animation + User Rotation)
         canvas.rotate(sampled.rotation + frame.rotationZ)
-        canvas.drawText(ss.emoji, 0f, baseline - cy, paint)
+        // Apply Scale (X, Y independently) + Flip
+        canvas.scale(
+            (sampled.scale / 100f) * frame.scaleX * flipScaleX,
+            (sampled.scale / 100f) * frame.scaleY * flipScaleY
+        )
+
+        canvas.drawText(ss.emoji, 0f, baseline, paint)
         canvas.restore()
     }
 

@@ -1834,7 +1834,47 @@ class EditorViewModel : ViewModel() {
         _state.update { it.copy(clips = list, selectedClipId = null) }
         updateHistoryFlags()
     }
+    fun getSelectedAnimation(): String {
+        val sel = _state.value.selectedClip ?: return "none"
+        return when {
+            sel.isTextClip -> sel.textState?.animation ?: "none"
+            sel.isStickerClip -> sel.stickerState?.animation ?: "none"
+            else -> "none"
+        }
+    }
 
+    fun getSelectedAnimationDuration(): Float {
+        val sel = _state.value.selectedClip ?: return 0.6f
+        return when {
+            sel.isTextClip -> sel.textState?.animationDuration ?: 0.6f
+            sel.isStickerClip -> sel.stickerState?.animationDuration ?: 0.6f
+            else -> 0.6f
+        }
+    }
+
+    fun setSelectedAnimation(animation: String) {
+        forEachSelectedClip { clip ->
+            when {
+                clip.isTextClip && clip.textState != null ->
+                    clip.copy(textState = clip.textState.copy(animation = animation))
+                clip.isStickerClip && clip.stickerState != null ->
+                    clip.copy(stickerState = clip.stickerState.copy(animation = animation))
+                else -> clip
+            }
+        }
+    }
+
+    fun setSelectedAnimationDuration(duration: Float) {
+        forEachSelectedClip { clip ->
+            when {
+                clip.isTextClip && clip.textState != null ->
+                    clip.copy(textState = clip.textState.copy(animationDuration = duration))
+                clip.isStickerClip && clip.stickerState != null ->
+                    clip.copy(stickerState = clip.stickerState.copy(animationDuration = duration))
+                else -> clip
+            }
+        }
+    }
     fun setTextAnimation(animation: String) {
         forEachSelectedClip { clip ->
             if (clip.isTextClip && clip.textState != null) {
