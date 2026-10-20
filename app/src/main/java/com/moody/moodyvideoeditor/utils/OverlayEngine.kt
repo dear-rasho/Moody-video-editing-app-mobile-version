@@ -1,5 +1,5 @@
 package com.moody.moodyvideoeditor.utils
-import androidx.compose.ui.graphics.drawscope.withTransform
+
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -88,7 +88,7 @@ object OverlayEngine {
             // Atmosphere
             "fog" -> drawFog(scope, W, H, t, effectiveI, color)
             "smoke" -> drawSmoke(scope, W, H, t, effectiveI)
-            "haze" -> drawHaze(scope, W, H, effectiveI, color)
+            "haze" -> drawHaze(scope, W, H, t, effectiveI, color)
             "mist" -> drawMist(scope, W, H, t, effectiveI, color)
 
             // Noise
@@ -96,7 +96,7 @@ object OverlayEngine {
             "filmGrain" -> drawNoise(scope, W, H, t, effectiveI * 0.6f, blackOnly = false)
             "blackNoise" -> drawNoise(scope, W, H, t, effectiveI, blackOnly = true)
             "whiteNoise" -> drawWhiteNoise(scope, W, H, t, effectiveI)
-            "scanlines" -> drawScanlines(scope, W, H, effectiveI)
+            "scanlines" -> drawScanlines(scope, W, H, t, effectiveI)
             "staticTV" -> drawStaticTV(scope, W, H, t, effectiveI)
 
             // Light
@@ -124,16 +124,16 @@ object OverlayEngine {
             "edgeGlow" -> drawEdgeGlow(scope, W, H, effectiveI, color)
 
             // Misc
-            "vignette" -> drawVignette(scope, W, H, effectiveI)
+            "vignette" -> drawVignette(scope, W, H, t, effectiveI)
             "blackBars" -> drawBlackBars(scope, W, H, effectiveI)
             "vhsLines" -> drawVhsLines(scope, W, H, t, effectiveI)
             "glitchBars" -> drawGlitchBars(scope, W, H, t, effectiveI)
         }
     }
 
-// ═══════════════════════════════════════════════════════════════
-//  PARTICLE HELPERS
-// ═══════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
+    //  PARTICLE HELPERS
+    // ═══════════════════════════════════════════════════════════════
 
     private fun DrawScope.drawParticle(
         shape: String,
@@ -173,8 +173,7 @@ object OverlayEngine {
                 val outerR = radius
                 val innerR = radius * 0.5f
                 for (i in 0 until spikes * 2) {
-                    val angle = (i * Math.PI / spikes).toFloat() -
-                            (Math.PI / 2f).toFloat()
+                    val angle = (i * Math.PI / spikes).toFloat() - (Math.PI / 2f).toFloat()
                     val r = if (i % 2 == 0) outerR else innerR
                     val x = center.x + kotlin.math.cos(angle) * r
                     val y = center.y + kotlin.math.sin(angle) * r
@@ -242,13 +241,9 @@ object OverlayEngine {
             val y = (c * H + time * (60f + a * 40f) + i * 13f) % H
             val mixed = if (i % 2 == 0) color else color2
             scope.drawParticle(
-                shape = shape,
-                center = Offset(x, y),
-                radius = particleSize,
+                shape = shape, center = Offset(x, y), radius = particleSize,
                 color = mixed.copy(alpha = (0.55f + a * 0.4f).coerceIn(0f, 1f)),
-                glowEnabled = glowOn,
-                glowRadius = glowRad,
-                glowColor = glowCol
+                glowEnabled = glowOn, glowRadius = glowRad, glowColor = glowCol
             )
         }
     }
@@ -270,13 +265,9 @@ object OverlayEngine {
             val size = (0.6f + c * 1.4f) * sizeMul
             val mixed = if (i % 2 == 0) color else color2
             scope.drawParticle(
-                shape = shape,
-                center = Offset(x, y),
-                radius = size,
+                shape = shape, center = Offset(x, y), radius = size,
                 color = mixed.copy(alpha = (0.35f + c * 0.5f).coerceIn(0f, 1f)),
-                glowEnabled = glowOn,
-                glowRadius = glowRad,
-                glowColor = glowCol
+                glowEnabled = glowOn, glowRadius = glowRad, glowColor = glowCol
             )
         }
     }
@@ -297,13 +288,9 @@ object OverlayEngine {
             if (y < -20f) continue
             val size = (1f + a * 2f) * sizeMul
             scope.drawParticle(
-                shape = shape,
-                center = Offset(x, y),
-                radius = size,
+                shape = shape, center = Offset(x, y), radius = size,
                 color = color.copy(alpha = (0.6f + b * 0.4f).coerceIn(0f, 1f)),
-                glowEnabled = glowOn,
-                glowRadius = glowRad,
-                glowColor = glowCol
+                glowEnabled = glowOn, glowRadius = glowRad, glowColor = glowCol
             )
         }
     }
@@ -323,13 +310,9 @@ object OverlayEngine {
             val size = (1f + b * 2f) * sizeMul
             val col = if (a > 0.5f) Color(0xFFFF6B1A) else Color(0xFFFFCC00)
             scope.drawParticle(
-                shape = shape,
-                center = Offset(x, y),
-                radius = size,
+                shape = shape, center = Offset(x, y), radius = size,
                 color = col.copy(alpha = (0.5f + a * 0.4f).coerceIn(0f, 1f)),
-                glowEnabled = glowOn,
-                glowRadius = glowRad,
-                glowColor = glowCol
+                glowEnabled = glowOn, glowRadius = glowRad, glowColor = glowCol
             )
         }
     }
@@ -344,21 +327,14 @@ object OverlayEngine {
             val a = hash((i + 1300).toDouble()).toFloat()
             val b = hash((i + 1400).toDouble()).toFloat()
             val c = hash((i + 1500).toDouble()).toFloat()
-            val twinkle = 0.5f +
-                    abs(sin((time * 3f + i * 0.7f).toDouble()).toFloat()) * 0.5f
+            val twinkle = 0.5f + abs(sin((time * 3f + i * 0.7f).toDouble()).toFloat()) * 0.5f
             val x = a * W
             val y = b * H
             val size = (0.5f + c * 1.5f) * sizeMul
             scope.drawParticle(
-                shape = shape,
-                center = Offset(x, y),
-                radius = size,
-                color = color.copy(
-                    alpha = (twinkle * (0.4f + c * 0.6f)).coerceIn(0f, 1f)
-                ),
-                glowEnabled = glowOn,
-                glowRadius = glowRad,
-                glowColor = glowCol
+                shape = shape, center = Offset(x, y), radius = size,
+                color = color.copy(alpha = (twinkle * (0.4f + c * 0.6f)).coerceIn(0f, 1f)),
+                glowEnabled = glowOn, glowRadius = glowRad, glowColor = glowCol
             )
         }
     }
@@ -382,15 +358,10 @@ object OverlayEngine {
             val b = (baseCol.blue * 255f).toInt()
             scope.drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color(r, g, b, 140),
-                        Color(r, g, b, 0)
-                    ),
-                    center = Offset(x, y),
-                    radius = size
+                    colors = listOf(Color(r, g, b, 140), Color(r, g, b, 0)),
+                    center = Offset(x, y), radius = size
                 ),
-                radius = size,
-                center = Offset(x, y)
+                radius = size, center = Offset(x, y)
             )
         }
     }
@@ -410,19 +381,15 @@ object OverlayEngine {
             val x = (a * W + drift + W) % W
             val y = (b * H + driftY + H) % H
             val size = (2f + c * 3f) * sizeMul
-            val pulse = 0.4f +
-                    abs(sin((time * 4f + i).toDouble()).toFloat()) * 0.6f
+            val pulse = 0.4f + abs(sin((time * 4f + i).toDouble()).toFloat()) * 0.6f
             scope.drawParticle(
-                shape = "circle",
-                center = Offset(x, y),
-                radius = size,
+                shape = "circle", center = Offset(x, y), radius = size,
                 color = color.copy(alpha = pulse * 0.9f),
-                glowEnabled = glowOn,
-                glowRadius = glowRad,
-                glowColor = glowCol
+                glowEnabled = glowOn, glowRadius = glowRad, glowColor = glowCol
             )
         }
     }
+
     //  ATMOSPHERE
 
     private fun drawFog(scope: DrawScope, W: Float, H: Float, time: Float, I: Float, color: Color) {
@@ -439,15 +406,10 @@ object OverlayEngine {
             val size = 200f + c * 300f
             scope.drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color(red = r, green = g, blue = b, alpha = a1),
-                        Color(red = r, green = g, blue = b, alpha = 0)
-                    ),
-                    center = Offset(drift, y),
-                    radius = size
+                    colors = listOf(Color(red = r, green = g, blue = b, alpha = a1), Color(red = r, green = g, blue = b, alpha = 0)),
+                    center = Offset(drift, y), radius = size
                 ),
-                radius = size,
-                center = Offset(drift, y)
+                radius = size, center = Offset(drift, y)
             )
         }
     }
@@ -462,70 +424,49 @@ object OverlayEngine {
             val size = 120f + a * 200f
             scope.drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color(red = 200, green = 200, blue = 210, alpha = a1),
-                        Color(red = 200, green = 200, blue = 210, alpha = 0)
-                    ),
-                    center = Offset(drift, y),
-                    radius = size
+                    colors = listOf(Color(red = 200, green = 200, blue = 210, alpha = a1), Color(red = 200, green = 200, blue = 210, alpha = 0)),
+                    center = Offset(drift, y), radius = size
                 ),
-                radius = size,
-                center = Offset(drift, y)
+                radius = size, center = Offset(drift, y)
             )
         }
     }
 
-    private fun drawHaze(scope: DrawScope, W: Float, H: Float, I: Float, color: Color) {
+    private fun drawHaze(scope: DrawScope, W: Float, H: Float, time: Float, I: Float, color: Color) {
+        val breath = (sin(time * 1.5f) * 0.15f + 0.85f).toFloat()
+        val alphaF = (0.35f * I * breath).coerceIn(0f, 1f)
         scope.drawRect(
-            color = color.copy(alpha = (0.35f * I).coerceIn(0f, 1f)),
-            topLeft = Offset.Zero,
-            size = Size(W, H)
+            color = color.copy(alpha = alphaF),
+            topLeft = Offset.Zero, size = Size(W, H)
         )
     }
 
     private fun drawMist(
-        scope: DrawScope,
-        W: Float,
-        H: Float,
-        time: Float,
-        I: Float,
-        color: Color
+        scope: DrawScope, W: Float, H: Float, time: Float, I: Float, color: Color
     ) {
         val r = fI(color.red * 255f)
         val g = fI(color.green * 255f)
         val b = fI(color.blue * 255f)
         val a1 = fI(76f * I)
-        for (i in 0 until 5) {
+        for (i in 0 until 6) {
             val a = hash((i + 3500).toDouble()).toFloat()
-            val drift = (time * (8f + a * 10f) + i * 300f) % (W + 400f) - 200f
+            val driftX = (time * (15f + a * 20f) + i * 300f) % (W + 400f) - 200f
+            val driftY = sin((time * 1.5f + i).toDouble()).toFloat() * 40f
             val size = 250f + a * 200f
-            val y = H * 0.7f
+            val y = H * 0.7f + driftY
             scope.drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color(red = r, green = g, blue = b, alpha = a1),
-                        Color(red = r, green = g, blue = b, alpha = 0)
-                    ),
-                    center = Offset(drift, y),
-                    radius = size
+                    colors = listOf(Color(red = r, green = g, blue = b, alpha = a1), Color(red = r, green = g, blue = b, alpha = 0)),
+                    center = Offset(driftX, y), radius = size
                 ),
-                radius = size,
-                center = Offset(drift, y)
+                radius = size, center = Offset(driftX, y)
             )
         }
     }
 
-
     //  NOISE / TEXTURE
 
-    private fun drawNoise(
-        scope: DrawScope,
-        W: Float,
-        H: Float,
-        time: Float,
-        I: Float,
-        blackOnly: Boolean
-    ) {
+    private fun drawNoise(scope: DrawScope, W: Float, H: Float, time: Float, I: Float, blackOnly: Boolean) {
         val seed = (time * 24f).toInt()
         val step = 3f
         val alphaI = fI(140f * I)
@@ -538,8 +479,7 @@ object OverlayEngine {
                     val v = if (blackOnly) 0 else fI((n * 255).toFloat())
                     scope.drawRect(
                         color = Color(red = v, green = v, blue = v, alpha = alphaI),
-                        topLeft = Offset(x, y),
-                        size = Size(step, step)
+                        topLeft = Offset(x, y), size = Size(step, step)
                     )
                 }
                 x += step
@@ -558,22 +498,23 @@ object OverlayEngine {
             val size = 1f + hash((i + seed).toDouble()).toFloat() * 3f
             scope.drawRect(
                 color = Color.White.copy(alpha = alphaF),
-                topLeft = Offset(x, y),
-                size = Size(size, size)
+                topLeft = Offset(x, y), size = Size(size, size)
             )
         }
     }
 
-    private fun drawScanlines(scope: DrawScope, W: Float, H: Float, I: Float) {
+    private fun drawScanlines(scope: DrawScope, W: Float, H: Float, time: Float, I: Float) {
         val alphaF = (0.28f * I).coerceIn(0f, 1f)
-        var y = 0f
+        val scrollSpeed = 40f
+        val spacing = 4f
+        val offset = (time * scrollSpeed) % spacing
+        var y = -spacing + offset
         while (y < H) {
             scope.drawRect(
                 color = Color.Black.copy(alpha = alphaF),
-                topLeft = Offset(0f, y),
-                size = Size(W, 1.5f)
+                topLeft = Offset(0f, y), size = Size(W, 1.5f)
             )
-            y += 4f
+            y += spacing
         }
     }
 
@@ -591,12 +532,10 @@ object OverlayEngine {
             val v = fI((hash((i + seed * 3.1).toDouble()) * 255).toFloat())
             scope.drawRect(
                 color = Color(red = v, green = v, blue = v, alpha = alphaI),
-                topLeft = Offset(x, y),
-                size = Size(3f, 3f)
+                topLeft = Offset(x, y), size = Size(3f, 3f)
             )
         }
     }
-
 
     //  LIGHT
 
@@ -607,16 +546,10 @@ object OverlayEngine {
         val a2 = (64f * I).toInt().coerceIn(0, 255) / 255f
         scope.drawCircle(
             brush = Brush.radialGradient(
-                colors = listOf(
-                    Color(red = 1f, green = 0.63f, blue = 0.31f, alpha = a1),
-                    Color(red = 1f, green = 0.31f, blue = 0.59f, alpha = a2),
-                    Color(red = 1f, green = 0f, blue = 0.39f, alpha = 0f)
-                ),
-                center = Offset(x, H * 0.3f),
-                radius = size
+                colors = listOf(Color(red = 1f, green = 0.63f, blue = 0.31f, alpha = a1), Color(red = 1f, green = 0.31f, blue = 0.59f, alpha = a2), Color(red = 1f, green = 0f, blue = 0.39f, alpha = 0f)),
+                center = Offset(x, H * 0.3f), radius = size
             ),
-            radius = size,
-            center = Offset(x, H * 0.3f)
+            radius = size, center = Offset(x, H * 0.3f)
         )
     }
 
@@ -626,16 +559,10 @@ object OverlayEngine {
         val size = maxOf(W, H) * 0.6f
         scope.drawCircle(
             brush = Brush.radialGradient(
-                colors = listOf(
-                    Color.White.copy(alpha = (0.8f * I).coerceIn(0f, 1f)),
-                    Color(0.7f, 0.86f, 1f, (0.4f * I).coerceIn(0f, 1f)),
-                    Color(0.7f, 0.86f, 1f, 0f)
-                ),
-                center = Offset(cx, cy),
-                radius = size
+                colors = listOf(Color.White.copy(alpha = (0.8f * I).coerceIn(0f, 1f)), Color(0.7f, 0.86f, 1f, (0.4f * I).coerceIn(0f, 1f)), Color(0.7f, 0.86f, 1f, 0f)),
+                center = Offset(cx, cy), radius = size
             ),
-            radius = size,
-            center = Offset(cx, cy)
+            radius = size, center = Offset(cx, cy)
         )
     }
 
@@ -647,15 +574,10 @@ object OverlayEngine {
         val a1 = fI(152f * I)
         scope.drawCircle(
             brush = Brush.radialGradient(
-                colors = listOf(
-                    Color(red = r, green = g, blue = b, alpha = a1),
-                    Color(red = r, green = g, blue = b, alpha = 0)
-                ),
-                center = Offset(W / 2f, H / 2f),
-                radius = size
+                colors = listOf(Color(red = r, green = g, blue = b, alpha = a1), Color(red = r, green = g, blue = b, alpha = 0)),
+                center = Offset(W / 2f, H / 2f), radius = size
             ),
-            radius = size,
-            center = Offset(W / 2f, H / 2f)
+            radius = size, center = Offset(W / 2f, H / 2f)
         )
     }
 
@@ -678,10 +600,7 @@ object OverlayEngine {
                 lineTo(cx + dx - perpX, cy + dy - perpY)
                 close()
             }
-            scope.drawPath(
-                path = path,
-                color = Color(red = 255, green = 220, blue = 150, alpha = alphaI)
-            )
+            scope.drawPath(path = path, color = Color(red = 255, green = 220, blue = 150, alpha = alphaI))
         }
     }
 
@@ -691,8 +610,7 @@ object OverlayEngine {
         val rays = 12
         val alphaI = fI(71f * I)
         for (i in 0 until rays) {
-            val a = (i.toFloat() / rays) * Math.PI.toFloat() * 0.8f -
-                    Math.PI.toFloat() * 0.4f + Math.PI.toFloat() * 0.5f
+            val a = (i.toFloat() / rays) * Math.PI.toFloat() * 0.8f - Math.PI.toFloat() * 0.4f + Math.PI.toFloat() * 0.5f
             val dx = cos(a)
             val dy = sin(a)
             val path = Path().apply {
@@ -702,60 +620,30 @@ object OverlayEngine {
                 lineTo(srcX + dx * 60f - 60f, srcY + dy * H * 1.5f)
                 close()
             }
-            scope.drawPath(
-                path = path,
-                color = Color(red = 255, green = 240, blue = 200, alpha = alphaI)
-            )
+            scope.drawPath(path = path, color = Color(red = 255, green = 240, blue = 200, alpha = alphaI))
         }
     }
 
-
     //  FLICKER
 
-    private fun drawFlicker(
-        scope: DrawScope,
-        W: Float,
-        H: Float,
-        time: Float,
-        I: Float,
-        amount: Float,
-        hz: Float
-    ) {
+    private fun drawFlicker(scope: DrawScope, W: Float, H: Float, time: Float, I: Float, amount: Float, hz: Float) {
         val phase = sin((time * hz * Math.PI * 2f).toDouble()).toFloat()
         val v = if (phase > 0f) amount * I else 0f
         if (v <= 0.01f) return
-        scope.drawRect(
-            color = Color.Black.copy(alpha = v.coerceAtMost(1f)),
-            topLeft = Offset.Zero, size = Size(W, H)
-        )
+        scope.drawRect(color = Color.Black.copy(alpha = v.coerceAtMost(1f)), topLeft = Offset.Zero, size = Size(W, H))
     }
 
     private fun drawPulseFx(scope: DrawScope, W: Float, H: Float, time: Float, I: Float) {
         val v = abs(sin((time * 2.5f).toDouble()).toFloat()) * 0.4f * I
-        scope.drawRect(
-            color = Color.White.copy(alpha = v.coerceAtMost(1f)),
-            topLeft = Offset.Zero, size = Size(W, H)
-        )
+        scope.drawRect(color = Color.White.copy(alpha = v.coerceAtMost(1f)), topLeft = Offset.Zero, size = Size(W, H))
     }
-
 
     //  TONE WASH
 
-    private fun drawToneWash(
-        scope: DrawScope,
-        W: Float,
-        H: Float,
-        I: Float,
-        colorLong: Long,
-        baseAlpha: Float
-    ) {
+    private fun drawToneWash(scope: DrawScope, W: Float, H: Float, I: Float, colorLong: Long, baseAlpha: Float) {
         val c = Color(colorLong.toULong().toLong())
-        scope.drawRect(
-            color = c.copy(alpha = (baseAlpha * I).coerceIn(0f, 1f)),
-            topLeft = Offset.Zero, size = Size(W, H)
-        )
+        scope.drawRect(color = c.copy(alpha = (baseAlpha * I).coerceIn(0f, 1f)), topLeft = Offset.Zero, size = Size(W, H))
     }
-
 
     //  EDGES
 
@@ -763,34 +651,27 @@ object OverlayEngine {
         val a = (I * 0.4f).coerceIn(0f, 1f)
         scope.drawRect(
             color = Color.White.copy(alpha = a * 0.15f),
-            topLeft = Offset(0f, 0f),
-            size = Size(W, H),
-            style = Stroke(width = 2f)
+            topLeft = Offset(0f, 0f), size = Size(W, H), style = Stroke(width = 2f)
         )
     }
 
     private fun drawEdgeGlow(scope: DrawScope, W: Float, H: Float, I: Float, color: Color) {
         scope.drawRect(
             color = color.copy(alpha = (I * 0.45f).coerceIn(0f, 1f)),
-            topLeft = Offset(0f, 0f),
-            size = Size(W, H),
-            style = Stroke(width = 3f)
+            topLeft = Offset(0f, 0f), size = Size(W, H), style = Stroke(width = 3f)
         )
     }
 
-
     //  MISC
 
-    private fun drawVignette(scope: DrawScope, W: Float, H: Float, I: Float) {
-        val radius = maxOf(W, H) * 0.75f
+    private fun drawVignette(scope: DrawScope, W: Float, H: Float, time: Float, I: Float) {
+        val breath = (sin(time * 1.2f) * 0.1f + 0.9f).toFloat()
+        val radius = maxOf(W, H) * 0.75f * breath
+        val alpha = (0.85f * I).coerceIn(0f, 1f)
         scope.drawRect(
             brush = Brush.radialGradient(
-                colors = listOf(
-                    Color.Transparent,
-                    Color.Black.copy(alpha = (0.85f * I).coerceIn(0f, 1f))
-                ),
-                center = Offset(W / 2f, H / 2f),
-                radius = radius
+                colors = listOf(Color.Transparent, Color.Black.copy(alpha = alpha)),
+                center = Offset(W / 2f, H / 2f), radius = radius
             ),
             topLeft = Offset.Zero, size = Size(W, H)
         )
@@ -807,18 +688,12 @@ object OverlayEngine {
         for (i in 0 until 6) {
             val y = (hash((i + (time * 3f).toInt()).toDouble()) * H).toFloat()
             scope.drawRect(
-                color = if (i % 2 == 0) Color.White.copy(alpha = alphaF)
-                else Color.Black.copy(alpha = alphaF),
-                topLeft = Offset(0f, y),
-                size = Size(W, 2f + I * 4f)
+                color = if (i % 2 == 0) Color.White.copy(alpha = alphaF) else Color.Black.copy(alpha = alphaF),
+                topLeft = Offset(0f, y), size = Size(W, 2f + I * 4f)
             )
         }
         val tearY = (time * 300f) % H
-        scope.drawRect(
-            color = Color.White.copy(alpha = (0.4f * I).coerceIn(0f, 1f)),
-            topLeft = Offset(0f, tearY),
-            size = Size(W, 3f)
-        )
+        scope.drawRect(color = Color.White.copy(alpha = (0.4f * I).coerceIn(0f, 1f)), topLeft = Offset(0f, tearY), size = Size(W, 3f))
     }
 
     private fun drawGlitchBars(scope: DrawScope, W: Float, H: Float, time: Float, I: Float) {
@@ -829,8 +704,7 @@ object OverlayEngine {
             val off = (hash((i + seed * 7.3).toDouble()).toFloat() - 0.5f) * 60f * I
             scope.drawRect(
                 color = Color.White.copy(alpha = (0.45f * I).coerceIn(0f, 1f)),
-                topLeft = Offset(off, y),
-                size = Size(W, h)
+                topLeft = Offset(off, y), size = Size(W, h)
             )
         }
     }

@@ -568,6 +568,7 @@ fun PreviewCanvas(
                     !it.isAdjustmentClip &&
                     !it.isEffectClip &&
                     !it.isFilterLayerClip &&
+                    !it.isOverlayClip && // <--- YEH LINE ADD KARO
                     currentPosMs >= it.timelineStartMs &&
                     currentPosMs < it.timelineEndMs &&
                     !hiddenVisualTracks.contains(it.trackIndex)
