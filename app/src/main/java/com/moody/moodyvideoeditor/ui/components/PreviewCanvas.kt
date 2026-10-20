@@ -593,10 +593,56 @@ fun PreviewCanvas(
     val outgoingClip = remember(activeTransitionClip?.id, clips) {
         activeTransitionClip?.let { tc ->
             clips.filter {
-                it.isVisualClip && it.trackIndex == tc.trackIndex &&
-                        it.id != tc.id &&
-                        it.timelineEndMs <= tc.timelineStartMs + 50L
+                it.isVisualClip && it.id != tc.id && it.timelineEndMs <= tc.timelineStartMs + 50L
             }.maxByOrNull { it.timelineEndMs }
+        }
+    }
+    // 🆕 Transition Bitmap Preload Cache — taaki preview mein blink na ho
+    val transitionBitmapCache = remember { mutableMapOf<String, Bitmap>() }
+
+    LaunchedEffect(clips.map { it.id + "_" + (it.transition?.key ?: "none") }) {
+        withContext(Dispatchers.IO) {
+            clips.forEach { rightClip ->
+                if (rightClip.transition?.isActive == true) {
+                    val outgoing = clips.filter {
+                        it.isVisualClip && it.id != rightClip.id &&
+                                it.timelineEndMs <= rightClip.timelineStartMs + 50L
+                    }.maxByOrNull { it.timelineEndMs }
+
+                    if (outgoing != null && !transitionBitmapCache.containsKey(outgoing.id)) {
+                        val bmp = try {
+                            if (outgoing.type.startsWith("image/")) {
+                                context.contentResolver.openInputStream(outgoing.uri)?.use { stream ->
+                                    android.graphics.BitmapFactory.decodeStream(stream)
+                                }
+                            } else {
+                                val retriever = android.media.MediaMetadataRetriever()
+                                retriever.setDataSource(context, outgoing.uri)
+                                val timeUs = (outgoing.sourceEndMs - 33).coerceAtLeast(0L) * 1000L
+                                val b = retriever.getFrameAtTime(
+                                    timeUs, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+                                )
+                                retriever.release()
+                                b
+                            }
+                        } catch (e: Exception) {
+                            null
+                        }
+                        if (bmp != null) {
+                            withContext(Dispatchers.Main) {
+                                transitionBitmapCache[outgoing.id] = bmp
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            transitionBitmapCache.values.forEach { if (!it.isRecycled) it.recycle() }
+            transitionBitmapCache.clear()
         }
     }
 
@@ -608,9 +654,9 @@ fun PreviewCanvas(
         val bmp = withContext(Dispatchers.IO) {
             try {
                 if (oc.type.startsWith("image/")) {
-                    android.graphics.BitmapFactory.decodeStream(
-                        context.contentResolver.openInputStream(oc.uri)
-                    )
+                    context.contentResolver.openInputStream(oc.uri)?.use { stream ->
+                        android.graphics.BitmapFactory.decodeStream(stream)
+                    }
                 } else {
                     val retriever = MediaMetadataRetriever()
                     retriever.setDataSource(context, oc.uri)
@@ -2445,16 +2491,26 @@ fun PreviewCanvas(
 
             // ═══════════════════════════════════════════════════════════
             //  TRANSITION — ⚠️ FIXED: duplicate `if` block deleted
-            // ═══════════════════════════════════════════════════════════
-            if (activeTransitionClip != null && outgoingBitmap != null) {
-                val ts = activeTransitionClip.transition!!
-                val progress = (
-                        (currentPosMs - activeTransitionClip.timelineStartMs).toFloat() /
-                                ts.durationMs.coerceAtLeast(1L)
-                        ).coerceIn(0f, 1f)
-                TransitionRenderer.Render(outgoingBitmap!!, ts.key, progress)
-            }
+            if (activeTransitionClip != null) {
+                val oc = outgoingClip
+                if (oc != null) {
+                    val transBitmap = transitionBitmapCache[oc.id] ?: outgoingBitmap
+                    if (transBitmap != null && !transBitmap.isRecycled) {
+                        val ts = activeTransitionClip.transition!!
+                        val progress = (
+                                (currentPosMs - activeTransitionClip.timelineStartMs).toFloat() /
+                                        ts.durationMs.coerceAtLeast(1L)
+                                ).coerceIn(0f, 1f)
 
+                        // 🆕 Dp ko Pixels mein convert karo taaki graphicsLayer se match kare
+                        val density = androidx.compose.ui.platform.LocalDensity.current
+                        val pixelW = with(density) { canvasW.dp.toPx() }
+                        val pixelH = with(density) { canvasH.dp.toPx() }
+
+                        TransitionRenderer.Render(oc, transBitmap, ts.key, progress, pixelW, pixelH)
+                    }
+                }
+            }
             if ((isMaskPenMode || isMaskHandMode) && selectedClip != null) {
                 MaskPenOverlay(
                     maskState = maskToRender ?: MaskState(type = MaskType.CUSTOM),
