@@ -22,9 +22,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -49,8 +52,7 @@ val FEATURES = listOf(
     Feature("stickers", "Stickers", "😀"),
     Feature("overlays", "Overlays", "🎬"),
     Feature("transitions", "Transitions", "⇄"),
-    Feature("chroma", "Chroma", "🟢"),
-    Feature("mask", "Mask", "🎭"),
+    Feature("mask", "Mask", "▣"),
     Feature("brush", "Brush", "🖌️"),
     Feature("visualizer", "Visualizer", "🎵"),
     Feature("transform", "Transform", "🔲"),
@@ -114,8 +116,30 @@ private fun FeatureItem(feature: Feature, onClick: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        // ✅ FIX: Draw an actual Color Wheel for the "wheel" feature
-        if (feature.key == "wheel") {
+        if (feature.key == "mask") {
+            Canvas(modifier = Modifier.size(22.dp)) {
+                val stroke = Stroke(width = 1.8.dp.toPx())
+                drawRoundRect(
+                    color = Color.White,
+                    topLeft = Offset(1.dp.toPx(), 1.dp.toPx()),
+                    size = Size(20.dp.toPx(), 20.dp.toPx()),
+                    cornerRadius = CornerRadius(2.dp.toPx()),
+                    style = stroke
+                )
+                drawCircle(
+                    color = Color.White,
+                    radius = 6.dp.toPx(),
+                    center = Offset(14.dp.toPx(), 8.dp.toPx()),
+                    style = stroke
+                )
+                drawLine(
+                    color = Color.White,
+                    start = Offset(8.dp.toPx(), 14.dp.toPx()),
+                    end = Offset(17.dp.toPx(), 14.dp.toPx()),
+                    strokeWidth = stroke.width
+                )
+            }
+        } else if (feature.key == "wheel") {
             Box(
                 modifier = Modifier.size(22.dp),
                 contentAlignment = Alignment.Center

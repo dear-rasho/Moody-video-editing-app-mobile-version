@@ -2166,6 +2166,6 @@ private fun clipColor(clip: EditorClip): Color = when {
     clip.isEffectClip -> Color(0xFFA855F7)
     clip.isAdjustmentClip -> Color(0xFF06B6D4)
     clip.isOverlayClip -> Color(0xFF3B82F6)
-    clip.isChromaClip -> Color(0xFF22C55E)
+
     else -> Color(0xFF2563EB)
 }

@@ -380,14 +380,14 @@ object TextBitmapRenderer {
                     }
                     if (clip.keyframes.isNotEmpty()) anyAnimated = true
                 }
-                if (clip.mask.keyframes.isNotEmpty()) anyAnimated = true
+                if (clip.mask.hasKeyframes) anyAnimated = true
             }
         }
 
         imageClips.forEach { clip ->
             if (timelineMs >= clip.timelineStartMs && timelineMs < clip.timelineEndMs) {
                 visibleKey.add(clip.id)
-                if (clip.keyframes.isNotEmpty() || clip.mask.keyframes.isNotEmpty()) {
+                if (clip.keyframes.isNotEmpty() || clip.mask.hasKeyframes) {
                     anyAnimated = true
                 }
             }

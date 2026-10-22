@@ -1,7 +1,7 @@
 package com.moody.moodyvideoeditor.utils
 
 import com.moody.moodyvideoeditor.data.BrushType
-import com.moody.moodyvideoeditor.data.ChromaState
+
 import com.moody.moodyvideoeditor.data.EffectLibrary
 import com.moody.moodyvideoeditor.data.FilterState
 import com.moody.moodyvideoeditor.data.RatioLibrary
@@ -744,23 +744,7 @@ object PromptExecutor {
                         }
                     }
 
-                    CmdType.CHROMA -> {
-                        val rest = cmd.key
-                        val hexRegex = Regex("""#([0-9a-fA-F]{6})""")
-                            .find(rest)
-                        val colorLong = hexRegex?.let {
-                            try {
-                                (0xFF000000L) or
-                                        it.groupValues[1].toLong(16)
-                            } catch (_: Exception) {
-                                null
-                            }
-                        } ?: 0xFF00FF00
-                        viewModel.updateSelectedChroma(
-                            ChromaState(keyColor = colorLong)
-                        )
-                        applied.add("chroma $rest")
-                    }
+
 
                     CmdType.AUDIO_FX -> run audioBlock@{
                         val sel = selected

@@ -11,7 +11,6 @@ import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.ReturnCode
 import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.EditorClip
-import com.moody.moodyvideoeditor.data.MaskKeyframe
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -552,20 +551,7 @@ class VideoExporter(
                 val newSourceEnd = (clip.sourceEndMs - sourceRightCut)
                     .coerceAtLeast(newSourceStart + 33L)
                 val newTimelineStart = (clipStart - rangeStart).coerceAtLeast(0L)
-                val trimmedMask = if (leftCut > 0L && clip.mask.keyframes.isNotEmpty()) {
-                    val sampled = MaskEngine.sampleAt(clip.mask, leftCut / 1000f)
-                    val startKeyframe = sampled.toMaskKeyframe(timeMs = 0L)
-                    val remainingKeyframes = clip.mask.keyframes
-                        .filter { it.timeMs > leftCut }
-                        .map { it.copy(timeMs = it.timeMs - leftCut) }
-                    sampled.copy(
-                        keyframes = (listOf(startKeyframe) + remainingKeyframes)
-                            .distinctBy { it.timeMs }
-                            .sortedBy { it.timeMs }
-                    )
-                } else {
-                    clip.mask
-                }
+                val trimmedMask = MaskEngine.trimToTime(clip.mask, leftCut)
                 clip.copy(
                     sourceStartMs = newSourceStart,
                     sourceEndMs = newSourceEnd,
@@ -574,25 +560,6 @@ class VideoExporter(
                 )
             }
     }
-
-    private fun com.moody.moodyvideoeditor.data.MaskState.toMaskKeyframe(
-        timeMs: Long
-    ) = MaskKeyframe(
-        timeMs = timeMs,
-        centerX = centerX,
-        centerY = centerY,
-        radius = radius,
-        width = width,
-        height = height,
-        rotation = rotation,
-        cornerRadius = cornerRadius,
-        scale = scale,
-        positionY = positionY,
-        feather = feather,
-        expansion = expansion,
-        opacity = opacity,
-        customPoints = customPoints
-    )
 
     private suspend fun exportSyntheticFull(
         allClips: List<EditorClip>,

@@ -31,7 +31,7 @@ fun KeyframeMarkerOverlay(
     onSeekToKeyframe: (Float) -> Unit
 ) {
     if (clipWidthPx <= 0f) return
-    if (clip.keyframes.isEmpty()) return
+    if (clip.keyframes.isEmpty() && !clip.mask.hasKeyframes) return
 
     val clipDurMs = clip.durationMs
     if (clipDurMs <= 0L) return
@@ -40,13 +40,22 @@ fun KeyframeMarkerOverlay(
 
     // Collect unique keyframe times (any prop)
     val times = mutableSetOf<Float>()
+// Transform keyframes
     KeyframeLibrary.ANIMATABLE_PROPS.forEach { prop ->
         clip.keyframes[prop]?.forEach { kf -> times.add(kf.time) }
+    }
+// 🆕 Mask property keyframes
+    clip.mask.propertyKeyframes.values.forEach { list ->
+        list.forEach { kf -> times.add(kf.time) }
+    }
+// 🆕 Legacy mask keyframes
+    clip.mask.keyframes.forEach { kf ->
+        times.add(kf.timeMs / 1000f)
     }
     if (times.isEmpty()) return
 
     // Force recompose on keyframe change
-    key(clip.keyframes.hashCode(), clip.id) {
+    key(clip.keyframes.hashCode(), clip.mask.propertyKeyframes.hashCode(), clip.mask.keyframes.hashCode(), clip.id) {
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.CenterStart

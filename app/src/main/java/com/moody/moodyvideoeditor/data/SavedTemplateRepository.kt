@@ -208,7 +208,7 @@ object SavedTemplateRepository {
         c.effectState?.let { put("effectState", effectStateToJson(it)) }
         c.textState?.let { put("textState", textStateToJson(it)) }
         c.stickerState?.let { put("stickerState", stickerStateToJson(it)) }
-        c.chroma?.let { put("chroma", chromaToJson(it)) }
+
         c.freeze?.let { put("freeze", freezeToJson(it)) }
         c.transition?.let { put("transition", transitionToJson(it)) }
         c.ratio?.let { put("ratio", ratioToJson(it)) }
@@ -271,7 +271,7 @@ object SavedTemplateRepository {
             effectState = o.optJSONObject("effectState")?.let { effectStateFromJson(it) },
             textState = o.optJSONObject("textState")?.let { textStateFromJson(it) },
             stickerState = o.optJSONObject("stickerState")?.let { stickerStateFromJson(it) },
-            chroma = o.optJSONObject("chroma")?.let { chromaFromJson(it) },
+
             freeze = o.optJSONObject("freeze")?.let { freezeFromJson(it) },
             transition = o.optJSONObject("transition")?.let { transitionFromJson(it) },
             ratio = o.optJSONObject("ratio")?.let { ratioFromJson(it) },
@@ -470,19 +470,6 @@ object SavedTemplateRepository {
         opacity = o.optDouble("opacity", 100.0).toFloat()
     )
 
-    private fun chromaToJson(c: ChromaState) = JSONObject().apply {
-        put("keyColor", c.keyColor); put("similarity", c.similarity.toDouble())
-        put("smoothness", c.smoothness.toDouble()); put("spill", c.spill.toDouble())
-        put("intensity", c.intensity.toDouble())
-    }
-
-    private fun chromaFromJson(o: JSONObject) = ChromaState(
-        keyColor = o.optLong("keyColor", 0xFF00FF00L),
-        similarity = o.optDouble("similarity", 30.0).toFloat(),
-        smoothness = o.optDouble("smoothness", 20.0).toFloat(),
-        spill = o.optDouble("spill", 50.0).toFloat(),
-        intensity = o.optDouble("intensity", 100.0).toFloat()
-    )
 
     private fun freezeToJson(f: FreezeState) = JSONObject().apply {
         put("durationMs", f.durationMs); put("atTimeMs", f.atTimeMs)
@@ -513,12 +500,12 @@ object SavedTemplateRepository {
 
     private fun maskToJson(m: MaskState) = JSONObject().apply {
         put("type", m.type.name)
-        put("centerX", m.centerX.toDouble()); put("centerY", m.centerY.toDouble())
-        put("rotation", m.rotation.toDouble()); put("feather", m.feather.toDouble())
+        put("positionX", m.positionX.toDouble()); put("positionY", m.positionY.toDouble())
+        put("rotation", m.rotation.toDouble()); put("feather", m.feather.coerceIn(0f, 300f).toDouble())
         put("isInverted", m.isInverted); put("opacity", m.opacity.toDouble())
         put("radius", m.radius.toDouble()); put("width", m.width.toDouble())
-        put("height", m.height.toDouble()); put("cornerRadius", m.cornerRadius.toDouble())
-        put("positionY", m.positionY.toDouble()); put("scale", m.scale.toDouble())
+        put("height", m.height.toDouble()); put("cornerRadius", m.cornerRadius.coerceAtLeast(0f).toDouble())
+        put("linearPosition", m.linearPosition.toDouble()); put("scale", m.scale.toDouble())
         put("customClosed", m.customClosed); put("expansion", m.expansion.toDouble())
         put("strokeColor", m.strokeColor); put("overlayColor", m.overlayColor)
 
@@ -537,6 +524,7 @@ object SavedTemplateRepository {
 
     private fun maskFromJson(o: JSONObject?): MaskState {
         if (o == null) return MaskState()
+        val hasPositionSchema = o.has("positionX")
         val pts = mutableListOf<MaskPoint>()
         val ptsArr = o.optJSONArray("customPoints")
         if (ptsArr != null) {
@@ -556,17 +544,25 @@ object SavedTemplateRepository {
         return MaskState(
             type = try { MaskType.valueOf(o.optString("type", "NONE")) }
             catch (e: Exception) { MaskType.NONE },
-            centerX = o.optDouble("centerX", 0.5).toFloat(),
-            centerY = o.optDouble("centerY", 0.5).toFloat(),
+            positionX = o.optDouble("positionX", o.optDouble("centerX", 0.5)).toFloat(),
+            positionY = if (hasPositionSchema) {
+                o.optDouble("positionY", 0.5).toFloat()
+            } else {
+                o.optDouble("centerY", 0.5).toFloat()
+            },
             rotation = o.optDouble("rotation", 0.0).toFloat(),
-            feather = o.optDouble("feather", 0.0).toFloat(),
+            feather = o.optDouble("feather", 0.0).toFloat().coerceIn(0f, 300f),
             isInverted = o.optBoolean("isInverted", false),
             opacity = o.optDouble("opacity", 100.0).toFloat(),
             radius = o.optDouble("radius", 0.3).toFloat(),
             width = o.optDouble("width", 0.5).toFloat(),
             height = o.optDouble("height", 0.5).toFloat(),
-            cornerRadius = o.optDouble("cornerRadius", 0.0).toFloat(),
-            positionY = o.optDouble("positionY", 0.5).toFloat(),
+            cornerRadius = o.optDouble("cornerRadius", 0.0).toFloat().coerceAtLeast(0f),
+            linearPosition = if (hasPositionSchema) {
+                o.optDouble("linearPosition", 0.5).toFloat()
+            } else {
+                o.optDouble("positionY", 0.5).toFloat()
+            },
             scale = o.optDouble("scale", 1.0).toFloat(),
             customPoints = pts,
             customClosed = o.optBoolean("customClosed", false),

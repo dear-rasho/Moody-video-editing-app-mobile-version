@@ -55,7 +55,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.BeatsState
-import com.moody.moodyvideoeditor.data.ChromaState
+
 import com.moody.moodyvideoeditor.data.ColorWheelState
 import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.OverlayState
@@ -77,7 +77,7 @@ import com.moody.moodyvideoeditor.ui.features.AutoCaptionsPanel
 import com.moody.moodyvideoeditor.ui.features.BeatsPanel
 import com.moody.moodyvideoeditor.ui.features.BlendModePanel
 import com.moody.moodyvideoeditor.ui.features.BrushPanel
-import com.moody.moodyvideoeditor.ui.features.ChromaKeyPanel
+
 import com.moody.moodyvideoeditor.ui.features.ColorMattePanel
 import com.moody.moodyvideoeditor.ui.features.ColorWheelPanel
 import com.moody.moodyvideoeditor.ui.features.CropPanel
@@ -1115,25 +1115,25 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
             }
-
-            "chroma" -> ChromaKeyPanel(
-                state = selected?.chroma ?: ChromaState(),
-                hasClipSelected = true,
-                onStateChanged = { viewModel.updateSelectedChroma(it) },
-                onRemove = { viewModel.removeSelectedChroma() },
-                onClose = { activePanel = null }
-            )
+            "chroma" -> {
+                // Chroma feature removed
+                activePanel = null
+            }
 
             "mask" -> MaskPanel(
-                current = selected?.mask ?: MaskState(),
+                current = viewModel.selectedMaskAtPlayhead(),
                 hasClipSelected = selected != null,
                 hasKeyframeAtPlayhead = viewModel.hasMaskKeyframeAtPlayhead(),
                 isPenMode = isMaskPenMode,
                 isHandMode = isMaskHandMode,
-                onStateChanged = { viewModel.updateMask(it) },
-                onTypeSelected = { viewModel.setMaskType(it) },
-                onAddKeyframe = { viewModel.addMaskKeyframe() },
-                onClearKeyframes = { viewModel.clearMaskKeyframes() },
+                viewModel = viewModel,
+                onTypeSelected = { type ->
+                    viewModel.setMaskType(type)
+                    if (type == com.moody.moodyvideoeditor.data.MaskType.CUSTOM) {
+                        isMaskPenMode = true
+                        isMaskHandMode = false
+                    }
+                },
                 onPenToolToggle = {
                     isMaskPenMode = !isMaskPenMode
                     if (isMaskPenMode) isMaskHandMode = false
@@ -2447,6 +2447,7 @@ fun EditorScreen(
                 .background(Color(0xFF0A0A0A))
         ) {
             PreviewCanvas(
+
                 exoPlayer = exoPlayer,
                 hasVideo = state.clips.any { it.isVisualClip },
                 rotation = state.rotation,
@@ -2524,6 +2525,8 @@ fun EditorScreen(
                 onVisualizerPositionChanged = { clipId: String, x: Float, y: Float ->
                     viewModel.updateSelectedPositionBulk(clipId, x, y)
                 },
+                isPickingChromaColor = state.isPickingChromaColor,
+                onChromaColorPicked = { viewModel.onChromaColorPicked(it) },
                 onVisualizerTransformChanged = { clipId: String, s: Float, r: Float ->
                     viewModel.updateSelectedTransformBulk(clipId, s, r)
                 },

@@ -14,7 +14,6 @@ import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.ColorFilterValues
 import com.moody.moodyvideoeditor.data.ColorWheelState
 import com.moody.moodyvideoeditor.data.EditorClip
-import com.moody.moodyvideoeditor.data.MaskKeyframe
 import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.MotionConfig
 import kotlinx.coroutines.CancellationException
@@ -181,7 +180,7 @@ class FFmpegExecutor(
                 videoFiles to audioFiles
             }
 
-            val maskSequences = renderMaskSequences(clips, targetW, targetH, fps)
+            val maskSequences = renderMaskSequences(clips + matteClips, targetW, targetH, fps)
 
             val lightningClips =
                 allClips.filter { c -> c.isEffectClip && c.effectState?.lightning != null && c.timelineEndMs > 0L && c.timelineStartMs < totalDurationMs }
@@ -346,7 +345,7 @@ class FFmpegExecutor(
                 if (!directory.mkdirs()) throw java.io.IOException("Could not create mask render directory")
                 maskSequenceDirectories.add(directory)
 
-                val hasAnimation = clip.mask.keyframes.isNotEmpty()
+                val hasAnimation = clip.mask.hasKeyframes
                 val frameCount = if (hasAnimation) {
                     ((clip.durationMs.toDouble() * fps) / 1000.0).toLong()
                         .coerceAtMost(Int.MAX_VALUE.toLong()).toInt().coerceAtLeast(1)
@@ -776,14 +775,7 @@ class FFmpegExecutor(
                 val newSourceEnd =
                     (clip.sourceEndMs - (rightCut * speed).toLong()).coerceAtLeast(newSourceStart + 33L)
                 val newTimelineStart = (clipStart - rangeStart).coerceAtLeast(0L)
-                val trimmedMask = if (leftCut > 0L && clip.mask.keyframes.isNotEmpty()) {
-                    val sampled = MaskEngine.sampleAt(clip.mask, leftCut / 1000f)
-                    val startKeyframe = sampled.toMaskKeyframe(timeMs = 0L)
-                    val remainingKeyframes = clip.mask.keyframes.filter { it.timeMs > leftCut }
-                        .map { it.copy(timeMs = it.timeMs - leftCut) }
-                    sampled.copy(keyframes = (listOf(startKeyframe) + remainingKeyframes).distinctBy { it.timeMs }
-                        .sortedBy { it.timeMs })
-                } else clip.mask
+                val trimmedMask = MaskEngine.trimToTime(clip.mask, leftCut)
                 clip.copy(
                     sourceStartMs = newSourceStart,
                     sourceEndMs = newSourceEnd,
@@ -792,24 +784,6 @@ class FFmpegExecutor(
                 )
             }
     }
-
-    private fun com.moody.moodyvideoeditor.data.MaskState.toMaskKeyframe(timeMs: Long) =
-        MaskKeyframe(
-            timeMs,
-            centerX,
-            centerY,
-            radius,
-            width,
-            height,
-            rotation,
-            cornerRadius,
-            scale,
-            positionY,
-            feather,
-            expansion,
-            opacity,
-            customPoints
-        )
 
     private fun createOutputFile(fileName: String, format: String): File {
         val dir = File(context.cacheDir, "MoodyExports")
@@ -1488,8 +1462,18 @@ class FFmpegExecutor(
                         chain.add("setpts=PTS-STARTPTS+${startSec}/TB")
                         filterParts.add("[${item.inputIndex}:v]${chain.joinToString(",")}[$scaledLabel]")
 
+                        val maskIdx = maskInputIndices[matte.id]
+                        val matteLayerLabel = if (maskIdx != null) {
+                            filterParts.add("[$maskIdx:v]format=rgba,alphaextract,format=gray,setpts=PTS-STARTPTS+${startSec}/TB[matte_mask_pts${item.matteIdx}]")
+                            filterParts.add("[$scaledLabel]format=rgba[matte_layer_rgba${item.matteIdx}]")
+                            filterParts.add("[matte_layer_rgba${item.matteIdx}][matte_mask_pts${item.matteIdx}]alphamerge[matte_mask_ready${item.matteIdx}]")
+                            "matte_mask_ready${item.matteIdx}"
+                        } else {
+                            scaledLabel
+                        }
+
                         if (matte.blendMode.lowercase() == "normal" || matte.blendMode.isBlank()) filterParts.add(
-                            "[$canvasLabel][$scaledLabel]overlay=0:0:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]"
+                            "[$canvasLabel][$matteLayerLabel]overlay=0:0:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]"
                         )
                         else {
                             val ffMode = ffmpegBlendName(matte.blendMode.lowercase())
@@ -1499,7 +1483,7 @@ class FFmpegExecutor(
                                 (matte.blendOpacity / 100f).coerceIn(0f, 1f)
                             )
                             filterParts.add("[$canvasLabel]format=rgba[matte_blend_base_${item.matteIdx}]")
-                            filterParts.add("[$scaledLabel]format=rgba[matte_blend_layer_rgba_${item.matteIdx}]")
+                            filterParts.add("[$matteLayerLabel]format=rgba[matte_blend_layer_rgba_${item.matteIdx}]")
                             filterParts.add("[matte_blend_base_${item.matteIdx}][matte_blend_layer_rgba_${item.matteIdx}]blend=all_mode=$ffMode:all_opacity=$blendAlpha:shortest=0[matte_blend_out_${item.matteIdx}]")
                             filterParts.add("[matte_blend_base_${item.matteIdx}][matte_blend_out_${item.matteIdx}]overlay=0:0:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
                         }
@@ -2553,19 +2537,18 @@ class FFmpegExecutor(
                 if (filter.isNotBlank()) filters.add(filter)
             }
 
-        // Chroma
-        clip.chroma?.let {
-            if (it.isActive) {
-                val cf = ChromaEngine.buildFfmpegFilter(it); if (cf.isNotBlank()) filters.add(cf)
-            }
-        }
+        // 🚫 CHROMA — Feature removed
+        // (was: clip.chroma?.let { if (it.isActive) { ... } })
 
         return filters
     }
 
     private fun buildEdgeGlowDrawboxFilter(glow: com.moody.moodyvideoeditor.data.EdgeGlowConfig): String {
         return try {
-            val (r, g, b) = ChromaEngine.toRgb(glow.color)
+            val colorLong = glow.color
+            val r = ((colorLong shr 16) and 0xFF).toInt()
+            val g = ((colorLong shr 8) and 0xFF).toInt()
+            val b = (colorLong and 0xFF).toInt()
             val colorSpec = "${String.format(Locale.US, "0x%02X%02X%02X", r, g, b)}@${
                 String.format(
                     Locale.US,

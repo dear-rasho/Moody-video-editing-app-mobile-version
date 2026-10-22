@@ -48,7 +48,6 @@ data class EditorClip(
     val textState: TextState? = null,
     val stickerState: StickerState? = null,
 
-    val chroma: ChromaState? = null,
     val freeze: FreezeState? = null,
     val transition: TransitionState? = null,
     val ratio: RatioState? = null,
@@ -76,7 +75,7 @@ data class EditorClip(
     val isEffectClip: Boolean get() = type == "effect/plain"
     val isAdjustmentClip: Boolean get() = type == "adjustment/plain"
     val isOverlayClip: Boolean get() = type == "overlay/plain"
-    val isChromaClip: Boolean get() = type == "chroma/plain"
+
     val isBrushClip: Boolean get() = type == "brush/plain"
     val isVisualizerClip: Boolean get() = type == "visualizer/plain"
     val isColorMatteClip: Boolean get() = type == "matte/plain"
@@ -202,7 +201,7 @@ data class EditorState(
 
     // Live preview effect (temporary, not committed)
     val previewEffectState: EffectState? = null,
-
+    val isPickingChromaColor: Boolean = false,
     // 🆕 Live preview for Color Matte (temporary, not committed)
     val previewMatte: PreviewMatteState? = null
 ) {

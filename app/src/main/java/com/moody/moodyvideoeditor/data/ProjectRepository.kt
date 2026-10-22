@@ -5,7 +5,7 @@ import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-
+import com.moody.moodyvideoeditor.data.Keyframe
 // Saves/loads project state to local storage as JSON.
 // No external dependencies — uses org.json (built into Android).
 object ProjectRepository {
@@ -240,8 +240,6 @@ object ProjectRepository {
         val stickerState = c.stickerState
         if (stickerState != null) put("stickerState", stickerStateToJson(stickerState))
 
-        val chroma = c.chroma
-        if (chroma != null) put("chroma", chromaToJson(chroma))
 
         val freeze = c.freeze
         if (freeze != null) put("freeze", freezeToJson(freeze))
@@ -321,7 +319,7 @@ object ProjectRepository {
             effectState = o.optJSONObject("effectState")?.let { effectStateFromJson(it) },
             textState = o.optJSONObject("textState")?.let { textStateFromJson(it) },
             stickerState = o.optJSONObject("stickerState")?.let { stickerStateFromJson(it) },
-            chroma = o.optJSONObject("chroma")?.let { chromaFromJson(it) },
+
             freeze = o.optJSONObject("freeze")?.let { freezeFromJson(it) },
             transition = o.optJSONObject("transition")?.let { transitionFromJson(it) },
             ratio = o.optJSONObject("ratio")?.let { ratioFromJson(it) },
@@ -1030,24 +1028,6 @@ object ProjectRepository {
     )
 
 
-    //  CHROMA
-
-
-    private fun chromaToJson(c: ChromaState) = JSONObject().apply {
-        put("keyColor", c.keyColor)
-        put("similarity", c.similarity.toDouble())
-        put("smoothness", c.smoothness.toDouble())
-        put("spill", c.spill.toDouble())
-        put("intensity", c.intensity.toDouble())
-    }
-
-    private fun chromaFromJson(o: JSONObject): ChromaState = ChromaState(
-        keyColor = o.optLong("keyColor", 0xFF00FF00L),
-        similarity = o.optDouble("similarity", 30.0).toFloat(),
-        smoothness = o.optDouble("smoothness", 20.0).toFloat(),
-        spill = o.optDouble("spill", 50.0).toFloat(),
-        intensity = o.optDouble("intensity", 100.0).toFloat()
-    )
 
 
     //  FREEZE
@@ -1099,17 +1079,17 @@ object ProjectRepository {
 
     private fun maskToJson(m: MaskState) = JSONObject().apply {
         put("type", m.type.name)
-        put("centerX", m.centerX.toDouble())
-        put("centerY", m.centerY.toDouble())
+        put("positionX", m.positionX.toDouble())
+        put("positionY", m.positionY.toDouble())
         put("rotation", m.rotation.toDouble())
-        put("feather", m.feather.toDouble())
+        put("feather", m.feather.coerceIn(0f, 300f).toDouble())
         put("isInverted", m.isInverted)
         put("opacity", m.opacity.toDouble())
         put("radius", m.radius.toDouble())
         put("width", m.width.toDouble())
         put("height", m.height.toDouble())
-        put("cornerRadius", m.cornerRadius.toDouble())
-        put("positionY", m.positionY.toDouble())
+        put("cornerRadius", m.cornerRadius.coerceAtLeast(0f).toDouble())
+        put("linearPosition", m.linearPosition.toDouble())
         put("scale", m.scale.toDouble())
         put("customClosed", m.customClosed)
         put("expansion", m.expansion.toDouble())
@@ -1130,42 +1110,23 @@ object ProjectRepository {
         }
         put("customPoints", ptsArr)
 
-        val kfArr = JSONArray()
-        m.keyframes.forEach { kf ->
-            kfArr.put(JSONObject().apply {
-                put("timeMs", kf.timeMs)
-                put("centerX", kf.centerX.toDouble())
-                put("centerY", kf.centerY.toDouble())
-                put("radius", kf.radius.toDouble())
-                put("width", kf.width.toDouble())
-                put("height", kf.height.toDouble())
-                put("rotation", kf.rotation.toDouble())
-                put("cornerRadius", kf.cornerRadius.toDouble())
-                put("scale", kf.scale.toDouble())
-                put("positionY", kf.positionY.toDouble())
-                put("feather", kf.feather.toDouble())
-                put("expansion", kf.expansion.toDouble())
-                put("opacity", kf.opacity.toDouble())
-                put("ease", kf.ease)
-
-                val kfPts = JSONArray()
-                kf.customPoints.forEach { p ->
-                    kfPts.put(JSONObject().apply {
-                        put("x", p.x.toDouble())
-                        put("y", p.y.toDouble())
-                        put("handleInX", p.handleInX.toDouble())
-                        put("handleInY", p.handleInY.toDouble())
-                        put("handleOutX", p.handleOutX.toDouble())
-                        put("handleOutY", p.handleOutY.toDouble())
-                        put("hasHandles", p.hasHandles)
+        // 🆕 Per-property keyframes
+        val propKfObj = JSONObject()
+        m.propertyKeyframes.forEach { (prop, kfs) ->
+            if (kfs.isNotEmpty()) {
+                val arr = JSONArray()
+                kfs.forEach { kf ->
+                    arr.put(JSONObject().apply {
+                        put("time", kf.time.toDouble())
+                        put("value", kf.value.toDouble())
+                        put("ease", kf.ease)
                     })
                 }
-                put("customPoints", kfPts)
-            })
+                propKfObj.put(prop, arr)
+            }
         }
-        put("keyframes", kfArr)
+        put("propertyKeyframes", propKfObj)
     }
-
     private fun maskFromJson(o: JSONObject?): MaskState {
         if (o == null) return MaskState()
 
@@ -1173,10 +1134,66 @@ object ProjectRepository {
         val ptsArr = o.optJSONArray("customPoints")
         if (ptsArr != null) {
             for (i in 0 until ptsArr.length()) {
-                val p = ptsArr.optJSONObject(i)
-                if (p != null) {
-                    pts.add(
-                        MaskPoint(
+                val p = ptsArr.optJSONObject(i) ?: continue
+                pts.add(MaskPoint(
+                    x = p.optDouble("x", 0.0).toFloat(),
+                    y = p.optDouble("y", 0.0).toFloat(),
+                    handleInX = p.optDouble("handleInX", 0.0).toFloat(),
+                    handleInY = p.optDouble("handleInY", 0.0).toFloat(),
+                    handleOutX = p.optDouble("handleOutX", 0.0).toFloat(),
+                    handleOutY = p.optDouble("handleOutY", 0.0).toFloat(),
+                    hasHandles = p.optBoolean("hasHandles", false)
+                ))
+            }
+        }
+
+        // 🆕 Per-property keyframes
+        val hasPositionSchema = o.has("positionX")
+        val propKfs = mutableMapOf<String, List<Keyframe>>()
+        val propObj = o.optJSONObject("propertyKeyframes")
+        if (propObj != null) {
+            val keys = propObj.keys()
+            while (keys.hasNext()) {
+                val storedProp = keys.next()
+                val prop = when (storedProp) {
+                    "centerX" -> "positionX"
+                    "centerY" -> "positionY"
+                    "positionY" -> if (hasPositionSchema) "positionY" else "linearPosition"
+                    else -> storedProp
+                }
+                val arr = propObj.optJSONArray(storedProp) ?: continue
+                val list = mutableListOf<Keyframe>()
+                for (i in 0 until arr.length()) {
+                    val kf = arr.optJSONObject(i) ?: continue
+                    val value = kf.optDouble("value", 0.0).toFloat()
+                    list.add(Keyframe(
+                        time = kf.optDouble("time", 0.0).toFloat(),
+                        value = when (prop) {
+                            "cornerRadius" -> value.coerceAtLeast(0f)
+                            "feather" -> value.coerceIn(0f, 300f)
+                            else -> value
+                        },
+                        ease = kf.optString("ease", Keyframe.DEFAULT_EASE)
+                    ))
+                }
+                if (list.isNotEmpty()) {
+                    propKfs[prop] = (propKfs[prop].orEmpty() + list).sortedBy { it.time }
+                }
+            }
+        }
+
+        // Legacy snapshot keyframes
+        val snapshotKfs = mutableListOf<MaskKeyframe>()
+        val kfArr = o.optJSONArray("keyframes")
+        if (kfArr != null) {
+            for (i in 0 until kfArr.length()) {
+                val k = kfArr.optJSONObject(i) ?: continue
+                val kfPts = mutableListOf<MaskPoint>()
+                val kpArr = k.optJSONArray("customPoints")
+                if (kpArr != null) {
+                    for (j in 0 until kpArr.length()) {
+                        val p = kpArr.optJSONObject(j) ?: continue
+                        kfPts.add(MaskPoint(
                             x = p.optDouble("x", 0.0).toFloat(),
                             y = p.optDouble("y", 0.0).toFloat(),
                             handleInX = p.optDouble("handleInX", 0.0).toFloat(),
@@ -1184,92 +1201,69 @@ object ProjectRepository {
                             handleOutX = p.optDouble("handleOutX", 0.0).toFloat(),
                             handleOutY = p.optDouble("handleOutY", 0.0).toFloat(),
                             hasHandles = p.optBoolean("hasHandles", false)
-                        )
-                    )
-                }
-            }
-        }
-
-        val kfs = mutableListOf<MaskKeyframe>()
-        val kfArr = o.optJSONArray("keyframes")
-        if (kfArr != null) {
-            for (i in 0 until kfArr.length()) {
-                val k = kfArr.optJSONObject(i)
-                if (k != null) {
-                    val kfPts = mutableListOf<MaskPoint>()
-                    val kpArr = k.optJSONArray("customPoints")
-                    if (kpArr != null) {
-                        for (j in 0 until kpArr.length()) {
-                            val p = kpArr.optJSONObject(j)
-                            if (p != null) {
-                                kfPts.add(
-                                    MaskPoint(
-                                        x = p.optDouble("x", 0.0).toFloat(),
-                                        y = p.optDouble("y", 0.0).toFloat(),
-                                        handleInX = p.optDouble("handleInX", 0.0)
-                                            .toFloat(),
-                                        handleInY = p.optDouble("handleInY", 0.0)
-                                            .toFloat(),
-                                        handleOutX = p.optDouble("handleOutX", 0.0)
-                                            .toFloat(),
-                                        handleOutY = p.optDouble("handleOutY", 0.0)
-                                            .toFloat(),
-                                        hasHandles = p.optBoolean("hasHandles", false)
-                                    )
-                                )
-                            }
-                        }
+                        ))
                     }
-                    kfs.add(
-                        MaskKeyframe(
-                            timeMs = k.optLong("timeMs", 0L),
-                            centerX = k.optDouble("centerX", 0.5).toFloat(),
-                            centerY = k.optDouble("centerY", 0.5).toFloat(),
-                            radius = k.optDouble("radius", 0.3).toFloat(),
-                            width = k.optDouble("width", 0.5).toFloat(),
-                            height = k.optDouble("height", 0.5).toFloat(),
-                            rotation = k.optDouble("rotation", 0.0).toFloat(),
-                            cornerRadius = k.optDouble("cornerRadius", 0.0).toFloat(),
-                            scale = k.optDouble("scale", 1.0).toFloat(),
-                            positionY = k.optDouble("positionY", 0.5).toFloat(),
-                            feather = k.optDouble("feather", 0.0).toFloat(),
-                            expansion = k.optDouble("expansion", 0.0).toFloat(),
-                            opacity = k.optDouble("opacity", 100.0).toFloat(),
-                            customPoints = kfPts,
-                            ease = k.optString("ease", "easeInOut")
-                        )
-                    )
                 }
+                snapshotKfs.add(MaskKeyframe(
+                    timeMs = k.optLong("timeMs", 0L),
+                    positionX = k.optDouble("positionX", k.optDouble("centerX", 0.5)).toFloat(),
+                    positionY = if (k.has("positionX")) {
+                        k.optDouble("positionY", 0.5).toFloat()
+                    } else {
+                        k.optDouble("centerY", 0.5).toFloat()
+                    },
+                    radius = k.optDouble("radius", 0.3).toFloat(),
+                    width = k.optDouble("width", 0.5).toFloat(),
+                    height = k.optDouble("height", 0.5).toFloat(),
+                    rotation = k.optDouble("rotation", 0.0).toFloat(),
+                    cornerRadius = k.optDouble("cornerRadius", 0.0).toFloat().coerceAtLeast(0f),
+                    scale = k.optDouble("scale", 1.0).toFloat(),
+                    linearPosition = if (k.has("positionX")) {
+                        k.optDouble("linearPosition", 0.5).toFloat()
+                    } else {
+                        k.optDouble("positionY", 0.5).toFloat()
+                    },
+                    feather = k.optDouble("feather", 0.0).toFloat().coerceIn(0f, 300f),
+                    expansion = k.optDouble("expansion", 0.0).toFloat(),
+                    opacity = k.optDouble("opacity", 100.0).toFloat(),
+                    customPoints = kfPts,
+                    ease = k.optString("ease", "easeInOut")
+                ))
             }
         }
 
         return MaskState(
-            type = try {
-                MaskType.valueOf(o.optString("type", "NONE"))
-            } catch (e: Exception) {
-                MaskType.NONE
+            type = try { MaskType.valueOf(o.optString("type", "NONE")) }
+            catch (_: Exception) { MaskType.NONE },
+            positionX = o.optDouble("positionX", o.optDouble("centerX", 0.5)).toFloat(),
+            positionY = if (hasPositionSchema) {
+                o.optDouble("positionY", 0.5).toFloat()
+            } else {
+                o.optDouble("centerY", 0.5).toFloat()
             },
-            centerX = o.optDouble("centerX", 0.5).toFloat(),
-            centerY = o.optDouble("centerY", 0.5).toFloat(),
             rotation = o.optDouble("rotation", 0.0).toFloat(),
-            feather = o.optDouble("feather", 0.0).toFloat(),
+            feather = o.optDouble("feather", 0.0).toFloat().coerceIn(0f, 300f),
             isInverted = o.optBoolean("isInverted", false),
             opacity = o.optDouble("opacity", 100.0).toFloat(),
             radius = o.optDouble("radius", 0.3).toFloat(),
             width = o.optDouble("width", 0.5).toFloat(),
             height = o.optDouble("height", 0.5).toFloat(),
-            cornerRadius = o.optDouble("cornerRadius", 0.0).toFloat(),
-            positionY = o.optDouble("positionY", 0.5).toFloat(),
+            cornerRadius = o.optDouble("cornerRadius", 0.0).toFloat().coerceAtLeast(0f),
+            linearPosition = if (hasPositionSchema) {
+                o.optDouble("linearPosition", 0.5).toFloat()
+            } else {
+                o.optDouble("positionY", 0.5).toFloat()
+            },
             scale = o.optDouble("scale", 1.0).toFloat(),
             customPoints = pts,
             customClosed = o.optBoolean("customClosed", false),
             expansion = o.optDouble("expansion", 0.0).toFloat(),
             strokeColor = o.optLong("strokeColor", 0xFF22C55EL),
             overlayColor = o.optLong("overlayColor", 0xFF000000L),
-            keyframes = kfs
+            propertyKeyframes = propKfs,
+            keyframes = snapshotKfs
         )
     }
-
 
     //  BRUSH
 
