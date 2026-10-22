@@ -69,6 +69,9 @@ data class MaskKeyframe(
 ) {
     init {
         require(cornerRadius.isFinite() && cornerRadius >= 0f)
+        require(positionX.isFinite() && positionX in MaskAnimatableProps.positionRange)
+        require(positionY.isFinite() && positionY in MaskAnimatableProps.positionRange)
+        require(feather.isFinite() && feather in 0f..300f)
     }
 }
 
@@ -125,11 +128,18 @@ data class MaskState(
     init {
         require(cornerRadius.isFinite() && cornerRadius >= 0f)
         require(feather.isFinite() && feather in 0f..300f)
+        require(positionX.isFinite() && positionX in MaskAnimatableProps.positionRange)
+        require(positionY.isFinite() && positionY in MaskAnimatableProps.positionRange)
         require(propertyKeyframes["cornerRadius"].orEmpty().all {
             it.value.isFinite() && it.value >= 0f
         })
         require(propertyKeyframes["feather"].orEmpty().all {
             it.value.isFinite() && it.value in 0f..300f
+        })
+        require(listOf("positionX", "positionY").all { prop ->
+            propertyKeyframes[prop].orEmpty().all {
+                it.value.isFinite() && it.value in MaskAnimatableProps.positionRange
+            }
         })
     }
 
@@ -183,8 +193,8 @@ data class MaskState(
     // ─── Write a property by name ───
 
     fun withValue(prop: String, v: Float): MaskState = when (prop) {
-        "positionX" -> copy(positionX = v)
-        "positionY" -> copy(positionY = v)
+        "positionX" -> copy(positionX = v.coerceIn(MaskAnimatableProps.positionRange))
+        "positionY" -> copy(positionY = v.coerceIn(MaskAnimatableProps.positionRange))
         "rotation" -> copy(rotation = v)
         "feather" -> copy(feather = v.coerceIn(0f, 300f))
         "opacity" -> copy(opacity = v)
@@ -205,6 +215,9 @@ data class MaskState(
 // ═══════════════════════════════════════════════════════════════
 
 object MaskAnimatableProps {
+
+    const val POSITION_LIMIT = 10f
+    val positionRange: ClosedFloatingPointRange<Float> = -POSITION_LIMIT..POSITION_LIMIT
 
     // All animatable properties across all mask types
     val ALL = listOf(
@@ -276,7 +289,7 @@ object MaskAnimatableProps {
 
     // Sensible min/max for each property
     fun rangeFor(prop: String): ClosedFloatingPointRange<Float> = when (prop) {
-        "positionX", "positionY" -> -1_000_000f..1_000_000f
+        "positionX", "positionY" -> positionRange
         "rotation" -> -1800f..1800f
         "feather" -> 0f..300f
         "opacity" -> 0f..1000f

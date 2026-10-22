@@ -7,7 +7,6 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Colorize
@@ -19,12 +18,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -129,67 +124,31 @@ fun ChromaKeyPanel(
                 }
             }
 
-            // Quick color presets
-            Text(
-                "Quick Colors",
-                color = Color(0xFF888888),
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(start = 4.dp)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                listOf(
-                    0xFF00FF00L to "Green",
-                    0xFF0000FFL to "Blue",
-                    0xFFFF00FFL to "Magenta",
-                    0xFF00E5FFL to "Cyan"
-                ).forEach { (color, label) ->
-                    val active = state.keyColor == color
+            if (state.isActive) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Box(
                         modifier = Modifier
-                            .weight(1f)
-                            .height(32.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (active) Color(0xFF7C3AED)
-                                else Color(0xFF181818)
-                            )
-                            .clickable {
-                                onStateChanged(state.copy(keyColor = color))
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            label,
-                            color = Color.White,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(state.keyColor))
+                            .border(2.dp, Color.White, RoundedCornerShape(8.dp))
+                    )
+                    Text(
+                        String.format("#%06X", 0xFFFFFFL and state.keyColor),
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
-            }
-
-            // Color Preview + Hex
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(state.keyColor))
-                        .border(2.dp, Color.White, RoundedCornerShape(8.dp))
-                )
-                HexColorInput(
-                    colorLong = state.keyColor,
-                    onColorChanged = { onStateChanged(state.copy(keyColor = it)) },
-                    modifier = Modifier.weight(1f)
+            } else {
+                Text(
+                    "No key color selected",
+                    color = Color(0xFF888888),
+                    fontSize = 11.sp
                 )
             }
 
@@ -226,73 +185,12 @@ fun ChromaKeyPanel(
             }
 
             Text(
-                "💡 Similarity 60-80 me rakho real greenscreen ke liye",
+                "💡 Start around 25-45% similarity, then refine the edge",
                 color = Color(0xFF666666),
                 fontSize = 9.sp,
                 modifier = Modifier.padding(start = 4.dp)
             )
         }
-    }
-}
-
-@Composable
-private fun HexColorInput(
-    colorLong: Long,
-    onColorChanged: (Long) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var textValue by remember {
-        mutableStateOf(String.format("#%06X", 0xFFFFFFL and colorLong))
-    }
-    var isFocused by remember { mutableStateOf(false) }
-
-    LaunchedEffect(colorLong, isFocused) {
-        if (!isFocused) {
-            textValue = String.format("#%06X", 0xFFFFFFL and colorLong)
-        }
-    }
-
-    Box(
-        modifier = modifier
-            .height(40.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF181818))
-            .padding(horizontal = 12.dp),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        BasicTextField(
-            value = textValue,
-            onValueChange = { newText ->
-                val filtered = newText.uppercase()
-                    .filter { it.isLetterOrDigit() || it == '#' }
-                    .take(7)
-                textValue = if (!filtered.startsWith("#")) "#$filtered" else filtered
-                if (textValue.length == 7) {
-                    try {
-                        onColorChanged(
-                            0xFF000000L or textValue.removePrefix("#").toLong(16)
-                        )
-                    } catch (_: Exception) {
-                    }
-                }
-            },
-            singleLine = true,
-            textStyle = TextStyle(
-                color = Color.White,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            ),
-            cursorBrush = SolidColor(Color(0xFF7C3AED)),
-            modifier = Modifier
-                .fillMaxWidth()
-                .onFocusChanged { focusState ->
-                    isFocused = focusState.isFocused
-                    if (!focusState.isFocused) {
-                        textValue = String.format("#%06X", 0xFFFFFFL and colorLong)
-                    }
-                }
-        )
     }
 }
 

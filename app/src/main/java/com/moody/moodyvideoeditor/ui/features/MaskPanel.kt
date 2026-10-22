@@ -659,7 +659,6 @@ private fun MaskPropertyRow(
     currentMask: MaskState,
     viewModel: EditorViewModel
 ) {
-    val isUnboundedPosition = prop == "positionX" || prop == "positionY"
     val kfs = currentMask.propertyKeyframes[prop] ?: emptyList()
     val hasKf = viewModel.hasMaskPropertyKeyframeAtPlayhead(prop)
     val hasAnyKf = kfs.isNotEmpty()
@@ -751,8 +750,7 @@ private fun MaskPropertyRow(
                     filtered.toFloatOrNull()
                         ?.takeIf { it.isFinite() }
                         ?.let { v ->
-                            val accepted = if (isUnboundedPosition) v
-                            else v.coerceIn(range.start, range.endInclusive)
+                            val accepted = v.coerceIn(range.start, range.endInclusive)
                             viewModel.updateMaskProperty(prop, accepted)
                         }
                 },

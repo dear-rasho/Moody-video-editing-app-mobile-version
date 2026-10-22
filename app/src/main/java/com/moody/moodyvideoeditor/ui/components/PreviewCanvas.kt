@@ -96,11 +96,14 @@ import com.moody.moodyvideoeditor.data.ColorMatteMode
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.EffectState
 import com.moody.moodyvideoeditor.data.FilterState
+import com.moody.moodyvideoeditor.data.MaskAnimatableProps
 import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.utils.BlurEngine
 import com.moody.moodyvideoeditor.utils.BrushEngine
+import com.moody.moodyvideoeditor.utils.ChromaKeyPreviewFilter
+import com.moody.moodyvideoeditor.utils.ChromaEngine
 import com.moody.moodyvideoeditor.utils.ColorMatrixBuilder
 import com.moody.moodyvideoeditor.utils.ColorWheelEngine
 import com.moody.moodyvideoeditor.utils.ColorWheelPreviewFilter
@@ -237,13 +240,17 @@ private fun buildClipMatrix(
         cm.postConcat(EffectsEngine.buildColorMatrix(ownFilter))
     }
     if (applyGlobal) cm.postConcat(globalMatrix)
+    val usesChromaFallback = Build.VERSION.SDK_INT < 33 && ChromaEngine.isActive(clip.chroma)
+    if (usesChromaFallback) {
+        cm.postConcat(ChromaEngine.buildApproxMatrix(clip.chroma!!))
+    }
     if (!useExactColorWheels) {
         ColorWheelEngine.buildColorMatrix(clip.colorWheel)?.let(cm::postConcat)
         colorWheelMatrix?.let(cm::postConcat)
     }
     val hasChange = !clip.adjustments.isDefault || clip.filters.hasAnyChange ||
             (clip.colorWheel.hasAnyChange && !useExactColorWheels) || applyGlobal ||
-            (colorWheelMatrix != null && !useExactColorWheels)
+            (colorWheelMatrix != null && !useExactColorWheels) || usesChromaFallback
     return if (hasChange) cm else null
 }
 
@@ -326,7 +333,7 @@ fun PreviewCanvas(
     onMaskMove: (Float, Float) -> Unit = { _, _ -> },
     onMaskStateChanged: (MaskState) -> Unit = {},
     onClosePath: () -> Unit = {},
-    isPickingChromaColor: Boolean = false, // disabled (chroma removed)
+    isPickingChromaColor: Boolean = false,
     onChromaColorPicked: (Long) -> Unit = {},
     onClipSelected: (String) -> Unit = {},
     onDeleteLayer: (String) -> Unit = {},
@@ -343,6 +350,13 @@ fun PreviewCanvas(
     onVisualizerTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> }
 ) {
     val context = LocalContext.current
+    var chromaTextureView by remember { mutableStateOf<TextureView?>(null) }
+    var chromaImageBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    LaunchedEffect(selectedClipId) {
+        chromaTextureView = null
+        chromaImageBitmap = null
+    }
 
     val previewMatteClip: EditorClip? = previewMatte?.let { pm ->
         EditorClip(
@@ -656,9 +670,6 @@ fun PreviewCanvas(
             .background(Color(0xFF0A0A0A)),
         contentAlignment = Alignment.Center
     ) {
-        // 🚫 EYEDROPPER DISABLED — Chroma feature removed
-        // (was: if (isPickingChromaColor) { ... })
-
         val windowW = maxWidth.value
         val windowH = maxHeight.value
         if (windowW <= 0f || windowH <= 0f) return@BoxWithConstraints
@@ -731,11 +742,7 @@ fun PreviewCanvas(
                                 )
                             }
 
-                        // 🚫 Chroma removed — only color wheel effect
-                        val combinedVideoEffect = remember(videoWheelNative) {
-                            videoWheelNative
-                        }
-
+                        val combinedVideoEffect = videoWheelNative
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
                             Box(
                                 modifier = Modifier
@@ -813,6 +820,9 @@ fun PreviewCanvas(
                                         view.rotation = rotation.toFloat()
                                         val sv = view.videoSurfaceView
                                         if (sv is TextureView) {
+                                            if (clip.id == selectedClipId && chromaTextureView !== sv) {
+                                                chromaTextureView = sv
+                                            }
                                             val videoCm = buildClipMatrix(
                                                 clip,
                                                 combinedMatrix,
@@ -831,7 +841,9 @@ fun PreviewCanvas(
                                             } else sv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
                                             if (Build.VERSION.SDK_INT >= 31) {
-                                                view.setRenderEffect(combinedVideoEffect)
+                                                sv.isOpaque = combinedVideoEffect == null &&
+                                                        clip.chroma?.isActive != true
+                                                sv.setRenderEffect(combinedVideoEffect)
                                             }
                                         }
                                     },
@@ -925,6 +937,12 @@ fun PreviewCanvas(
                                 } catch (_: Throwable) {
                                     null
                                 }
+                            }
+                        }
+                        LaunchedEffect(clip.id, selectedClipId, loadedBitmap) {
+                            if (clip.id == selectedClipId) {
+                                chromaImageBitmap = loadedBitmap
+                                chromaTextureView = null
                             }
                         }
                         LaunchedEffect(loadedBitmap, adjKey, needsCpuAdj) {
@@ -1136,9 +1154,27 @@ fun PreviewCanvas(
                                     )
                                 }
 
-                                // 🚫 Chroma removed — only color wheel effect
-                                val combinedImageRenderEffect = remember(imageWheelNative) {
-                                    imageWheelNative?.asComposeRenderEffect()
+                                val imageChromaNative = remember(clip.chroma) {
+                                    if (Build.VERSION.SDK_INT >= 33) {
+                                        ChromaKeyPreviewFilter.createRenderEffect(clip.chroma)
+                                    } else null
+                                }
+                                val combinedImageNative = remember(
+                                    imageWheelNative,
+                                    imageChromaNative
+                                ) {
+                                    when {
+                                        imageWheelNative != null && imageChromaNative != null ->
+                                            android.graphics.RenderEffect.createChainEffect(
+                                                imageWheelNative,
+                                                imageChromaNative
+                                            )
+                                        imageChromaNative != null -> imageChromaNative
+                                        else -> imageWheelNative
+                                    }
+                                }
+                                val combinedImageRenderEffect = remember(combinedImageNative) {
+                                    combinedImageNative?.asComposeRenderEffect()
                                 }
 
                                 if (processedImageBitmap != null) {
@@ -2255,6 +2291,43 @@ fun PreviewCanvas(
                     )
                 }
             }
+
+            if (isPickingChromaColor) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.12f))
+                        .pointerInput(
+                            selectedClipId,
+                            chromaTextureView,
+                            chromaImageBitmap
+                        ) {
+                            detectTapGestures { point ->
+                                val capturedBitmap = chromaTextureView?.getBitmap()
+                                val bitmap = capturedBitmap ?: chromaImageBitmap
+                                if (bitmap != null && bitmap.width > 0 && bitmap.height > 0) {
+                                    val x = (point.x / size.width * bitmap.width)
+                                        .toInt().coerceIn(0, bitmap.width - 1)
+                                    val y = (point.y / size.height * bitmap.height)
+                                        .toInt().coerceIn(0, bitmap.height - 1)
+                                    val rgb = bitmap.getPixel(x, y).toLong() and 0x00FFFFFFL
+                                    onChromaColorPicked(0xFF000000L or rgb)
+                                }
+                                if (capturedBitmap != null && capturedBitmap !== chromaImageBitmap) {
+                                    capturedBitmap.recycle()
+                                }
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Canvas(modifier = Modifier.size(28.dp)) {
+                        val center = Offset(size.width / 2f, size.height / 2f)
+                        drawCircle(Color.White, radius = 8.dp.toPx(), center = center, style = Stroke(2.dp.toPx()))
+                        drawLine(Color.White, Offset(center.x - 14.dp.toPx(), center.y), Offset(center.x + 14.dp.toPx(), center.y), 1.dp.toPx())
+                        drawLine(Color.White, Offset(center.x, center.y - 14.dp.toPx()), Offset(center.x, center.y + 14.dp.toPx()), 1.dp.toPx())
+                    }
+                }
+            }
         }
 
         if (sideBar > 0.5f) {
@@ -3085,8 +3158,8 @@ private fun transformMaskWithOneFinger(
     val pivotY = initial.positionY * height
     return when (handle) {
         MaskGestureHandle.MOVE -> initial.copy(
-            positionX = initial.positionX + dx,
-            positionY = initial.positionY + dy,
+            positionX = (initial.positionX + dx).coerceIn(MaskAnimatableProps.positionRange),
+            positionY = (initial.positionY + dy).coerceIn(MaskAnimatableProps.positionRange),
             customPoints = initial.customPoints.map { it.copy(x = it.x + dx, y = it.y + dy) })
 
         MaskGestureHandle.ROTATE -> {
@@ -3170,8 +3243,8 @@ private fun transformMaskWithTwoFingers(
     val dy = (centroid.y - startCentroid.y) / height.coerceAtLeast(1f)
     val scaleFactor = (distance / startDistance.coerceAtLeast(1f)).coerceIn(0.05f, 20f)
     val angleDelta = Math.toDegrees((angle - startAngle).toDouble()).toFloat()
-    val positionX = initial.positionX + dx;
-    val positionY = initial.positionY + dy
+    val positionX = (initial.positionX + dx).coerceIn(MaskAnimatableProps.positionRange);
+    val positionY = (initial.positionY + dy).coerceIn(MaskAnimatableProps.positionRange)
     val rotatedPoints = initial.customPoints.map { point ->
         val x = initial.positionX + (point.x - initial.positionX) * scaleFactor + dx;
         val y = initial.positionY + (point.y - initial.positionY) * scaleFactor + dy; point.copy(

@@ -243,7 +243,9 @@ class FFmpegExecutor(
             val adjustmentClips = allClips.filter { it.isAdjustmentClip }
 
             val needsLayered = clips.map { it.trackIndex }
-                .distinct().size > 1 || maskSequences.isNotEmpty() || matteClips.isNotEmpty() || allExtraSequences.isNotEmpty() || adjustmentClips.isNotEmpty()
+                .distinct().size > 1 || maskSequences.isNotEmpty() || matteClips.isNotEmpty() ||
+                    allExtraSequences.isNotEmpty() || adjustmentClips.isNotEmpty() ||
+                    clips.any { ChromaEngine.isActive(it.chroma) }
 
             if (needsLayered) {
                 exportLayeredTracks(
@@ -1512,6 +1514,11 @@ class FFmpegExecutor(
                                 positionByOverlay = !isBlendActive
                             )
                         )
+                        clip.chroma?.takeIf { ChromaEngine.isActive(it) }?.let { chroma ->
+                            filters.add("format=yuva420p")
+                            filters.add(ChromaEngine.buildFfmpegFilter(chroma))
+                            filters.add("format=rgba")
+                        }
                         filters.add("fps=$fps"); filters.add("trim=duration=$clipDurationSec"); filters.add(
                             "setpts=PTS-STARTPTS+${startSec}/TB"
                         ); filters.add("format=rgba")
@@ -2536,9 +2543,6 @@ class FFmpegExecutor(
                 )
                 if (filter.isNotBlank()) filters.add(filter)
             }
-
-        // 🚫 CHROMA — Feature removed
-        // (was: clip.chroma?.let { if (it.isActive) { ... } })
 
         return filters
     }

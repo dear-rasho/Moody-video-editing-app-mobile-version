@@ -57,6 +57,7 @@ import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.BeatsState
 
 import com.moody.moodyvideoeditor.data.ColorWheelState
+import com.moody.moodyvideoeditor.data.ChromaState
 import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.data.RatioLibrary
@@ -80,6 +81,7 @@ import com.moody.moodyvideoeditor.ui.features.BrushPanel
 
 import com.moody.moodyvideoeditor.ui.features.ColorMattePanel
 import com.moody.moodyvideoeditor.ui.features.ColorWheelPanel
+import com.moody.moodyvideoeditor.ui.features.ChromaKeyPanel
 import com.moody.moodyvideoeditor.ui.features.CropPanel
 import com.moody.moodyvideoeditor.ui.features.EffectsPanel
 import com.moody.moodyvideoeditor.ui.features.ExportDialog
@@ -102,6 +104,7 @@ import com.moody.moodyvideoeditor.ui.features.VisualizerPanel
 import com.moody.moodyvideoeditor.ui.features.VolumePanel
 import com.moody.moodyvideoeditor.utils.AudioPreviewEngine
 import com.moody.moodyvideoeditor.utils.BrushConfigHolder
+import com.moody.moodyvideoeditor.utils.ChromaKeyGlEffect
 import com.moody.moodyvideoeditor.utils.CropEngine
 import com.moody.moodyvideoeditor.utils.PromptEngine
 import com.moody.moodyvideoeditor.utils.PromptExecutor
@@ -357,9 +360,15 @@ fun EditorScreen(
             .maxByOrNull { it.trackIndex }
 
         if (activeClip == null) {
+            exoPlayer.setVideoEffects(emptyList())
             if (exoPlayer.isPlaying) exoPlayer.pause()
             return@LaunchedEffect
         }
+
+        val chroma = activeClip.chroma?.takeIf { it.isActive }
+        exoPlayer.setVideoEffects(
+            chroma?.let { listOf(ChromaKeyGlEffect(it)) }.orEmpty()
+        )
 
         val currentUri = exoPlayer.currentMediaItem?.localConfiguration?.uri
         if (currentUri != activeClip.uri) {
@@ -1116,8 +1125,18 @@ fun EditorScreen(
                 )
             }
             "chroma" -> {
-                // Chroma feature removed
-                activePanel = null
+                ChromaKeyPanel(
+                    state = selected?.chroma ?: ChromaState(),
+                    hasClipSelected = selected?.isVisualClip == true,
+                    isPickingColor = state.isPickingChromaColor,
+                    onStartPicking = { viewModel.startPickingChromaColor() },
+                    onStateChanged = { viewModel.updateSelectedChroma(it) },
+                    onRemove = { viewModel.removeSelectedChroma() },
+                    onClose = {
+                        viewModel.cancelPickingChromaColor()
+                        activePanel = null
+                    }
+                )
             }
 
             "mask" -> MaskPanel(

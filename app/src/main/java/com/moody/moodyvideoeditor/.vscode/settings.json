@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^cmd\\.exe /c \"D:\\\\MoodyVideoEditor\\\\gradlew\\.bat -p D:\\\\MoodyVideoEditor :app:compileDebugKotlin --console=plain\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

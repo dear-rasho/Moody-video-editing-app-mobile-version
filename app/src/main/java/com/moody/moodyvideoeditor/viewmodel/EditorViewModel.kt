@@ -13,6 +13,7 @@ import com.moody.moodyvideoeditor.data.ColorMatteDefaults
 import com.moody.moodyvideoeditor.data.ColorMatteMode
 import com.moody.moodyvideoeditor.data.ColorMatteStyle
 import com.moody.moodyvideoeditor.data.ColorWheelState
+import com.moody.moodyvideoeditor.data.ChromaState
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.EditorState
 import com.moody.moodyvideoeditor.data.EffectLibrary

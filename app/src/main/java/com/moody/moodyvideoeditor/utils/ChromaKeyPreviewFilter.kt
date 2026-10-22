@@ -23,15 +23,9 @@ object ChromaKeyPreviewFilter {
     @RequiresApi(33)
     fun createRenderEffect(chroma: ChromaState?): RenderEffect? {
         if (chroma == null) {
-            Log.e(TAG, "❌ chroma=null → no effect")
             return null
         }
         if (!chroma.isActive) {
-            Log.e(
-                TAG,
-                "❌ chroma NOT active: keyColor=0x${chroma.keyColor.toString(16)} " +
-                        "intensity=${chroma.intensity}"
-            )
             return null
         }
 
@@ -55,14 +49,6 @@ object ChromaKeyPreviewFilter {
             else -> ((r - g) / (maxC - minC) + 4f) / 6f
         }.let { if (it < 0f) it + 1f else it }
 
-        Log.e(
-            TAG,
-            "✅ Creating chroma effect: key=0x${chroma.keyColor.toString(16)} " +
-                    "U=$keyU V=$keyV H=$hue S=$sat " +
-                    "sim=${chroma.similarity} smooth=${chroma.smoothness} " +
-                    "spill=${chroma.spill} int=${chroma.intensity}"
-        )
-
         return try {
             val shader = RuntimeShader(SHADER)
             shader.setFloatUniform("uKeyR", r)
@@ -73,16 +59,16 @@ object ChromaKeyPreviewFilter {
             shader.setFloatUniform("uKeyH", hue)
             shader.setFloatUniform("uKeyS", sat)
             shader.setFloatUniform(
-                "uSimilarity", (chroma.similarity / 100f).coerceIn(0.01f, 1f)
+                "uSimilarity", (chroma.similarity / 100f).coerceIn(0f, 1f)
             )
             shader.setFloatUniform(
-                "uSmoothness", (chroma.smoothness / 100f).coerceIn(0f, 0.99f)
+                "uSmoothness", (chroma.smoothness / 100f).coerceIn(0f, 1f)
             )
             shader.setFloatUniform("uSpill", (chroma.spill / 100f).coerceIn(0f, 1f))
             shader.setFloatUniform("uIntensity", (chroma.intensity / 100f).coerceIn(0f, 1f))
             RenderEffect.createRuntimeShaderEffect(shader, "input")
         } catch (e: Throwable) {
-            Log.e(TAG, "❌ Failed to create chroma shader", e)
+            Log.e(TAG, "Failed to create chroma shader", e)
             null
         }
     }
@@ -134,8 +120,8 @@ object ChromaKeyPreviewFilter {
             // Combined distance
             float dist = chromaDist * 1.6 + hueDist * 0.4;
 
-            float threshold = mix(0.04, 0.55, uSimilarity);
-            float soft = mix(0.008, 0.22, uSmoothness);
+            float threshold = mix(0.01, 0.28, uSimilarity);
+            float soft = mix(0.002, 0.08, uSmoothness);
 
             float alpha = smoothstep(threshold - soft, threshold + soft, dist);
             alpha = mix(1.0, alpha, uIntensity);

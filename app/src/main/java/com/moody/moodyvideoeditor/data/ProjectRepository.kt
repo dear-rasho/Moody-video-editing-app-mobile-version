@@ -251,6 +251,7 @@ object ProjectRepository {
         if (ratio != null) put("ratio", ratioToJson(ratio))
 
         put("mask", maskToJson(c.mask))
+        c.chroma?.let { put("chroma", chromaToJson(it)) }
         put("brush", brushToJson(c.brush))
         put("matteStyle", matteStyleToJson(c.matteStyle))
 
@@ -324,6 +325,7 @@ object ProjectRepository {
             transition = o.optJSONObject("transition")?.let { transitionFromJson(it) },
             ratio = o.optJSONObject("ratio")?.let { ratioFromJson(it) },
             mask = maskFromJson(o.optJSONObject("mask")),
+            chroma = chromaFromJson(o.optJSONObject("chroma")),
             brush = brushFromJson(o.optJSONObject("brush")),
             matteStyle = matteStyleFromJson(o.optJSONObject("matteStyle")),
             visualizer = o.optJSONObject("visualizer")?.let { visualizerFromJson(it) },
@@ -1073,6 +1075,24 @@ object ProjectRepository {
         h = o.optInt("h", 9)
     )
 
+    private fun chromaToJson(state: ChromaState) = JSONObject().apply {
+        put("keyColor", state.keyColor)
+        put("similarity", state.similarity.toDouble())
+        put("smoothness", state.smoothness.toDouble())
+        put("spill", state.spill.toDouble())
+        put("intensity", state.intensity.toDouble())
+    }
+
+    private fun chromaFromJson(o: JSONObject?): ChromaState? = o?.let {
+        ChromaState(
+            keyColor = it.optLong("keyColor", 0L),
+            similarity = it.optDouble("similarity", 45.0).toFloat().coerceIn(0f, 100f),
+            smoothness = it.optDouble("smoothness", 15.0).toFloat().coerceIn(0f, 100f),
+            spill = it.optDouble("spill", 50.0).toFloat().coerceIn(0f, 100f),
+            intensity = it.optDouble("intensity", 100.0).toFloat().coerceIn(0f, 100f)
+        )
+    }
+
 
     //  MASK
 
@@ -1169,6 +1189,7 @@ object ProjectRepository {
                     list.add(Keyframe(
                         time = kf.optDouble("time", 0.0).toFloat(),
                         value = when (prop) {
+                            "positionX", "positionY" -> value.coerceIn(MaskAnimatableProps.positionRange)
                             "cornerRadius" -> value.coerceAtLeast(0f)
                             "feather" -> value.coerceIn(0f, 300f)
                             else -> value
@@ -1206,11 +1227,14 @@ object ProjectRepository {
                 }
                 snapshotKfs.add(MaskKeyframe(
                     timeMs = k.optLong("timeMs", 0L),
-                    positionX = k.optDouble("positionX", k.optDouble("centerX", 0.5)).toFloat(),
+                    positionX = k.optDouble("positionX", k.optDouble("centerX", 0.5)).toFloat()
+                        .coerceIn(MaskAnimatableProps.positionRange),
                     positionY = if (k.has("positionX")) {
                         k.optDouble("positionY", 0.5).toFloat()
+                            .coerceIn(MaskAnimatableProps.positionRange)
                     } else {
                         k.optDouble("centerY", 0.5).toFloat()
+                            .coerceIn(MaskAnimatableProps.positionRange)
                     },
                     radius = k.optDouble("radius", 0.3).toFloat(),
                     width = k.optDouble("width", 0.5).toFloat(),
@@ -1235,11 +1259,14 @@ object ProjectRepository {
         return MaskState(
             type = try { MaskType.valueOf(o.optString("type", "NONE")) }
             catch (_: Exception) { MaskType.NONE },
-            positionX = o.optDouble("positionX", o.optDouble("centerX", 0.5)).toFloat(),
+            positionX = o.optDouble("positionX", o.optDouble("centerX", 0.5)).toFloat()
+                .coerceIn(MaskAnimatableProps.positionRange),
             positionY = if (hasPositionSchema) {
                 o.optDouble("positionY", 0.5).toFloat()
+                    .coerceIn(MaskAnimatableProps.positionRange)
             } else {
                 o.optDouble("centerY", 0.5).toFloat()
+                    .coerceIn(MaskAnimatableProps.positionRange)
             },
             rotation = o.optDouble("rotation", 0.0).toFloat(),
             feather = o.optDouble("feather", 0.0).toFloat().coerceIn(0f, 300f),

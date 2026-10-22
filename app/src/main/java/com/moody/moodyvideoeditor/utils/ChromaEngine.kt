@@ -34,9 +34,10 @@ object ChromaEngine {
     fun buildFfmpegFilter(state: ChromaState): String {
         val (r, g, b) = toRgb(state.keyColor)
         val hex = String.format("0x%02X%02X%02X", r, g, b)
-        val similarity = (state.similarity / 100f).coerceIn(0.01f, 1f)
-        val blend = (state.smoothness / 100f).coerceIn(0f, 0.99f)
-        return "chromakey=$hex:$similarity:$blend"
+        val similarity = (state.similarity / 100f * 0.25f).coerceIn(0.01f, 0.25f)
+        val blend = (state.smoothness / 100f * 0.4f).coerceIn(0f, 0.4f)
+        val intensity = (state.intensity / 100f).coerceIn(0f, 1f)
+        return "chromakey=$hex:$similarity:$blend,lut=a='val*$intensity+255*(1-$intensity)'"
     }
 
     fun isActive(state: ChromaState?): Boolean = state != null && state.isActive

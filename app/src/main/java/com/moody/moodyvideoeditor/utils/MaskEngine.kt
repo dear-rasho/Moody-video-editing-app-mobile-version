@@ -43,6 +43,7 @@ object MaskEngine {
             base
         )
         return when (prop) {
+            "positionX", "positionY" -> sampled.coerceIn(MaskAnimatableProps.positionRange)
             "cornerRadius" -> sampled.coerceAtLeast(0f)
             "feather" -> sampled.coerceIn(0f, 300f)
             else -> sampled
@@ -150,8 +151,8 @@ object MaskEngine {
         base: MaskState,
         k: MaskKeyframe
     ): MaskState = base.copy(
-        positionX = k.positionX,
-        positionY = k.positionY,
+        positionX = k.positionX.coerceIn(MaskAnimatableProps.positionRange),
+        positionY = k.positionY.coerceIn(MaskAnimatableProps.positionRange),
         radius = k.radius,
         width = k.width,
         height = k.height,
@@ -186,8 +187,10 @@ object MaskEngine {
         fun lerpF(x: Float, y: Float) = x + (y - x) * t
 
         return base.copy(
-            positionX = lerpF(a.positionX, b.positionX),
-            positionY = lerpF(a.positionY, b.positionY),
+            positionX = lerpF(a.positionX, b.positionX)
+                .coerceIn(MaskAnimatableProps.positionRange),
+            positionY = lerpF(a.positionY, b.positionY)
+                .coerceIn(MaskAnimatableProps.positionRange),
             radius = lerpF(a.radius, b.radius),
             width = lerpF(a.width, b.width),
             height = lerpF(a.height, b.height),
