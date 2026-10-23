@@ -7,6 +7,7 @@ import com.moody.moodyvideoeditor.utils.ManualCaptionParser
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -2392,14 +2393,35 @@ fun EditorScreen(
     // ═══════════════════════════════════════════════════════════
     //  MAIN LAYOUT
     // ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+//  RESPONSIVE PREVIEW HEIGHT — screen size ke hisaab se
+// ═══════════════════════════════════════════════════════════
+
+    val configuration = LocalConfiguration.current
+    val screenHeightDp = configuration.screenHeightDp
+    val previewHeight = when {
+        screenHeightDp < 640 -> 150.dp
+        screenHeightDp < 800 -> 180.dp
+        else -> 210.dp
+    }
+    val timelineHeight = when {
+        screenHeightDp < 640 -> 170.dp
+        screenHeightDp < 800 -> 200.dp
+        else -> 230.dp
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF121212))
     ) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF121212))
+    ) {
 
-        // ─── TOP BAR ───
+        // ─── TOP BAR (fixed height) ───
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2458,15 +2480,14 @@ fun EditorScreen(
             }
         }
 
-        // ─── PREVIEW ───
+// ─── PREVIEW — RESPONSIVE FIXED HEIGHT ───
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
+                .height(previewHeight)
                 .background(Color(0xFF0A0A0A))
         ) {
             PreviewCanvas(
-
                 exoPlayer = exoPlayer,
                 hasVideo = state.clips.any { it.isVisualClip },
                 rotation = state.rotation,
@@ -2572,11 +2593,11 @@ fun EditorScreen(
             onRatioClick = { activePanel = "ratio" }
         )
 
-        // ─── TIMELINE ───
+// ─── TIMELINE — RESPONSIVE FIXED HEIGHT ───
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(220.dp)
+                .height(timelineHeight)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 val selectedForToolbar = state.selectedClip
@@ -2586,7 +2607,6 @@ fun EditorScreen(
                         (selectedForToolbar != null && linkGroupId == null)
                 val isLinked = linkGroupId != null
 
-                // Compute split/trim eligibility
                 val canSplit = selectedForToolbar != null &&
                         state.currentPosMs > (selectedForToolbar.timelineStartMs + EditorClip.MIN_DURATION_MS) &&
                         state.currentPosMs < (selectedForToolbar.timelineEndMs - EditorClip.MIN_DURATION_MS)
@@ -2614,7 +2634,6 @@ fun EditorScreen(
                     },
                     isLinked = isLinked,
                     canLink = canLink,
-                    // 🆕 Split & Trim icons
                     onSplit = { viewModel.splitCurrentClip() },
                     onTrimLeft = { viewModel.trimLeft() },
                     onTrimRight = { viewModel.trimRight() },
@@ -2700,13 +2719,11 @@ fun EditorScreen(
                         }
                     },
                     onEmptyAreaTapped = {
-                        // 🆕 CHANGE #1: Khali jagah tap → unselect all
                         viewModel.clearAllSelection()
                     }
                 )
             }
         }
-
         // ─── PLAYBACK CONTROLS ───
         PlaybackControls(
             isPlaying = isPlaybackActive,
@@ -2769,7 +2786,8 @@ fun EditorScreen(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 90.dp, max = 220.dp)
+                .weight(1f)
+                .heightIn(min = 90.dp)          // ← max hata do
         ) {
             EditorPanelHost()
         }
@@ -2930,4 +2948,4 @@ fun EditorScreen(
             shape = RoundedCornerShape(16.dp)
         )
     }
-}
+}}

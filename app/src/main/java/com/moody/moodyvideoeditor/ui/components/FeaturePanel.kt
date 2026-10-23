@@ -35,13 +35,12 @@ fun FeaturePanel(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 90.dp, max = 200.dp)
+            .heightIn(min = 90.dp)
             .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
             .background(Color(0xFF0A0A0A))
             .padding(6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        // Header with back button
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -68,7 +67,6 @@ fun FeaturePanel(
             )
         }
 
-        // Panel content
         content()
     }
 }
