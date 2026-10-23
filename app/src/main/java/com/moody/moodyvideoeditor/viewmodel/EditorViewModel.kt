@@ -1638,11 +1638,67 @@ class EditorViewModel : ViewModel() {
         val s = _state.value
 
         val localOffsetMs = (s.currentPosMs - sel.timelineStartMs).coerceAtLeast(0L)
-        if (localOffsetMs <= EditorClip.MIN_DURATION_MS || localOffsetMs >= sel.durationMs - EditorClip.MIN_DURATION_MS) return
+        if (localOffsetMs <= EditorClip.MIN_DURATION_MS ||
+            localOffsetMs >= sel.durationMs - EditorClip.MIN_DURATION_MS
+        ) return
 
         pushHistory()
         val groupId = sel.linkGroupId
         val list = s.clips.toMutableList()
+
+        // ─── Helper: split a single clip into A + B with keyframe splitting ───
+        fun splitSingleClip(
+            source: EditorClip,
+            splitSourceMs: Long,
+            newGroupA: String?,
+            newGroupB: String?,
+            keepAId: String,
+            keepBId: String
+        ): Pair<EditorClip, EditorClip> {
+            // Cut time in clip-local seconds
+            val cutLocalSec = (splitSourceMs - source.sourceStartMs) /
+                    source.speed.coerceAtLeast(0.01f) / 1000f
+
+            // ─── A: keep keyframes only up to cut, rebase not needed (starts at 0) ───
+            val aKeyframes = source.keyframes.mapNotNull { (prop, track) ->
+                val kept = track.filter { it.time <= cutLocalSec }
+                if (kept.isEmpty()) null else prop to kept
+            }.toMap()
+
+            // Also trim mask keyframes to cut time
+            val aMask = MaskEngine.trimToTime(source.mask, 0L)
+
+            // ─── B: keep keyframes AFTER cut, rebased to new local time ───
+            val bKeyframes = source.keyframes.mapNotNull { (prop, track) ->
+                val kept = track.filter { it.time > cutLocalSec }
+                    .map { it.copy(time = (it.time - cutLocalSec).coerceAtLeast(0f)) }
+                if (kept.isEmpty()) null else prop to kept
+            }.toMap()
+
+            // Mask keyframes must be rebased to cut offset (ms)
+            val cutMs = (cutLocalSec * 1000f).toLong()
+            val bMask = MaskEngine.trimToTime(source.mask, cutMs)
+
+            val first = source.copy(
+                id = keepAId,
+                sourceEndMs = splitSourceMs,
+                linkGroupId = newGroupA,
+                keyframes = aKeyframes,
+                mask = aMask
+            )
+
+            val second = source.copy(
+                id = keepBId,
+                sourceStartMs = splitSourceMs,
+                linkedId = null,   // naya link banega via linkGroupId
+                linkGroupId = newGroupB,
+                timelineStartMs = s.currentPosMs,
+                keyframes = bKeyframes,
+                mask = bMask
+            )
+
+            return first to second
+        }
 
         if (groupId != null) {
             val group = s.clips.filter { it.linkGroupId == groupId }
@@ -1653,22 +1709,25 @@ class EditorViewModel : ViewModel() {
             group.forEach { c ->
                 val idx = list.indexOfFirst { it.id == c.id }
                 if (idx < 0) return@forEach
-                if (s.currentPosMs <= c.timelineStartMs || s.currentPosMs >= c.timelineEndMs) return@forEach
+                if (s.currentPosMs <= c.timelineStartMs ||
+                    s.currentPosMs >= c.timelineEndMs
+                ) return@forEach
 
-                val localSplitMs = c.sourceStartMs + ((s.currentPosMs - c.timelineStartMs) * c.speed).toLong()
+                val localSplitMs = c.sourceStartMs +
+                        ((s.currentPosMs - c.timelineStartMs) * c.speed).toLong()
                 if (localSplitMs <= c.sourceStartMs + EditorClip.MIN_DURATION_MS ||
                     localSplitMs >= c.sourceEndMs - EditorClip.MIN_DURATION_MS
                 ) return@forEach
 
-                val first = c.copy(
-                    id = "${c.id}-A", sourceEndMs = localSplitMs,
-                    linkGroupId = groupA
+                val (first, second) = splitSingleClip(
+                    source = c,
+                    splitSourceMs = localSplitMs,
+                    newGroupA = groupA,
+                    newGroupB = groupB,
+                    keepAId = "${c.id}-A",
+                    keepBId = "${c.id}-B"
                 )
-                val second = c.copy(
-                    id = "${c.id}-B", sourceStartMs = localSplitMs,
-                    linkGroupId = groupB,
-                    timelineStartMs = s.currentPosMs
-                )
+
                 if (c.id == sel.id) firstIdOfSel = first.id
                 list.removeAt(idx)
                 list.add(idx, second)
@@ -1684,26 +1743,83 @@ class EditorViewModel : ViewModel() {
                 )
             }
         } else {
+            // ─── Non-grouped clip (may have linkedId partner) ───
             val splitMs = sel.sourceStartMs + (localOffsetMs * sel.speed).toLong()
             if (splitMs <= sel.sourceStartMs + EditorClip.MIN_DURATION_MS ||
                 splitMs >= sel.sourceEndMs - EditorClip.MIN_DURATION_MS
             ) return
 
-            val first = sel.copy(id = "${sel.id}-A", sourceEndMs = splitMs)
-            val second = sel.copy(
-                id = "${sel.id}-B", sourceStartMs = splitMs, linkedId = null,
-                timelineStartMs = s.currentPosMs
+            // Find linked partner (video ↔ audio)
+            val linkedPartner = sel.linkedId?.let { lid ->
+                s.clips.firstOrNull { it.linkedId == lid && it.id != sel.id }
+            }
+
+            // Generate fresh linkedId pairs so A-video stays linked to A-audio,
+            // and B-video stays linked to B-audio (they're separate halves now)
+            val linkIdA = "lk-A-${System.currentTimeMillis()}"
+            val linkIdB = "lk-B-${System.currentTimeMillis()}"
+
+            val (firstVideo, secondVideo) = splitSingleClip(
+                source = sel,
+                splitSourceMs = splitMs,
+                newGroupA = null,
+                newGroupB = null,
+                keepAId = "${sel.id}-A",
+                keepBId = "${sel.id}-B"
             )
+
+            // Rewire linkedIds for split halves
+            val first = firstVideo.copy(linkedId = linkIdA)
+            val second = secondVideo.copy(linkedId = linkIdB)
+
             val idx = list.indexOfFirst { it.id == sel.id }
             list.removeAt(idx)
             list.add(idx, second)
             list.add(idx, first)
 
+            // ─── Split the linked partner too ───
+            if (linkedPartner != null) {
+                val partnerIdx = list.indexOfFirst { it.id == linkedPartner.id }
+                if (partnerIdx >= 0) {
+                    // Partner's sourceStart might differ (audio trimming) — use
+                    // partner's own split point derived from the same timeline cut
+                    val partnerSplitMs = linkedPartner.sourceStartMs +
+                            ((s.currentPosMs - linkedPartner.timelineStartMs) *
+                                    linkedPartner.speed).toLong()
+
+                    val safePartnerSplit = partnerSplitMs
+                        .coerceIn(
+                            linkedPartner.sourceStartMs + EditorClip.MIN_DURATION_MS,
+                            linkedPartner.sourceEndMs - EditorClip.MIN_DURATION_MS
+                        )
+
+                    if (safePartnerSplit > linkedPartner.sourceStartMs + EditorClip.MIN_DURATION_MS &&
+                        safePartnerSplit < linkedPartner.sourceEndMs - EditorClip.MIN_DURATION_MS
+                    ) {
+                        val (firstPartner, secondPartner) = splitSingleClip(
+                            source = linkedPartner,
+                            splitSourceMs = safePartnerSplit,
+                            newGroupA = null,
+                            newGroupB = null,
+                            keepAId = "${linkedPartner.id}-A",
+                            keepBId = "${linkedPartner.id}-B"
+                        )
+
+                        // Re-link to video halves
+                        val linkedA = firstPartner.copy(linkedId = linkIdA)
+                        val linkedB = secondPartner.copy(linkedId = linkIdB)
+
+                        list.removeAt(partnerIdx)
+                        list.add(partnerIdx, linkedB)
+                        list.add(partnerIdx, linkedA)
+                    }
+                }
+            }
+
             _state.update { it.copy(clips = list, selectedClipId = first.id) }
         }
         updateHistoryFlags()
     }
-
     fun commitTrim() = pushHistory()
 
     fun deleteCurrentClip() {

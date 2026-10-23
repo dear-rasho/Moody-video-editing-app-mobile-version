@@ -556,7 +556,8 @@ class VideoExporter(
                     sourceStartMs = newSourceStart,
                     sourceEndMs = newSourceEnd,
                     timelineStartMs = newTimelineStart,
-                    mask = trimmedMask
+                    mask = trimmedMask,
+                    keyframes = KeyframeStore.rebaseToTime(clip.keyframes, leftCut)
                 )
             }
     }

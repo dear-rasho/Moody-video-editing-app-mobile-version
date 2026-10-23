@@ -245,7 +245,7 @@ class FFmpegExecutor(
             val needsLayered = clips.map { it.trackIndex }
                 .distinct().size > 1 || maskSequences.isNotEmpty() || matteClips.isNotEmpty() ||
                     allExtraSequences.isNotEmpty() || adjustmentClips.isNotEmpty() ||
-                    clips.any { ChromaEngine.isActive(it.chroma) }
+                    clips.any { ChromaEngine.isActive(it.chroma) || TransformApplier.hasAnimatedTransform(it) }
 
             if (needsLayered) {
                 exportLayeredTracks(
@@ -782,7 +782,8 @@ class FFmpegExecutor(
                     sourceStartMs = newSourceStart,
                     sourceEndMs = newSourceEnd,
                     timelineStartMs = newTimelineStart,
-                    mask = trimmedMask
+                    mask = trimmedMask,
+                    keyframes = KeyframeStore.rebaseToTime(clip.keyframes, leftCut)
                 )
             }
     }
@@ -998,12 +999,27 @@ class FFmpegExecutor(
         val filters = mutableListOf<String>()
         if (transparentPadding) filters.add("format=rgba")
 
-        val cropL = clip.cropL.coerceIn(0f, 0.45f);
+        val cropTracks = listOf("cropL", "cropR", "cropT", "cropB")
+            .any { clip.keyframes[it].orEmpty().isNotEmpty() }
+        val cropL = clip.cropL.coerceIn(0f, 0.45f)
         val cropR = clip.cropR.coerceIn(0f, 0.45f)
-        val cropT = clip.cropT.coerceIn(0f, 0.45f);
+        val cropT = clip.cropT.coerceIn(0f, 0.45f)
         val cropB = clip.cropB.coerceIn(0f, 0.45f)
 
-        if (cropL > 0.001f || cropR > 0.001f || cropT > 0.001f || cropB > 0.001f) {
+        if (cropTracks) {
+            fun cropExpr(prop: String, base: Float): String =
+                KeyframeStore.escapeFfmpegExpression(
+                    "clip(${KeyframeStore.ffmpegExpression(clip.keyframes, prop, base)},0,0.45)"
+                )
+            val cropLExpr = cropExpr("cropL", clip.cropL)
+            val cropRExpr = cropExpr("cropR", clip.cropR)
+            val cropTExpr = cropExpr("cropT", clip.cropT)
+            val cropBExpr = cropExpr("cropB", clip.cropB)
+            filters.add(
+                "crop=w='iw*(1-($cropLExpr+$cropRExpr))':h='ih*(1-($cropTExpr+$cropBExpr))':" +
+                        "x='iw*$cropLExpr':y='ih*$cropTExpr':eval=frame"
+            )
+        } else if (cropL > 0.001f || cropR > 0.001f || cropT > 0.001f || cropB > 0.001f) {
             filters.add(
                 "crop=iw*${"%.4f".format(1f - cropL - cropR)}:ih*${"%.4f".format(1f - cropT - cropB)}:iw*${
                     "%.4f".format(
@@ -1013,11 +1029,19 @@ class FFmpegExecutor(
             )
         }
 
-        filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease")
+        filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
         filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=${if (transparentPadding) "black@0" else "black"}")
 
         val userScale = clip.scale.coerceIn(0.1f, 5f)
-        if (kotlin.math.abs(userScale - 1.0f) > 0.01f) {
+        val hasScaleTrack = clip.keyframes["scale"].orEmpty().isNotEmpty()
+        if (hasScaleTrack) {
+            val scaleExpr = KeyframeStore.escapeFfmpegExpression(
+                KeyframeStore.ffmpegExpression(clip.keyframes, "scale", clip.scale * 100f)
+            )
+            filters.add("scale=w='iw*($scaleExpr/100)':h='ih*($scaleExpr/100)':eval=frame")
+            filters.add("crop=w='min(iw,$targetW)':h='min(ih,$targetH)':x='(iw-ow)/2':y='(ih-oh)/2':eval=frame")
+            filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=${if (transparentPadding) "black@0" else "black"}")
+        } else if (kotlin.math.abs(userScale - 1.0f) > 0.01f) {
             filters.add(
                 "scale=iw*${String.format(Locale.US, "%.4f", userScale)}:ih*${
                     String.format(
@@ -1031,7 +1055,16 @@ class FFmpegExecutor(
             else filters.add("crop=$targetW:$targetH")
         }
 
-        if (kotlin.math.abs(clip.rotation) > 0.1f) {
+        val hasRotationTrack = clip.keyframes["rotation"].orEmpty().isNotEmpty()
+        if (hasRotationTrack) {
+            val rotationExpr = KeyframeStore.escapeFfmpegExpression(
+                KeyframeStore.ffmpegExpression(clip.keyframes, "rotation", clip.rotation)
+            )
+            filters.add(
+                "rotate=angle='($rotationExpr)*PI/180':c=${if (transparentPadding) "black@0" else "black"}:" +
+                        "ow=$targetW:oh=$targetH"
+            )
+        } else if (kotlin.math.abs(clip.rotation) > 0.1f) {
             filters.add(
                 "rotate=${
                     String.format(
@@ -1535,10 +1568,19 @@ class FFmpegExecutor(
                         } else unmasked
 
                         val outLabel = "canvas_c${item.clipIdx}"
-                        val x = if (isBlendActive) 0 else (clip.offsetX * targetW).toInt();
-                        val y = if (isBlendActive) 0 else (clip.offsetY * targetH).toInt()
-
-                        if (!isBlendActive) filterParts.add("[$canvasLabel][$layerLabel]overlay=$x:$y:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
+                        if (!isBlendActive) {
+                            val baseX = 50f + clip.offsetX * 100f
+                            val baseY = 50f + clip.offsetY * 100f
+                            val localTimeExpression =
+                                "(t-${String.format(Locale.US, "%.6f", startSec)})"
+                            val x = KeyframeStore.escapeFfmpegExpression(
+                                "((${KeyframeStore.ffmpegExpression(clip.keyframes, "x", baseX, localTimeExpression)}-50)*$targetW/100)"
+                            )
+                            val y = KeyframeStore.escapeFfmpegExpression(
+                                "((${KeyframeStore.ffmpegExpression(clip.keyframes, "y", baseY, localTimeExpression)}-50)*$targetH/100)"
+                            )
+                            filterParts.add("[$canvasLabel][$layerLabel]overlay=x='$x':y='$y':eval=frame:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
+                        }
                         else {
                             val ffMode = ffmpegBlendName(blendKey);
                             val blendAlpha = String.format(

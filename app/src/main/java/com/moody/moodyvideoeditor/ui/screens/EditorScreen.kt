@@ -124,7 +124,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
-
+import com.moody.moodyvideoeditor.data.EditorClip
 private data class MediaInfo(
     val name: String,
     val durationMs: Long,
@@ -2586,6 +2586,15 @@ fun EditorScreen(
                         (selectedForToolbar != null && linkGroupId == null)
                 val isLinked = linkGroupId != null
 
+                // Compute split/trim eligibility
+                val canSplit = selectedForToolbar != null &&
+                        state.currentPosMs > (selectedForToolbar.timelineStartMs + EditorClip.MIN_DURATION_MS) &&
+                        state.currentPosMs < (selectedForToolbar.timelineEndMs - EditorClip.MIN_DURATION_MS)
+                val canTrimLeft = selectedForToolbar != null &&
+                        state.currentPosMs > (selectedForToolbar.timelineStartMs + EditorClip.MIN_DURATION_MS)
+                val canTrimRight = selectedForToolbar != null &&
+                        state.currentPosMs < (selectedForToolbar.timelineEndMs - EditorClip.MIN_DURATION_MS)
+
                 TimelineToolbar(
                     onSelectBackward = { viewModel.selectBackward() },
                     onSelectForward = { viewModel.selectForward() },
@@ -2605,6 +2614,13 @@ fun EditorScreen(
                     },
                     isLinked = isLinked,
                     canLink = canLink,
+                    // 🆕 Split & Trim icons
+                    onSplit = { viewModel.splitCurrentClip() },
+                    onTrimLeft = { viewModel.trimLeft() },
+                    onTrimRight = { viewModel.trimRight() },
+                    canSplit = canSplit,
+                    canTrimLeft = canTrimLeft,
+                    canTrimRight = canTrimRight,
                     zoomSlider = state.timelineZoom,
                     totalSec = state.totalDurationMs / 1000f,
                     viewportContentWidthDp = 320f,

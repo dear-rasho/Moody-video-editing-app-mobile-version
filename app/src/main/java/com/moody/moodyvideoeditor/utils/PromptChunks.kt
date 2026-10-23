@@ -483,6 +483,8 @@ Examples:
   trim right     cut from playhead to end
   split          divide at playhead
 
+
+
 Examples:
   speed 0.5x, split, trim left
 """.trimIndent()

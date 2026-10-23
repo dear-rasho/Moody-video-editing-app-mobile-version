@@ -31,6 +31,14 @@ data class TransformValues(
 
 object TransformApplier {
 
+    private val TRANSFORM_PROPERTIES = setOf(
+        "x", "y", "scale", "rotation", "anchorX", "anchorY",
+        "cropL", "cropR", "cropT", "cropB"
+    )
+
+    fun hasAnimatedTransform(clip: EditorClip): Boolean =
+        clip.keyframes.any { (prop, track) -> prop in TRANSFORM_PROPERTIES && track.isNotEmpty() }
+
     // Extract base transform from clip.
     // Different clip types store values differently.
     fun baseOf(clip: EditorClip): TransformValues {

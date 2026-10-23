@@ -40,6 +40,13 @@ fun TimelineToolbar(
     onUnlink: () -> Unit = {},
     isLinked: Boolean = false,
     canLink: Boolean = false,
+    // 🆕 Split & Trim
+    onSplit: () -> Unit = {},
+    onTrimLeft: () -> Unit = {},
+    onTrimRight: () -> Unit = {},
+    canSplit: Boolean = false,
+    canTrimLeft: Boolean = false,
+    canTrimRight: Boolean = false,
     zoomSlider: Float,
     totalSec: Float,
     viewportContentWidthDp: Float,
@@ -67,6 +74,23 @@ fun TimelineToolbar(
 
             IconBtn("＋V") { onAddVisualLayer() }
             IconBtn("＋A") { onAddAudioLayer() }
+
+            // 🆕 SPLIT — 3 icons: both-sides, left-only, right-only
+            IconBtn(
+                text = "][",
+                enabled = canSplit,
+                highlight = canSplit
+            ) { onSplit() }
+            IconBtn(
+                text = "[",
+                enabled = canTrimLeft,
+                highlight = canTrimLeft
+            ) { onTrimLeft() }
+            IconBtn(
+                text = "]",
+                enabled = canTrimRight,
+                highlight = canTrimRight
+            ) { onTrimRight() }
 
             // 🆕 LINK / UNLINK
             if (isLinked) {
@@ -109,11 +133,11 @@ fun TimelineToolbar(
         }
     }
 }
-
 @Composable
 private fun IconBtn(
     text: String,
     highlight: Boolean = false,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     Box(
@@ -122,13 +146,22 @@ private fun IconBtn(
             .widthIn(min = 30.dp)
             .clip(RoundedCornerShape(6.dp))
             .background(
-                if (highlight) Color(0xFF7C3AED)
-                else Color(0xFF181818)
+                when {
+                    !enabled -> Color(0xFF141414)
+                    highlight -> Color(0xFF7C3AED)
+                    else -> Color(0xFF181818)
+                }
             )
-            .pointerInput(text) { detectTapGestures { onClick() } }
+            .pointerInput(text, enabled) {
+                if (enabled) detectTapGestures { onClick() }
+            }
             .padding(horizontal = 6.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(text, fontSize = 12.sp, color = Color.White)
+        Text(
+            text = text,
+            fontSize = 12.sp,
+            color = if (enabled) Color.White else Color(0xFF555555)
+        )
     }
 }

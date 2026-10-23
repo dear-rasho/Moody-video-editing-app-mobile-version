@@ -5,6 +5,7 @@ import com.moody.moodyvideoeditor.data.KeyframeLibrary
 import com.moody.moodyvideoeditor.data.KeyframeMap
 import kotlin.math.abs
 import kotlin.math.pow
+import java.util.Locale
 
 // Mirrors js/workspace/keyframeStore.js
 // - Keyframe CRUD
@@ -188,6 +189,84 @@ object KeyframeStore {
             }
         }
         return last.value
+    }
+
+    fun ffmpegExpression(
+        map: KeyframeMap,
+        prop: String,
+        baseValue: Float,
+        timeExpression: String = "t"
+    ): String {
+        val keyframes = getKeyframes(map, prop).sortedBy { it.time }
+        if (keyframes.isEmpty()) return ffmpegNumber(baseValue)
+        if (keyframes.size == 1) return ffmpegNumber(keyframes.first().value)
+
+        var expression = ffmpegNumber(keyframes.last().value)
+        for (index in keyframes.lastIndex downTo 1) {
+            val start = keyframes[index - 1]
+            val end = keyframes[index]
+            val duration = (end.time - start.time).coerceAtLeast(0.000001f)
+            val progress = "(($timeExpression-${ffmpegNumber(start.time)})/${ffmpegNumber(duration)})"
+            val easedProgress = ffmpegEaseExpression(progress, start.ease)
+            val interpolated = "(${ffmpegNumber(start.value)}+(${ffmpegNumber(end.value)}-${ffmpegNumber(start.value)})*($easedProgress))"
+            expression = "if(lt($timeExpression,${ffmpegNumber(end.time)}),$interpolated,$expression)"
+        }
+        expression = "if(lt($timeExpression,${ffmpegNumber(keyframes.first().time)}),${ffmpegNumber(keyframes.first().value)},$expression)"
+        return expression
+    }
+
+    fun escapeFfmpegExpression(expression: String): String = expression.replace(",", "\\,")
+
+    fun rebaseToTime(map: KeyframeMap, cutMs: Long): KeyframeMap {
+        if (cutMs <= 0L) return map
+        val cutSec = cutMs / 1000f
+        return map.mapNotNull { (prop, track) ->
+            val sorted = track.sortedBy { it.time }
+            if (sorted.isEmpty()) return@mapNotNull null
+            val startEase = sorted.lastOrNull { it.time <= cutSec }?.ease
+                ?: sorted.first().ease
+            val start = Keyframe(
+                time = 0f,
+                value = sample(map, prop, cutSec, sorted.first().value),
+                ease = startEase
+            )
+            val remaining = sorted.filter { it.time > cutSec }.map {
+                it.copy(time = it.time - cutSec)
+            }
+            prop to (listOf(start) + remaining).distinctBy { it.time }.sortedBy { it.time }
+        }.toMap()
+    }
+
+    private fun ffmpegNumber(value: Float): String =
+        String.format(Locale.US, "%.8f", value)
+
+    private fun ffmpegEaseExpression(progress: String, ease: String): String {
+        val p = "min(max($progress,0),1)"
+        return when (ease) {
+            "easeIn", "quadIn" -> "pow($p,2)"
+            "easeOut", "quadOut" -> "(1-pow(1-$p,2))"
+            "easeInOut", "quadInOut" -> "if(lt($p,0.5),2*pow($p,2),1-pow(-2*$p+2,2)/2)"
+            "cubicIn" -> "pow($p,3)"
+            "cubicOut" -> "(1-pow(1-$p,3))"
+            "cubicInOut" -> "if(lt($p,0.5),4*pow($p,3),1-pow(-2*$p+2,3)/2)"
+            "quartIn" -> "pow($p,4)"
+            "quartOut" -> "(1-pow(1-$p,4))"
+            "quartInOut" -> "if(lt($p,0.5),8*pow($p,4),1-pow(-2*$p+2,4)/2)"
+            "quintIn" -> "pow($p,5)"
+            "quintOut" -> "(1-pow(1-$p,5))"
+            "quintInOut" -> "if(lt($p,0.5),16*pow($p,5),1-pow(-2*$p+2,5)/2)"
+            "sineIn" -> "(1-cos($p*PI/2))"
+            "sineOut" -> "sin($p*PI/2)"
+            "sineInOut" -> "(1-cos(PI*$p))/2"
+            "expoIn" -> "if(eq($p,0),0,pow(2,10*$p-10))"
+            "expoOut" -> "if(eq($p,1),1,1-pow(2,-10*$p))"
+            "expoInOut" -> "if(eq($p,0),0,if(eq($p,1),1,if(lt($p,0.5),pow(2,20*$p-10)/2,(2-pow(2,-20*$p+10))/2)))"
+            "circIn" -> "(1-sqrt(1-pow($p,2)))"
+            "circOut" -> "sqrt(1-pow($p-1,2))"
+            "circInOut" -> "if(lt($p,0.5),(1-sqrt(1-pow(2*$p,2)))/2,(sqrt(1-pow(-2*$p+2,2))+1)/2)"
+            "linear" -> p
+            else -> p
+        }
     }
 
     fun sampleScaleRotation(

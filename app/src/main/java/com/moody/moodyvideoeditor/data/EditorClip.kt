@@ -2,7 +2,7 @@ package com.moody.moodyvideoeditor.data
 
 import android.net.Uri
 import java.util.UUID
-
+import com.moody.moodyvideoeditor.data.EditorClip
 data class EditorClip(
     val id: String = UUID.randomUUID().toString(),
     val uri: Uri,
