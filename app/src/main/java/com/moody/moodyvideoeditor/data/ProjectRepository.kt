@@ -154,6 +154,7 @@ object ProjectRepository {
         put("soundFx", s.soundFx)
         put("exportResolution", s.exportResolution)
         put("exportFps", s.exportFps)
+        put("timelineLockedMs", s.timelineLockedMs)
         put("exportBitrateKbps", s.exportBitrateKbps)
         put("exportFormat", s.exportFormat)
         put("exportFolderUri", s.exportFolderUri ?: JSONObject.NULL)
@@ -184,9 +185,11 @@ object ProjectRepository {
             exportFps = o.optInt("exportFps", 30),
             exportBitrateKbps = o.optInt("exportBitrateKbps", 8000),
             exportFormat = o.optString("exportFormat", "mp4"),
+            timelineLockedMs = o.optLong("timelineLockedMs", 0L) ,  // 🆕
             exportFolderUri = if (o.isNull("exportFolderUri")) null
             else o.optString("exportFolderUri", null),
             timelineZoom = o.optDouble("timelineZoom", 0.0).toFloat()
+
         )
     }
 

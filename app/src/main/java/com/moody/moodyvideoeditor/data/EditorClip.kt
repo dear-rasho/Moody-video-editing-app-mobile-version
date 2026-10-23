@@ -3,6 +3,8 @@ package com.moody.moodyvideoeditor.data
 import android.net.Uri
 import java.util.UUID
 import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.utils.TimelineZoom
+
 data class EditorClip(
     val id: String = UUID.randomUUID().toString(),
     val uri: Uri,
@@ -154,6 +156,7 @@ data class AdjustmentData(
 ) {
     val isDefault: Boolean get() = this == AdjustmentData()
 }
+
 // 🆕 Live preview of Color Matte (before applying as layer)
 data class PreviewMatteState(
     val style: ColorMatteStyle,
@@ -204,11 +207,41 @@ data class EditorState(
     val previewEffectState: EffectState? = null,
     val isPickingChromaColor: Boolean = false,
     // 🆕 Live preview for Color Matte (temporary, not committed)
-    val previewMatte: PreviewMatteState? = null
+    val previewMatte: PreviewMatteState? = null,
+
+    // 🆕 FIXED TIMELINE LENGTH
+    // 0 = auto (set on first import)
+    // > 0 = locked length (does not auto-shrink/stretch)
+    val timelineLockedMs: Long = 0L
 ) {
     val totalDurationMs: Long
         get() = clips.maxOfOrNull { it.timelineEndMs } ?: 10000L
 
+    // 🆕 TIMELINE DURATION
+    // If locked → use locked value
+    // Else if has clips → lock to content + padding
+    // Else → default 60 seconds (1 minute)
+    val timelineDurationMs: Long
+        get() {
+            // 1. Content ki asal maximum end time nikaalo
+            val contentMax = clips.maxOfOrNull { it.timelineEndMs } ?: 0L
+
+            // 2. Agar timeline locked hai (pehli clip ke hisaab se)
+            if (timelineLockedMs > 0L) {
+                // 🆕 AGAR CONTENT LOCKED LENGTH SE AAGE GAYA HAI (jaise image mein 1:15)
+                // Toh timeline ko automatically extend karo + thoda padding do (5 sec)
+                if (contentMax > timelineLockedMs) {
+                    return contentMax + 5_000L
+                }
+                return timelineLockedMs
+            }
+
+            // 3. Agar lock nahi hai (default behavior)
+            if (clips.isNotEmpty()) {
+                return (contentMax + 5_000L).coerceAtLeast(1_000L)
+            }
+            return 60_000L // 1 minute default
+        }
     val currentClip: EditorClip?
         get() = clips.getOrNull(currentIndex)
 

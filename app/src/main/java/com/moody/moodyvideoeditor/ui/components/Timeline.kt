@@ -163,14 +163,8 @@ fun Timeline(
         360f
     }
 
-    val actualMs = state.totalDurationMs
-    val hasClips = state.clips.isNotEmpty()
-
-    val totalMs = if (hasClips) {
-        (actualMs + 5_000L).coerceAtLeast(1_000L)
-    } else {
-        TimelineZoom.MIN_TIMELINE_MS
-    }
+// 🆕 Use locked timeline duration
+    val totalMs = state.timelineDurationMs
     val totalSec = totalMs / 1000f
 
     val pps = TimelineZoom.ppsForSlider(slider, totalSec, viewportContentWidthDp)
@@ -1951,16 +1945,36 @@ private fun TimelineScrollbar(
     val contentVisibleWidthPx = (viewportWidthPx - labelWidthPx).coerceAtLeast(1f)
     val maxScroll = (contentWidthPx - contentVisibleWidthPx).coerceAtLeast(0f)
 
+    // 🆕 AGAR SCROLL KARNE KI ZAROORAT NAHI HAI (maxScroll == 0)
     if (maxScroll <= 1f) {
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(SCROLLBAR_HEIGHT)
                 .background(Color(0xFF0A0A0A))
-        )
+        ) {
+            Box(modifier = Modifier.width(TRACK_LABEL_WIDTH).fillMaxHeight())
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .padding(vertical = 2.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Color(0xFF1A1A1A)) // Track color
+            ) {
+                // 🆕 Full width thumb (kyunki sab kuch fit hai)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(Color(0xFF4F9DFF).copy(alpha = 0.5f)) // Halka sa blue
+                )
+            }
+        }
         return
     }
 
+    // 🆕 NORMAL SCROLLBAR (jab scroll ki zaroorat ho)
     val trackWidthDp = with(density) { contentVisibleWidthPx.toDp() }
     val thumbFraction = (contentVisibleWidthPx / contentWidthPx)
         .coerceIn(0.05f, 1f)
@@ -2038,7 +2052,6 @@ private fun TimelineScrollbar(
         }
     }
 }
-
 
 // ═══════════════════════════════════════════════════════════════
 //  AUDIO WAVEFORM BACKGROUND

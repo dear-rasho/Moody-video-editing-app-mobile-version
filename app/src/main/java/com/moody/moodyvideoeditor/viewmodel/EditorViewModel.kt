@@ -62,7 +62,7 @@ import kotlin.math.sin
 
 class EditorViewModel : ViewModel() {
 
-      fun startPickingChromaColor() {
+    fun startPickingChromaColor() {
         val sel = _state.value.selectedClip
         if (sel == null || !sel.isVisualClip) {
             android.util.Log.w("CHROMA", "Pick ignored: select a video/image clip first")
@@ -170,7 +170,7 @@ class EditorViewModel : ViewModel() {
         currentProjectId = id
         currentProjectName = name
         history.clear()
-        _state.value = EditorState()
+        _state.value = EditorState(timelineLockedMs = 0L) // 🆕 Reset
 
         if (SettingsConsumer.freeLayerEnabled) {
             _state.update {
@@ -242,6 +242,50 @@ class EditorViewModel : ViewModel() {
         currentProjectName = newName
         com.moody.moodyvideoeditor.data.ProjectRepository
             .renameProject(context, id, newName)
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  TEMPLATE LOADING (🆕 ADDED)
+    // ═══════════════════════════════════════════════════════════
+
+    fun loadFromTemplate(context: Context, templateId: String): Boolean {
+        val loaded = com.moody.moodyvideoeditor.data.SavedTemplateRepository
+            .load(context, templateId) ?: return false
+
+        val fixedClips = loaded.clips.map { clip ->
+            if (clip.isTextClip || clip.isStickerClip || clip.isBrushClip ||
+                clip.isEffectClip || clip.isAdjustmentClip ||
+                clip.isOverlayClip ||
+                clip.isColorMatteClip || clip.isFilterLayerClip ||
+                clip.isVisualizerClip
+            ) {
+                clip
+            } else if (clip.type.startsWith("image/") &&
+                clip.uri.toString().isBlank()
+            ) {
+                clip.copy(sourceTotalMs = Long.MAX_VALUE)
+            } else clip
+        }
+
+        val fixedState = loaded.copy(clips = fixedClips)
+
+        history.clear()
+        _state.value = fixedState
+        updateHistoryFlags()
+        return true
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  REPLACE CLIP URI (🆕 ADDED)
+    // ═══════════════════════════════════════════════════════════
+
+    fun replaceClipUri(clipId: String, newUri: Uri) {
+        val clip = _state.value.clips.firstOrNull { it.id == clipId } ?: return
+        pushHistory()
+        updateClipDirect(clipId) {
+            it.copy(uri = newUri, sourceTotalMs = Long.MAX_VALUE)
+        }
+        updateHistoryFlags()
     }
 
     private fun pushHistory() {
@@ -523,17 +567,31 @@ class EditorViewModel : ViewModel() {
             name = "$name (audio)", type = "audio/mpeg",
             trackIndex = 0, isAudio = true
         )
-        val list = _state.value.clips.toMutableList()
-        list.add(videoClip)
-        list.add(audioClip)
-        _state.update {
-            it.copy(
-                clips = list, currentIndex = 0, currentPosMs = 0L,
+
+        // 🆕 FIX: List variable correctly calculate karo
+        val updatedClips = _state.value.clips + videoClip + audioClip
+
+        // 🆕 LOCK timeline if not locked
+        val shouldLock = _state.value.timelineLockedMs == 0L
+        val lockedMs = if (shouldLock) {
+            val maxEnd = updatedClips.maxOfOrNull { it.timelineEndMs } ?: 5000L
+            maxEnd + 5_000L
+        } else {
+            _state.value.timelineLockedMs
+        }
+
+        _state.update { st ->
+            st.copy(
+                clips = updatedClips,
+                currentIndex = 0,
+                currentPosMs = 0L,
                 selectedClipId = videoClip.id,
-                selectedTrackIndex = 0, selectedIsAudio = false,
-                visualLayerCount = maxOf(it.visualLayerCount, 3),
-                audioLayerCount = maxOf(it.audioLayerCount, 2),
-                multiSelectedIds = emptySet()
+                selectedTrackIndex = 0,
+                selectedIsAudio = false,
+                visualLayerCount = maxOf(st.visualLayerCount, 3),
+                audioLayerCount = maxOf(st.audioLayerCount, 2),
+                multiSelectedIds = emptySet(),
+                timelineLockedMs = lockedMs // 🆕
             )
         }
         updateHistoryFlags()
@@ -587,16 +645,26 @@ class EditorViewModel : ViewModel() {
             newAudioList[audioPlacement.trackIndex] =
                 newAudioList[audioPlacement.trackIndex] + clip
 
+            val updatedClips = s.timelineVisualList().flatten() + newAudioList.flatten()
+
+            // 🆕 LOCK timeline
+            val shouldLock = s.timelineLockedMs == 0L
+            val lockedMs = if (shouldLock) {
+                val maxEnd = updatedClips.maxOfOrNull { it.timelineEndMs } ?: 5000L
+                maxEnd + 5_000L
+            } else s.timelineLockedMs
+
             _state.update { st ->
                 st.copy(
-                    clips = st.timelineVisualList().flatten() + newAudioList.flatten(),
+                    clips = updatedClips,
                     audioLayerCount = maxOf(
                         st.audioLayerCount, audioPlacement.trackIndex + 1
                     ),
                     selectedClipId = clip.id,
                     selectedTrackIndex = audioPlacement.trackIndex,
                     selectedIsAudio = true,
-                    multiSelectedIds = emptySet()
+                    multiSelectedIds = emptySet(),
+                    timelineLockedMs = lockedMs
                 )
             }
             updateHistoryFlags()
@@ -636,29 +704,39 @@ class EditorViewModel : ViewModel() {
             isAudio = true
         )
 
+        val newVisualList = s.timelineVisualList().toMutableList()
+        while (newVisualList.size <= visualPlacement.trackIndex)
+            newVisualList.add(emptyList())
+        newVisualList[visualPlacement.trackIndex] =
+            newVisualList[visualPlacement.trackIndex] + videoClip
+
+        val newAudioList = if (audioClip != null) {
+            val list = s.timelineAudioList().toMutableList()
+            while (list.size <= audioPlacement.trackIndex) list.add(emptyList())
+            list[audioPlacement.trackIndex] =
+                list[audioPlacement.trackIndex] + audioClip
+            list
+        } else s.timelineAudioList()
+
+        val updatedClips = newVisualList.flatten() + newAudioList.flatten()
+
+        // 🆕 LOCK timeline
+        val shouldLock = s.timelineLockedMs == 0L
+        val lockedMs = if (shouldLock) {
+            val maxEnd = updatedClips.maxOfOrNull { it.timelineEndMs } ?: 5000L
+            maxEnd + 5_000L
+        } else s.timelineLockedMs
+
         _state.update { st ->
-            val newVisualList = st.timelineVisualList().toMutableList()
-            while (newVisualList.size <= visualPlacement.trackIndex)
-                newVisualList.add(emptyList())
-            newVisualList[visualPlacement.trackIndex] =
-                newVisualList[visualPlacement.trackIndex] + videoClip
-
-            val newAudioList = if (audioClip != null) {
-                val list = st.timelineAudioList().toMutableList()
-                while (list.size <= audioPlacement.trackIndex) list.add(emptyList())
-                list[audioPlacement.trackIndex] =
-                    list[audioPlacement.trackIndex] + audioClip
-                list
-            } else st.timelineAudioList()
-
             st.copy(
-                clips = newVisualList.flatten() + newAudioList.flatten(),
+                clips = updatedClips,
                 visualLayerCount = maxOf(st.visualLayerCount, visualPlacement.trackIndex + 1),
                 audioLayerCount = maxOf(st.audioLayerCount, audioPlacement.trackIndex + 1),
                 selectedClipId = videoClip.id,
                 selectedTrackIndex = visualPlacement.trackIndex,
                 selectedIsAudio = false,
-                multiSelectedIds = emptySet()
+                multiSelectedIds = emptySet(),
+                timelineLockedMs = lockedMs
             )
         }
         updateHistoryFlags()
@@ -682,10 +760,54 @@ class EditorViewModel : ViewModel() {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  MOVE CLIP (unchanged — full implementation preserved)
+    //  PREVIEW FILTERS + EFFECTS (🆕 ADDED)
     // ═══════════════════════════════════════════════════════════
-    // [Original moveClip / moveLinkedGroup / findFreeTrackForClip /
-    //  moveSelectedClipsBulk implementations remain exactly as before]
+
+    fun setPreviewFilters(filters: FilterState?) {
+        _state.update { it.copy(previewFilters = filters) }
+    }
+
+    fun clearPreviewFilters() {
+        _state.update { it.copy(previewFilters = null) }
+    }
+
+    fun setPreviewEffect(presetKey: String?, intensity: Float) {
+        if (presetKey == null) {
+            _state.update { it.copy(previewEffectState = null) }
+            return
+        }
+        val preset = EffectLibrary.findByKey(presetKey) ?: return
+        val scaled = buildScaledEffectState(preset, intensity)
+        _state.update { it.copy(previewEffectState = scaled) }
+    }
+
+    fun setPreviewEffectFull(state: EffectState?) {
+        _state.update { it.copy(previewEffectState = state) }
+    }
+
+    fun clearPreviewEffect() {
+        _state.update { it.copy(previewEffectState = null) }
+    }
+
+    fun setPreviewMatte(style: ColorMatteStyle, opacity: Float, durationMs: Long) {
+        _state.update {
+            it.copy(
+                previewMatte = PreviewMatteState(
+                    style = style,
+                    opacity = opacity.coerceIn(0f, 100f),
+                    durationMs = durationMs.coerceAtLeast(100L)
+                )
+            )
+        }
+    }
+
+    fun clearPreviewMatte() {
+        _state.update { it.copy(previewMatte = null) }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  CLIP MOVE
+    // ═══════════════════════════════════════════════════════════
 
     fun moveClip(clipId: String, targetTrackIndex: Int, newIsAudio: Boolean, newTimelineMs: Long) {
         val s = _state.value
@@ -1310,10 +1432,6 @@ class EditorViewModel : ViewModel() {
         return updated
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  BULK TRANSFORM (unchanged)
-    // ═══════════════════════════════════════════════════════════
-
     fun updateSelectedPositionBulk(anchorId: String, newX: Float, newY: Float) {
         val s = _state.value
         val anchor = s.clips.firstOrNull { it.id == anchorId } ?: return
@@ -1351,6 +1469,7 @@ class EditorViewModel : ViewModel() {
         }
         _state.update { it.copy(clips = list) }
     }
+
     fun updateSelectedChroma(newChroma: ChromaState) {
         val s = _state.value
         val targetIds: Set<String> = if (s.multiSelectedIds.isNotEmpty()) {
@@ -1398,6 +1517,7 @@ class EditorViewModel : ViewModel() {
             _state.update { it.copy(clips = list) }
         }
     }
+
     fun updateSelectedTransformBulk(anchorId: String, newScale: Float, newRotation: Float) {
         val s = _state.value
         val anchor = s.clips.firstOrNull { it.id == anchorId } ?: return
@@ -1646,7 +1766,6 @@ class EditorViewModel : ViewModel() {
         val groupId = sel.linkGroupId
         val list = s.clips.toMutableList()
 
-        // ─── Helper: split a single clip into A + B with keyframe splitting ───
         fun splitSingleClip(
             source: EditorClip,
             splitSourceMs: Long,
@@ -1655,27 +1774,22 @@ class EditorViewModel : ViewModel() {
             keepAId: String,
             keepBId: String
         ): Pair<EditorClip, EditorClip> {
-            // Cut time in clip-local seconds
             val cutLocalSec = (splitSourceMs - source.sourceStartMs) /
                     source.speed.coerceAtLeast(0.01f) / 1000f
 
-            // ─── A: keep keyframes only up to cut, rebase not needed (starts at 0) ───
             val aKeyframes = source.keyframes.mapNotNull { (prop, track) ->
                 val kept = track.filter { it.time <= cutLocalSec }
                 if (kept.isEmpty()) null else prop to kept
             }.toMap()
 
-            // Also trim mask keyframes to cut time
             val aMask = MaskEngine.trimToTime(source.mask, 0L)
 
-            // ─── B: keep keyframes AFTER cut, rebased to new local time ───
             val bKeyframes = source.keyframes.mapNotNull { (prop, track) ->
                 val kept = track.filter { it.time > cutLocalSec }
                     .map { it.copy(time = (it.time - cutLocalSec).coerceAtLeast(0f)) }
                 if (kept.isEmpty()) null else prop to kept
             }.toMap()
 
-            // Mask keyframes must be rebased to cut offset (ms)
             val cutMs = (cutLocalSec * 1000f).toLong()
             val bMask = MaskEngine.trimToTime(source.mask, cutMs)
 
@@ -1690,7 +1804,7 @@ class EditorViewModel : ViewModel() {
             val second = source.copy(
                 id = keepBId,
                 sourceStartMs = splitSourceMs,
-                linkedId = null,   // naya link banega via linkGroupId
+                linkedId = null,
                 linkGroupId = newGroupB,
                 timelineStartMs = s.currentPosMs,
                 keyframes = bKeyframes,
@@ -1743,19 +1857,15 @@ class EditorViewModel : ViewModel() {
                 )
             }
         } else {
-            // ─── Non-grouped clip (may have linkedId partner) ───
             val splitMs = sel.sourceStartMs + (localOffsetMs * sel.speed).toLong()
             if (splitMs <= sel.sourceStartMs + EditorClip.MIN_DURATION_MS ||
                 splitMs >= sel.sourceEndMs - EditorClip.MIN_DURATION_MS
             ) return
 
-            // Find linked partner (video ↔ audio)
             val linkedPartner = sel.linkedId?.let { lid ->
                 s.clips.firstOrNull { it.linkedId == lid && it.id != sel.id }
             }
 
-            // Generate fresh linkedId pairs so A-video stays linked to A-audio,
-            // and B-video stays linked to B-audio (they're separate halves now)
             val linkIdA = "lk-A-${System.currentTimeMillis()}"
             val linkIdB = "lk-B-${System.currentTimeMillis()}"
 
@@ -1768,7 +1878,6 @@ class EditorViewModel : ViewModel() {
                 keepBId = "${sel.id}-B"
             )
 
-            // Rewire linkedIds for split halves
             val first = firstVideo.copy(linkedId = linkIdA)
             val second = secondVideo.copy(linkedId = linkIdB)
 
@@ -1777,12 +1886,9 @@ class EditorViewModel : ViewModel() {
             list.add(idx, second)
             list.add(idx, first)
 
-            // ─── Split the linked partner too ───
             if (linkedPartner != null) {
                 val partnerIdx = list.indexOfFirst { it.id == linkedPartner.id }
                 if (partnerIdx >= 0) {
-                    // Partner's sourceStart might differ (audio trimming) — use
-                    // partner's own split point derived from the same timeline cut
                     val partnerSplitMs = linkedPartner.sourceStartMs +
                             ((s.currentPosMs - linkedPartner.timelineStartMs) *
                                     linkedPartner.speed).toLong()
@@ -1805,7 +1911,6 @@ class EditorViewModel : ViewModel() {
                             keepBId = "${linkedPartner.id}-B"
                         )
 
-                        // Re-link to video halves
                         val linkedA = firstPartner.copy(linkedId = linkIdA)
                         val linkedB = secondPartner.copy(linkedId = linkIdB)
 
@@ -1820,6 +1925,7 @@ class EditorViewModel : ViewModel() {
         }
         updateHistoryFlags()
     }
+
     fun commitTrim() = pushHistory()
 
     fun deleteCurrentClip() {
@@ -2299,10 +2405,9 @@ class EditorViewModel : ViewModel() {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    //  🆕 MASK — PER-PROPERTY KEYFRAMES
-    //  Clean replacement for all old mask keyframe methods.
-    // ═══════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
+    //  MASK — PER-PROPERTY KEYFRAMES
+    // ═══════════════════════════════════════════════════════════
 
     private fun currentMaskAtPlayhead(clip: EditorClip): MaskState {
         val timeSec = KeyframeStore.clipLocalTimeSeconds(
@@ -2633,14 +2738,6 @@ class EditorViewModel : ViewModel() {
         forEachSelectedClip { clip ->
             if (clip.isVisualClip) clip.copy(filters = FilterState()) else clip
         }
-    }
-
-    fun setPreviewFilters(filters: FilterState?) {
-        _state.update { it.copy(previewFilters = filters) }
-    }
-
-    fun clearPreviewFilters() {
-        _state.update { it.copy(previewFilters = null) }
     }
 
     fun createFilterLayer(filters: FilterState, durationMs: Long = 0L) {
@@ -3651,45 +3748,8 @@ class EditorViewModel : ViewModel() {
             .save(context, meta, s)
     }
 
-    fun loadFromTemplate(context: Context, templateId: String): Boolean {
-        val loaded = com.moody.moodyvideoeditor.data.SavedTemplateRepository
-            .load(context, templateId) ?: return false
-
-        val fixedClips = loaded.clips.map { clip ->
-            if (clip.isTextClip || clip.isStickerClip || clip.isBrushClip ||
-                clip.isEffectClip || clip.isAdjustmentClip ||
-                clip.isOverlayClip ||
-                clip.isColorMatteClip || clip.isFilterLayerClip ||
-                clip.isVisualizerClip
-            ) {
-                clip
-            } else if (clip.type.startsWith("image/") &&
-                clip.uri.toString().isBlank()
-            ) {
-                clip.copy(sourceTotalMs = Long.MAX_VALUE)
-            } else clip
-        }
-
-        val fixedState = loaded.copy(clips = fixedClips)
-
-        history.clear()
-        _state.value = fixedState
-        updateHistoryFlags()
-        return true
-    }
-
-    fun replaceClipUri(clipId: String, newUri: Uri) {
-        val clip = _state.value.clips.firstOrNull { it.id == clipId } ?: return
-        pushHistory()
-        updateClipDirect(clipId) {
-            it.copy(uri = newUri, sourceTotalMs = Long.MAX_VALUE)
-        }
-        updateHistoryFlags()
-    }
-
     // ═══════════════════════════════════════════════════════════
     //  EFFECTS / ADJUSTMENTS / VISUALIZER
-    //  (Full implementations preserved — unchanged from original)
     // ═══════════════════════════════════════════════════════════
 
     fun applyEffectPreset(presetKey: String, presetLabel: String) {
@@ -3716,40 +3776,6 @@ class EditorViewModel : ViewModel() {
         pushHistory()
         addClipOnNewLayer(clip, baseTrack + 1)
         updateHistoryFlags()
-    }
-
-    fun setPreviewEffect(presetKey: String?, intensity: Float) {
-        if (presetKey == null) {
-            _state.update { it.copy(previewEffectState = null) }
-            return
-        }
-        val preset = EffectLibrary.findByKey(presetKey) ?: return
-        val scaled = buildScaledEffectState(preset, intensity)
-        _state.update { it.copy(previewEffectState = scaled) }
-    }
-
-    fun setPreviewEffectFull(state: EffectState?) {
-        _state.update { it.copy(previewEffectState = state) }
-    }
-
-    fun clearPreviewEffect() {
-        _state.update { it.copy(previewEffectState = null) }
-    }
-
-    fun setPreviewMatte(style: ColorMatteStyle, opacity: Float, durationMs: Long) {
-        _state.update {
-            it.copy(
-                previewMatte = PreviewMatteState(
-                    style = style,
-                    opacity = opacity.coerceIn(0f, 100f),
-                    durationMs = durationMs.coerceAtLeast(100L)
-                )
-            )
-        }
-    }
-
-    fun clearPreviewMatte() {
-        _state.update { it.copy(previewMatte = null) }
     }
 
     fun createEffectLayerAt(presetKey: String, intensity: Float) {
