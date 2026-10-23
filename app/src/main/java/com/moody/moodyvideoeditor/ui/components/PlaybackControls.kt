@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -45,6 +45,7 @@ fun PlaybackControls(
     canUndo: Boolean,
     canRedo: Boolean,
     hasKeyframeAtPlayhead: Boolean = false,
+    // Tools
     onSelectBackward: () -> Unit = {},
     onSelectForward: () -> Unit = {},
     onSelectAll: () -> Unit = {},
@@ -54,10 +55,9 @@ fun PlaybackControls(
     onUnlink: () -> Unit = {},
     isLinked: Boolean = false,
     canLink: Boolean = false,
-    // SPLIT
+    // Split & Trim
     onSplit: () -> Unit = {},
     canSplit: Boolean = false,
-    // Trim
     onTrimLeft: () -> Unit = {},
     onTrimRight: () -> Unit = {},
     canTrimLeft: Boolean = false,
@@ -80,14 +80,15 @@ fun PlaybackControls(
             .padding(horizontal = 2.dp, vertical = 1.dp),
         verticalArrangement = Arrangement.spacedBy(1.dp)
     ) {
-        // ─── ROW 1 — Play + Undo/Redo + Keyframe + Tools + Split/Trim + Link ───
+        // ─── ROW 1 — Play + Undo/Redo + Keyframe + Tools ───
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(30.dp)
-                .horizontalScroll(rememberScrollState()),
+                .height(32.dp) // Height thodi barhai taake buttons fit aayen
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(1.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp) // 🆕 Gap barha diya
         ) {
             // Keyframe
             IconButton(onClick = onKeyframe, enabled = hasVideo, modifier = Modifier.size(28.dp)) {
@@ -131,38 +132,38 @@ fun PlaybackControls(
                 )
             }
 
-            // Select tools
-            SmallBtn("⏪") { onSelectBackward() }
-            SmallBtn("⏩") { onSelectForward() }
-            SmallBtn("☑") { onSelectAll() }
-            SmallBtn("▤") { onSelectAllTrack() }
-            SmallBtn("☐") { onDeselectAll() }
+            // Select tools (with Text)
+            SmallBtn("⏪ Back") { onSelectBackward() }
+            SmallBtn("⏩ Fwd") { onSelectForward() }
+            SmallBtn("☑ All") { onSelectAll() }
+            SmallBtn("▤ Track") { onSelectAllTrack() }
+            SmallBtn("☐ None") { onDeselectAll() }
 
-            // ★ SPLIT wapas ★
+            // Split
             SmallBtn(
-                text = "][",
+                text = "][ Split",
                 enabled = canSplit,
                 highlight = canSplit
             ) { onSplit() }
 
             // Trim
             SmallBtn(
-                text = "[",
+                text = "[ Trim L",
                 enabled = canTrimLeft,
                 highlight = canTrimLeft
             ) { onTrimLeft() }
 
             SmallBtn(
-                text = "]",
+                text = "] Trim R",
                 enabled = canTrimRight,
                 highlight = canTrimRight
             ) { onTrimRight() }
 
             // Link / unlink
             if (isLinked) {
-                SmallBtn("🔓", highlight = true) { onUnlink() }
+                SmallBtn("🔓 Unlink", highlight = true) { onUnlink() }
             } else if (canLink) {
-                SmallBtn("🔗") { onLink() }
+                SmallBtn("🔗 Link") { onLink() }
             }
         }
 
@@ -170,7 +171,8 @@ fun PlaybackControls(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(18.dp),
+                .height(18.dp)
+                .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
@@ -215,8 +217,8 @@ private fun SmallBtn(
 ) {
     Box(
         modifier = Modifier
-            .height(24.dp)
-            .widthIn(min = 24.dp)
+            .height(26.dp)
+            .wrapContentWidth() // 🆕 Text ke hisaab se width
             .clip(RoundedCornerShape(5.dp))
             .background(
                 when {
@@ -228,13 +230,15 @@ private fun SmallBtn(
             .pointerInput(text, enabled) {
                 if (enabled) detectTapGestures { onClick() }
             }
-            .padding(horizontal = 4.dp),
+            .padding(horizontal = 8.dp), // 🆕 Saaf padding
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = text,
-            fontSize = 10.sp,
-            color = if (enabled) Color.White else Color(0xFF555555)
+            fontSize = 9.sp, // Chota text
+            fontWeight = FontWeight.Medium,
+            color = if (enabled) Color.White else Color(0xFF555555),
+            maxLines = 1
         )
     }
 }
