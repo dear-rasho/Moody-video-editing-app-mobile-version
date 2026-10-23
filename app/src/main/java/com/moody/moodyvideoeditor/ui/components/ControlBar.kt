@@ -10,8 +10,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -22,6 +30,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.moody.moodyvideoeditor.utils.VideoUtils
 
 @Composable
 fun ControlBar(
@@ -29,7 +38,16 @@ fun ControlBar(
     onAddVisualLayer: () -> Unit = {},
     onAddAudioLayer: () -> Unit = {},
     currentRatio: String = "16:9",
-    onRatioClick: () -> Unit = {}
+    onRatioClick: () -> Unit = {},
+    // 🆕 5 icons moved from PlaybackControls
+    isMuted: Boolean = false,
+    onMuteToggle: () -> Unit = {},
+    onMagnet: () -> Unit = {},
+    onDelete: () -> Unit = {},
+    onDuplicate: () -> Unit = {},
+    hasVideo: Boolean = true,
+    currentPosMs: Long = 0L,
+    totalDurationMs: Long = 0L
 ) {
     Row(
         modifier = Modifier
@@ -37,22 +55,66 @@ fun ControlBar(
             .height(48.dp)
             .background(Color(0xFF0A0A0A))
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp),
+            .padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         PillButton("＋ Media", onMediaClick)
         PillButton("＋V", onAddVisualLayer)
         PillButton("＋A", onAddAudioLayer)
-        // 🆕 Ratio button — shows current ratio, tap opens ratio panel
         PillButton("🖼️ $currentRatio", onRatioClick)
+
+        // ─── Moved from PlaybackControls ───
+        IconButton(
+            onClick = onMuteToggle,
+            enabled = hasVideo,
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(
+                if (isMuted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
+                "Mute",
+                tint = if (isMuted) Color(0xFFFF6B6B) else Color(0xFF7C3AED),
+                modifier = Modifier.size(18.dp)
+            )
+        }
+
+        PillButton("🧲", onMagnet)
+
+        IconButton(
+            onClick = onDuplicate,
+            enabled = hasVideo,
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(
+                Icons.Filled.ContentCopy, "Duplicate",
+                tint = if (hasVideo) Color(0xFF7C3AED) else Color(0xFF444444),
+                modifier = Modifier.size(18.dp)
+            )
+        }
+
+        IconButton(
+            onClick = onDelete,
+            enabled = hasVideo,
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(
+                Icons.Filled.Delete, "Delete",
+                tint = if (hasVideo) Color(0xFFFF6B6B) else Color(0xFF444444),
+                modifier = Modifier.size(18.dp)
+            )
+        }
 
         Spacer(modifier = Modifier.weight(1f))
 
+        // Time display
         Text(
-            "🔍 1.00x",
+            "${VideoUtils.formatDuration(currentPosMs)} / ${
+                VideoUtils.formatDuration(
+                    totalDurationMs
+                )
+            }",
             color = Color(0xFF888888),
-            fontSize = 11.sp,
+            fontSize = 10.sp,
             fontWeight = FontWeight.Bold
         )
     }
@@ -62,11 +124,11 @@ fun ControlBar(
 private fun PillButton(text: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .height(34.dp)
+            .height(32.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF1A1A1A))
             .pointerInput(text) { detectTapGestures { onClick() } }
-            .padding(horizontal = 12.dp),
+            .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(text, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)

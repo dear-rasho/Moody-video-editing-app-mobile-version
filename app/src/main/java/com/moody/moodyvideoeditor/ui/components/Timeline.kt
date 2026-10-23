@@ -72,10 +72,10 @@ import kotlin.math.roundToInt
 // ═══════════════════════════════════════════════════════════════
 
 private val TRACK_LABEL_WIDTH = 54.dp
-private val RULER_HEIGHT = 22.dp
-private val SCROLLBAR_HEIGHT = 10.dp
-private val VISUAL_TRACK_HEIGHT = 48.dp
-private val AUDIO_TRACK_HEIGHT = 42.dp
+private val RULER_HEIGHT = 20.dp
+private val SCROLLBAR_HEIGHT = 8.dp
+private val VISUAL_TRACK_HEIGHT = 36.dp
+private val AUDIO_TRACK_HEIGHT = 32.dp
 private const val DP_PER_SECOND = 20f
 
 private const val SNAP_ENTER_PX = 14f

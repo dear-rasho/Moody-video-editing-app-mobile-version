@@ -165,29 +165,6 @@ fun TransformPanel(
             Spacer(Modifier.height(8.dp))
 
 
-            //  INFO BAR
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFF181818))
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    clipName.take(16), color = Color.White, fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)
-                )
-                Text(
-                    String.format("%.2fs", currentTimeSec),
-                    color = Color(0xFF4F9DFF), fontSize = 10.sp, fontWeight = FontWeight.Bold
-                )
-            }
-
-            Spacer(Modifier.height(6.dp))
-
-
             //  TRANSFORM PROPERTIES
 
             Column(

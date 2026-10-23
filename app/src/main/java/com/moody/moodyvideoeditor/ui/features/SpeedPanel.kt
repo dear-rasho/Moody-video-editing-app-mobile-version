@@ -59,24 +59,6 @@ fun SpeedPanel(
 
         var sliderValue by remember(currentSpeed) { mutableFloatStateOf(currentSpeed) }
 
-        // INFO BAR
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFF181818))
-                .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            InfoRow("Clip:", clipName)
-            InfoRow("Base:", "${baseDurationMs / 1000.0}s")
-            InfoRow(
-                "Duration:",
-                String.format("%.2fs", (baseDurationMs / currentSpeed) / 1000.0)
-            )
-        }
-
-        Spacer(Modifier.height(8.dp))
 
         // PRESETS ROW
         Text(
@@ -182,16 +164,6 @@ fun SpeedPanel(
     }
 }
 
-@Composable
-private fun InfoRow(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(label, color = Color(0xFF888888), fontSize = 10.sp)
-        Text(value, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-    }
-}
 
 @Composable
 private fun EmptyState(icon: String, title: String, text: String) {

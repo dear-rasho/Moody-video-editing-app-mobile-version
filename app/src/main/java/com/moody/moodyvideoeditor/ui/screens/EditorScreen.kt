@@ -2415,237 +2415,290 @@ fun EditorScreen(
             .fillMaxSize()
             .background(Color(0xFF121212))
     ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF121212))
-    ) {
-
-        // ─── TOP BAR (fixed height) ───
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFF0A0A0A))
+                .fillMaxSize()
+                .background(Color(0xFF121212))
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, "Back", tint = Color.White)
-                }
-                Text(
-                    "Editor",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f)
-                )
-            }
 
-            Row(
+            // ═══════════════════════════════════════════════════════════
+            //  1. TOP BAR
+            // ═══════════════════════════════════════════════════════════
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
+                    .background(Color(0xFF0A0A0A))
             ) {
-                Box(
+                Row(
                     modifier = Modifier
-                        .height(34.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color(0xFF7C3AED))
-                        .pointerInput(Unit) {
-                            detectTapGestures { activePanel = "export" }
-                        }
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.ArrowBack, "Back", tint = Color.White)
+                    }
+                    Text(
+                        "Editor",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .height(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF7C3AED))
+                            .pointerInput(Unit) {
+                                detectTapGestures { activePanel = "export" }
+                            }
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text("💾", fontSize = 13.sp)
-                        Text(
-                            "Export",
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Text("💾", fontSize = 13.sp)
+                            Text(
+                                "Export",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
-        }
 
-// ─── PREVIEW — RESPONSIVE FIXED HEIGHT ───
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(previewHeight)
-                .background(Color(0xFF0A0A0A))
-        ) {
-            PreviewCanvas(
-                exoPlayer = exoPlayer,
-                hasVideo = state.clips.any { it.isVisualClip },
-                rotation = state.rotation,
-                aspectMode = state.aspectMode,
-                clips = state.clips,
-                currentPosMs = state.currentPosMs,
-                previewMatte = state.previewMatte,
-                isPlaying = isPlaybackActive,
-                hiddenVisualTracks = state.hiddenVisualTracks,
-                aspectRatioKey = state.aspectRatio,
-                selectedClipId = state.selectedClipId,
-                multiSelectedIds = state.multiSelectedIds,
-                previewFilters = state.previewFilters,
-                previewEffectState = state.previewEffectState,
-                isDrawingMode = isDrawingMode,
-                activeBrushType = brushType,
-                activeBrushColor = brushColor,
-                activeBrushWidth = brushWidth,
-                activeBrushOpacity = brushOpacity,
-                isMaskPenMode = isMaskPenMode,
-                isMaskHandMode = isMaskHandMode,
-                onMaskGestureStart = { viewModel.beginGroupGesture() },
-                onMaskGestureEnd = { viewModel.endGroupGesture() },
-                onBrushStrokeComplete = { stroke ->
-                    val targetBrush = state.selectedClip?.takeIf { it.isBrushClip }
-                        ?: state.clips.lastOrNull { it.isBrushClip }
-                    val strokeWithGradient = stroke.copy(gradient = brushGradient)
-                    viewModel.addStrokeToBrushClip(targetBrush?.id, strokeWithGradient)
+            // ═══════════════════════════════════════════════════════════
+            //  2. PREVIEW (fixed responsive height)
+            // ═══════════════════════════════════════════════════════════
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(previewHeight)
+                    .background(Color(0xFF0A0A0A))
+            ) {
+                PreviewCanvas(
+                    exoPlayer = exoPlayer,
+                    hasVideo = state.clips.any { it.isVisualClip },
+                    rotation = state.rotation,
+                    aspectMode = state.aspectMode,
+                    clips = state.clips,
+                    currentPosMs = state.currentPosMs,
+                    previewMatte = state.previewMatte,
+                    isPlaying = isPlaybackActive,
+                    hiddenVisualTracks = state.hiddenVisualTracks,
+                    aspectRatioKey = state.aspectRatio,
+                    selectedClipId = state.selectedClipId,
+                    multiSelectedIds = state.multiSelectedIds,
+                    previewFilters = state.previewFilters,
+                    previewEffectState = state.previewEffectState,
+                    isDrawingMode = isDrawingMode,
+                    activeBrushType = brushType,
+                    activeBrushColor = brushColor,
+                    activeBrushWidth = brushWidth,
+                    activeBrushOpacity = brushOpacity,
+                    isMaskPenMode = isMaskPenMode,
+                    isMaskHandMode = isMaskHandMode,
+                    onMaskGestureStart = { viewModel.beginGroupGesture() },
+                    onMaskGestureEnd = { viewModel.endGroupGesture() },
+                    onBrushStrokeComplete = { stroke ->
+                        val targetBrush = state.selectedClip?.takeIf { it.isBrushClip }
+                            ?: state.clips.lastOrNull { it.isBrushClip }
+                        val strokeWithGradient = stroke.copy(gradient = brushGradient)
+                        viewModel.addStrokeToBrushClip(targetBrush?.id, strokeWithGradient)
+                    },
+                    onMaskPointAdd = { x, y -> viewModel.addMaskPoint(x, y) },
+                    onMaskAnchorMove = { index, x, y ->
+                        viewModel.moveMaskAnchor(index, x, y)
+                    },
+                    onMaskHandleMove = { index, isIn, dx, dy ->
+                        viewModel.moveMaskHandle(index, isIn, dx, dy)
+                    },
+                    onMaskPointToggle = { index -> viewModel.toggleMaskPointSmooth(index) },
+                    onMaskPointDelete = { index -> viewModel.deleteMaskPoint(index) },
+                    onMaskMove = { dx, dy -> viewModel.moveMaskBy(dx, dy) },
+                    onMaskStateChanged = { viewModel.updateMask(it) },
+                    onClosePath = { viewModel.setMaskClosed(true) },
+                    onClipSelected = { clipId ->
+                        val clip = state.clips.firstOrNull { it.id == clipId }
+                        if (clip != null) viewModel.selectClip(clip)
+                    },
+                    onDeleteLayer = { clipId ->
+                        state.clips.firstOrNull { it.id == clipId }?.let { clip ->
+                            viewModel.selectClip(clip)
+                            viewModel.deleteCurrentClip()
+                        }
+                    },
+                    onGroupGestureStart = { viewModel.beginGroupGesture() },
+                    onGroupGestureEnd = { viewModel.endGroupGesture() },
+                    onGroupGesture = { clipId: String, x: Float, y: Float, scale: Float, rot: Float ->
+                        viewModel.applyGroupTransform(clipId, x, y, scale, rot)
+                    },
+                    onTextPositionChanged = { clipId: String, x: Float, y: Float ->
+                        viewModel.updateTextPositionDirect(clipId, x, y)
+                    },
+                    onTextTransformChanged = { clipId: String, s: Float, r: Float ->
+                        viewModel.updateSelectedTransformBulk(clipId, s, r)
+                    },
+                    onStickerPositionChanged = { clipId: String, x: Float, y: Float ->
+                        viewModel.updateSelectedPositionBulk(clipId, x, y)
+                    },
+                    onStickerTransformChanged = { clipId: String, s: Float, r: Float ->
+                        viewModel.updateSelectedTransformBulk(clipId, s, r)
+                    },
+                    onBrushPositionChanged = { clipId: String, x: Float, y: Float ->
+                        viewModel.updateSelectedPositionBulk(clipId, x, y)
+                    },
+                    onBrushTransformChanged = { clipId: String, s: Float, r: Float ->
+                        viewModel.updateSelectedTransformBulk(clipId, s, r)
+                    },
+                    onVisualizerPositionChanged = { clipId: String, x: Float, y: Float ->
+                        viewModel.updateSelectedPositionBulk(clipId, x, y)
+                    },
+                    isPickingChromaColor = state.isPickingChromaColor,
+                    onChromaColorPicked = { viewModel.onChromaColorPicked(it) },
+                    onVisualizerTransformChanged = { clipId: String, s: Float, r: Float ->
+                        viewModel.updateSelectedTransformBulk(clipId, s, r)
+                    },
+                )
+            }
+
+            // ═══════════════════════════════════════════════════════════
+            //  3. CONTROL BAR (＋Media, ＋V, ＋A, ratio) — fixed 48dp
+            // ═══════════════════════════════════════════════════════════
+            ControlBar(
+                onMediaClick = {
+                    picker.launch(
+                        arrayOf(
+                            "video/*",
+                            "image/*",
+                            "audio/*",
+                            "image/jpeg",
+                            "image/jpg",
+                            "application/octet-stream"
+                        )
+                    )
                 },
-                onMaskPointAdd = { x, y -> viewModel.addMaskPoint(x, y) },
-                onMaskAnchorMove = { index, x, y ->
-                    viewModel.moveMaskAnchor(index, x, y)
-                },
-                onMaskHandleMove = { index, isIn, dx, dy ->
-                    viewModel.moveMaskHandle(index, isIn, dx, dy)
-                },
-                onMaskPointToggle = { index -> viewModel.toggleMaskPointSmooth(index) },
-                onMaskPointDelete = { index -> viewModel.deleteMaskPoint(index) },
-                onMaskMove = { dx, dy -> viewModel.moveMaskBy(dx, dy) },
-                onMaskStateChanged = { viewModel.updateMask(it) },
-                onClosePath = { viewModel.setMaskClosed(true) },
-                onClipSelected = { clipId ->
-                    val clip = state.clips.firstOrNull { it.id == clipId }
-                    if (clip != null) viewModel.selectClip(clip)
-                },
-                onDeleteLayer = { clipId ->
-                    state.clips.firstOrNull { it.id == clipId }?.let { clip ->
-                        viewModel.selectClip(clip)
+                onAddVisualLayer = { viewModel.addVisualLayer() },
+                onAddAudioLayer = { viewModel.addAudioLayer() },
+                currentRatio = state.aspectRatio,
+                onRatioClick = { activePanel = "ratio" },
+                // 🆕 moved from PlaybackControls
+                isMuted = state.isMuted,
+                onMuteToggle = { viewModel.toggleMute() },
+                onMagnet = { viewModel.closeGapsFromPlayhead() },
+                onDelete = {
+                    if (state.multiSelectedIds.isNotEmpty()) {
+                        viewModel.deleteSelectedClips()
+                    } else {
                         viewModel.deleteCurrentClip()
                     }
                 },
-                onGroupGestureStart = { viewModel.beginGroupGesture() },
-                onGroupGestureEnd = { viewModel.endGroupGesture() },
-                onGroupGesture = { clipId: String, x: Float, y: Float, scale: Float, rot: Float ->
-                    viewModel.applyGroupTransform(clipId, x, y, scale, rot)
-                },
-                onTextPositionChanged = { clipId: String, x: Float, y: Float ->
-                    viewModel.updateTextPositionDirect(clipId, x, y)
-                },
-                onTextTransformChanged = { clipId: String, s: Float, r: Float ->
-                    viewModel.updateSelectedTransformBulk(clipId, s, r)
-                },
-                onStickerPositionChanged = { clipId: String, x: Float, y: Float ->
-                    viewModel.updateSelectedPositionBulk(clipId, x, y)
-                },
-                onStickerTransformChanged = { clipId: String, s: Float, r: Float ->
-                    viewModel.updateSelectedTransformBulk(clipId, s, r)
-                },
-                onBrushPositionChanged = { clipId: String, x: Float, y: Float ->
-                    viewModel.updateSelectedPositionBulk(clipId, x, y)
-                },
-                onBrushTransformChanged = { clipId: String, s: Float, r: Float ->
-                    viewModel.updateSelectedTransformBulk(clipId, s, r)
-                },
-                onVisualizerPositionChanged = { clipId: String, x: Float, y: Float ->
-                    viewModel.updateSelectedPositionBulk(clipId, x, y)
-                },
-                isPickingChromaColor = state.isPickingChromaColor,
-                onChromaColorPicked = { viewModel.onChromaColorPicked(it) },
-                onVisualizerTransformChanged = { clipId: String, s: Float, r: Float ->
-                    viewModel.updateSelectedTransformBulk(clipId, s, r)
-                },
+                onDuplicate = { viewModel.duplicateCurrentClip() },
+                hasVideo = state.clips.isNotEmpty(),
+                currentPosMs = state.currentPosMs,
+                totalDurationMs = state.totalDurationMs
             )
-        }
+            // ═══════════════════════════════════════════════════════════
+            //  4. PLAYBACK CONTROLS (2 rows — tools + zoom)
+            //     ★ Yahan — Timeline ke UPAR ★
+            // ═══════════════════════════════════════════════════════════
+            PlaybackControls(
+                isPlaying = isPlaybackActive,
+                hasVideo = state.clips.isNotEmpty(),
+                canUndo = state.canUndo,
+                canRedo = state.canRedo,
+                hasKeyframeAtPlayhead = viewModel.hasKeyframeAtPlayhead(),
+                onSelectBackward = { viewModel.selectBackward() },
+                onSelectForward = { viewModel.selectForward() },
+                onSelectAll = { viewModel.selectAllClips() },
+                onSelectAllTrack = { viewModel.selectAllOnCurrentTrack() },
+                onDeselectAll = { viewModel.deselectAll() },
+                onLink = { viewModel.linkSelectedClips() },
+                onUnlink = {
+                    state.selectedClip?.let {
+                        viewModel.unlinkClip(it.id)
+                    }
+                },
+                isLinked = state.selectedClip?.linkGroupId != null,
+                canLink = (state.multiSelectedIds.size >= 2) ||
+                        (state.selectedClip != null && state.selectedClip?.linkGroupId == null),
+                onSplit = { viewModel.splitCurrentClip() },
+                canSplit = state.selectedClip?.let { sel ->
+                    state.currentPosMs > (sel.timelineStartMs + EditorClip.MIN_DURATION_MS) &&
+                            state.currentPosMs < (sel.timelineEndMs - EditorClip.MIN_DURATION_MS)
+                } ?: false,
+                onTrimLeft = { viewModel.trimLeft() },
+                onTrimRight = { viewModel.trimRight() },
+                canTrimLeft = state.selectedClip?.let { sel ->
+                    state.currentPosMs > (sel.timelineStartMs + EditorClip.MIN_DURATION_MS)
+                } ?: false,
+                canTrimRight = state.selectedClip?.let { sel ->
+                    state.currentPosMs < (sel.timelineEndMs - EditorClip.MIN_DURATION_MS)
+                } ?: false,
+                zoomSlider = state.timelineZoom,
+                totalSec = state.totalDurationMs / 1000f,
+                viewportContentWidthDp = 320f,
+                onZoomChange = { viewModel.setTimelineZoom(it) },
+                onPlayPause = {
+                    if (isPlaybackActive) {
+                        isPlaybackActive = false
+                        exoPlayer.pause()
+                        audioExoPlayer.pause()
+                    } else {
+                        if (state.clips.isNotEmpty()) {
+                            val totalDur = state.totalDurationMs
+                            if (state.currentPosMs >= totalDur) {
+                                viewModel.setCurrentPos(0L)
+                            }
+                            isPlaybackActive = true
 
-        // ─── CONTROL BAR ───
-        ControlBar(
-            onMediaClick = {
-                picker.launch(
-                    arrayOf(
-                        "video/*",
-                        "image/*",
-                        "audio/*",
-                        "image/jpeg",
-                        "image/jpg",
-                        "application/octet-stream"
-                    )
-                )
-            },
-            onAddVisualLayer = { viewModel.addVisualLayer() },
-            onAddAudioLayer = { viewModel.addAudioLayer() },
-            currentRatio = state.aspectRatio,
-            onRatioClick = { activePanel = "ratio" }
-        )
+                            val activeVisual = state.clips.firstOrNull {
+                                it.isVisualClip &&
+                                        state.currentPosMs >= it.timelineStartMs &&
+                                        state.currentPosMs < it.timelineEndMs &&
+                                        !state.hiddenVisualTracks.contains(it.trackIndex)
+                            }
+                            if (activeVisual != null) exoPlayer.play()
 
-// ─── TIMELINE — RESPONSIVE FIXED HEIGHT ───
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(timelineHeight)
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                val selectedForToolbar = state.selectedClip
-                val linkGroupId = selectedForToolbar?.linkGroupId
-                val multiCount = state.multiSelectedIds.size
-                val canLink = multiCount >= 2 ||
-                        (selectedForToolbar != null && linkGroupId == null)
-                val isLinked = linkGroupId != null
-
-                val canSplit = selectedForToolbar != null &&
-                        state.currentPosMs > (selectedForToolbar.timelineStartMs + EditorClip.MIN_DURATION_MS) &&
-                        state.currentPosMs < (selectedForToolbar.timelineEndMs - EditorClip.MIN_DURATION_MS)
-                val canTrimLeft = selectedForToolbar != null &&
-                        state.currentPosMs > (selectedForToolbar.timelineStartMs + EditorClip.MIN_DURATION_MS)
-                val canTrimRight = selectedForToolbar != null &&
-                        state.currentPosMs < (selectedForToolbar.timelineEndMs - EditorClip.MIN_DURATION_MS)
-
-                TimelineToolbar(
-                    onSelectBackward = { viewModel.selectBackward() },
-                    onSelectForward = { viewModel.selectForward() },
-                    onSelectAll = { viewModel.selectAllClips() },
-                    onSelectAllTrack = { viewModel.selectAllOnCurrentTrack() },
-                    onDeselectAll = { viewModel.deselectAll() },
-                    onMagnet = { viewModel.closeGapsFromPlayhead() },
-                    onAddVisualLayer = { viewModel.addVisualLayer() },
-                    onAddAudioLayer = { viewModel.addAudioLayer() },
-                    onLink = {
-                        viewModel.linkSelectedClips()
-                    },
-                    onUnlink = {
-                        selectedForToolbar?.let {
-                            viewModel.unlinkClip(it.id)
+                            val activeAudio = state.clips.firstOrNull {
+                                it.isAudio &&
+                                        !it.isAudioEffectClip &&
+                                        it.uri != Uri.EMPTY &&
+                                        state.currentPosMs >= it.timelineStartMs &&
+                                        state.currentPosMs < it.timelineEndMs &&
+                                        !state.mutedAudioTracks.contains(it.trackIndex)
+                            }
+                            if (activeAudio != null) audioExoPlayer.play()
                         }
-                    },
-                    isLinked = isLinked,
-                    canLink = canLink,
-                    onSplit = { viewModel.splitCurrentClip() },
-                    onTrimLeft = { viewModel.trimLeft() },
-                    onTrimRight = { viewModel.trimRight() },
-                    canSplit = canSplit,
-                    canTrimLeft = canTrimLeft,
-                    canTrimRight = canTrimRight,
-                    zoomSlider = state.timelineZoom,
-                    totalSec = state.totalDurationMs / 1000f,
-                    viewportContentWidthDp = 320f,
-                    onZoomChange = { viewModel.setTimelineZoom(it) }
-                )
-
+                    }
+                },
+                onUndo = { viewModel.undo() },
+                onRedo = { viewModel.redo() },
+                onKeyframe = { viewModel.toggleKeyframeAll() }
+            )
+            // ═══════════════════════════════════════════════════════════
+            //  5. TIMELINE (responsive fixed height) — ab PlaybackControls ke NEECHE
+            // ═══════════════════════════════════════════════════════════
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(timelineHeight)
+            ) {
                 Timeline(
                     state = state,
                     onClipTapped = { clip ->
@@ -2723,73 +2776,18 @@ fun EditorScreen(
                     }
                 )
             }
-        }
-        // ─── PLAYBACK CONTROLS ───
-        PlaybackControls(
-            isPlaying = isPlaybackActive,
-            isMuted = state.isMuted,
-            currentPosMs = state.currentPosMs,
-            totalDurationMs = state.totalDurationMs,
-            hasVideo = state.clips.isNotEmpty(),
-            canUndo = state.canUndo,
-            canRedo = state.canRedo,
-            hasKeyframeAtPlayhead = viewModel.hasKeyframeAtPlayhead(),
-            onPlayPause = {
-                if (isPlaybackActive) {
-                    isPlaybackActive = false
-                    exoPlayer.pause()
-                    audioExoPlayer.pause()
-                } else {
-                    if (state.clips.isNotEmpty()) {
-                        val totalDur = state.totalDurationMs
-                        if (state.currentPosMs >= totalDur) {
-                            viewModel.setCurrentPos(0L)
-                        }
-                        isPlaybackActive = true
 
-                        val activeVisual = state.clips.firstOrNull {
-                            it.isVisualClip &&
-                                    state.currentPosMs >= it.timelineStartMs &&
-                                    state.currentPosMs < it.timelineEndMs &&
-                                    !state.hiddenVisualTracks.contains(it.trackIndex)
-                        }
-                        if (activeVisual != null) exoPlayer.play()
-
-                        val activeAudio = state.clips.firstOrNull {
-                            it.isAudio &&
-                                    !it.isAudioEffectClip &&
-                                    it.uri != Uri.EMPTY &&
-                                    state.currentPosMs >= it.timelineStartMs &&
-                                    state.currentPosMs < it.timelineEndMs &&
-                                    !state.mutedAudioTracks.contains(it.trackIndex)
-                        }
-                        if (activeAudio != null) audioExoPlayer.play()
-                    }
-                }
-            },
-            onSplit = { viewModel.splitCurrentClip() },
-            onDelete = {
-                if (state.multiSelectedIds.isNotEmpty()) {
-                    viewModel.deleteSelectedClips()
-                } else {
-                    viewModel.deleteCurrentClip()
-                }
-            },
-            onDuplicate = { viewModel.duplicateCurrentClip() },
-            onUndo = { viewModel.undo() },
-            onRedo = { viewModel.redo() },
-            onMuteToggle = { viewModel.toggleMute() },
-            onKeyframe = { viewModel.toggleKeyframeAll() }
-        )
-
-        // ─── FEATURE PANEL OR SHELF ───
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .heightIn(min = 90.dp)          // ← max hata do
-        ) {
-            EditorPanelHost()
+            // ═══════════════════════════════════════════════════════════
+            //  6. FEATURE PANEL — poori bachi hui jagah (weight 1f)
+            // ═══════════════════════════════════════════════════════════
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .heightIn(min = 90.dp, max = 560.dp)    // ← max = 560dp
+            ) {
+                EditorPanelHost()
+            }
         }
     }
 
@@ -2948,4 +2946,4 @@ fun EditorScreen(
             shape = RoundedCornerShape(16.dp)
         )
     }
-}}
+}
