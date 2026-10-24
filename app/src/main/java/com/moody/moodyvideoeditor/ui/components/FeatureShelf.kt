@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,9 +63,8 @@ val FEATURES = listOf(
     Feature("crop", "Crop", "📐"),
     Feature("volume", "Volume", "🔊"),
     Feature("audiofx", "Audio FX", "🎧"),
-    Feature("music", "Music", "🎵"),
     Feature("beats", "Beats", "🥁"),
-    Feature("motion", "Motion", "💫"),
+
     Feature("freeze", "Freeze", "❄️"),
     Feature("ratio", "Ratio", "🖼️"),
     Feature("duplicate", "Dup", "📋"),
@@ -163,6 +165,13 @@ private fun FeatureItem(feature: Feature, onClick: () -> Unit) {
                     drawCircle(brush = sweep, radius = radius, center = center)
                 }
             }
+        } else if (feature.key == "crop") {
+            Icon(
+                imageVector = Icons.Filled.Crop,
+                contentDescription = "Crop",
+                tint = Color.White,
+                modifier = Modifier.size(22.dp)
+            )
         } else {
             // Normal emojis for other features
             Text(feature.icon, fontSize = 22.sp)

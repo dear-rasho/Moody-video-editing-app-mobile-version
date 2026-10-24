@@ -752,6 +752,14 @@ class VideoExporter(
         }
         filterParts.add("[$lastLabel]format=yuv420p[outv]")
 
+        // Watermark add karo
+        val finalOutv = WatermarkHelper.addWatermarkToFilter(context, filterParts, "outv", targetW, targetH)
+
+        args.add("-filter_complex")
+        args.add(filterParts.joinToString(";"))
+        args.add("-map"); args.add("[$finalOutv]")
+        args.add("-map"); args.add("[outa]")
+
         if (audioLocalFiles.isEmpty()) {
             filterParts.add("[1:a]anull[outa]")
         } else {

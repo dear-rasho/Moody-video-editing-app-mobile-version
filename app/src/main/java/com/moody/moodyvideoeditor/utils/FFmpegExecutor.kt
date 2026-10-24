@@ -742,8 +742,9 @@ class FFmpegExecutor(
             }
             filterParts.add("[$lastLabel]format=yuv420p[outv]")
 
+            val finalOutv = WatermarkHelper.addWatermarkToFilter(context, filterParts, "outv", targetW, targetH)
             args.add("-filter_complex"); args.add(filterParts.joinToString(";"))
-            args.add("-map"); args.add("[outv]"); args.add("-frames:v"); args.add(totalFrames.toString())
+            args.add("-map"); args.add("[$finalOutv]"); args.add("-frames:v"); args.add(totalFrames.toString())
             args.add("-r"); args.add(fps.toString()); args.add("-threads"); args.add("0"); args.add(
                 pattern
             )
@@ -1009,9 +1010,9 @@ class FFmpegExecutor(
         targetH: Int
     ): String {
         filterParts.add("[$inputLabel]scale=$targetW:$targetH:flags=lanczos,setsar=1[exportv]")
-        return "exportv"
+        // Watermark yahan add ho raha hai
+        return WatermarkHelper.addWatermarkToFilter(context, filterParts, "exportv", targetW, targetH)
     }
-
     private fun buildVisualTransformFilters(
         clip: EditorClip,
         targetW: Int,

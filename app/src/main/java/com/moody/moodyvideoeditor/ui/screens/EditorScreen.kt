@@ -91,8 +91,7 @@ import com.moody.moodyvideoeditor.ui.features.FiltersPanel
 import com.moody.moodyvideoeditor.ui.features.FreezePanel
 import com.moody.moodyvideoeditor.ui.features.ManualCaptionsPanel
 import com.moody.moodyvideoeditor.ui.features.MaskPanel
-import com.moody.moodyvideoeditor.ui.features.MotionPanel
-import com.moody.moodyvideoeditor.ui.features.MusicPanel
+
 import com.moody.moodyvideoeditor.ui.features.OverlaysPanel
 import com.moody.moodyvideoeditor.ui.features.PromptPanel
 import com.moody.moodyvideoeditor.ui.features.SpeedPanel
@@ -348,6 +347,9 @@ fun EditorScreen(
     //  VIDEO PLAYBACK SYNC
     // ═══════════════════════════════════════════════════════════
 
+    // 🆕 Track previous chroma to know if it changed
+    var lastChromaHash by remember { mutableStateOf(0) }
+
     LaunchedEffect(state.currentPosMs, state.clips, state.hiddenVisualTracks) {
         val playheadMs = state.currentPosMs
         val activeClip = state.clips
@@ -367,12 +369,14 @@ fun EditorScreen(
         }
 
         val chroma = activeClip.chroma?.takeIf { it.isActive }
-        exoPlayer.setVideoEffects(
-            chroma?.let { listOf(ChromaKeyGlEffect(it)) }.orEmpty()
-        )
+        val currentChromaHash = chroma?.hashCode() ?: 0
 
         val currentUri = exoPlayer.currentMediaItem?.localConfiguration?.uri
-        if (currentUri != activeClip.uri) {
+
+        // 🆕 Agar URI change hui hai YA Chroma change hua hai, to player refresh karo
+        if (currentUri != activeClip.uri || lastChromaHash != currentChromaHash) {
+            lastChromaHash = currentChromaHash
+
             val mediaItem = MediaItem.Builder()
                 .setUri(activeClip.uri)
                 .setClippingConfiguration(
@@ -382,8 +386,20 @@ fun EditorScreen(
                         .build()
                 )
                 .build()
+
             exoPlayer.setMediaItem(mediaItem)
+
+            // 🆕 Effect prepare se pehle set karo
+            exoPlayer.setVideoEffects(
+                chroma?.let { listOf(ChromaKeyGlEffect(it)) }.orEmpty()
+            )
+
             exoPlayer.prepare()
+        } else {
+            // Sirf effect update karo (bina media reset ke)
+            exoPlayer.setVideoEffects(
+                chroma?.let { listOf(ChromaKeyGlEffect(it)) }.orEmpty()
+            )
         }
 
         val speed = activeClip.speed.coerceAtLeast(0.01f)
@@ -1788,13 +1804,9 @@ fun EditorScreen(
                 onClose = { activePanel = null }
             )
 
-            "music" -> MusicPanel(onClose = { activePanel = null })
 
-            "motion" -> MotionPanel(
-                current = "none",
-                onSelected = { },
-                onClose = { activePanel = null }
-            )
+
+
 
             "duplicate" -> {
                 viewModel.duplicateCurrentClip()

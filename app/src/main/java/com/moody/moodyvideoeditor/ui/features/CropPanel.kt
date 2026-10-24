@@ -56,8 +56,7 @@ fun CropPanel(
     onReset: () -> Unit,
     onClose: () -> Unit
 ) {
-    FeaturePanel(title = "✂️ Crop", onClose = onClose) {
-
+    FeaturePanel(title = "Crop", onClose = onClose) {
         if (!hasClipSelected || clip == null) {
             EmptyState()
             return@FeaturePanel
