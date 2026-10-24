@@ -704,11 +704,28 @@ fun PreviewCanvas(
                         val videoLocalSec =
                             ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
                         val videoTransform2 = TransformApplier.resolveLive(clip, videoLocalSec)
-                        val videoSize = exoPlayer.videoSize
-                        val rawVideoAspect =
-                            if (videoSize.width > 0 && videoSize.height > 0) videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height else canvasW / canvasH
-                        val videoAspect =
-                            if (videoSize.unappliedRotationDegrees % 180 != 0) 1f / rawVideoAspect else rawVideoAspect
+                        val videoAspect: Float = remember(clip.uri) {
+                            try {
+                                val retriever = MediaMetadataRetriever()
+                                retriever.setDataSource(context, clip.uri)
+                                val w = retriever.extractMetadata(
+                                    MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
+                                )?.toFloatOrNull() ?: 0f
+                                val h = retriever.extractMetadata(
+                                    MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
+                                )?.toFloatOrNull() ?: 0f
+                                val rot = retriever.extractMetadata(
+                                    MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION
+                                )?.toIntOrNull() ?: 0
+                                retriever.release()
+                                if (w > 0f && h > 0f) {
+                                    val raw = w / h
+                                    if (rot == 90 || rot == 270) 1f / raw else raw
+                                } else canvasW / canvasH
+                            } catch (_: Throwable) {
+                                canvasW / canvasH
+                            }
+                        }
                         val videoBounds = fittedBoundsFractions(canvasW, canvasH, videoAspect)
                         val useExactColorWheels = Build.VERSION.SDK_INT >= 33
                         val videoWheelStates = remember(clip.colorWheel, activeColorWheels) {
@@ -817,7 +834,7 @@ fun PreviewCanvas(
                                         },
                                         update = { view ->
                                             view.player = exoPlayer
-                                            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL
                                             view.rotation = rotation.toFloat()
                                             val sv = view.videoSurfaceView
                                             if (sv is TextureView) {
