@@ -3331,11 +3331,15 @@ class EditorViewModel : ViewModel() {
     }
 
     fun setCrop(l: Float, r: Float, t: Float, b: Float) {
-        val cl = l.coerceIn(0f, 0.45f)
-        val cr = r.coerceIn(0f, 0.45f)
-        val ct = t.coerceIn(0f, 0.45f)
-        val cb = b.coerceIn(0f, 0.45f)
-        forEachSelectedClip { it.copy(cropL = cl, cropR = cr, cropT = ct, cropB = cb) }
+        val clamped = com.moody.moodyvideoeditor.utils.CropHelper.clampAll(l, r, t, b)
+        forEachSelectedClip {
+            it.copy(
+                cropL = clamped.l,
+                cropR = clamped.r,
+                cropT = clamped.t,
+                cropB = clamped.b
+            )
+        }
     }
 
     fun setTransitionForClip(clipId: String, state: TransitionState) {

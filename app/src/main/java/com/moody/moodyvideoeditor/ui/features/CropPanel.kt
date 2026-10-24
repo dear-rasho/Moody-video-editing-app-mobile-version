@@ -2,7 +2,6 @@ package com.moody.moodyvideoeditor.ui.features
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,85 +9,129 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.data.Keyframe
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
+import com.moody.moodyvideoeditor.utils.CropHelper
+import com.moody.moodyvideoeditor.utils.KeyframeStore
 
 @Composable
 fun CropPanel(
-    cropL: Float, cropR: Float, cropT: Float, cropB: Float,
+    clip: EditorClip?,
+    playheadMs: Long,
     hasClipSelected: Boolean,
-    onCropChanged: (Float, Float, Float, Float) -> Unit,
-    onAspectSelected: (String) -> Unit,
+    onCropChanged: (prop: String, value01: Float) -> Unit,
+    onToggleKeyframe: (prop: String) -> Unit,
     onReset: () -> Unit,
     onClose: () -> Unit
 ) {
     FeaturePanel(title = "✂️ Crop", onClose = onClose) {
 
-        if (!hasClipSelected) {
+        if (!hasClipSelected || clip == null) {
             EmptyState()
             return@FeaturePanel
         }
 
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
 
-            // ASPECT PRESETS
+        val currentTimeSec = remember(clip.id, playheadMs, clip.timelineStartMs, clip.durationMs) {
+            KeyframeStore.clipLocalTimeSeconds(
+                playheadMs, clip.timelineStartMs, clip.durationMs
+            )
+        }
+
+        // 🔆 Sample crop values at playhead (respects keyframes)
+        val sampled = remember(
+            clip.id, clip.cropL, clip.cropR, clip.cropT, clip.cropB,
+            clip.keyframes, currentTimeSec
+        ) {
+            com.moody.moodyvideoeditor.utils.TransformApplier
+                .resolveLive(clip, currentTimeSec)
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 340.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
             Text(
-                "Aspect Ratio",
-                color = Color(0xFF888888), fontSize = 9.sp,
-                fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp)
+                "Crop % (0..100) · keyframe each side",
+                color = Color(0xFF888888),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
             )
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                listOf("Free", "1:1", "16:9", "9:16", "4:3", "3:4").forEach { a ->
-                    Box(
-                        modifier = Modifier
-                            .height(32.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF181818))
-                            .pointerInput(a) {
-                                detectTapGestures {
-                                    if (a == "Free") onReset()
-                                    else onAspectSelected(a)
-                                }
-                            }
-                            .padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(a, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
+            CropPropRow(
+                label = "Left",
+                propKey = "cropL",
+                value01 = sampled.cropL,
+                keyframeMap = clip.keyframes,
+                currentTimeSec = currentTimeSec,
+                onChanged = { v -> onCropChanged("cropL", v) },
+                onToggleKf = { onToggleKeyframe("cropL") }
+            )
+            CropPropRow(
+                label = "Right",
+                propKey = "cropR",
+                value01 = sampled.cropR,
+                keyframeMap = clip.keyframes,
+                currentTimeSec = currentTimeSec,
+                onChanged = { v -> onCropChanged("cropR", v) },
+                onToggleKf = { onToggleKeyframe("cropR") }
+            )
+            CropPropRow(
+                label = "Top",
+                propKey = "cropT",
+                value01 = sampled.cropT,
+                keyframeMap = clip.keyframes,
+                currentTimeSec = currentTimeSec,
+                onChanged = { v -> onCropChanged("cropT", v) },
+                onToggleKf = { onToggleKeyframe("cropT") }
+            )
+            CropPropRow(
+                label = "Bottom",
+                propKey = "cropB",
+                value01 = sampled.cropB,
+                keyframeMap = clip.keyframes,
+                currentTimeSec = currentTimeSec,
+                onChanged = { v -> onCropChanged("cropB", v) },
+                onToggleKf = { onToggleKeyframe("cropB") }
+            )
 
-            Spacer(Modifier.height(4.dp))
-
-            // SLIDERS
-            CropSlider("Left", cropL) { onCropChanged(it, cropR, cropT, cropB) }
-            CropSlider("Right", cropR) { onCropChanged(cropL, it, cropT, cropB) }
-            CropSlider("Top", cropT) { onCropChanged(cropL, cropR, it, cropB) }
-            CropSlider("Bottom", cropB) { onCropChanged(cropL, cropR, cropT, it) }
-
-            // RESET
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(6.dp))
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -99,38 +142,161 @@ fun CropPanel(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    "↺ Reset Crop",
-                    color = Color(0xFFFF6B6B), fontSize = 12.sp, fontWeight = FontWeight.Bold
+                    "↺ Reset All Crop",
+                    color = Color(0xFFFF6B6B),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
                 )
             }
+
+            Text(
+                "💡 Cropped area is transparent — layers below show through",
+                color = Color(0xFF666666),
+                fontSize = 9.sp,
+                modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+            )
         }
     }
 }
 
 @Composable
-private fun CropSlider(label: String, value: Float, onChange: (Float) -> Unit) {
+private fun CropPropRow(
+    label: String,
+    propKey: String,
+    value01: Float,
+    keyframeMap: Map<String, List<Keyframe>>,
+    currentTimeSec: Float,
+    onChanged: (Float) -> Unit,
+    onToggleKf: () -> Unit
+) {
+    val hasKfAtTime = KeyframeStore.hasKeyframeAt(keyframeMap, propKey, currentTimeSec)
+    val hasAnyKf = KeyframeStore.getKeyframes(keyframeMap, propKey).isNotEmpty()
+
+    val percentValue = (value01 * 100f).coerceIn(0f, 100f)
+
+    var textValue by remember(percentValue) {
+        mutableStateOf("%.0f".format(percentValue))
+    }
+    var isFocused by remember { mutableStateOf(false) }
+
+    LaunchedEffect(percentValue, isFocused) {
+        if (!isFocused) textValue = "%.0f".format(percentValue)
+    }
+
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0xFF181818))
+            .padding(horizontal = 6.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(
-            label, color = Color(0xFF888888), fontSize = 10.sp,
-            fontWeight = FontWeight.Bold, modifier = Modifier.width(50.dp)
-        )
-        Slider(
-            value = value, onValueChange = onChange, valueRange = 0f..0.45f,
-            modifier = Modifier.weight(1f),
-            colors = SliderDefaults.colors(
-                thumbColor = Color(0xFF7C3AED),
-                activeTrackColor = Color(0xFF7C3AED),
-                inactiveTrackColor = Color(0xFF303030)
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .clip(RoundedCornerShape(5.dp))
+                .background(
+                    when {
+                        hasKfAtTime -> Color(0xFF4F9DFF).copy(alpha = 0.25f)
+                        hasAnyKf -> Color(0xFF4F9DFF).copy(alpha = 0.10f)
+                        else -> Color.Transparent
+                    }
+                )
+                .pointerInput(propKey) { detectTapGestures { onToggleKf() } },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "◆",
+                color = when {
+                    hasKfAtTime -> Color(0xFF4F9DFF)
+                    hasAnyKf -> Color.White
+                    else -> Color.White.copy(alpha = 0.65f)
+                },
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
             )
-        )
+        }
+
         Text(
-            "${(value * 100).toInt()}%", color = Color.White, fontSize = 10.sp,
-            fontWeight = FontWeight.Bold, modifier = Modifier.width(40.dp)
+            label,
+            color = Color(0xFFCCCCCC),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.width(56.dp)
         )
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(32.dp)
+                .clip(RoundedCornerShape(5.dp))
+                .background(Color(0xFF0F0F0F))
+                .padding(horizontal = 8.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                BasicTextField(
+                    value = textValue,
+                    onValueChange = { input ->
+                        val filtered = input.filter { it.isDigit() || it == '.' }
+                        textValue = filtered
+                        filtered.toFloatOrNull()?.let { parsed ->
+                            if (parsed.isFinite()) {
+                                val clamped = parsed.coerceIn(0f, 100f)
+                                onChanged(clamped / 100f)
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    textStyle = TextStyle(
+                        color = Color(0xFF4F9DFF),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.End
+                    ),
+                    cursorBrush = SolidColor(Color(0xFF4F9DFF)),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            val parsed = textValue.toFloatOrNull()
+                            if (parsed != null && parsed.isFinite()) {
+                                val clamped = parsed.coerceIn(0f, 100f)
+                                textValue = "%.0f".format(clamped)
+                                onChanged(clamped / 100f)
+                            }
+                        }
+                    ),
+                    modifier = Modifier
+                        .width(64.dp)
+                        .onFocusChanged { state ->
+                            isFocused = state.isFocused
+                            if (!state.isFocused) {
+                                val parsed = textValue.toFloatOrNull()
+                                if (parsed != null && parsed.isFinite()) {
+                                    val clamped = parsed.coerceIn(0f, 100f)
+                                    textValue = "%.0f".format(clamped)
+                                    onChanged(clamped / 100f)
+                                } else {
+                                    textValue = "%.0f".format(percentValue)
+                                }
+                            }
+                        }
+                )
+                Text(
+                    "%",
+                    color = Color(0xFF888888),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
     }
 }
 

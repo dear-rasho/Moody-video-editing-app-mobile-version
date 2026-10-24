@@ -437,10 +437,6 @@ object TextBitmapRenderer {
             alpha = (clip.filters.opacity / 100f * 255f).toInt().coerceIn(0, 255)
         }
 
-        val cropSx = 1f / (1f - transform.cropL - transform.cropR).coerceAtLeast(0.05f)
-        val cropSy = 1f / (1f - transform.cropT - transform.cropB).coerceAtLeast(0.05f)
-        val cropTx = -(transform.cropL - transform.cropR) / 2f * W
-        val cropTy = -(transform.cropT - transform.cropB) / 2f * H
         val pivotX = transform.anchorX / 100f * W
         val pivotY = transform.anchorY / 100f * H
         val positionX = (transform.x - 50f) / 100f * W
@@ -448,10 +444,35 @@ object TextBitmapRenderer {
 
         val saveCount = canvas.save()
         try {
-            canvas.translate(pivotX + positionX + cropTx, pivotY + positionY + cropTy)
+            canvas.translate(pivotX + positionX, pivotY + positionY)
             canvas.rotate(transform.rotation)
-            canvas.scale(transform.scale / 100f * cropSx, transform.scale / 100f * cropSy)
+            canvas.scale(transform.scale / 100f, transform.scale / 100f)
             canvas.translate(-pivotX, -pivotY)
+
+            val safeCrop = com.moody.moodyvideoeditor.utils.CropHelper.clampAll(
+                transform.cropL, transform.cropR, transform.cropT, transform.cropB
+            )
+            if (com.moody.moodyvideoeditor.utils.CropHelper.isFullyCropped(
+                    safeCrop.l, safeCrop.r, safeCrop.t, safeCrop.b
+                )
+            ) return
+
+            // Image-relative crop → convert to canvas coords
+            val bmpAspect = bitmap.width.toFloat() / bitmap.height
+            val canvasAR = W.toFloat() / H
+            val fitW: Float; val fitH: Float
+            if (bmpAspect >= canvasAR) { fitW = 1f; fitH = canvasAR / bmpAspect }
+            else { fitW = bmpAspect / canvasAR; fitH = 1f }
+            val leftOff = (1f - fitW) / 2f
+            val topOff = (1f - fitH) / 2f
+
+            val x1 = (leftOff + safeCrop.l * fitW) * W
+            val y1 = (topOff + safeCrop.t * fitH) * H
+            val x2 = (leftOff + (1f - safeCrop.r) * fitW) * W
+            val y2 = (topOff + (1f - safeCrop.b) * fitH) * H
+            if (x2 <= x1 || y2 <= y1) return
+            canvas.clipRect(x1, y1, x2, y2)
+
             canvas.drawBitmap(bitmap, null, destination, paint)
         } finally {
             canvas.restoreToCount(saveCount)

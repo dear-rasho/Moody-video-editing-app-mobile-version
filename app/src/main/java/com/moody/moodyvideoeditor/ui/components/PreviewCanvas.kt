@@ -119,6 +119,7 @@ import com.moody.moodyvideoeditor.utils.TextScaler
 import com.moody.moodyvideoeditor.utils.Transform2D
 import com.moody.moodyvideoeditor.utils.TransformApplier
 import com.moody.moodyvideoeditor.utils.TransitionRenderer
+import com.moody.moodyvideoeditor.utils.applyTransparentCrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -753,18 +754,6 @@ fun PreviewCanvas(
                                         blendMode = blendKeyToCompose(clip.blendMode)
                                         val w = size.width;
                                         val h = size.height
-                                        val cropSx =
-                                            1f / (1f - videoTransform2.cropL - videoTransform2.cropR).coerceAtLeast(
-                                                0.05f
-                                            )
-                                        val cropSy =
-                                            1f / (1f - videoTransform2.cropT - videoTransform2.cropB).coerceAtLeast(
-                                                0.05f
-                                            )
-                                        val cropTx =
-                                            -(videoTransform2.cropL - videoTransform2.cropR) / 2f * w
-                                        val cropTy =
-                                            -(videoTransform2.cropT - videoTransform2.cropB) / 2f * h
                                         val posTx = (videoTransform2.x - 50f) / 100f * w
                                         val posTy = (videoTransform2.y - 50f) / 100f * h
                                         val transT: Transform2D =
@@ -783,13 +772,13 @@ fun PreviewCanvas(
                                             } else Transform2D()
 
                                         translationX =
-                                            posTx + cropTx + combinedMotion.tx + transT.tx
+                                            posTx + combinedMotion.tx + transT.tx
                                         translationY =
-                                            posTy + cropTy + combinedMotion.ty + transT.ty
+                                            posTy + combinedMotion.ty + transT.ty
                                         scaleX =
-                                            (videoTransform2.scale / 100f) * cropSx * combinedMotion.scale * transT.scaleX
+                                            (videoTransform2.scale / 100f) * combinedMotion.scale * transT.scaleX
                                         scaleY =
-                                            (videoTransform2.scale / 100f) * cropSy * combinedMotion.scale * transT.scaleY
+                                            (videoTransform2.scale / 100f) * combinedMotion.scale * transT.scaleY
                                         rotationZ =
                                             videoTransform2.rotation + combinedMotion.rotation + transT.rotZ
                                         transformOrigin = TransformOrigin(
@@ -800,55 +789,68 @@ fun PreviewCanvas(
                                             opacityAlpha * transT.alpha * blendOpacityFactor(clip)
                                         this.clip = true
                                     }
-                                    .then(
-                                        if (videoBlurDp > 0.5f) Modifier.blur(
-                                            radius = videoBlurDp.dp,
-                                            edgeTreatment = BlurredEdgeTreatment.Unbounded
-                                        ) else Modifier
-                                    )
                             ) {
-                                AndroidView(
-                                    factory = { ctx ->
-                                        LayoutInflater.from(ctx).inflate(
-                                            com.moody.moodyvideoeditor.R.layout.view_player,
-                                            null
-                                        ) as PlayerView
-                                    },
-                                    update = { view ->
-                                        view.player = exoPlayer
-                                        view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                                        view.rotation = rotation.toFloat()
-                                        val sv = view.videoSurfaceView
-                                        if (sv is TextureView) {
-                                            if (clip.id == selectedClipId && chromaTextureView !== sv) {
-                                                chromaTextureView = sv
-                                            }
-                                            val videoCm = buildClipMatrix(
-                                                clip,
-                                                combinedMatrix,
-                                                applyMatrix,
-                                                videoWheelMatrix,
-                                                useExactVideoColorWheels
-                                            )
-                                            if (videoCm != null) {
-                                                val paint = Paint().apply {
-                                                    colorFilter =
-                                                        android.graphics.ColorMatrixColorFilter(
-                                                            videoCm
-                                                        )
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.Center)
+                                        .fillMaxWidth(videoBounds.first.coerceIn(0.01f, 1f))
+                                        .fillMaxHeight(videoBounds.second.coerceIn(0.01f, 1f))
+                                        .applyTransparentCrop(
+                                            videoTransform2.cropL,
+                                            videoTransform2.cropR,
+                                            videoTransform2.cropT,
+                                            videoTransform2.cropB
+                                        )
+                                        .then(
+                                            if (videoBlurDp > 0.5f) Modifier.blur(
+                                                radius = videoBlurDp.dp,
+                                                edgeTreatment = BlurredEdgeTreatment.Unbounded
+                                            ) else Modifier
+                                        )
+                                ) {
+                                    AndroidView(
+                                        factory = { ctx ->
+                                            LayoutInflater.from(ctx).inflate(
+                                                com.moody.moodyvideoeditor.R.layout.view_player,
+                                                null
+                                            ) as PlayerView
+                                        },
+                                        update = { view ->
+                                            view.player = exoPlayer
+                                            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                            view.rotation = rotation.toFloat()
+                                            val sv = view.videoSurfaceView
+                                            if (sv is TextureView) {
+                                                if (clip.id == selectedClipId && chromaTextureView !== sv) {
+                                                    chromaTextureView = sv
                                                 }
-                                                sv.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
-                                            } else sv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                                                val videoCm = buildClipMatrix(
+                                                    clip,
+                                                    combinedMatrix,
+                                                    applyMatrix,
+                                                    videoWheelMatrix,
+                                                    useExactVideoColorWheels
+                                                )
+                                                if (videoCm != null) {
+                                                    val paint = Paint().apply {
+                                                        colorFilter =
+                                                            android.graphics.ColorMatrixColorFilter(
+                                                                videoCm
+                                                            )
+                                                    }
+                                                    sv.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
+                                                } else sv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
-                                            if (Build.VERSION.SDK_INT >= 31) {
-                                                sv.isOpaque = combinedVideoEffect == null &&
-                                                        clip.chroma?.isActive != true
-                                                sv.setRenderEffect(combinedVideoEffect)
+                                                if (Build.VERSION.SDK_INT >= 31) {
+                                                    sv.isOpaque = combinedVideoEffect == null &&
+                                                            clip.chroma?.isActive != true
+                                                    sv.setRenderEffect(combinedVideoEffect)
+                                                }
                                             }
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxSize()
-                                )
+                                        },
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
                                 if (clip.id == selectedClipId && !isDrawingMode) {
                                     LayerTransformHandles(
                                         clipId = clip.id,
@@ -973,18 +975,6 @@ fun PreviewCanvas(
                                         blendMode = blendKeyToCompose(clip.blendMode)
                                         val w = size.width;
                                         val h = size.height
-                                        val cropSx =
-                                            1f / (1f - imgTransform.cropL - imgTransform.cropR).coerceAtLeast(
-                                                0.05f
-                                            )
-                                        val cropSy =
-                                            1f / (1f - imgTransform.cropT - imgTransform.cropB).coerceAtLeast(
-                                                0.05f
-                                            )
-                                        val cropTx =
-                                            -(imgTransform.cropL - imgTransform.cropR) / 2f * w
-                                        val cropTy =
-                                            -(imgTransform.cropT - imgTransform.cropB) / 2f * h
                                         val posTx = (imgTransform.x - 50f) / 100f * w
                                         val posTy = (imgTransform.y - 50f) / 100f * h
                                         val transT: Transform2D =
@@ -1002,13 +992,13 @@ fun PreviewCanvas(
                                                 )
                                             } else Transform2D()
                                         translationX =
-                                            posTx + cropTx + combinedMotion.tx + transT.tx
+                                            posTx + combinedMotion.tx + transT.tx
                                         translationY =
-                                            posTy + cropTy + combinedMotion.ty + transT.ty
+                                            posTy + combinedMotion.ty + transT.ty
                                         scaleX =
-                                            (imgTransform.scale / 100f) * cropSx * combinedMotion.scale * transT.scaleX
+                                            (imgTransform.scale / 100f) * combinedMotion.scale * transT.scaleX
                                         scaleY =
-                                            (imgTransform.scale / 100f) * cropSy * combinedMotion.scale * transT.scaleY
+                                            (imgTransform.scale / 100f) * combinedMotion.scale * transT.scaleY
                                         rotationZ =
                                             imgTransform.rotation + combinedMotion.rotation + transT.rotZ
                                         transformOrigin = TransformOrigin(
@@ -1019,12 +1009,6 @@ fun PreviewCanvas(
                                             opacityAlpha * transT.alpha * blendOpacityFactor(clip)
                                         this.clip = true
                                     }
-                                    .then(
-                                        if (imageBlurDp > 0.5f) Modifier.blur(
-                                            radius = imageBlurDp.dp,
-                                            edgeTreatment = BlurredEdgeTreatment.Unbounded
-                                        ) else Modifier
-                                    )
                                     .then(
                                         if (isMulti) Modifier.border(
                                             width = 1.dp,
@@ -1177,38 +1161,56 @@ fun PreviewCanvas(
                                     combinedImageNative?.asComposeRenderEffect()
                                 }
 
-                                if (processedImageBitmap != null) {
-                                    Image(
-                                        bitmap = processedImageBitmap!!,
-                                        contentDescription = null,
-                                        contentScale = ContentScale.Fit,
-                                        colorFilter = imgColorFilter,
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .graphicsLayer {
-                                                renderEffect = combinedImageRenderEffect
-                                            }
-                                    )
-                                } else {
-                                    val imageRequest = remember(clip.uri) {
-                                        ImageRequest.Builder(context).data(clip.uri)
-                                            .decoderFactory(BitmapFactoryDecoder.Factory())
-                                            .allowHardware(false).crossfade(false).build()
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.Center)
+                                        .fillMaxWidth(imageBounds.first.coerceIn(0.01f, 1f))
+                                        .fillMaxHeight(imageBounds.second.coerceIn(0.01f, 1f))
+                                        .applyTransparentCrop(
+                                            imgTransform.cropL,
+                                            imgTransform.cropR,
+                                            imgTransform.cropT,
+                                            imgTransform.cropB
+                                        )
+                                        .then(
+                                            if (imageBlurDp > 0.5f) Modifier.blur(
+                                                radius = imageBlurDp.dp,
+                                                edgeTreatment = BlurredEdgeTreatment.Unbounded
+                                            ) else Modifier
+                                        )
+                                ) {
+                                    if (processedImageBitmap != null) {
+                                        Image(
+                                            bitmap = processedImageBitmap!!,
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Fit,
+                                            colorFilter = imgColorFilter,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .graphicsLayer {
+                                                    renderEffect = combinedImageRenderEffect
+                                                }
+                                        )
+                                    } else {
+                                        val imageRequest = remember(clip.uri) {
+                                            ImageRequest.Builder(context).data(clip.uri)
+                                                .decoderFactory(BitmapFactoryDecoder.Factory())
+                                                .allowHardware(false).crossfade(false).build()
+                                        }
+                                        val imgPainter = rememberAsyncImagePainter(imageRequest)
+                                        Image(
+                                            painter = imgPainter,
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Fit,
+                                            colorFilter = imgColorFilter,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .graphicsLayer {
+                                                    renderEffect = combinedImageRenderEffect
+                                                }
+                                        )
                                     }
-                                    val imgPainter = rememberAsyncImagePainter(imageRequest)
-                                    Image(
-                                        painter = imgPainter,
-                                        contentDescription = null,
-                                        contentScale = ContentScale.Fit,
-                                        colorFilter = imgColorFilter,
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .graphicsLayer {
-                                                renderEffect = combinedImageRenderEffect
-                                            }
-                                    )
                                 }
-
                                 if (isSelected && !isDrawingMode) {
                                     LayerTransformHandles(
                                         clipId = clip.id,
@@ -1265,26 +1267,14 @@ fun PreviewCanvas(
                                         blendMode = blendKeyToCompose(clip.blendMode)
                                         val w = size.width;
                                         val h = size.height
-                                        val cropSx =
-                                            1f / (1f - matteTransform.cropL - matteTransform.cropR).coerceAtLeast(
-                                                0.05f
-                                            )
-                                        val cropSy =
-                                            1f / (1f - matteTransform.cropT - matteTransform.cropB).coerceAtLeast(
-                                                0.05f
-                                            )
-                                        val cropTx =
-                                            -(matteTransform.cropL - matteTransform.cropR) / 2f * w
-                                        val cropTy =
-                                            -(matteTransform.cropT - matteTransform.cropB) / 2f * h
                                         val posTx = (matteTransform.x - 50f) / 100f * w
                                         val posTy = (matteTransform.y - 50f) / 100f * h
-                                        translationX = posTx + cropTx + combinedMotion.tx
-                                        translationY = posTy + cropTy + combinedMotion.ty
+                                        translationX = posTx + combinedMotion.tx
+                                        translationY = posTy + combinedMotion.ty
                                         scaleX =
-                                            (matteTransform.scale / 100f) * cropSx * combinedMotion.scale
+                                            (matteTransform.scale / 100f) * combinedMotion.scale
                                         scaleY =
-                                            (matteTransform.scale / 100f) * cropSy * combinedMotion.scale
+                                            (matteTransform.scale / 100f) * combinedMotion.scale
                                         rotationZ =
                                             matteTransform.rotation + combinedMotion.rotation
                                         transformOrigin = TransformOrigin(
@@ -1386,10 +1376,21 @@ fun PreviewCanvas(
                                         detectTapGestures { if (!isMulti) onClipSelected(clip.id) }
                                     }
                             ) {
-                                ColorMatteRenderer(
-                                    style = clip.matteStyle,
-                                    modifier = Modifier.fillMaxSize()
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .applyTransparentCrop(
+                                            matteTransform.cropL,
+                                            matteTransform.cropR,
+                                            matteTransform.cropT,
+                                            matteTransform.cropB
+                                        )
+                                ) {
+                                    ColorMatteRenderer(
+                                        style = clip.matteStyle,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
                                 if (isSel && !isDrawingMode) {
                                     LayerTransformHandles(
                                         clipId = clip.id,
@@ -1838,17 +1839,28 @@ fun PreviewCanvas(
                                         detectTapGestures { if (!isMulti) onClipSelected(clip.id) }
                                     }
                             ) {
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    clip.brush.strokes.forEach { stroke ->
-                                        BrushEngine.drawStroke(
-                                            scope = this,
-                                            stroke = stroke,
-                                            viewW = size.width,
-                                            viewH = size.height,
-                                            currentTimeMs = (currentPosMs - clip.timelineStartMs).coerceAtLeast(
-                                                0L
-                                            )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .applyTransparentCrop(
+                                            brushTransform.cropL,
+                                            brushTransform.cropR,
+                                            brushTransform.cropT,
+                                            brushTransform.cropB
                                         )
+                                ) {
+                                    Canvas(modifier = Modifier.fillMaxSize()) {
+                                        clip.brush.strokes.forEach { stroke ->
+                                            BrushEngine.drawStroke(
+                                                scope = this,
+                                                stroke = stroke,
+                                                viewW = size.width,
+                                                viewH = size.height,
+                                                currentTimeMs = (currentPosMs - clip.timelineStartMs).coerceAtLeast(
+                                                    0L
+                                                )
+                                            )
+                                        }
                                     }
                                 }
                                 if (isSelected && !isDrawingMode) {
@@ -2376,7 +2388,6 @@ fun PreviewCanvas(
         )
     }
 }
-
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawParticlePreview(
     cfg: com.moody.moodyvideoeditor.data.ParticleConfig, localSec: Float, W: Float, H: Float
 ) {
@@ -2553,7 +2564,6 @@ private fun MaskedClipContent(mask: MaskState, content: @Composable BoxScope.() 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            // ✅ FORCE HARDWARE LAYER (Iske baghair masking kabhi nahi hoti)
             .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
             .drawWithContent {
                 drawContent()
@@ -2562,6 +2572,7 @@ private fun MaskedClipContent(mask: MaskState, content: @Composable BoxScope.() 
         content = content
     )
 }
+
 private fun DrawScope.drawMaskBlend(mask: MaskState, w: Float, h: Float) {
     val path = buildMaskPathCompose(mask, w, h) ?: return
 
@@ -2601,6 +2612,7 @@ private fun DrawScope.drawMaskBlend(mask: MaskState, w: Float, h: Float) {
         }
     }
 }
+
 private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
     if (mask.type == MaskType.NONE) return null
     val cx = mask.positionX * w;
@@ -2667,7 +2679,6 @@ private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
                         close()
                     }
                 } else {
-                    // Sharp rectangle
                     val c1 = rp(cx - hw, cy - hh)
                     val c2 = rp(cx + hw, cy - hh)
                     val c3 = rp(cx + hw, cy + hh)
@@ -2682,7 +2693,7 @@ private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
             MaskType.LINEAR -> {
                 val diag = kotlin.math.sqrt(w * w + h * h) * 1.5f
                 val lineY = (mask.positionY + mask.linearPosition - 0.5f) * h -
-                    mask.expansion / 100f * minOf(w, h)
+                        mask.expansion / 100f * minOf(w, h)
                 val px = -sinR;
                 val py = cosR
                 val p1x = cx - cosR * diag;

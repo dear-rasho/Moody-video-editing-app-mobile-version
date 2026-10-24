@@ -1230,24 +1230,17 @@ fun EditorScreen(
             }
 
             "crop" -> CropPanel(
-                cropL = selected?.cropL ?: 0f,
-                cropR = selected?.cropR ?: 0f,
-                cropT = selected?.cropT ?: 0f,
-                cropB = selected?.cropB ?: 0f,
-                hasClipSelected =
-                    selected?.isVisualClip == true ||
-                            selected?.isColorMatteClip == true ||
-                            selected?.isTextClip == true ||
-                            selected?.isStickerClip == true ||
-                            selected?.isBrushClip == true ||
-                            selected?.isVisualizerClip == true ||
-                            state.multiSelectedIds.isNotEmpty(),
-                onCropChanged = { l, r, t, b ->
-                    viewModel.setCrop(l, r, t, b)
+                clip = selected,
+                playheadMs = state.currentPosMs,
+                hasClipSelected = selected != null &&
+                        (selected.isVisualClip ||
+                                selected.isColorMatteClip ||
+                                selected.isBrushClip),
+                onCropChanged = { prop, value01 ->
+                    viewModel.changeTransformProperty(prop, value01)
                 },
-                onAspectSelected = { key ->
-                    val q = CropEngine.presetFor(key, 16f, 9f)
-                    viewModel.setCrop(q.l, q.r, q.t, q.b)
+                onToggleKeyframe = { prop ->
+                    viewModel.toggleKeyframeAtPlayhead(prop)
                 },
                 onReset = { viewModel.setCrop(0f, 0f, 0f, 0f) },
                 onClose = { activePanel = null }

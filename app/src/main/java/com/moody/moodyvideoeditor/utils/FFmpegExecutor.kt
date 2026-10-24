@@ -238,11 +238,33 @@ class FFmpegExecutor(
                 }
             } else emptyList()
 
+            val cropClips = clips.filter { c ->
+                c.isVisualClip && com.moody.moodyvideoeditor.utils.CropHelper.isCropped(c)
+            }
+            val cropAlphaSequences = if (cropClips.isNotEmpty()) {
+                try {
+                    com.moody.moodyvideoeditor.utils.CropAlphaRenderer.render(
+                        context = context,
+                        clips = cropClips,
+                        canvasW = targetW,
+                        canvasH = targetH,
+                        fps = fps,
+                        totalMs = totalDurationMs,
+                        onProgress = { p -> onProgress(0.10f + p * 0.10f) },
+                        shouldCancel = { isCancelled }
+                    )
+                } catch (e: Exception) {
+                    Log.e("FFMPEG", "Crop alpha render failed", e)
+                    emptyList()
+                }
+            } else emptyList()
+
             val allExtraSequences =
                 lightningSequences + particleSequences + fireSequences + dustSequences
             val adjustmentClips = allClips.filter { it.isAdjustmentClip }
+            val needsLayeredCrop = cropAlphaSequences.isNotEmpty()
 
-            val needsLayered = clips.map { it.trackIndex }
+            val needsLayered = needsLayeredCrop || clips.map { it.trackIndex }
                 .distinct().size > 1 || maskSequences.isNotEmpty() || matteClips.isNotEmpty() ||
                     allExtraSequences.isNotEmpty() || adjustmentClips.isNotEmpty() ||
                     clips.any { ChromaEngine.isActive(it.chroma) || TransformApplier.hasAnimatedTransform(it) }
@@ -251,7 +273,8 @@ class FFmpegExecutor(
                 exportLayeredTracks(
                     clips, allClips, localFiles, audioOnlyClips, audioLocalFiles,
                     outputFile, targetW, targetH, fps, bitrateKbps,
-                    textSequences, maskSequences, matteClips, totalDurationMs, allExtraSequences
+                    textSequences, maskSequences, matteClips, totalDurationMs, allExtraSequences,
+                    cropAlphaSequences
                 )
                 return
             }
@@ -999,36 +1022,7 @@ class FFmpegExecutor(
         val filters = mutableListOf<String>()
         if (transparentPadding) filters.add("format=rgba")
 
-        val cropTracks = listOf("cropL", "cropR", "cropT", "cropB")
-            .any { clip.keyframes[it].orEmpty().isNotEmpty() }
-        val cropL = clip.cropL.coerceIn(0f, 0.45f)
-        val cropR = clip.cropR.coerceIn(0f, 0.45f)
-        val cropT = clip.cropT.coerceIn(0f, 0.45f)
-        val cropB = clip.cropB.coerceIn(0f, 0.45f)
-
-        if (cropTracks) {
-            fun cropExpr(prop: String, base: Float): String =
-                KeyframeStore.escapeFfmpegExpression(
-                    "clip(${KeyframeStore.ffmpegExpression(clip.keyframes, prop, base)},0,0.45)"
-                )
-            val cropLExpr = cropExpr("cropL", clip.cropL)
-            val cropRExpr = cropExpr("cropR", clip.cropR)
-            val cropTExpr = cropExpr("cropT", clip.cropT)
-            val cropBExpr = cropExpr("cropB", clip.cropB)
-            filters.add(
-                "crop=w='iw*(1-($cropLExpr+$cropRExpr))':h='ih*(1-($cropTExpr+$cropBExpr))':" +
-                        "x='iw*$cropLExpr':y='ih*$cropTExpr':eval=frame"
-            )
-        } else if (cropL > 0.001f || cropR > 0.001f || cropT > 0.001f || cropB > 0.001f) {
-            filters.add(
-                "crop=iw*${"%.4f".format(1f - cropL - cropR)}:ih*${"%.4f".format(1f - cropT - cropB)}:iw*${
-                    "%.4f".format(
-                        cropL
-                    )
-                }:ih*${"%.4f".format(cropT)}"
-            )
-        }
-
+        // Crop is now handled via pre-rendered alpha masks (see CropAlphaRenderer)
         filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
         filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=${if (transparentPadding) "black@0" else "black"}")
 
@@ -1286,7 +1280,6 @@ class FFmpegExecutor(
         }
         return filters
     }
-
     private fun exportLayeredTracks(
         clips: List<EditorClip>,
         allClips: List<EditorClip>,
@@ -1302,7 +1295,8 @@ class FFmpegExecutor(
         maskSequences: List<MaskFrameSequence>,
         colorMettes: List<EditorClip>,
         totalDurationMs: Long,
-        extraSequences: List<TextOverlaySequence>
+        extraSequences: List<TextOverlaySequence>,
+        cropAlphaSequences: List<com.moody.moodyvideoeditor.utils.CropAlphaSequence> = emptyList()
     ) {
         try {
             val durationSec = (totalDurationMs / 1000.0).coerceAtLeast(0.1)
@@ -1386,8 +1380,28 @@ class FFmpegExecutor(
             val combinedSequences = sequences + extraSequences
             addSequenceInputs(args, combinedSequences)
 
+            // 🆕 Crop alpha mask inputs
+            val cropAlphaInputIndices = mutableMapOf<String, Int>()
+            var nextCropAlphaIdx = sequenceStartIdx + combinedSequences.size + maskSequences.size
+            cropAlphaSequences.forEach { seq ->
+                if (seq.isStatic && seq.staticFile != null) {
+                    args.addAll(listOf(
+                        "-loop", "1", "-framerate", fps.toString(),
+                        "-t", durationSec.toString(),
+                        "-i", seq.staticFile.absolutePath
+                    ))
+                } else {
+                    args.addAll(listOf(
+                        "-framerate", seq.fps.toString(),
+                        "-start_number", "1",
+                        "-i", seq.pattern
+                    ))
+                }
+                cropAlphaInputIndices[seq.clipId] = nextCropAlphaIdx++
+            }
+
             val maskInputIndices = mutableMapOf<String, Int>()
-            var nextMaskInputIdx = sequenceStartIdx + combinedSequences.size
+            var nextMaskInputIdx = nextCropAlphaIdx
             maskSequences.forEach { seq ->
                 if (seq.staticFile != null) args.addAll(
                     listOf(
@@ -1560,12 +1574,21 @@ class FFmpegExecutor(
                         filterParts.add("[${item.inputIndex}:v]${filters.joinToString(",")}[$unmasked]")
 
                         val maskIdx = maskInputIndices[clip.id]
-                        val layerLabel = if (maskIdx != null) {
+                        var layerLabel = if (maskIdx != null) {
                             filterParts.add("[$maskIdx:v]format=rgba,alphaextract,format=gray,setpts=PTS-STARTPTS+${startSec}/TB[mask_pts${item.clipIdx}]")
                             filterParts.add("[$unmasked]format=rgba[layer_rgba${item.clipIdx}]")
                             filterParts.add("[layer_rgba${item.clipIdx}][mask_pts${item.clipIdx}]alphamerge[mask_ready${item.clipIdx}]")
                             "mask_ready${item.clipIdx}"
                         } else unmasked
+
+                        // 🆕 Apply crop alpha mask
+                        val cropAlphaIdx = cropAlphaInputIndices[clip.id]
+                        if (cropAlphaIdx != null) {
+                            filterParts.add("[$cropAlphaIdx:v]format=gray,setpts=PTS-STARTPTS+${startSec}/TB[crop_pts${item.clipIdx}]")
+                            filterParts.add("[$layerLabel]format=rgba[crop_layer_rgba${item.clipIdx}]")
+                            filterParts.add("[crop_layer_rgba${item.clipIdx}][crop_pts${item.clipIdx}]alphamerge[crop_ready${item.clipIdx}]")
+                            layerLabel = "crop_ready${item.clipIdx}"
+                        }
 
                         val outLabel = "canvas_c${item.clipIdx}"
                         if (!isBlendActive) {
