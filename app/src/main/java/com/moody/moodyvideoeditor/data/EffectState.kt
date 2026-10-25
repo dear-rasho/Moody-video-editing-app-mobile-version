@@ -21,6 +21,5 @@ data class EffectState(
         const val KIND_FILTER = "filter"
         const val KIND_ADJUSTMENT = "adjustment"
         const val KIND_COLOR_WHEEL = "colorWheel"
-        const val KIND_CHROMA = "chroma"
     }
 }

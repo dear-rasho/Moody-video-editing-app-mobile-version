@@ -1,7 +1,6 @@
 package com.moody.moodyvideoeditor.utils
 
 import com.moody.moodyvideoeditor.data.BrushType
-import com.moody.moodyvideoeditor.data.ChromaState
 
 import com.moody.moodyvideoeditor.data.EffectLibrary
 import com.moody.moodyvideoeditor.data.FilterState
@@ -499,39 +498,6 @@ object PromptExecutor {
         for (cmd in parsed.commands) {
             try {
                 when (cmd.type) {
-                    CmdType.CHROMA -> {
-                        val target = selected?.takeIf { it.isVisualClip }
-                        if (target == null) {
-                            errors.add("chroma: select a video or image clip first")
-                            continue
-                        }
-
-                        val tokens = cmd.key.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
-                        if (tokens.firstOrNull()?.lowercase() in setOf("off", "none", "remove", "clear")) {
-                            viewModel.removeSelectedChroma()
-                            applied.add("chroma removed")
-                            continue
-                        }
-
-                        val color = parseChromaColor(tokens.firstOrNull())
-                        var chroma = target.chroma ?: ChromaState()
-                        if (color != null) chroma = chroma.copy(keyColor = color)
-                        tokens.drop(1).chunked(2).forEach { pair ->
-                            if (pair.size != 2) return@forEach
-                            val value = pair[1].toFloatOrNull()?.takeIf { it.isFinite() }
-                                ?: return@forEach
-                            chroma = when (pair[0].lowercase()) {
-                                "similarity" -> chroma.copy(similarity = value.coerceIn(0f, 100f))
-                                "smoothness" -> chroma.copy(smoothness = value.coerceIn(0f, 100f))
-                                "spill" -> chroma.copy(spill = value.coerceIn(0f, 100f))
-                                "intensity" -> chroma.copy(intensity = value.coerceIn(0f, 100f))
-                                else -> chroma
-                            }
-                        }
-                        viewModel.updateSelectedChroma(chroma)
-                        applied.add("chroma #${java.lang.Long.toHexString(chroma.keyColor and 0xFFFFFFL)}")
-                    }
-
                     CmdType.ADJUSTMENT -> {
                         val target = selected ?: continue
                         val value = cmd.value1 ?: continue
@@ -1324,23 +1290,6 @@ object PromptExecutor {
             unknown = parsed.unknown,
             errors = errors
         )
-    }
-
-    private fun parseChromaColor(token: String?): Long? {
-        val value = token?.lowercase()?.removePrefix("#") ?: return null
-        val namedColor = when (value) {
-            "green" -> "00ff00"
-            "blue" -> "0000ff"
-            "magenta" -> "ff00ff"
-            "cyan" -> "00e5ff"
-            "white" -> "ffffff"
-            "black" -> "000000"
-            else -> value
-        }
-        if (namedColor.length != 6 || namedColor.any { it.digitToIntOrNull(16) == null }) {
-            return null
-        }
-        return 0xFF000000L or namedColor.toLong(16)
     }
 
     //  HELPERS

@@ -41,6 +41,7 @@ data class Feature(val key: String, val label: String, val icon: String)
 
 val FEATURES = listOf(
     Feature("matte", "Matte", "🎨"),
+    Feature("chromakey", "Chroma", "🟩"),
     Feature("trim", "Trim", "✂️"),
     Feature("speed", "Speed", "⏩"),
     Feature("text", "Text", "📝"),
@@ -56,7 +57,6 @@ val FEATURES = listOf(
     Feature("overlays", "Overlays", "🎬"),
     Feature("transitions", "Transitions", "⇄"),
     Feature("mask", "Mask", "▣"),
-    Feature("chroma", "Chroma", "🟢"),
     Feature("brush", "Brush", "🖌️"),
     Feature("visualizer", "Visualizer", "🎵"),
     Feature("transform", "Transform", "🔲"),

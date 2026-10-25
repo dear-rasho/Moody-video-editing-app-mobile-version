@@ -15,6 +15,7 @@ import com.moody.moodyvideoeditor.data.ColorFilterValues
 import com.moody.moodyvideoeditor.data.ColorWheelState
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.MaskType
+import com.moody.moodyvideoeditor.utils.ChromaKeyEngine
 import com.moody.moodyvideoeditor.data.MotionConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -267,7 +268,7 @@ class FFmpegExecutor(
             val needsLayered = needsLayeredCrop || clips.map { it.trackIndex }
                 .distinct().size > 1 || maskSequences.isNotEmpty() || matteClips.isNotEmpty() ||
                     allExtraSequences.isNotEmpty() || adjustmentClips.isNotEmpty() ||
-                    clips.any { ChromaEngine.isActive(it.chroma) || TransformApplier.hasAnimatedTransform(it) }
+                    clips.any { TransformApplier.hasAnimatedTransform(it) }
 
             if (needsLayered) {
                 exportLayeredTracks(
@@ -1562,11 +1563,6 @@ class FFmpegExecutor(
                                 positionByOverlay = !isBlendActive
                             )
                         )
-                        clip.chroma?.takeIf { ChromaEngine.isActive(it) }?.let { chroma ->
-                            filters.add("format=yuva420p")
-                            filters.add(ChromaEngine.buildFfmpegFilter(chroma))
-                            filters.add("format=rgba")
-                        }
                         filters.add("fps=$fps"); filters.add("trim=duration=$clipDurationSec"); filters.add(
                             "setpts=PTS-STARTPTS+${startSec}/TB"
                         ); filters.add("format=rgba")
@@ -2609,6 +2605,16 @@ class FFmpegExecutor(
                 )
                 if (filter.isNotBlank()) filters.add(filter)
             }
+
+        // 🟩 CHROMA KEY — green/blue screen removal
+        if (clip.chromaKey.isActive) {
+            val ckFilter = ChromaKeyEngine.buildFfmpegFilter(clip.chromaKey)
+            if (ckFilter.isNotBlank()) {
+                // chromakey needs rgb format for best results
+                filters.add("format=rgba")
+                filters.add(ckFilter)
+            }
+        }
 
         return filters
     }

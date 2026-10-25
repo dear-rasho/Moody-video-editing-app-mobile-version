@@ -139,12 +139,6 @@ private val CATEGORIES = listOf(
         )
     ),
     Cat(
-        "Chroma", "🟢", listOf(
-            "green screen", "chroma #00ff00",
-            "chroma #0000ff"
-        )
-    ),
-    Cat(
         "Speed", "⏩", listOf(
             "speed 0.5x", "speed 1.5x", "speed 2x", "speed 4x"
         )

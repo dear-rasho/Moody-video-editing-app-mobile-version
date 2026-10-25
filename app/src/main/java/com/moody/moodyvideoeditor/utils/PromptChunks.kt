@@ -490,24 +490,7 @@ Examples:
 """.trimIndent()
 
     // ═══════════════════════════════════════════════════════════
-    //  9. CHROMA
-    // ═══════════════════════════════════════════════════════════
-    val CHROMA = """
-## 🟢 CHROMA KEY
-Format:
-  chroma #hex
-  chroma #hex similarity N smoothness N spill N
-  green screen
-
-Examples:
-  chroma #00ff00
-  chroma #00ff00 similarity 30 smoothness 20 spill 50
-  chroma #0000ff similarity 40
-  green screen
-""".trimIndent()
-
-    // ═══════════════════════════════════════════════════════════
-    //  10. COLOR WHEEL
+    //  9. COLOR WHEEL
     // ═══════════════════════════════════════════════════════════
     val COLOR_WHEEL = """
 ## 🌈 COLOR WHEELS
@@ -526,7 +509,7 @@ Examples:
 """.trimIndent()
 
     // ═══════════════════════════════════════════════════════════
-    //  11. TRANSITIONS
+    //  10. TRANSITIONS
     // ═══════════════════════════════════════════════════════════
     val TRANSITIONS = """
 ## ⇄ TRANSITIONS
@@ -581,7 +564,7 @@ Rules:
 """.trimIndent()
 
     // ═══════════════════════════════════════════════════════════
-    //  12. BRUSH
+    //  11. BRUSH
     // ═══════════════════════════════════════════════════════════
     val BRUSH = """
 ## 🖌️ BRUSH
@@ -605,7 +588,7 @@ Examples:
 """.trimIndent()
 
     // ═══════════════════════════════════════════════════════════
-    //  13. VISUALIZER
+    //  12. VISUALIZER
     // ═══════════════════════════════════════════════════════════
     val VISUALIZER = """
 ## 🎵 VISUALIZER (audio-reactive)
@@ -648,7 +631,7 @@ Examples:
 """.trimIndent()
 
     // ═══════════════════════════════════════════════════════════
-    //  14. AUDIO FX
+    //  13. AUDIO FX
     // ═══════════════════════════════════════════════════════════
     val AUDIO = """
 ## 🎙️ AUDIO FX (applies to selected clip)
@@ -671,7 +654,7 @@ Examples:
 """.trimIndent()
 
     // ═══════════════════════════════════════════════════════════
-    //  15. SPECIAL
+    //  14. SPECIAL
     // ═══════════════════════════════════════════════════════════
     val SPECIAL = """
 ## ⚙️ SPECIAL COMMANDS
@@ -704,7 +687,7 @@ Examples:
 """.trimIndent()
 
     // ═══════════════════════════════════════════════════════════
-    //  16. EXAMPLES — timed blocks + recipes
+    //  15. EXAMPLES — timed blocks + recipes
     // ═══════════════════════════════════════════════════════════
     val EXAMPLES = """
 ## ⏱️ TIMESTAMPED BLOCKS
@@ -766,8 +749,6 @@ Example:
             "Scale, rotation, position, crop", TRANSFORMS),
         PromptChunk("speed_trim", "⏩", "Speed & Trim",
             "Playback speed and trim/split", SPEED_TRIM),
-        PromptChunk("chroma", "🟢", "Chroma Key",
-            "Green screen / color removal", CHROMA),
         PromptChunk("color_wheel", "🌈", "Color Wheels",
             "Shadows / midtones / highlights / HDR", COLOR_WHEEL),
         PromptChunk("transitions", "⇄", "Transitions",

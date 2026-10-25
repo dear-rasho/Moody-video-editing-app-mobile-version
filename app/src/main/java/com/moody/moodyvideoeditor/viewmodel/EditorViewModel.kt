@@ -12,8 +12,8 @@ import com.moody.moodyvideoeditor.data.BrushStroke
 import com.moody.moodyvideoeditor.data.ColorMatteDefaults
 import com.moody.moodyvideoeditor.data.ColorMatteMode
 import com.moody.moodyvideoeditor.data.ColorMatteStyle
+import com.moody.moodyvideoeditor.data.ChromaKeyState
 import com.moody.moodyvideoeditor.data.ColorWheelState
-import com.moody.moodyvideoeditor.data.ChromaState
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.EditorState
 import com.moody.moodyvideoeditor.data.EffectLibrary
@@ -58,37 +58,10 @@ import kotlinx.coroutines.flow.update
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.cos
+
 import kotlin.math.sin
 
 class EditorViewModel : ViewModel() {
-
-    fun startPickingChromaColor() {
-        val sel = _state.value.selectedClip
-        if (sel == null || !sel.isVisualClip) {
-            android.util.Log.w("CHROMA", "Pick ignored: select a video/image clip first")
-            return
-        }
-        _state.update { it.copy(isPickingChromaColor = true) }
-    }
-
-    fun onChromaColorPicked(color: Long) {
-        val sel = _state.value.selectedClip
-        if (sel != null && sel.isVisualClip) {
-            val currentChroma = sel.chroma ?: ChromaState()
-            updateSelectedChroma(currentChroma.copy(keyColor = color))
-            android.util.Log.e(
-                "CHROMA",
-                "Color picked: 0x${color.toString(16)} for clip ${sel.id}"
-            )
-        } else {
-            android.util.Log.w("CHROMA", "Picked color but no visual clip selected")
-        }
-        _state.update { it.copy(isPickingChromaColor = false) }
-    }
-
-    fun cancelPickingChromaColor() {
-        _state.update { it.copy(isPickingChromaColor = false) }
-    }
 
     private val _state = MutableStateFlow(EditorState())
     val state: StateFlow<EditorState> = _state.asStateFlow()
@@ -1470,54 +1443,6 @@ class EditorViewModel : ViewModel() {
         _state.update { it.copy(clips = list) }
     }
 
-    fun updateSelectedChroma(newChroma: ChromaState) {
-        val s = _state.value
-        val targetIds: Set<String> = if (s.multiSelectedIds.isNotEmpty()) {
-            s.multiSelectedIds
-        } else {
-            setOfNotNull(s.selectedClipId)
-        }
-        if (targetIds.isEmpty()) return
-
-        val list = s.clips.toMutableList()
-        var changed = false
-        for (i in list.indices) {
-            val clip = list[i]
-            if (clip.id !in targetIds) continue
-            if (!clip.isVisualClip) {
-                android.util.Log.w("CHROMA", "Skipping non-visual clip: ${clip.type}")
-                continue
-            }
-            list[i] = clip.copy(chroma = newChroma)
-            changed = true
-        }
-        if (changed) {
-            _state.update { it.copy(clips = list) }
-        }
-    }
-
-    fun removeSelectedChroma() {
-        val s = _state.value
-        val targetIds: Set<String> = if (s.multiSelectedIds.isNotEmpty()) {
-            s.multiSelectedIds
-        } else {
-            setOfNotNull(s.selectedClipId)
-        }
-        if (targetIds.isEmpty()) return
-
-        val list = s.clips.toMutableList()
-        var changed = false
-        for (i in list.indices) {
-            if (list[i].id in targetIds) {
-                list[i] = list[i].copy(chroma = null)
-                changed = true
-            }
-        }
-        if (changed) {
-            _state.update { it.copy(clips = list) }
-        }
-    }
-
     fun updateSelectedTransformBulk(anchorId: String, newScale: Float, newRotation: Float) {
         val s = _state.value
         val anchor = s.clips.firstOrNull { it.id == anchorId } ?: return
@@ -2892,6 +2817,56 @@ class EditorViewModel : ViewModel() {
         forEachSelectedClip { clip ->
             if (clip.isVisualClip) clip.copy(colorWheel = ColorWheelState()) else clip
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  🟩 CHROMA KEY
+    // ═══════════════════════════════════════════════════════════
+
+    fun updateChromaKey(newState: ChromaKeyState) {
+        val sel = _state.value.selectedClip ?: return
+        pushHistory()
+        updateClipDirect(sel.id) { it.copy(chromaKey = newState) }
+        updateHistoryFlags()
+    }
+
+    fun clearChromaKey() {
+        val sel = _state.value.selectedClip ?: return
+        pushHistory()
+        updateClipDirect(sel.id) { it.copy(chromaKey = ChromaKeyState()) }
+        updateHistoryFlags()
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  🟩 EYEDROPPER — "tap on preview to pick"
+    // ═══════════════════════════════════════════════════════════
+
+    private val _eyedropperActive = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val eyedropperActive: kotlinx.coroutines.flow.StateFlow<Boolean> =
+        _eyedropperActive.asStateFlow()
+
+    fun startEyedropper() {
+        _eyedropperActive.value = true
+    }
+
+    fun cancelEyedropper() {
+        _eyedropperActive.value = false
+    }
+
+    fun applyPickedColor(colorLong: Long) {
+        val sel = _state.value.selectedClip ?: return
+        val current = sel.chromaKey
+        updateClipDirect(sel.id) {
+            it.copy(
+                chromaKey = current.copy(
+                    enabled = true,
+                    targetColor = colorLong,
+                    hasColor = true
+                )
+            )
+        }
+        updateHistoryFlags()
+        _eyedropperActive.value = false
     }
 
     fun updateRatio(state: RatioState) = _state.update {

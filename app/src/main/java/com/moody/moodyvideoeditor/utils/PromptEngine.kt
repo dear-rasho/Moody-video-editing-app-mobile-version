@@ -8,7 +8,7 @@ enum class CmdType {
     ADJUSTMENT, FILTER, EFFECT, SPEED, TRANSFORM, TRIM,
     TRANSITION, TRANSITION_ALL, TRANSITION_AT, TRANSITION_LAYER,
     TRANSITION_LAYER_CLIPS, TRANSITION_CLIP_MAP,
-    TEXT, STICKER, CHROMA, AUDIO_FX, ANIMATION,
+    TEXT, STICKER, AUDIO_FX, ANIMATION,
     COLOR_WHEEL, FONT, ALIGN, ANCHOR, KEYFRAME,
     RATIO, TIGHTEN, GRAPH, CLEAR_KEYFRAMES,
     TEMPLATE,
@@ -887,7 +887,6 @@ object PromptEngine {
             "trim left" -> return ParsedCommand(CmdType.TRIM, "left", raw = text)
             "trim right" -> return ParsedCommand(CmdType.TRIM, "right", raw = text)
             "split" -> return ParsedCommand(CmdType.TRIM, "split", raw = text)
-            "green screen" -> return ParsedCommand(CmdType.CHROMA, "#00ff00", raw = text)
         }
 
         // ═══════════════════════════════════════════════════════
@@ -1000,10 +999,6 @@ object PromptEngine {
             }
             return ParsedCommand(CmdType.FILTER, lower, value1 = def, raw = text)
         }
-
-        // ── CHROMA ──
-        if (lower.startsWith("chroma "))
-            return ParsedCommand(CmdType.CHROMA, text.substring(7).trim(), raw = text)
 
         return null
     }

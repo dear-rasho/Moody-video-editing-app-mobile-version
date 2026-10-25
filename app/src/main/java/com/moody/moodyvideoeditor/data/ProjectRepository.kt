@@ -6,6 +6,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import com.moody.moodyvideoeditor.data.Keyframe
+import com.moody.moodyvideoeditor.data.ChromaKeyState
+
 // Saves/loads project state to local storage as JSON.
 // No external dependencies — uses org.json (built into Android).
 object ProjectRepository {
@@ -185,7 +187,7 @@ object ProjectRepository {
             exportFps = o.optInt("exportFps", 30),
             exportBitrateKbps = o.optInt("exportBitrateKbps", 8000),
             exportFormat = o.optString("exportFormat", "mp4"),
-            timelineLockedMs = o.optLong("timelineLockedMs", 0L) ,  // 🆕
+            timelineLockedMs = o.optLong("timelineLockedMs", 0L),
             exportFolderUri = if (o.isNull("exportFolderUri")) null
             else o.optString("exportFolderUri", null),
             timelineZoom = o.optDouble("timelineZoom", 0.0).toFloat()
@@ -254,9 +256,9 @@ object ProjectRepository {
         if (ratio != null) put("ratio", ratioToJson(ratio))
 
         put("mask", maskToJson(c.mask))
-        c.chroma?.let { put("chroma", chromaToJson(it)) }
         put("brush", brushToJson(c.brush))
         put("matteStyle", matteStyleToJson(c.matteStyle))
+        put("chromaKey", chromaKeyToJson(c.chromaKey))
 
         val visualizer = c.visualizer
         if (visualizer != null) put("visualizer", visualizerToJson(visualizer))
@@ -328,9 +330,9 @@ object ProjectRepository {
             transition = o.optJSONObject("transition")?.let { transitionFromJson(it) },
             ratio = o.optJSONObject("ratio")?.let { ratioFromJson(it) },
             mask = maskFromJson(o.optJSONObject("mask")),
-            chroma = chromaFromJson(o.optJSONObject("chroma")),
             brush = brushFromJson(o.optJSONObject("brush")),
             matteStyle = matteStyleFromJson(o.optJSONObject("matteStyle")),
+            chromaKey = chromaKeyFromJson(o.optJSONObject("chromaKey")),
             visualizer = o.optJSONObject("visualizer")?.let { visualizerFromJson(it) },
             keyframes = keyframesFromJson(o.optJSONObject("keyframes"))
         )
@@ -1078,25 +1080,6 @@ object ProjectRepository {
         h = o.optInt("h", 9)
     )
 
-    private fun chromaToJson(state: ChromaState) = JSONObject().apply {
-        put("keyColor", state.keyColor)
-        put("similarity", state.similarity.toDouble())
-        put("smoothness", state.smoothness.toDouble())
-        put("spill", state.spill.toDouble())
-        put("intensity", state.intensity.toDouble())
-    }
-
-    private fun chromaFromJson(o: JSONObject?): ChromaState? = o?.let {
-        ChromaState(
-            keyColor = it.optLong("keyColor", 0L),
-            similarity = it.optDouble("similarity", 45.0).toFloat().coerceIn(0f, 100f),
-            smoothness = it.optDouble("smoothness", 15.0).toFloat().coerceIn(0f, 100f),
-            spill = it.optDouble("spill", 50.0).toFloat().coerceIn(0f, 100f),
-            intensity = it.optDouble("intensity", 100.0).toFloat().coerceIn(0f, 100f)
-        )
-    }
-
-
     //  MASK
 
 
@@ -1582,6 +1565,33 @@ object ProjectRepository {
             useBeatSync = o.optBoolean("useBeatSync", true),
 
             lerpFactor = o.optDouble("lerpFactor", 0.20).toFloat()
+        )
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  🟩 CHROMA KEY SERIALIZATION
+    // ═══════════════════════════════════════════════════════════
+
+    private fun chromaKeyToJson(s: ChromaKeyState) = JSONObject().apply {
+        put("enabled", s.enabled)
+        put("targetColor", s.targetColor)
+        put("hasColor", s.hasColor)
+        put("similarity", s.similarity.toDouble())
+        put("smoothness", s.smoothness.toDouble())
+        put("spillSuppression", s.spillSuppression.toDouble())
+        put("opacity", s.opacity.toDouble())
+    }
+
+    private fun chromaKeyFromJson(o: JSONObject?): ChromaKeyState {
+        if (o == null) return ChromaKeyState()
+        return ChromaKeyState(
+            enabled = o.optBoolean("enabled", false),
+            targetColor = o.optLong("targetColor", 0xFF00FF00L),
+            hasColor = o.optBoolean("hasColor", false),
+            similarity = o.optDouble("similarity", 40.0).toFloat(),
+            smoothness = o.optDouble("smoothness", 15.0).toFloat(),
+            spillSuppression = o.optDouble("spillSuppression", 50.0).toFloat(),
+            opacity = o.optDouble("opacity", 100.0).toFloat()
         )
     }
 }

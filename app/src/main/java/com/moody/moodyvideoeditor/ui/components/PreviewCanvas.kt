@@ -1,8 +1,7 @@
 @file:OptIn(UnstableApi::class)
 
 package com.moody.moodyvideoeditor.ui.components
-import androidx.compose.ui.graphics.asComposePath
-import androidx.compose.ui.graphics.nativeCanvas
+
 import android.graphics.Bitmap
 import android.graphics.BlurMaskFilter
 import android.graphics.Paint
@@ -10,6 +9,8 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.media.MediaMetadataRetriever
 import android.os.Build
+import androidx.compose.ui.graphics.asAndroidBitmap
+
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.TextureView
@@ -18,13 +19,18 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,8 +46,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -57,10 +65,13 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix as ComposeColorMatrix
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -70,6 +81,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -77,6 +90,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -102,8 +116,7 @@ import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.utils.BlurEngine
 import com.moody.moodyvideoeditor.utils.BrushEngine
-import com.moody.moodyvideoeditor.utils.ChromaKeyPreviewFilter
-import com.moody.moodyvideoeditor.utils.ChromaEngine
+import com.moody.moodyvideoeditor.utils.ChromaKeyEngine
 import com.moody.moodyvideoeditor.utils.ColorMatrixBuilder
 import com.moody.moodyvideoeditor.utils.ColorWheelEngine
 import com.moody.moodyvideoeditor.utils.ColorWheelPreviewFilter
@@ -123,7 +136,11 @@ import com.moody.moodyvideoeditor.utils.applyTransparentCrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
+import com.moody.moodyvideoeditor.utils.ChromaKeyHelper
+import kotlinx.coroutines.delay
 private const val HSL_SHARPEN_SHADER = """
 uniform shader input;
 uniform float2 uResolution;
@@ -241,17 +258,13 @@ private fun buildClipMatrix(
         cm.postConcat(EffectsEngine.buildColorMatrix(ownFilter))
     }
     if (applyGlobal) cm.postConcat(globalMatrix)
-    val usesChromaFallback = Build.VERSION.SDK_INT < 33 && ChromaEngine.isActive(clip.chroma)
-    if (usesChromaFallback) {
-        cm.postConcat(ChromaEngine.buildApproxMatrix(clip.chroma!!))
-    }
     if (!useExactColorWheels) {
         ColorWheelEngine.buildColorMatrix(clip.colorWheel)?.let(cm::postConcat)
         colorWheelMatrix?.let(cm::postConcat)
     }
     val hasChange = !clip.adjustments.isDefault || clip.filters.hasAnyChange ||
             (clip.colorWheel.hasAnyChange && !useExactColorWheels) || applyGlobal ||
-            (colorWheelMatrix != null && !useExactColorWheels) || usesChromaFallback
+            (colorWheelMatrix != null && !useExactColorWheels)
     return if (hasChange) cm else null
 }
 
@@ -334,8 +347,6 @@ fun PreviewCanvas(
     onMaskMove: (Float, Float) -> Unit = { _, _ -> },
     onMaskStateChanged: (MaskState) -> Unit = {},
     onClosePath: () -> Unit = {},
-    isPickingChromaColor: Boolean = false,
-    onChromaColorPicked: (Long) -> Unit = {},
     onClipSelected: (String) -> Unit = {},
     onDeleteLayer: (String) -> Unit = {},
     onGroupGestureStart: () -> Unit = {},
@@ -351,13 +362,6 @@ fun PreviewCanvas(
     onVisualizerTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> }
 ) {
     val context = LocalContext.current
-    var chromaTextureView by remember { mutableStateOf<TextureView?>(null) }
-    var chromaImageBitmap by remember { mutableStateOf<Bitmap?>(null) }
-
-    LaunchedEffect(selectedClipId) {
-        chromaTextureView = null
-        chromaImageBitmap = null
-    }
 
     val previewMatteClip: EditorClip? = previewMatte?.let { pm ->
         EditorClip(
@@ -441,7 +445,6 @@ fun PreviewCanvas(
             }
         }
     }
-
     var outgoingBitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(outgoingClip?.id) {
         outgoingBitmap?.takeIf { !it.isRecycled }?.recycle()
@@ -760,7 +763,6 @@ fun PreviewCanvas(
                                 )
                             }
 
-                        val combinedVideoEffect = videoWheelNative
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
                             Box(
                                 modifier = Modifier
@@ -768,7 +770,9 @@ fun PreviewCanvas(
                                     .then(adjustmentEffectModifier)
                                     .graphicsLayer {
                                         compositingStrategy = CompositingStrategy.Offscreen
+
                                         blendMode = blendKeyToCompose(clip.blendMode)
+
                                         val w = size.width;
                                         val h = size.height
                                         val posTx = (videoTransform2.x - 50f) / 100f * w
@@ -825,48 +829,116 @@ fun PreviewCanvas(
                                             ) else Modifier
                                         )
                                 ) {
-                                    AndroidView(
-                                        factory = { ctx ->
-                                            LayoutInflater.from(ctx).inflate(
-                                                com.moody.moodyvideoeditor.R.layout.view_player,
-                                                null
-                                            ) as PlayerView
-                                        },
-                                        update = { view ->
-                                            view.player = exoPlayer
-                                            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL
-                                            view.rotation = rotation.toFloat()
-                                            val sv = view.videoSurfaceView
-                                            if (sv is TextureView) {
-                                                if (clip.id == selectedClipId && chromaTextureView !== sv) {
-                                                    chromaTextureView = sv
-                                                }
-                                                val videoCm = buildClipMatrix(
-                                                    clip,
-                                                    combinedMatrix,
-                                                    applyMatrix,
-                                                    videoWheelMatrix,
-                                                    useExactVideoColorWheels
-                                                )
-                                                if (videoCm != null) {
-                                                    val paint = Paint().apply {
-                                                        colorFilter =
-                                                            android.graphics.ColorMatrixColorFilter(
-                                                                videoCm
-                                                            )
-                                                    }
-                                                    sv.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
-                                                } else sv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                                    // 🟩 VIDEO CHROMA KEY LIVE PREVIEW
+                                    if (clip.chromaKey.isActive) {
+                                        var chromaProcessedBmp by remember(clip.id) { mutableStateOf<Bitmap?>(null) }
+                                        var textureViewRef by remember(clip.id) { mutableStateOf<TextureView?>(null) }
 
-                                                if (Build.VERSION.SDK_INT >= 31) {
-                                                    sv.isOpaque = combinedVideoEffect == null &&
-                                                            clip.chroma?.isActive != true
-                                                    sv.setRenderEffect(combinedVideoEffect)
+                                        LaunchedEffect(
+                                            clip.id,
+                                            clip.chromaKey,
+                                            isPlaying,
+                                            if (isPlaying) null else currentPosMs
+                                        ) {
+                                            if (!isPlaying) chromaProcessedBmp = null
+                                            var pausedCaptureAttempts = 0
+                                            while (isPlaying || pausedCaptureAttempts < 20) {
+                                                val tv = textureViewRef
+                                                if (tv != null && tv.isAvailable && tv.width > 0) {
+                                                    try {
+                                                        val frame = tv.bitmap
+                                                        if (frame != null) {
+                                                            chromaProcessedBmp =
+                                                                ChromaKeyHelper.applyChromaKey(
+                                                                    frame,
+                                                                    clip.chromaKey
+                                                                )
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        android.util.Log.w(
+                                                            "ChromaKeyPreview",
+                                                            "Failed to process video frame",
+                                                            e
+                                                        )
+                                                    }
                                                 }
+
+                                                if (!isPlaying) {
+                                                    if (chromaProcessedBmp != null) break
+                                                    pausedCaptureAttempts++
+                                                }
+                                                delay(100)
                                             }
-                                        },
-                                        modifier = Modifier.fillMaxSize()
-                                    )
+                                        }
+
+                                        AndroidView(
+                                            factory = { ctx ->
+                                                LayoutInflater.from(ctx).inflate(
+                                                    com.moody.moodyvideoeditor.R.layout.view_player,
+                                                    null
+                                                ) as PlayerView
+                                            },
+                                            update = { view ->
+                                                view.player = exoPlayer
+                                                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL
+                                                view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                                view.alpha = if (chromaProcessedBmp == null) 1f else 0f
+                                                val sv = view.videoSurfaceView
+                                                if (sv is TextureView) {
+                                                    textureViewRef = sv
+                                                }
+                                            },
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+
+                                        if (chromaProcessedBmp != null) {
+                                            Image(
+                                                bitmap = chromaProcessedBmp!!.asImageBitmap(),
+                                                contentDescription = null,
+                                                contentScale = ContentScale.Fit,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        }
+
+                                    } else {
+                                        AndroidView(
+                                            factory = { ctx ->
+                                                LayoutInflater.from(ctx).inflate(
+                                                    com.moody.moodyvideoeditor.R.layout.view_player,
+                                                    null
+                                                ) as PlayerView
+                                            },
+                                            update = { view ->
+                                                view.player = exoPlayer
+                                                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL
+                                                view.rotation = rotation.toFloat()
+                                                view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+
+                                                val sv = view.videoSurfaceView
+                                                if (sv is TextureView) {
+                                                    val videoCm = buildClipMatrix(
+                                                        clip,
+                                                        combinedMatrix,
+                                                        applyMatrix,
+                                                        videoWheelMatrix,
+                                                        useExactVideoColorWheels
+                                                    )
+                                                    if (videoCm != null) {
+                                                        val paint = Paint().apply {
+                                                            colorFilter = android.graphics.ColorMatrixColorFilter(videoCm)
+                                                        }
+                                                        sv.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
+                                                    } else sv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
+                                                    sv.isOpaque = videoWheelNative == null
+                                                    if (Build.VERSION.SDK_INT >= 31) {
+                                                        sv.setRenderEffect(videoWheelNative)
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    }
                                 }
                                 if (clip.id == selectedClipId && !isDrawingMode) {
                                     LayerTransformHandles(
@@ -903,7 +975,6 @@ fun PreviewCanvas(
                             }
                         }
                     }
-
                     clip.isVisualClip && clip.type.startsWith("image/") -> {
                         val imgLocalSec =
                             ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
@@ -958,12 +1029,6 @@ fun PreviewCanvas(
                                 }
                             }
                         }
-                        LaunchedEffect(clip.id, selectedClipId, loadedBitmap) {
-                            if (clip.id == selectedClipId) {
-                                chromaImageBitmap = loadedBitmap
-                                chromaTextureView = null
-                            }
-                        }
                         LaunchedEffect(loadedBitmap, adjKey, needsCpuAdj) {
                             val src = loadedBitmap ?: return@LaunchedEffect
                             if (!needsCpuAdj) {
@@ -990,6 +1055,7 @@ fun PreviewCanvas(
                                     .graphicsLayer {
                                         compositingStrategy = CompositingStrategy.Offscreen
                                         blendMode = blendKeyToCompose(clip.blendMode)
+
                                         val w = size.width;
                                         val h = size.height
                                         val posTx = (imgTransform.x - 50f) / 100f * w
@@ -1131,6 +1197,14 @@ fun PreviewCanvas(
                                 }
                                 val useExactImageWheels =
                                     useExactImageColorWheels && (imageWheelStates.isEmpty() || imageWheelNative != null)
+                                // 🟩 CHROMA KEY HELPER APPLY KARO
+                                var finalImageToRender = processedImageBitmap
+                                if (clip.chromaKey.isActive && processedImageBitmap != null) {
+                                    val bmp = processedImageBitmap!!.asAndroidBitmap()
+                                    val keyedBmp = ChromaKeyHelper.applyChromaKey(bmp, clip.chromaKey)
+                                    finalImageToRender = keyedBmp.asImageBitmap()
+                                }
+
                                 val imgColorFilter = remember(
                                     clip.filters,
                                     clip.adjustments,
@@ -1155,27 +1229,8 @@ fun PreviewCanvas(
                                     )
                                 }
 
-                                val imageChromaNative = remember(clip.chroma) {
-                                    if (Build.VERSION.SDK_INT >= 33) {
-                                        ChromaKeyPreviewFilter.createRenderEffect(clip.chroma)
-                                    } else null
-                                }
-                                val combinedImageNative = remember(
-                                    imageWheelNative,
-                                    imageChromaNative
-                                ) {
-                                    when {
-                                        imageWheelNative != null && imageChromaNative != null ->
-                                            android.graphics.RenderEffect.createChainEffect(
-                                                imageWheelNative,
-                                                imageChromaNative
-                                            )
-                                        imageChromaNative != null -> imageChromaNative
-                                        else -> imageWheelNative
-                                    }
-                                }
-                                val combinedImageRenderEffect = remember(combinedImageNative) {
-                                    combinedImageNative?.asComposeRenderEffect()
+                                val imageWheelRenderEffect = remember(imageWheelNative) {
+                                    imageWheelNative?.asComposeRenderEffect()
                                 }
 
                                 Box(
@@ -1196,16 +1251,16 @@ fun PreviewCanvas(
                                             ) else Modifier
                                         )
                                 ) {
-                                    if (processedImageBitmap != null) {
+                                    if (finalImageToRender != null) {
                                         Image(
-                                            bitmap = processedImageBitmap!!,
+                                            bitmap = finalImageToRender!!,
                                             contentDescription = null,
                                             contentScale = ContentScale.Fit,
                                             colorFilter = imgColorFilter,
                                             modifier = Modifier
                                                 .fillMaxSize()
                                                 .graphicsLayer {
-                                                    renderEffect = combinedImageRenderEffect
+                                                    renderEffect = imageWheelRenderEffect
                                                 }
                                         )
                                     } else {
@@ -1223,7 +1278,7 @@ fun PreviewCanvas(
                                             modifier = Modifier
                                                 .fillMaxSize()
                                                 .graphicsLayer {
-                                                    renderEffect = combinedImageRenderEffect
+                                                    renderEffect = imageWheelRenderEffect
                                                 }
                                         )
                                     }
@@ -1282,6 +1337,15 @@ fun PreviewCanvas(
                                     .graphicsLayer {
                                         compositingStrategy = CompositingStrategy.Offscreen
                                         blendMode = blendKeyToCompose(clip.blendMode)
+
+                                        // 🟩 CHROMA KEY YAHAN APPLY KARO
+                                        if (clip.chromaKey.isActive && Build.VERSION.SDK_INT >= 33) {
+                                            val eff = ChromaKeyEngine.createRenderEffect(clip.chromaKey)
+                                            if (eff != null) {
+                                                renderEffect = eff.asComposeRenderEffect()
+                                            }
+                                        }
+
                                         val w = size.width;
                                         val h = size.height
                                         val posTx = (matteTransform.x - 50f) / 100f * w
@@ -1437,7 +1501,6 @@ fun PreviewCanvas(
                             }
                         }
                     }
-
                     clip.isTextClip -> {
                         val st = clip.textState ?: return@forEach
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
@@ -2023,7 +2086,6 @@ fun PreviewCanvas(
                     }
                 }
             }
-
             val activeLightning =
                 clips.filter { c -> c.isEffectClip && c.trackIndex > videoTrackIdx && currentPosMs >= c.timelineStartMs && currentPosMs < c.timelineEndMs && c.effectState?.lightning != null }
                     .sortedBy { it.trackIndex }.mapNotNull { c ->
@@ -2321,42 +2383,6 @@ fun PreviewCanvas(
                 }
             }
 
-            if (isPickingChromaColor) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.12f))
-                        .pointerInput(
-                            selectedClipId,
-                            chromaTextureView,
-                            chromaImageBitmap
-                        ) {
-                            detectTapGestures { point ->
-                                val capturedBitmap = chromaTextureView?.getBitmap()
-                                val bitmap = capturedBitmap ?: chromaImageBitmap
-                                if (bitmap != null && bitmap.width > 0 && bitmap.height > 0) {
-                                    val x = (point.x / size.width * bitmap.width)
-                                        .toInt().coerceIn(0, bitmap.width - 1)
-                                    val y = (point.y / size.height * bitmap.height)
-                                        .toInt().coerceIn(0, bitmap.height - 1)
-                                    val rgb = bitmap.getPixel(x, y).toLong() and 0x00FFFFFFL
-                                    onChromaColorPicked(0xFF000000L or rgb)
-                                }
-                                if (capturedBitmap != null && capturedBitmap !== chromaImageBitmap) {
-                                    capturedBitmap.recycle()
-                                }
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Canvas(modifier = Modifier.size(28.dp)) {
-                        val center = Offset(size.width / 2f, size.height / 2f)
-                        drawCircle(Color.White, radius = 8.dp.toPx(), center = center, style = Stroke(2.dp.toPx()))
-                        drawLine(Color.White, Offset(center.x - 14.dp.toPx(), center.y), Offset(center.x + 14.dp.toPx(), center.y), 1.dp.toPx())
-                        drawLine(Color.White, Offset(center.x, center.y - 14.dp.toPx()), Offset(center.x, center.y + 14.dp.toPx()), 1.dp.toPx())
-                    }
-                }
-            }
         }
 
         if (sideBar > 0.5f) {
@@ -2824,7 +2850,6 @@ private fun buildMaskPathCompose(mask: MaskState, w: Float, h: Float): Path? {
         }
     }
 }
-
 @Composable
 private fun MaskPenOverlay(
     maskState: MaskState, canvasW: Float, canvasH: Float, isHandMode: Boolean,
@@ -3370,7 +3395,6 @@ private fun BrushDrawLayer(
         }
     }
 }
-
 @Composable
 private fun TextBackgroundRenderer(
     state: com.moody.moodyvideoeditor.data.TextState,
@@ -4233,4 +4257,262 @@ private fun normalizeAngle(radians: Float): Float {
     while (normalized > Math.PI) normalized -= twoPi
     while (normalized < -Math.PI) normalized += twoPi
     return normalized
+}
+// ═══════════════════════════════════════════════════════════════
+//  🟩 EYEDROPPER OVERLAY — v3 (Exact touch point + smaller)
+// ═══════════════════════════════════════════════════════════════
+@Composable
+fun EyedropperOverlay(
+    active: Boolean,
+    onColorPicked: (Long) -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (!active) return
+
+    val context = LocalContext.current
+    val activity = context as? android.app.Activity
+    val window = activity?.window
+    val density = LocalDensity.current
+    val coroutineScope = rememberCoroutineScope()
+
+    var screenBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var bitmapsLoaded by remember { mutableStateOf(false) }
+
+    var loupeX by remember { mutableFloatStateOf(-1000f) }
+    var loupeY by remember { mutableFloatStateOf(-1000f) }
+    var currentColor by remember { mutableStateOf<Long?>(null) }
+
+    // ✅ Size chota kar diya (40dp)
+    val loupeDiameterDp = 40.dp
+    val loupeDiameterPx = with(density) { loupeDiameterDp.toPx() }
+
+    // Window ki exact position nikalne ke liye
+    var viewLocation by remember { mutableStateOf<IntArray?>(null) }
+
+    LaunchedEffect(active, window) {
+        if (!active || window == null) return@LaunchedEffect
+        try {
+            val decor = window.decorView
+            // Pura screen capture karo (taaki touch coordinates match karein)
+            val bmp = Bitmap.createBitmap(
+                decor.width.coerceAtLeast(1),
+                decor.height.coerceAtLeast(1),
+                Bitmap.Config.ARGB_8888
+            )
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val latch = CountDownLatch(1)
+                android.view.PixelCopy.request(
+                    window, bmp,
+                    {
+                        bitmapsLoaded = true
+                        latch.countDown()
+                    },
+                    android.os.Handler(android.os.Looper.getMainLooper())
+                )
+                latch.await(1, TimeUnit.SECONDS)
+            } else {
+                decor.isDrawingCacheEnabled = true
+                decor.buildDrawingCache()
+                val cacheBmp = decor.drawingCache
+                if (cacheBmp != null) {
+                    val canvas = android.graphics.Canvas(bmp)
+                    canvas.drawBitmap(cacheBmp, 0f, 0f, null)
+                }
+                decor.isDrawingCacheEnabled = false
+                bitmapsLoaded = true
+            }
+            screenBitmap = bmp
+        } catch (t: Throwable) {
+            Log.e("Eyedropper", "Failed to capture screen", t)
+        }
+    }
+
+    DisposableEffect(active) {
+        onDispose {
+            screenBitmap?.takeIf { !it.isRecycled }?.recycle()
+            screenBitmap = null
+        }
+    }
+
+    fun updateColorAt(viewX: Float, viewY: Float) {
+        val bmp = screenBitmap ?: return
+        val loc = viewLocation ?: return
+
+        // View coordinates ko Screen coordinates mein convert karo
+        val screenX = viewX + loc[0]
+        val screenY = viewY + loc[1]
+
+        // Bounds check
+        val px = screenX.toInt().coerceIn(0, bmp.width - 1)
+        val py = screenY.toInt().coerceIn(0, bmp.height - 1)
+
+        try {
+            val c = bmp.getPixel(px, py)
+            currentColor = 0xFF000000L or
+                    ((android.graphics.Color.red(c).toLong() and 0xFF) shl 16) or
+                    ((android.graphics.Color.green(c).toLong() and 0xFF) shl 8) or
+                    (android.graphics.Color.blue(c).toLong() and 0xFF)
+        } catch (e: Exception) {
+            Log.e("Eyedropper", "Failed to get pixel at $px, $py", e)
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .onGloballyPositioned { coordinates ->
+                // Fallback jo har version mein chalta hai
+                val pos = coordinates.localToRoot(Offset.Zero)
+                viewLocation = intArrayOf(pos.x.toInt(), pos.y.toInt())
+            }
+            .pointerInput(active, screenBitmap, viewLocation) {
+                if (!bitmapsLoaded || screenBitmap == null || viewLocation == null) return@pointerInput
+
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+
+                    // ✅ Exact jagah set karo
+                    loupeX = down.position.x
+                    loupeY = down.position.y
+                    updateColorAt(loupeX, loupeY)
+
+                    var continueGesture = true
+                    while (continueGesture) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id }
+
+                        if (change == null || !change.pressed) {
+                            if (currentColor != null) onColorPicked(currentColor!!)
+                            else onCancel()
+                            continueGesture = false
+                        } else {
+                            // ✅ Drag karte waqt bhi exact position update karo
+                            loupeX = change.position.x
+                            loupeY = change.position.y
+                            updateColorAt(loupeX, loupeY)
+                            change.consume()
+                        }
+                    }
+                }
+            }
+    ) {
+        // Dim overlay (thoda halka kiya taaki background dikhe)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.15f))
+        )
+
+        // Top banner
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 16.dp)
+                .background(Color(0xFF7C3AED), RoundedCornerShape(20.dp))
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+            Text(
+                "🎯 Drag to move · Tap to pick",
+                color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold
+            )
+        }
+
+        // Cancel button
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp)
+                .size(36.dp)
+                .background(Color(0xFFFF3B3B), CircleShape)
+                .clickable { onCancel() },
+            contentAlignment = Alignment.Center
+        ) {
+            Text("✕", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+
+        // Loupe circle
+        val bmp = screenBitmap
+        val loc = viewLocation
+        if (bmp != null && !bmp.isRecycled && bitmapsLoaded && loupeX > -500f && loc != null) {
+
+            // 1. Circle ki position set karo (touch point pe center)
+            Box(
+                modifier = Modifier
+                    .offset(
+                        x = with(density) { loupeX.toDp() } - loupeDiameterDp / 2,
+                        y = with(density) { loupeY.toDp() } - loupeDiameterDp / 2
+                    )
+                    .size(loupeDiameterDp)
+                    .clip(CircleShape)
+                    .background(Color.Black)
+                    .border(2.dp, Color.White, CircleShape)
+            ) {
+                // 2. Crop karo bitmap ko exact screen coordinates se
+                val screenX = loupeX + loc[0]
+                val screenY = loupeY + loc[1]
+
+                val srcX = (screenX - loupeDiameterPx / 2)
+                    .toInt()
+                    .coerceIn(0, (bmp.width - loupeDiameterPx.toInt()).coerceAtLeast(0))
+                val srcY = (screenY - loupeDiameterPx / 2)
+                    .toInt()
+                    .coerceIn(0, (bmp.height - loupeDiameterPx.toInt()).coerceAtLeast(0))
+
+                val srcW = loupeDiameterPx.toInt().coerceAtMost(bmp.width - srcX)
+                val srcH = loupeDiameterPx.toInt().coerceAtMost(bmp.height - srcY)
+
+                if (srcW > 0 && srcH > 0) {
+                    val cropped = Bitmap.createBitmap(bmp, srcX, srcY, srcW, srcH)
+                    Image(
+                        bitmap = cropped.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                // Center crosshair dot
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .size(4.dp)
+                        .background(Color.White, CircleShape)
+                        .border(1.dp, Color.Black, CircleShape)
+                )
+            }
+
+            // Color swatch ke saath exact hex value
+            val colorInt = currentColor?.toInt() ?: 0xFF000000.toInt()
+            val hexLabel = "#%06X".format(currentColor ?: 0L)
+
+            Row(
+                modifier = Modifier
+                    .offset(
+                        x = with(density) { loupeX.toDp() } - 35.dp,
+                        y = with(density) { loupeY.toDp() } + loupeDiameterDp / 2 + 8.dp
+                    )
+                    .width(70.dp)
+                    .height(24.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = 0.85f)),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(Color(colorInt))
+                        .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(3.dp))
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    hexLabel,
+                    color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
 }

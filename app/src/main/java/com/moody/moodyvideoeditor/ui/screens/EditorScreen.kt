@@ -57,8 +57,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.BeatsState
 
+import com.moody.moodyvideoeditor.data.ChromaKeyState
 import com.moody.moodyvideoeditor.data.ColorWheelState
-import com.moody.moodyvideoeditor.data.ChromaState
 import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.data.RatioLibrary
@@ -66,6 +66,7 @@ import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.data.TransitionState
 import com.moody.moodyvideoeditor.data.VisualizerState
 import com.moody.moodyvideoeditor.ui.components.ControlBar
+import com.moody.moodyvideoeditor.ui.components.EyedropperOverlay
 import com.moody.moodyvideoeditor.ui.components.FeatureShelf
 import com.moody.moodyvideoeditor.ui.components.PlaybackControls
 import com.moody.moodyvideoeditor.ui.components.PreviewCanvas
@@ -81,8 +82,8 @@ import com.moody.moodyvideoeditor.ui.features.BlendModePanel
 import com.moody.moodyvideoeditor.ui.features.BrushPanel
 
 import com.moody.moodyvideoeditor.ui.features.ColorMattePanel
+import com.moody.moodyvideoeditor.ui.features.ColorRemoverPanel
 import com.moody.moodyvideoeditor.ui.features.ColorWheelPanel
-import com.moody.moodyvideoeditor.ui.features.ChromaKeyPanel
 import com.moody.moodyvideoeditor.ui.features.CropPanel
 import com.moody.moodyvideoeditor.ui.features.EffectsPanel
 import com.moody.moodyvideoeditor.ui.features.ExportDialog
@@ -104,7 +105,6 @@ import com.moody.moodyvideoeditor.ui.features.VisualizerPanel
 import com.moody.moodyvideoeditor.ui.features.VolumePanel
 import com.moody.moodyvideoeditor.utils.AudioPreviewEngine
 import com.moody.moodyvideoeditor.utils.BrushConfigHolder
-import com.moody.moodyvideoeditor.utils.ChromaKeyGlEffect
 import com.moody.moodyvideoeditor.utils.CropEngine
 import com.moody.moodyvideoeditor.utils.PromptEngine
 import com.moody.moodyvideoeditor.utils.PromptExecutor
@@ -152,10 +152,8 @@ fun EditorScreen(
 
     LaunchedEffect(projectId, initialSavedTemplateId) {
         if (projectId.isNotBlank() && viewModel.getProjectId() != projectId) {
-            // 🆕 1. Pehle disk se project load karo
             val loaded = viewModel.loadProject(context, projectId)
 
-            // 2. Agar naya project hai (file nahi mili), toh bas meta set karo
             if (!loaded) {
                 viewModel.setProjectMeta(
                     projectId,
@@ -289,7 +287,6 @@ fun EditorScreen(
             }
         }
     }
-
     // ═══════════════════════════════════════════════════════════
     //  PREVIEW CLEAR ON TRACK HIDE
     // ═══════════════════════════════════════════════════════════
@@ -347,9 +344,6 @@ fun EditorScreen(
     //  VIDEO PLAYBACK SYNC
     // ═══════════════════════════════════════════════════════════
 
-    // 🆕 Track previous chroma to know if it changed
-    var lastChromaHash by remember { mutableStateOf(0) }
-
     LaunchedEffect(state.currentPosMs, state.clips, state.hiddenVisualTracks) {
         val playheadMs = state.currentPosMs
         val activeClip = state.clips
@@ -363,20 +357,13 @@ fun EditorScreen(
             .maxByOrNull { it.trackIndex }
 
         if (activeClip == null) {
-            exoPlayer.setVideoEffects(emptyList())
             if (exoPlayer.isPlaying) exoPlayer.pause()
             return@LaunchedEffect
         }
 
-        val chroma = activeClip.chroma?.takeIf { it.isActive }
-        val currentChromaHash = chroma?.hashCode() ?: 0
-
         val currentUri = exoPlayer.currentMediaItem?.localConfiguration?.uri
 
-        // 🆕 Agar URI change hui hai YA Chroma change hua hai, to player refresh karo
-        if (currentUri != activeClip.uri || lastChromaHash != currentChromaHash) {
-            lastChromaHash = currentChromaHash
-
+        if (currentUri != activeClip.uri) {
             val mediaItem = MediaItem.Builder()
                 .setUri(activeClip.uri)
                 .setClippingConfiguration(
@@ -388,18 +375,7 @@ fun EditorScreen(
                 .build()
 
             exoPlayer.setMediaItem(mediaItem)
-
-            // 🆕 Effect prepare se pehle set karo
-            exoPlayer.setVideoEffects(
-                chroma?.let { listOf(ChromaKeyGlEffect(it)) }.orEmpty()
-            )
-
             exoPlayer.prepare()
-        } else {
-            // Sirf effect update karo (bina media reset ke)
-            exoPlayer.setVideoEffects(
-                chroma?.let { listOf(ChromaKeyGlEffect(it)) }.orEmpty()
-            )
         }
 
         val speed = activeClip.speed.coerceAtLeast(0.01f)
@@ -766,7 +742,7 @@ fun EditorScreen(
                 playheadMs = state.currentPosMs,
                 sourceInMs = selected?.sourceStartMs ?: 0L,
                 sourceOutMs = selected?.sourceEndMs ?: 0L,
-                hasClipSelected = selected != null, // 🆕 Sab layers support karo
+                hasClipSelected = selected != null,
                 playheadInsideClip = selected?.let {
                     state.currentPosMs > it.timelineStartMs &&
                             state.currentPosMs < it.timelineEndMs
@@ -859,7 +835,6 @@ fun EditorScreen(
                             )
                         }
                     },
-                    // 🆕 Also update previewMatte for live feedback
                     onDelete = {
                         viewModel.clearPreviewMatte()
                         editLayer?.let { viewModel.removeColorMatte(it.id) }
@@ -1082,6 +1057,16 @@ fun EditorScreen(
                 onClose = { activePanel = null }
             )
 
+            "chromakey" -> ColorRemoverPanel(
+                current = selected?.chromaKey ?: ChromaKeyState(),
+                hasClipSelected = selected != null,
+                onStateChanged = { viewModel.updateChromaKey(it) },
+                onPickFromScreen = {
+                    viewModel.startEyedropper()
+                },
+                onClose = { activePanel = null }
+            )
+
             "stickers" -> StickersPanel(
                 current = viewModel.getSelectedStickerState(),
                 hasStickerSelected = selected?.isStickerClip == true,
@@ -1141,21 +1126,6 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
             }
-            "chroma" -> {
-                ChromaKeyPanel(
-                    state = selected?.chroma ?: ChromaState(),
-                    hasClipSelected = selected?.isVisualClip == true,
-                    isPickingColor = state.isPickingChromaColor,
-                    onStartPicking = { viewModel.startPickingChromaColor() },
-                    onStateChanged = { viewModel.updateSelectedChroma(it) },
-                    onRemove = { viewModel.removeSelectedChroma() },
-                    onClose = {
-                        viewModel.cancelPickingChromaColor()
-                        activePanel = null
-                    }
-                )
-            }
-
             "mask" -> MaskPanel(
                 current = viewModel.selectedMaskAtPlayhead(),
                 hasClipSelected = selected != null,
@@ -1804,10 +1774,6 @@ fun EditorScreen(
                 onClose = { activePanel = null }
             )
 
-
-
-
-
             "duplicate" -> {
                 viewModel.duplicateCurrentClip()
                 activePanel = null
@@ -1832,7 +1798,6 @@ fun EditorScreen(
                 onBlendOpacityChanged = { v -> viewModel.setBlendOpacity(v) },
                 onClose = { activePanel = null }
             )
-
             "captions" -> AutoCaptionsPanel(
                 isProcessing = isGeneratingCaptions,
                 progress = captionProgress,
@@ -2396,11 +2361,8 @@ fun EditorScreen(
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  MAIN LAYOUT
+    //  RESPONSIVE PREVIEW HEIGHT — screen size ke hisaab se
     // ═══════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════
-//  RESPONSIVE PREVIEW HEIGHT — screen size ke hisaab se
-// ═══════════════════════════════════════════════════════════
 
     val configuration = LocalConfiguration.current
     val screenHeightDp = configuration.screenHeightDp
@@ -2574,12 +2536,24 @@ fun EditorScreen(
                     onVisualizerPositionChanged = { clipId: String, x: Float, y: Float ->
                         viewModel.updateSelectedPositionBulk(clipId, x, y)
                     },
-                    isPickingChromaColor = state.isPickingChromaColor,
-                    onChromaColorPicked = { viewModel.onChromaColorPicked(it) },
                     onVisualizerTransformChanged = { clipId: String, s: Float, r: Float ->
                         viewModel.updateSelectedTransformBulk(clipId, s, r)
                     },
                 )
+
+                // 🟩 EYEDROPPER — PreviewCanvas ke BAHAR, Box ke andar
+                val eyedropperActive by viewModel.eyedropperActive.collectAsState()
+                if (eyedropperActive) {
+                    EyedropperOverlay(
+                        active = true,
+                        onColorPicked = { color ->
+                            viewModel.applyPickedColor(color)
+                        },
+                        onCancel = {
+                            viewModel.cancelEyedropper()
+                        }
+                    )
+                }
             }
 
             // ═══════════════════════════════════════════════════════════
@@ -2602,7 +2576,6 @@ fun EditorScreen(
                 onAddAudioLayer = { viewModel.addAudioLayer() },
                 currentRatio = state.aspectRatio,
                 onRatioClick = { activePanel = "ratio" },
-                // 🆕 moved from PlaybackControls
                 isMuted = state.isMuted,
                 onMuteToggle = { viewModel.toggleMute() },
                 onMagnet = { viewModel.closeGapsFromPlayhead() },
@@ -2618,9 +2591,9 @@ fun EditorScreen(
                 currentPosMs = state.currentPosMs,
                 totalDurationMs = state.totalDurationMs
             )
+
             // ═══════════════════════════════════════════════════════════
             //  4. PLAYBACK CONTROLS (2 rows — tools + zoom)
-            //     ★ Yahan — Timeline ke UPAR ★
             // ═══════════════════════════════════════════════════════════
             PlaybackControls(
                 isPlaying = isPlaybackActive,
@@ -2696,8 +2669,9 @@ fun EditorScreen(
                 onRedo = { viewModel.redo() },
                 onKeyframe = { viewModel.toggleKeyframeAll() }
             )
+
             // ═══════════════════════════════════════════════════════════
-            //  5. TIMELINE (responsive fixed height) — ab PlaybackControls ke NEECHE
+            //  5. TIMELINE (responsive fixed height)
             // ═══════════════════════════════════════════════════════════
             Box(
                 modifier = Modifier
@@ -2789,7 +2763,7 @@ fun EditorScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .heightIn(min = 90.dp, max = 560.dp)    // ← max = 560dp
+                    .heightIn(min = 90.dp, max = 560.dp)
             ) {
                 EditorPanelHost()
             }

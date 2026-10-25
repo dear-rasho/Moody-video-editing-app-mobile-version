@@ -553,14 +553,6 @@ private fun CommandsContent() {
     )
 
     CommandCategory(
-        "🟢 Chroma", listOf(
-            "green screen",
-            "chroma #00ff00",
-            "chroma #0000ff similarity 30"
-        )
-    )
-
-    CommandCategory(
         "🌈 Color Wheel", listOf(
             "shadows red 50 40",
             "midtones blue 40 50",
@@ -685,7 +677,6 @@ private fun GuideContent() {
             "Effects → 150+ presets (motion, color, overlay)",
             "Adjustments → 24 sliders for pro grading",
             "Color Wheels → shadows/midtones/highlights + HDR",
-            "Chroma Key → green screen removal",
             "Edge Glow → 16 animated glowing borders",
             "Light Leak → 10 ambient light presets"
         )

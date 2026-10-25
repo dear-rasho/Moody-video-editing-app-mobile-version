@@ -54,7 +54,6 @@ data class EditorClip(
     val transition: TransitionState? = null,
     val ratio: RatioState? = null,
     val mask: MaskState = MaskState(),
-    val chroma: ChromaState? = null,
     val brush: BrushState = BrushState(),
     val lightLeak: LightLeakState? = null,
 
@@ -62,6 +61,7 @@ data class EditorClip(
     val matteStyle: ColorMatteStyle = ColorMatteStyle(),
 
     val visualizer: VisualizerState? = null,
+    val chromaKey: ChromaKeyState = ChromaKeyState(),
 
     val keyframes: Map<String, List<Keyframe>> = emptyMap()
 ) {
@@ -205,7 +205,6 @@ data class EditorState(
 
     // Live preview effect (temporary, not committed)
     val previewEffectState: EffectState? = null,
-    val isPickingChromaColor: Boolean = false,
     // 🆕 Live preview for Color Matte (temporary, not committed)
     val previewMatte: PreviewMatteState? = null,
 
