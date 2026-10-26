@@ -10,7 +10,8 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,10 +20,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -36,12 +40,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.moody.moodyvideoeditor.service.ExportUiState
 import kotlinx.coroutines.delay
 
@@ -53,12 +57,12 @@ fun ExportOverlay(
 ) {
     val context = LocalContext.current
 
-    // Block all touch behind the overlay
+    // Block all touch behind the overlay (transparent background)
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xE6000000))
-            .pointerInput(Unit) {}
+        // ❌ pointerInput(Unit) {} HATA DIYA HAI TAAKI ANDAR KE BUTTONS CLICK HO SAKEIN
     ) {
         when {
             // Success state — show completion dialog
@@ -156,7 +160,6 @@ private fun ExportingDialog(
                     .rotate(rotation),
                 contentAlignment = Alignment.Center
             ) {
-                // Simple ring shape using borders
                 Box(
                     modifier = Modifier
                         .size(56.dp)
@@ -258,9 +261,10 @@ private fun ExportingDialog(
                     .height(44.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(Color(0xFF2A2A2A))
-                    .pointerInput(Unit) {
-                        detectTapGestures { onCancel() }
-                    },
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { onCancel() },
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -335,9 +339,10 @@ private fun CompletionDialog(
                         .height(44.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(Color(0xFF7C3AED))
-                        .pointerInput(outputUri) {
-                            detectTapGestures { onOpen(outputUri) }
-                        },
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { onOpen(outputUri) },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -355,9 +360,10 @@ private fun CompletionDialog(
                         .height(44.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(Color(0xFF2A2A2A))
-                        .pointerInput(outputUri) {
-                            detectTapGestures { onShare(outputUri) }
-                        },
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { onShare(outputUri) },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -375,9 +381,10 @@ private fun CompletionDialog(
                     .fillMaxWidth()
                     .height(40.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .pointerInput(Unit) {
-                        detectTapGestures { onOk() }
-                    },
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { onOk() },
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -452,6 +459,30 @@ private fun ErrorDialog(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Top Cross (X) Button - Clickable
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(32.dp),
+                contentAlignment = Alignment.TopEnd
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF2A2A2A))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { onDismiss() }
+                        .zIndex(10f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("✕", color = Color(0xFFFF6B6B), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // Red Error Icon
             Box(
                 modifier = Modifier
                     .size(64.dp)
@@ -476,25 +507,35 @@ private fun ErrorDialog(
                     .background(Color(0xFF2A2A2A))
             )
 
-            Text(
-                text = message,
-                color = Color(0xFFAAAAAA),
-                fontSize = 11.sp,
-                textAlign = TextAlign.Center,
-                lineHeight = 15.sp
-            )
+            // Scrollable error message
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 200.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = message,
+                    color = Color(0xFFAAAAAA),
+                    fontSize = 11.sp,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 15.sp
+                )
+            }
 
             Spacer(modifier = Modifier.height(4.dp))
 
+            // Bottom OK button
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(44.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(Color(0xFF7C3AED))
-                    .pointerInput(Unit) {
-                        detectTapGestures { onDismiss() }
-                    },
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { onDismiss() },
                 contentAlignment = Alignment.Center
             ) {
                 Text(

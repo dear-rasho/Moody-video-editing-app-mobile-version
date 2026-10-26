@@ -4,6 +4,9 @@ import android.net.Uri
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.remember
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -35,6 +38,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -1350,9 +1354,7 @@ private fun ClipCard(
     haptic: HapticFeedback
 ) {
     val density = LocalDensity.current
-    val startPx = clip.timelineStartMs.toFloat() / totalMs * contentWidthPx
-    val endPx = clip.timelineEndMs.toFloat() / totalMs * contentWidthPx
-    val clipWidthPx = (endPx - startPx).coerceAtLeast(20f)
+
 
     val barColor = clipColor(clip)
 
@@ -1364,10 +1366,16 @@ private fun ClipCard(
     var dragTargetTrack by remember { mutableIntStateOf(0) }
     var clipLifted by remember { mutableStateOf(false) }
 
+    // startPx ab live position se calculate hoga
+    val startPx = (dragTargetTimeMs.takeIf { clipLifted } ?: clip.timelineStartMs).toFloat() / totalMs * contentWidthPx
+    val endPx = startPx + (clip.durationMs.toFloat() / totalMs * contentWidthPx)
+    val clipWidthPx = (endPx - startPx).coerceAtLeast(20f)
+
     Box(
         modifier = Modifier
             .offset(x = with(density) { startPx.toDp() })
             .width(with(density) { clipWidthPx.toDp() })
+            // ...
             .fillMaxHeight()
             .padding(vertical = 2.dp)
             .zIndex(
@@ -1408,6 +1416,7 @@ private fun ClipCard(
                     val down = awaitFirstDown(requireUnconsumed = false)
                     accumDragX = 0f
                     accumDragY = 0f
+                    // FIX: dragStartTimeMs ko clip.timelineStartMs (current pos) se hi rakho
                     dragStartTimeMs = clip.timelineStartMs
                     dragStartTrack = clip.trackIndex
                     dragTargetTimeMs = clip.timelineStartMs
@@ -1610,23 +1619,18 @@ private fun ClipCard(
                     .size(16.dp)
                     .clip(RoundedCornerShape(3.dp))
                     .background(Color(0xFF4F9DFF).copy(alpha = 0.9f))
-                    .pointerInput(clip.id) {
-                        detectTapGestures(
-                            onTap = { onReplaceRequested(clip.id) }
-                        )
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        onReplaceRequested(clip.id)
                     }
                     .zIndex(20f),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    "🔄",
-                    color = Color.White,
-                    fontSize = 8.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Text("🔄", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
             }
         }
-
         if (isSelected && !isDragging && !clipLifted) {
             Box(
                 modifier = Modifier
@@ -1679,6 +1683,7 @@ private fun ClipCard(
             currentPosMs = currentPosMs,
             onSeekToKeyframe = { tSec ->
                 val timeMs = clip.timelineStartMs + (tSec * 1000f).toLong()
+                onClipTapped(clip)
                 onSeek(timeMs)
             }
         )
@@ -1704,6 +1709,16 @@ private fun TrimHandleLeft(
     onTrimCommit: () -> Unit,
     onSnapGuideUpdate: (Float, String?) -> Unit
 ) {
+    val latestClip = rememberUpdatedState(clip)
+    val latestAllClips = rememberUpdatedState(allClips)
+    val latestCurrentPosMs = rememberUpdatedState(currentPosMs)
+    val latestPxPerMs = rememberUpdatedState(pxPerMs)
+    val latestTotalMs = rememberUpdatedState(totalMs)
+    val latestContentWidthPx = rememberUpdatedState(contentWidthPx)
+    val latestOnTrimLeft = rememberUpdatedState(onTrimLeft)
+    val latestOnTrimCommit = rememberUpdatedState(onTrimCommit)
+    val latestOnSnapGuideUpdate = rememberUpdatedState(onSnapGuideUpdate)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1711,27 +1726,30 @@ private fun TrimHandleLeft(
                 var accumX = 0f
                 var startMs = 0L
                 var endMs = 0L
+                var dragClip = clip
                 var activeTarget: SnapTarget? = null
-
                 detectDragGestures(
                     onDragStart = { _: Offset ->
                         accumX = 0f
-                        startMs = clip.sourceStartMs
-                        endMs = clip.sourceEndMs
+                        dragClip = latestClip.value
+                        startMs = dragClip.sourceStartMs
+                        endMs = dragClip.sourceEndMs
                         activeTarget = null
                     },
                     onDrag = { change, drag ->
                         change.consume()
                         accumX += drag.x
-                        val dMs = (accumX / pxPerMs).toLong()
-                        val newStart = (startMs + dMs)
+                        val currentClip = dragClip
+                        val speed = currentClip.speed.coerceAtLeast(0.01f)
+                        val dMs = (accumX / latestPxPerMs.value).toLong()
+                        val newStart = (startMs + (dMs * speed).toLong())
                             .coerceIn(0L, endMs - EditorClip.MIN_DURATION_MS)
 
-                        val newStartTimelineMs = clip.timelineStartMs +
-                                (newStart - clip.sourceStartMs)
+                        val newStartTimelineMs = currentClip.timelineStartMs +
+                                ((newStart - currentClip.sourceStartMs) / speed).toLong()
 
                         val targets = mutableListOf<SnapTarget>()
-                        allClips.filter { it.id != clip.id }.forEach { other ->
+                        latestAllClips.value.filter { it.id != currentClip.id }.forEach { other ->
                             targets.add(
                                 SnapTarget(
                                     other.timelineStartMs,
@@ -1745,7 +1763,7 @@ private fun TrimHandleLeft(
                                 )
                             )
                         }
-                        targets.add(SnapTarget(currentPosMs, "Playhead"))
+                        targets.add(SnapTarget(latestCurrentPosMs.value, "Playhead"))
 
                         var bestTarget: SnapTarget? = null
                         var bestDist = enterMs
@@ -1769,27 +1787,28 @@ private fun TrimHandleLeft(
                         val captured = bestTarget
                         if (captured != null) {
                             activeTarget = captured
-                            val deltaMs = captured.timeMs - clip.timelineStartMs
-                            val finalSourceStart = clip.sourceStartMs + deltaMs
-                            onTrimLeft(finalSourceStart.coerceAtLeast(0L))
+                            val deltaMs = captured.timeMs - currentClip.timelineStartMs
+                            val finalSourceStart =
+                                currentClip.sourceStartMs + (deltaMs * speed).toLong()
+                            latestOnTrimLeft.value(finalSourceStart.coerceAtLeast(0L))
                             val guideX = (captured.timeMs.toFloat() /
-                                    totalMs.toFloat()) * contentWidthPx
-                            onSnapGuideUpdate(guideX, "Snap: ${captured.label}")
+                                    latestTotalMs.value.toFloat()) * latestContentWidthPx.value
+                            latestOnSnapGuideUpdate.value(guideX, "Snap: ${captured.label}")
                         } else {
                             activeTarget = null
-                            onTrimLeft(newStart)
-                            onSnapGuideUpdate(-1f, null)
+                            latestOnTrimLeft.value(newStart)
+                            latestOnSnapGuideUpdate.value(-1f, null)
                         }
                     },
                     onDragEnd = {
-                        onSnapGuideUpdate(-1f, null)
+                        latestOnSnapGuideUpdate.value(-1f, null)
                         activeTarget = null
-                        onTrimCommit()
+                        latestOnTrimCommit.value()
                     },
                     onDragCancel = {
-                        onSnapGuideUpdate(-1f, null)
+                        latestOnSnapGuideUpdate.value(-1f, null)
                         activeTarget = null
-                        onTrimCommit()
+                        latestOnTrimCommit.value()
                     }
                 )
             },
@@ -1820,6 +1839,16 @@ private fun TrimHandleRight(
     onTrimCommit: () -> Unit,
     onSnapGuideUpdate: (Float, String?) -> Unit
 ) {
+    val latestClip = rememberUpdatedState(clip)
+    val latestAllClips = rememberUpdatedState(allClips)
+    val latestCurrentPosMs = rememberUpdatedState(currentPosMs)
+    val latestPxPerMs = rememberUpdatedState(pxPerMs)
+    val latestTotalMs = rememberUpdatedState(totalMs)
+    val latestContentWidthPx = rememberUpdatedState(contentWidthPx)
+    val latestOnTrimRight = rememberUpdatedState(onTrimRight)
+    val latestOnTrimCommit = rememberUpdatedState(onTrimCommit)
+    val latestOnSnapGuideUpdate = rememberUpdatedState(onSnapGuideUpdate)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1827,32 +1856,36 @@ private fun TrimHandleRight(
                 var accumX = 0f
                 var startMs = 0L
                 var endMs = 0L
+                var dragClip = clip
                 var activeTarget: SnapTarget? = null
 
                 detectDragGestures(
                     onDragStart = { _: Offset ->
                         accumX = 0f
-                        startMs = clip.sourceStartMs
-                        endMs = clip.sourceEndMs
+                        dragClip = latestClip.value
+                        startMs = dragClip.sourceStartMs
+                        endMs = dragClip.sourceEndMs
                         activeTarget = null
                     },
                     onDrag = { change, drag ->
                         change.consume()
                         accumX += drag.x
-                        val dMs = (accumX / pxPerMs).toLong()
-                        val maxEnd = if (clip.sourceTotalMs != Long.MAX_VALUE)
-                            clip.sourceTotalMs else Long.MAX_VALUE
-                        val newEnd = (endMs + dMs)
+                        val currentClip = dragClip
+                        val speed = currentClip.speed.coerceAtLeast(0.01f)
+                        val dMs = (accumX / latestPxPerMs.value).toLong()
+                        val maxEnd = if (currentClip.sourceTotalMs != Long.MAX_VALUE)
+                            currentClip.sourceTotalMs else Long.MAX_VALUE
+                        val newEnd = (endMs + (dMs * speed).toLong())
                             .coerceIn(
                                 startMs + EditorClip.MIN_DURATION_MS,
                                 maxEnd
                             )
 
-                        val newEndTimelineMs = clip.timelineStartMs +
-                                (newEnd - clip.sourceStartMs)
+                        val newEndTimelineMs = currentClip.timelineStartMs +
+                                ((newEnd - currentClip.sourceStartMs) / speed).toLong()
 
                         val targets = mutableListOf<SnapTarget>()
-                        allClips.filter { it.id != clip.id }.forEach { other ->
+                        latestAllClips.value.filter { it.id != currentClip.id }.forEach { other ->
                             targets.add(
                                 SnapTarget(
                                     other.timelineStartMs,
@@ -1866,7 +1899,7 @@ private fun TrimHandleRight(
                                 )
                             )
                         }
-                        targets.add(SnapTarget(currentPosMs, "Playhead"))
+                        targets.add(SnapTarget(latestCurrentPosMs.value, "Playhead"))
 
                         var bestTarget: SnapTarget? = null
                         var bestDist = enterMs
@@ -1890,27 +1923,28 @@ private fun TrimHandleRight(
                         val captured = bestTarget
                         if (captured != null) {
                             activeTarget = captured
-                            val deltaMs = captured.timeMs - clip.timelineStartMs
-                            val finalSourceEnd = clip.sourceStartMs + deltaMs
-                            onTrimRight(finalSourceEnd.coerceAtMost(maxEnd))
+                            val deltaMs = captured.timeMs - currentClip.timelineStartMs
+                            val finalSourceEnd =
+                                currentClip.sourceStartMs + (deltaMs * speed).toLong()
+                            latestOnTrimRight.value(finalSourceEnd.coerceAtMost(maxEnd))
                             val guideX = (captured.timeMs.toFloat() /
-                                    totalMs.toFloat()) * contentWidthPx
-                            onSnapGuideUpdate(guideX, "Snap: ${captured.label}")
+                                    latestTotalMs.value.toFloat()) * latestContentWidthPx.value
+                            latestOnSnapGuideUpdate.value(guideX, "Snap: ${captured.label}")
                         } else {
                             activeTarget = null
-                            onTrimRight(newEnd)
-                            onSnapGuideUpdate(-1f, null)
+                            latestOnTrimRight.value(newEnd)
+                            latestOnSnapGuideUpdate.value(-1f, null)
                         }
                     },
                     onDragEnd = {
-                        onSnapGuideUpdate(-1f, null)
+                        latestOnSnapGuideUpdate.value(-1f, null)
                         activeTarget = null
-                        onTrimCommit()
+                        latestOnTrimCommit.value()
                     },
                     onDragCancel = {
-                        onSnapGuideUpdate(-1f, null)
+                        latestOnSnapGuideUpdate.value(-1f, null)
                         activeTarget = null
-                        onTrimCommit()
+                        latestOnTrimCommit.value()
                     }
                 )
             },

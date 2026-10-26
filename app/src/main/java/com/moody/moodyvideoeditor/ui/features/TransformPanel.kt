@@ -62,6 +62,8 @@ fun TransformPanel(
     onResetAll: () -> Unit,
     onUpdateKeyframe: (String, Float, Float, Float) -> Unit = { _, _, _, _ -> },
     onDeleteKeyframe: (String, Float) -> Unit = { _, _ -> },
+    onKeyframeEditStart: () -> Unit = {},
+    onKeyframeEditEnd: () -> Unit = {},
     onClose: () -> Unit
 ) {
     var showGraph by remember { mutableStateOf(false) }
@@ -75,6 +77,8 @@ fun TransformPanel(
             clipDurationSec = clipDurationSec,
             onUpdateKeyframe = onUpdateKeyframe,
             onDeleteKeyframe = onDeleteKeyframe,
+            onKeyframeEditStart = onKeyframeEditStart,
+            onKeyframeEditEnd = onKeyframeEditEnd,
             onClose = { showGraph = false }
         )
     }

@@ -3,7 +3,7 @@ package com.moody.moodyvideoeditor.utils
 import android.graphics.ColorMatrix
 import com.moody.moodyvideoeditor.data.AdjustmentData
 
-// ColorMatrix-based adjustments (real-time).
+// Per-pixel adjustments shared by preview ColorFilters and the export adjustment LUT.
 // Supported: brightness, contrast, exposure, saturation, temperature,
 // tint, whites, blacks, shadows, highlights, vibrance (approx),
 // clarity (approx).
@@ -136,11 +136,8 @@ object ColorMatrixBuilder {
         }
 
         // ═══════════════════════════════════════════════════════════
-        //  NOTE: HSL color channels (Reds, Oranges, etc.) CANNOT be
-        //  done via ColorMatrix. They need per-pixel hue checking.
-        //
-        //  → Preview: RuntimeShader (see PreviewCanvas.kt HSL shader)
-        //  → Export: FFmpeg selectivecolor filter (see FFmpegFilters.kt)
+        // HSL color channels are applied after this matrix by the preview shader
+        // and AdjustmentPixelEngine when building the export LUT.
         // ═══════════════════════════════════════════════════════════
 
         return cm

@@ -331,6 +331,7 @@ class EditorViewModel : ViewModel() {
     }
 
     private var dragBaseline: List<EditorClip>? = null
+    private var keyframeGraphBaseline: List<EditorClip>? = null
 
     fun beginDrag() { dragBaseline = _state.value.clips }
 
@@ -357,9 +358,11 @@ class EditorViewModel : ViewModel() {
     )
 
     private var groupGestureBaseline: Map<String, ClipSnapshot>? = null
+    private var groupGestureHistoryBaseline: List<EditorClip>? = null
 
     fun beginGroupGesture() {
         val s = _state.value
+        groupGestureHistoryBaseline = s.clips.toList()
         val ids: Set<String> = if (s.multiSelectedIds.isNotEmpty()) {
             s.multiSelectedIds
         } else {
@@ -378,7 +381,15 @@ class EditorViewModel : ViewModel() {
         groupGestureBaseline = map
     }
 
-    fun endGroupGesture() { groupGestureBaseline = null }
+    fun endGroupGesture() {
+        groupGestureBaseline = null
+        val baseline = groupGestureHistoryBaseline
+        if (baseline != null && baseline != _state.value.clips) {
+            history.push(baseline)
+        }
+        groupGestureHistoryBaseline = null
+        updateHistoryFlags()
+    }
 
     fun applyGroupTransform(
         anchorId: String, newX: Float, newY: Float,
@@ -3071,6 +3082,7 @@ class EditorViewModel : ViewModel() {
             )
         } else updated
 
+        if (finalClip != sel) pushHistory()
         updateClipDirect(sel.id) { finalClip }
     }
 
@@ -3111,18 +3123,18 @@ class EditorViewModel : ViewModel() {
                 )
             )
         } else {
-            val base = TransformApplier.baseOf(sel)
+            val live = TransformApplier.resolveLive(sel, currentTimeSec)
             val currentValue = when (prop) {
-                "x" -> base.x
-                "y" -> base.y
-                "scale" -> base.scale
-                "rotation" -> base.rotation
-                "anchorX" -> base.anchorX
-                "anchorY" -> base.anchorY
-                "cropL" -> base.cropL
-                "cropR" -> base.cropR
-                "cropT" -> base.cropT
-                "cropB" -> base.cropB
+                "x" -> live.x
+                "y" -> live.y
+                "scale" -> live.scale
+                "rotation" -> live.rotation
+                "anchorX" -> live.anchorX
+                "anchorY" -> live.anchorY
+                "cropL" -> live.cropL
+                "cropR" -> live.cropR
+                "cropT" -> live.cropT
+                "cropB" -> live.cropB
                 else -> 0f
             }
             sel.copy(
@@ -3131,6 +3143,7 @@ class EditorViewModel : ViewModel() {
                 )
             )
         }
+        if (updated != sel) pushHistory()
         updateClipDirect(sel.id) { updated }
     }
 
@@ -3162,6 +3175,7 @@ class EditorViewModel : ViewModel() {
             kf = KeyframeStore.setKeyframe(kf, "cropB", currentTimeSec, base.cropB)
             sel.copy(keyframes = kf)
         }
+        if (updated != sel) pushHistory()
         updateClipDirect(sel.id) { updated }
         updateHistoryFlags()
     }
@@ -3184,7 +3198,23 @@ class EditorViewModel : ViewModel() {
                 sel.keyframes, currentTimeSec, ease
             )
         )
+        if (updated != sel) pushHistory()
         updateClipDirect(sel.id) { updated }
+    }
+
+    fun beginKeyframeGraphEdit() {
+        if (keyframeGraphBaseline == null) {
+            keyframeGraphBaseline = _state.value.clips.toList()
+        }
+    }
+
+    fun commitKeyframeGraphEdit() {
+        val baseline = keyframeGraphBaseline ?: return
+        if (baseline != _state.value.clips) {
+            history.push(baseline)
+        }
+        keyframeGraphBaseline = null
+        updateHistoryFlags()
     }
 
     fun updateKeyframeInGraph(
@@ -3207,6 +3237,7 @@ class EditorViewModel : ViewModel() {
         }
         filtered.sortBy { it.time }
 
+        if (keyframeGraphBaseline == null) pushHistory()
         updateClipDirect(sel.id) {
             it.copy(keyframes = it.keyframes + (prop to filtered))
         }
@@ -3215,10 +3246,47 @@ class EditorViewModel : ViewModel() {
 
     fun deleteKeyframeFromGraph(prop: String, time: Float) {
         val sel = _state.value.selectedClip ?: return
+        val updatedKeyframes = KeyframeStore.removeKeyframe(sel.keyframes, prop, time)
+        if (updatedKeyframes == sel.keyframes) return
+        pushHistory()
         updateClipDirect(sel.id) {
-            it.copy(keyframes = KeyframeStore.removeKeyframe(it.keyframes, prop, time))
+            it.copy(keyframes = updatedKeyframes)
         }
         updateHistoryFlags()
+    }
+
+    fun deleteKeyframesAtPlayhead(): Boolean {
+        val sel = _state.value.selectedClip ?: return false
+        val timeSec = KeyframeStore.clipLocalTimeSeconds(
+            _state.value.currentPosMs, sel.timelineStartMs, sel.durationMs
+        )
+        val updatedKeyframes = KeyframeStore.removeAllKeyframesAtTime(
+            sel.keyframes, timeSec
+        )
+        val updatedMaskProperties = sel.mask.propertyKeyframes.mapValues { (_, track) ->
+            track.filter { abs(it.time - timeSec) > 0.05f }
+        }.filterValues { it.isNotEmpty() }
+        val timeMs = (timeSec * 1000f).toLong()
+        val updatedMaskLegacy = sel.mask.keyframes.filter {
+            abs(it.timeMs - timeMs) >= 50L
+        }
+        if (updatedKeyframes == sel.keyframes &&
+            updatedMaskProperties == sel.mask.propertyKeyframes &&
+            updatedMaskLegacy == sel.mask.keyframes
+        ) return false
+
+        pushHistory()
+        updateClipDirect(sel.id) { clip ->
+            clip.copy(
+                keyframes = updatedKeyframes,
+                mask = clip.mask.copy(
+                    propertyKeyframes = updatedMaskProperties,
+                    keyframes = updatedMaskLegacy
+                )
+            )
+        }
+        updateHistoryFlags()
+        return true
     }
 
     fun resetAllTransform() {

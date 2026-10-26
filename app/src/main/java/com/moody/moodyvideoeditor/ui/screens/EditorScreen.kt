@@ -106,6 +106,7 @@ import com.moody.moodyvideoeditor.ui.features.VolumePanel
 import com.moody.moodyvideoeditor.utils.AudioPreviewEngine
 import com.moody.moodyvideoeditor.utils.BrushConfigHolder
 import com.moody.moodyvideoeditor.utils.CropEngine
+import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.utils.PromptEngine
 import com.moody.moodyvideoeditor.utils.PromptExecutor
 import com.moody.moodyvideoeditor.utils.SettingsConsumer
@@ -183,15 +184,16 @@ fun EditorScreen(
     val settings by SettingsConsumer.current.collectAsState()
 
     LaunchedEffect(
-        state.clips,
+        projectId,
         settings.autoSaveEnabled,
         settings.autoSaveIntervalSec
     ) {
         if (projectId.isNotBlank() && settings.autoSaveEnabled) {
-            delay(settings.autoSaveIntervalSec * 1000L)
-            try {
-                viewModel.saveCurrentProject(context)
-            } catch (_: Exception) {
+            while (true) {
+                delay(settings.autoSaveIntervalSec.coerceAtLeast(1) * 1000L)
+                if (!viewModel.saveCurrentProject(context)) {
+                    Log.e("EditorScreen", "Project auto-save failed for $projectId")
+                }
             }
         }
     }
@@ -276,6 +278,13 @@ fun EditorScreen(
     }
 
     LaunchedEffect(activePanel) {
+        if (activePanel != "filters") {
+            viewModel.clearPreviewFilters()
+        }
+        if (activePanel != "effects") {
+            viewModel.clearPreviewEffect()
+        }
+
         if (activePanel != "audiofx" && activePanel != "soundfx") {
             AudioPreviewEngine.release()
             try {
@@ -1236,12 +1245,14 @@ fun EditorScreen(
                 val hasAnySelected = selected != null ||
                         state.multiSelectedIds.isNotEmpty()
                 val currentTimeSec = selected?.let {
-                    ((state.currentPosMs - it.timelineStartMs).toFloat() / 1000f)
-                        .coerceAtLeast(0f)
+                    KeyframeStore.clipLocalTimeSeconds(
+                        state.currentPosMs, it.timelineStartMs, it.durationMs
+                    )
                 } ?: 0f
                 val clipDurSec = selected?.let { it.durationMs / 1000f } ?: 5f
-                val base = selected?.let { TransformApplier.baseOf(it) }
-                    ?: TransformValues()
+                val base = selected?.let { clip ->
+                    TransformApplier.resolveLive(clip, currentTimeSec)
+                } ?: TransformValues()
                 TransformPanel(
                     clipName = if (state.multiSelectedIds.size > 1)
                         "${state.multiSelectedIds.size} clips"
@@ -1265,6 +1276,8 @@ fun EditorScreen(
                     onDeleteKeyframe = { prop, t ->
                         viewModel.deleteKeyframeFromGraph(prop, t)
                     },
+                    onKeyframeEditStart = { viewModel.beginKeyframeGraphEdit() },
+                    onKeyframeEditEnd = { viewModel.commitKeyframeGraphEdit() },
                     onClose = { activePanel = null }
                 )
             }
@@ -1782,7 +1795,7 @@ fun EditorScreen(
             "delete" -> {
                 if (state.multiSelectedIds.isNotEmpty()) {
                     viewModel.deleteSelectedClips()
-                } else {
+                } else if (!viewModel.deleteKeyframesAtPlayhead()) {
                     viewModel.deleteCurrentClip()
                 }
                 activePanel = null
@@ -2582,7 +2595,7 @@ fun EditorScreen(
                 onDelete = {
                     if (state.multiSelectedIds.isNotEmpty()) {
                         viewModel.deleteSelectedClips()
-                    } else {
+                    } else if (!viewModel.deleteKeyframesAtPlayhead()) {
                         viewModel.deleteCurrentClip()
                     }
                 },
@@ -2684,20 +2697,38 @@ fun EditorScreen(
                         viewModel.selectClip(clip)
                         viewModel.clearMultiSelect()
 
-                        if (clip.isFilterLayerClip) {
-                            filterEditLayerId = clip.id
-                            activePanel = "filters"
-                        }
-                        if (clip.isColorMatteClip) {
-                            matteEditLayerId = clip.id
-                            activePanel = "matte"
-                        }
-                        if (clip.isEffectClip) {
-                            effectEditLayerId = clip.id
-                            activePanel = "effects"
-                        }
-                        if (clip.isVisualizerClip) {
-                            activePanel = "visualizer"
+                        when {
+                            clip.isTextClip -> {
+                                activePanel = "text"
+                                openTextEditor = false
+                            }
+                            clip.isStickerClip -> {
+                                activePanel = "stickers"
+                            }
+                            clip.isFilterLayerClip -> {
+                                filterEditLayerId = clip.id
+                                activePanel = "filters"
+                            }
+                            clip.isColorMatteClip -> {
+                                matteEditLayerId = clip.id
+                                activePanel = "matte"
+                            }
+                            clip.isEffectClip -> {
+                                effectEditLayerId = clip.id
+                                activePanel = "effects"
+                            }
+                            clip.isVisualizerClip -> {
+                                activePanel = "visualizer"
+                            }
+                            clip.isBrushClip -> {
+                                activePanel = "brush"
+                            }
+                            clip.isAudioEffectClip -> {
+                                activePanel = "audiofx"
+                            }
+                            else -> {
+                                activePanel = null // Pichla koi panel (jaise replace) stuck na rahe
+                            }
                         }
                     },
                     onTrackTapped = { ti, aud -> viewModel.selectTrack(ti, aud) },

@@ -245,7 +245,8 @@ private fun buildClipMatrix(
 ): android.graphics.ColorMatrix? {
     val cm = android.graphics.ColorMatrix()
 
-    if (!clip.adjustments.isDefault && ColorMatrixBuilder.hasRealTimeAdjustments(clip.adjustments)) {
+    val hasClipAdjustments = ColorMatrixBuilder.hasRealTimeAdjustments(clip.adjustments)
+    if (hasClipAdjustments) {
         cm.postConcat(ColorMatrixBuilder.build(clip.adjustments))
     }
     val ownFilter = ColorFilterValues(
@@ -262,7 +263,7 @@ private fun buildClipMatrix(
         ColorWheelEngine.buildColorMatrix(clip.colorWheel)?.let(cm::postConcat)
         colorWheelMatrix?.let(cm::postConcat)
     }
-    val hasChange = !clip.adjustments.isDefault || clip.filters.hasAnyChange ||
+    val hasChange = hasClipAdjustments || EffectsEngine.hasColorEffect(ownFilter) ||
             (clip.colorWheel.hasAnyChange && !useExactColorWheels) || applyGlobal ||
             (colorWheelMatrix != null && !useExactColorWheels)
     return if (hasChange) cm else null
@@ -516,15 +517,17 @@ fun PreviewCanvas(
         } ?: 0f
     }
 
-    val filterList = activeEffects.mapNotNull { it.effectState?.filters }.toMutableList()
+    val filterList = mutableListOf<ColorFilterValues>()
     activeEffects.forEach { clip ->
-        val acCfg = clip.effectState?.animatedColor
-        if (acCfg != null) filterList.add(
-            com.moody.moodyvideoeditor.utils.AnimatedColorEngine.compute(
-                acCfg,
-                timeSec
+        clip.effectState?.filters?.let { filterList.add(it) }
+        clip.effectState?.animatedColor?.let { acCfg ->
+            filterList.add(
+                com.moody.moodyvideoeditor.utils.AnimatedColorEngine.compute(
+                    acCfg,
+                    timeSec
+                )
             )
-        )
+        }
     }
     previewEffectState?.filters?.let { filterList.add(it) }
     previewEffectState?.animatedColor?.let { acCfg ->
@@ -567,25 +570,55 @@ fun PreviewCanvas(
         )
     }.maxByOrNull { it.trackIndex }
 
+    val filterLayerHasColorEffect = activeFilterLayer?.filters?.let { filters ->
+        EffectsEngine.hasColorEffect(
+            ColorFilterValues(
+                brightness = filters.brightness,
+                contrast = filters.contrast,
+                saturation = filters.saturation,
+                hue = filters.hue,
+                grayscale = filters.grayscale,
+                sepia = filters.sepia,
+                invert = filters.invert,
+                blur = filters.blur,
+                opacity = filters.opacity
+            )
+        )
+    } ?: false
+    val previewHasColorEffect = previewFilters?.let { filters ->
+        EffectsEngine.hasColorEffect(
+            ColorFilterValues(
+                brightness = filters.brightness,
+                contrast = filters.contrast,
+                saturation = filters.saturation,
+                hue = filters.hue,
+                grayscale = filters.grayscale,
+                sepia = filters.sepia,
+                invert = filters.invert,
+                blur = filters.blur,
+                opacity = filters.opacity
+            )
+        )
+    } ?: false
     val hasAdjustments =
         activeAdjustment?.let { ColorMatrixBuilder.hasRealTimeAdjustments(it) } ?: false
-    val hasFilters = EffectsEngine.hasColorEffect(combinedFilter)
-    val applyMatrix =
-        hasAdjustments || hasFilters || activeFilterLayer != null || previewFilters != null
+    val hasFilters = filterList.any(EffectsEngine::hasColorEffect)
+    val applyMatrix = hasAdjustments || hasFilters ||
+            filterLayerHasColorEffect || previewHasColorEffect
 
     val combinedMatrix =
-        remember(activeAdjustment, combinedFilter, activeFilterLayer?.id, previewFilters) {
+        remember(activeAdjustment, filterList, activeFilterLayer?.filters, previewFilters) {
             val cm = android.graphics.ColorMatrix()
             if (hasAdjustments && activeAdjustment != null) cm.postConcat(
                 ColorMatrixBuilder.build(
                     activeAdjustment
                 )
             )
-            if (hasFilters && combinedFilter != null) cm.postConcat(
-                EffectsEngine.buildColorMatrix(
-                    combinedFilter
-                )
-            )
+            filterList.forEach { filter ->
+                if (EffectsEngine.hasColorEffect(filter)) {
+                    cm.postConcat(EffectsEngine.buildColorMatrix(filter))
+                }
+            }
             activeFilterLayer?.let { layer ->
                 val cfv = ColorFilterValues(
                     brightness = layer.filters.brightness,
@@ -762,6 +795,39 @@ fun PreviewCanvas(
                                     previewBlurDp
                                 )
                             }
+                        val videoColorMatrix = buildClipMatrix(
+                            clip,
+                            combinedMatrix,
+                            applyMatrix,
+                            videoWheelMatrix,
+                            useExactVideoColorWheels
+                        )
+                        val useNativeSurface =
+                            videoColorMatrix == null &&
+                                    videoWheelNative == null &&
+                                    clip.adjustments.isDefault &&
+                                    clip.filters.isDefault &&
+                                    clip.colorWheel.isDefault &&
+                                    activeAdjustment == null &&
+                                    activeColorWheels.isEmpty() &&
+                                    activeFilterLayer == null &&
+                                    activeEffects.isEmpty() &&
+                                    previewEffectState == null &&
+                                    previewFilters == null &&
+                                    videoBlurDp <= 0.5f &&
+                                    !clip.chromaKey.isActive &&
+                                    !maskAtClipTime(clip, currentPosMs).isActive &&
+                                    opacityAlpha >= 1f &&
+                                    clip.filters.opacity >= 100f &&
+                                    clip.blendMode.equals("normal", ignoreCase = true) &&
+                                    blendOpacityFactor(clip) >= 1f &&
+                                    rotation == 0 &&
+                                    videoTransform2.isIdentity() &&
+                                    combinedMotion == EffectsEngine.MotionFrame() &&
+                                    activeTransitionClip == null &&
+                                    !TransformApplier.hasAnimatedTransform(clip) &&
+                                    activeClips.none { it.id != clip.id && it.isVisualClip } &&
+                                    allOverlays.isEmpty()
 
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
                             Box(
@@ -769,7 +835,12 @@ fun PreviewCanvas(
                                     .fillMaxSize()
                                     .then(adjustmentEffectModifier)
                                     .graphicsLayer {
-                                        compositingStrategy = CompositingStrategy.Offscreen
+                                        compositingStrategy =
+                                            if (clip.blendMode.equals("normal", ignoreCase = true)) {
+                                                CompositingStrategy.Auto
+                                            } else {
+                                                CompositingStrategy.Offscreen
+                                            }
 
                                         blendMode = blendKeyToCompose(clip.blendMode)
 
@@ -901,43 +972,64 @@ fun PreviewCanvas(
                                         }
 
                                     } else {
-                                        AndroidView(
-                                            factory = { ctx ->
-                                                LayoutInflater.from(ctx).inflate(
-                                                    com.moody.moodyvideoeditor.R.layout.view_player,
-                                                    null
-                                                ) as PlayerView
-                                            },
-                                            update = { view ->
-                                                view.player = exoPlayer
-                                                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL
-                                                view.rotation = rotation.toFloat()
-                                                view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                        if (useNativeSurface) {
+                                            AndroidView(
+                                                factory = { ctx ->
+                                                    LayoutInflater.from(ctx).inflate(
+                                                        com.moody.moodyvideoeditor.R.layout.view_player_surface,
+                                                        null
+                                                    ) as PlayerView
+                                                },
+                                                update = { view ->
+                                                    view.player = exoPlayer
+                                                    view.resizeMode =
+                                                        AspectRatioFrameLayout.RESIZE_MODE_FILL
+                                                    view.rotation = rotation.toFloat()
+                                                    view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                                },
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        } else {
+                                            AndroidView(
+                                                factory = { ctx ->
+                                                    LayoutInflater.from(ctx).inflate(
+                                                        com.moody.moodyvideoeditor.R.layout.view_player,
+                                                        null
+                                                    ) as PlayerView
+                                                },
+                                                update = { view ->
+                                                    view.player = exoPlayer
+                                                    view.resizeMode =
+                                                        AspectRatioFrameLayout.RESIZE_MODE_FILL
+                                                    view.rotation = rotation.toFloat()
+                                                    view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
 
-                                                val sv = view.videoSurfaceView
-                                                if (sv is TextureView) {
-                                                    val videoCm = buildClipMatrix(
-                                                        clip,
-                                                        combinedMatrix,
-                                                        applyMatrix,
-                                                        videoWheelMatrix,
-                                                        useExactVideoColorWheels
-                                                    )
-                                                    if (videoCm != null) {
-                                                        val paint = Paint().apply {
-                                                            colorFilter = android.graphics.ColorMatrixColorFilter(videoCm)
+                                                    val sv = view.videoSurfaceView
+                                                    if (sv is TextureView) {
+                                                        if (videoColorMatrix != null) {
+                                                            val paint = Paint().apply {
+                                                                colorFilter =
+                                                                    android.graphics.ColorMatrixColorFilter(
+                                                                        videoColorMatrix
+                                                                    )
+                                                            }
+                                                            sv.setLayerType(
+                                                                View.LAYER_TYPE_HARDWARE,
+                                                                paint
+                                                            )
+                                                        } else {
+                                                            sv.setLayerType(View.LAYER_TYPE_NONE, null)
                                                         }
-                                                        sv.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
-                                                    } else sv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
-                                                    sv.isOpaque = videoWheelNative == null
-                                                    if (Build.VERSION.SDK_INT >= 31) {
-                                                        sv.setRenderEffect(videoWheelNative)
+                                                        sv.isOpaque = videoWheelNative == null
+                                                        if (Build.VERSION.SDK_INT >= 31) {
+                                                            sv.setRenderEffect(videoWheelNative)
+                                                        }
                                                     }
-                                                }
-                                            },
-                                            modifier = Modifier.fillMaxSize()
-                                        )
+                                                },
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        }
                                     }
                                 }
                                 if (clip.id == selectedClipId && !isDrawingMode) {

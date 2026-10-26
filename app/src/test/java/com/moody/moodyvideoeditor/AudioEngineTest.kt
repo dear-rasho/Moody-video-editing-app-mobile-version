@@ -1,6 +1,7 @@
 package com.moody.moodyvideoeditor
 
 import com.moody.moodyvideoeditor.utils.AudioEngine
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -27,5 +28,15 @@ class AudioEngineTest {
             assertFalse(filter.contains("NaN"))
             assertFalse(filter.contains("Infinity"))
         }
+    }
+
+    @Test
+    fun noiseReductionPresetHasSoftwareExportFilter() {
+        assertTrue(AudioEngine.AUDIO_FX.any { it.key == "noise_reduction" })
+        assertTrue(
+            AudioEngine.buildAudioFilter("noise_reduction", 100f)
+                .startsWith("afftdn=nr=")
+        )
+        assertEquals("", AudioEngine.buildAudioFilter("none", 100f))
     }
 }

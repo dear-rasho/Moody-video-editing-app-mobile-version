@@ -27,6 +27,7 @@ object AudioEngine {
         AudioPreset("reverb", "Reverb", "🏛️", "Room reverb"),
         AudioPreset("cave", "Cave", "🕳️", "Long cave reverb"),
         AudioPreset("stadium", "Stadium", "🏟️", "Big stadium reverb"),
+        AudioPreset("noise_reduction", "Noise Reduction", "🔇", "Reduce steady background noise"),
         AudioPreset("telephone", "Telephone", "☎️", "Old phone line"),
         AudioPreset("underwater", "Underwater", "🌊", "Muffled underwater"),
         AudioPreset("whisper", "Whisper", "🤫", "Soft whisper"),
@@ -142,6 +143,8 @@ object AudioEngine {
                 (2000 * t).toInt().coerceAtLeast(10),
                 0.4f * t
             )
+
+            "noise_reduction" -> "afftdn=nr=${(6f + 12f * t).coerceIn(6f, 30f)}:nf=-50"
 
             "telephone" -> "highpass=f=300,lowpass=f=${
                 (3000 + 1000 * (1f - t)).toInt().coerceIn(1000, 8000)

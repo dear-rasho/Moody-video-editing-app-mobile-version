@@ -62,14 +62,6 @@ class VideoExporter(
 
         Log.e("EXPORT", "=== START ===")
         Log.e("EXPORT", "clips=${clips.size}, mode=$exportMode, format=$format")
-        Log.e(
-            "EXPORT",
-            "resolution=$resolution, ratio=$aspectRatio, " +
-                    "requestedOutput=${outputWidth}x$outputHeight, " +
-                    "fps=$fps, bitrate=$bitrateKbps"
-        )
-        Log.e("EXPORT", "custom folder=$customFolderUri")
-        Log.e("EXPORT", "range: $customStartMs - $customEndMs")
 
         if (clips.isEmpty()) {
             onError("No content to export")
@@ -93,7 +85,6 @@ class VideoExporter(
             onError("Output dimensions must be even numbers")
             return
         }
-        Log.i("EXPORT", "Final output frame: ${targetW}x$targetH")
 
         val totalTimeline = clips.maxOfOrNull { it.timelineEndMs } ?: 5000L
         if (totalTimeline <= 0L) {
@@ -108,8 +99,6 @@ class VideoExporter(
             onError("The selected export range is empty")
             return
         }
-
-        Log.i("EXPORT_RANGE", "Range: $rangeStart - $rangeEnd (of $totalTimeline)")
 
         when (exportMode) {
             "audio" -> {
@@ -144,86 +133,41 @@ class VideoExporter(
             }
         }
 
-        // ─── Visual clips (video / image with a real URI) ───
         val allVisual = clips.filter {
-            it.isVisualClip &&
-                    it.uri.toString().isNotBlank() &&
-                    it.uri != Uri.EMPTY
+            it.isVisualClip && it.uri.toString().isNotBlank() && it.uri != Uri.EMPTY
         }
+        val trimmedVisualClips = trimClipsToRange(allVisual, rangeStart, rangeEnd)
 
-        val trimmedVisualClips = trimClipsToRange(
-            allVisual,
-            rangeStart,
-            rangeEnd
-        )
-
-        // ─── 🆕 Color Matte layers (data-only, no URI) ───
         val allMatteClips = clips.filter { it.isColorMatteClip }
-        val trimmedMatteClips = trimClipsToRange(
-            allMatteClips,
-            rangeStart,
-            rangeEnd
-        )
+        val trimmedMatteClips = trimClipsToRange(allMatteClips, rangeStart, rangeEnd)
         val overlayImageClips = emptyList<EditorClip>()
 
-        val audioOnlyClips = trimClipsToRange(
-            clips.filter {
-                it.isAudio &&
-                        !it.isAudioEffectClip &&
-                        it.uri.toString().isNotBlank() &&
-                        it.uri != Uri.EMPTY
-            },
-            rangeStart, rangeEnd
-        )
-
+        val audioOnlyClips = trimClipsToRange(clips.filter {
+            it.isAudio && !it.isAudioEffectClip && it.uri.toString()
+                .isNotBlank() && it.uri != Uri.EMPTY
+        }, rangeStart, rangeEnd)
         val trimmedTextClips = trimClipsToRange(
             clips.filter { it.isTextClip || it.isStickerClip },
-            rangeStart, rangeEnd
+            rangeStart,
+            rangeEnd
         )
-
         val trimmedOverlayClips = trimClipsToRange(
-            clips.filter {
-                it.isOverlayClip ||
-                        (it.isEffectClip && it.effectState?.overlay != null)
-            },
-            rangeStart, rangeEnd
+            clips.filter { it.isOverlayClip || (it.isEffectClip && it.effectState?.overlay != null) },
+            rangeStart,
+            rangeEnd
         )
-
-        val vizClips = clips.filter {
-            it.isVisualizerClip &&
-                    it.timelineEndMs > rangeStart &&
-                    it.timelineStartMs < rangeEnd
-        }
+        val vizClips =
+            clips.filter { it.isVisualizerClip && it.timelineEndMs > rangeStart && it.timelineStartMs < rangeEnd }
 
         val exportDurationMs = rangeEnd - rangeStart
-
-        Log.i("EXPORT", "Output aspect ratio=$aspectRatio, size=${targetW}x${targetH}")
-
-        Log.e(
-            "EXPORT",
-            "BaseVisual=${trimmedVisualClips.size}, " +
-                    "AudioOnly=${audioOnlyClips.size}, " +
-                    "Text=${trimmedTextClips.size}, " +
-                    "Overlay=${trimmedOverlayClips.size}, " +
-                    "Visualizer=${vizClips.size}"
-        )
-
-        // Matas are considered a real base — they can stand alone.
-        val hasBaseVideo = trimmedVisualClips.isNotEmpty() ||
-                trimmedMatteClips.isNotEmpty()
-
-        val hasSynthetic = trimmedTextClips.isNotEmpty() ||
-                overlayImageClips.isNotEmpty() ||
-                vizClips.isNotEmpty()
+        val hasBaseVideo = trimmedVisualClips.isNotEmpty() || trimmedMatteClips.isNotEmpty()
+        val hasSynthetic =
+            trimmedTextClips.isNotEmpty() || overlayImageClips.isNotEmpty() || vizClips.isNotEmpty()
 
         when {
             hasBaseVideo -> {
                 val outputFile = createOutputFile(fileName, format)
                 onProgress(0.01f)
-
-                // If there are no real video/image clips, we still need a
-                // visible base. Color mattes will be composited on top of
-                // a synthetic black background in the FFmpeg pipeline.
 
                 val textSequences = try {
                     TextBitmapRenderer.renderCombinedOverlays(
@@ -231,23 +175,20 @@ class VideoExporter(
                         textClips = trimmedTextClips,
                         imageClips = overlayImageClips,
                         overlayClips = trimmedOverlayClips,
-                        W = targetW, H = targetH, fps = fps,
+                        W = targetW,
+                        H = targetH,
+                        fps = fps,
                         totalDurationMs = exportDurationMs,
                         onProgress = { p -> onProgress(p * 0.20f) },
                         shouldCancel = { isCancelled },
                         imageFormat = imageFormat,
                         jpegQuality = jpegQuality
                     )
-                } catch (e: CancellationException) {
-                    if (isCancelled) {
-                        onCancelled()
-                        return
-                    }
-                    throw e
                 } catch (e: Exception) {
-                    Log.e("EXPORT", "Text render failed", e)
-                    onError("Text render failed: ${e.message}")
-                    return
+                    if (isCancelled) {
+                        onCancelled(); return
+                    }
+                    onError("Text render failed: ${e.message}"); return
                 }
 
                 val vizSequences = if (vizClips.isNotEmpty()) {
@@ -257,42 +198,33 @@ class VideoExporter(
                             visualizerClips = vizClips,
                             allClips = clips,
                             rangeStart = rangeStart,
-                            W = targetW, H = targetH, fps = fps,
+                            W = targetW,
+                            H = targetH,
+                            fps = fps,
                             totalDurationMs = exportDurationMs,
                             onProgress = { p -> onProgress(0.20f + p * 0.20f) },
                             shouldCancel = { isCancelled },
                             imageFormat = imageFormat,
                             jpegQuality = jpegQuality
                         )
-                    } catch (e: CancellationException) {
+                    } catch (e: Exception) {
                         cleanupSequences(textSequences)
                         if (isCancelled) {
-                            onCancelled()
-                            return
+                            onCancelled(); return
                         }
-                        throw e
-                    } catch (e: Exception) {
-                        Log.e("EXPORT", "Visualizer render failed", e)
-                        cleanupSequences(textSequences)
-                        onError("Visualizer render failed: ${e.message}")
-                        return
+                        onError("Visualizer render failed: ${e.message}"); return
                     }
                 } else emptyList()
 
-                val allSequences = (textSequences + vizSequences)
-                    .sortedBy { it.trackIndex }
-
+                val allSequences = (textSequences + vizSequences).sortedBy { it.trackIndex }
                 onProgress(0.40f)
 
                 ffmpeg = FFmpegExecutor(
                     context = context,
-                    onProgress = { p ->
-                        if (!isCancelled) onProgress(0.40f + p * 0.60f)
-                    },
+                    onProgress = { p -> if (!isCancelled) onProgress(0.40f + p * 0.60f) },
                     onSuccess = { file ->
                         if (isCancelled) {
-                            cleanupSequences(allSequences)
-                            return@FFmpegExecutor
+                            cleanupSequences(allSequences); return@FFmpegExecutor
                         }
                         completeExport(file, customFolderUri, allSequences)
                     },
@@ -302,20 +234,21 @@ class VideoExporter(
                     }
                 )
                 if (isCancelled) {
-                    cleanupSequences(allSequences)
-                    onCancelled()
-                    return
+                    cleanupSequences(allSequences); onCancelled(); return
                 }
+
                 try {
                     ffmpeg?.export(
                         clips = trimmedVisualClips,
                         allClips = clips,
                         outputFile = outputFile,
-                        targetW = targetW, targetH = targetH,
-                        fps = fps, bitrateKbps = bitrateKbps,
+                        targetW = targetW,
+                        targetH = targetH,
+                        fps = fps,
+                        bitrateKbps = bitrateKbps,
                         textSequences = allSequences,
                         audioOnlyClips = audioOnlyClips,
-                        matteClips = trimmedMatteClips,   // 🆕
+                        matteClips = trimmedMatteClips,
                         explicitDurationMs = exportDurationMs
                     )
                 } catch (e: CancellationException) {
@@ -332,7 +265,7 @@ class VideoExporter(
                         overlayImageClips = overlayImageClips,
                         overlayClips = trimmedOverlayClips,
                         vizClips = vizClips,
-                        matteClips = trimmedMatteClips,   // 🆕
+                        matteClips = trimmedMatteClips,
                         audioOnlyClips = audioOnlyClips,
                         rangeStart = rangeStart,
                         rangeEnd = rangeEnd,
@@ -366,45 +299,36 @@ class VideoExporter(
     ) {
         val ext = if (audioFormat == "m4a") "m4a" else "mp3"
         val outputFile = createOutputFile(fileName, ext)
-
-        Log.e("EXPORT_AUDIO", "Starting audio export: ${outputFile.absolutePath}")
-
         onProgress(0.01f)
-
         val executor = FFmpegExecutor(
             context = context,
             onProgress = { p -> if (!isCancelled) onProgress(0.05f + p * 0.90f) },
             onSuccess = { file ->
                 if (isCancelled) {
-                    onCancelled()
-                    return@FFmpegExecutor
+                    onCancelled(); return@FFmpegExecutor
                 }
-                Log.e("EXPORT_AUDIO", "FFmpeg done: ${file.absolutePath}")
                 kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
                     val uri = try {
                         saveAudioToGallerySync(
                             file = file,
                             customFolderUri = customFolderUri,
-                            mimeType = if (audioFormat == "m4a") "audio/mp4"
-                            else "audio/mpeg"
+                            mimeType = if (audioFormat == "m4a") "audio/mp4" else "audio/mpeg"
                         )
                     } catch (t: Throwable) {
-                        Log.e("EXPORT_AUDIO", "Save failed", t)
                         null
                     }
                     withContext(Dispatchers.Main) {
-                        onProgress(1f)
-                        onSuccess(uri ?: Uri.fromFile(file))
+                        onProgress(1f); onSuccess(
+                        uri ?: Uri.fromFile(
+                            file
+                        )
+                    )
                     }
                 }
             },
-            onError = { msg ->
-                Log.e("EXPORT_AUDIO", "FFmpeg error: $msg")
-                if (isCancelled) onCancelled() else onError(msg)
-            }
+            onError = { msg -> if (isCancelled) onCancelled() else onError(msg) }
         )
         ffmpeg = executor
-
         try {
             executor.exportAudioOnly(
                 allClips = allClips,
@@ -438,20 +362,14 @@ class VideoExporter(
         val outputDir = File(baseFolder, fileName)
         if (outputDir.exists()) outputDir.deleteRecursively()
         outputDir.mkdirs()
-
-        Log.e("EXPORT_IMG", "Starting image export: ${outputDir.absolutePath}")
-
         onProgress(0.01f)
-
         val executor = FFmpegExecutor(
             context = context,
             onProgress = { p -> if (!isCancelled) onProgress(0.05f + p * 0.90f) },
             onSuccess = { dir ->
                 if (isCancelled) {
-                    onCancelled()
-                    return@FFmpegExecutor
+                    onCancelled(); return@FFmpegExecutor
                 }
-                Log.e("EXPORT_IMG", "FFmpeg done: ${dir.absolutePath}")
                 kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
                     val uri = try {
                         saveSequenceToGallerySync(
@@ -460,22 +378,20 @@ class VideoExporter(
                             format = imageFormat
                         )
                     } catch (t: Throwable) {
-                        Log.e("EXPORT_IMG", "Save failed", t)
                         null
                     }
                     withContext(Dispatchers.Main) {
-                        onProgress(1f)
-                        onSuccess(uri ?: Uri.fromFile(dir))
+                        onProgress(1f); onSuccess(
+                        uri ?: Uri.fromFile(
+                            dir
+                        )
+                    )
                     }
                 }
             },
-            onError = { msg ->
-                Log.e("EXPORT_IMG", "FFmpeg error: $msg")
-                if (isCancelled) onCancelled() else onError(msg)
-            }
+            onError = { msg -> if (isCancelled) onCancelled() else onError(msg) }
         )
         ffmpeg = executor
-
         try {
             executor.exportImageSequence(
                 allClips = allClips,
@@ -488,8 +404,7 @@ class VideoExporter(
                 jpegQuality = jpegQuality,
                 rangeStartMs = rangeStart,
                 rangeEndMs = rangeEnd,
-                onFrameProgress = { _, _ -> }
-            )
+                onFrameProgress = { _, _ -> })
         } catch (e: CancellationException) {
             if (isCancelled) onCancelled() else throw e
         }
@@ -509,15 +424,9 @@ class VideoExporter(
         sequences: List<TextOverlaySequence>
     ) {
         try {
-            Log.e("EXPORT_SAVE", "Complete export: ${file.absolutePath}")
-            Log.e("EXPORT_SAVE", "Custom folder: $customFolderUri")
-
             val galleryUri = saveToGallery(file, customFolderUri)
-            Log.e("EXPORT_SAVE", "Result URI: $galleryUri")
-
             onSuccess(galleryUri ?: Uri.fromFile(file))
         } catch (e: Exception) {
-            Log.e("EXPORT_SAVE", "Complete export failed", e)
             onError("Could not save export: ${e.message}")
         } finally {
             cleanupSequences(sequences)
@@ -537,19 +446,16 @@ class VideoExporter(
         rangeStart: Long,
         rangeEnd: Long
     ): List<EditorClip> {
-        return clips
-            .filter { it.timelineEndMs > rangeStart && it.timelineStartMs < rangeEnd }
+        return clips.filter { it.timelineEndMs > rangeStart && it.timelineStartMs < rangeEnd }
             .map { clip ->
                 val clipStart = clip.timelineStartMs
                 val clipEnd = clip.timelineEndMs
                 val leftCut = (rangeStart - clipStart).coerceAtLeast(0L)
                 val rightCut = (clipEnd - rangeEnd).coerceAtLeast(0L)
                 val speed = clip.speed.coerceAtLeast(0.01f)
-                val sourceLeftCut = (leftCut * speed).toLong()
-                val sourceRightCut = (rightCut * speed).toLong()
-                val newSourceStart = clip.sourceStartMs + sourceLeftCut
-                val newSourceEnd = (clip.sourceEndMs - sourceRightCut)
-                    .coerceAtLeast(newSourceStart + 33L)
+                val newSourceStart = clip.sourceStartMs + (leftCut * speed).toLong()
+                val newSourceEnd =
+                    (clip.sourceEndMs - (rightCut * speed).toLong()).coerceAtLeast(newSourceStart + 33L)
                 val newTimelineStart = (clipStart - rangeStart).coerceAtLeast(0L)
                 val trimmedMask = MaskEngine.trimToTime(clip.mask, leftCut)
                 clip.copy(
@@ -568,7 +474,7 @@ class VideoExporter(
         overlayImageClips: List<EditorClip>,
         overlayClips: List<EditorClip>,
         vizClips: List<EditorClip>,
-        matteClips: List<EditorClip> = emptyList(),   // 🆕
+        matteClips: List<EditorClip> = emptyList(),
         audioOnlyClips: List<EditorClip>,
         rangeStart: Long,
         rangeEnd: Long,
@@ -582,7 +488,6 @@ class VideoExporter(
         jpegQuality: Int
     ) {
         val durationMs = (rangeEnd - rangeStart).coerceAtLeast(500L)
-
         onProgress(0.01f)
 
         val vizSequences = if (vizClips.isNotEmpty()) {
@@ -592,97 +497,54 @@ class VideoExporter(
                     visualizerClips = vizClips,
                     allClips = allClips,
                     rangeStart = rangeStart,
-                    W = targetW, H = targetH, fps = fps,
+                    W = targetW,
+                    H = targetH,
+                    fps = fps,
                     totalDurationMs = durationMs,
                     onProgress = { p -> onProgress(p * 0.25f) },
                     shouldCancel = { isCancelled },
                     imageFormat = imageFormat,
                     jpegQuality = jpegQuality
                 )
-            } catch (e: CancellationException) {
-                if (isCancelled) {
-                    onCancelled()
-                    return
-                }
-                throw e
             } catch (e: Exception) {
-                Log.e("EXPORT", "Visualizer render failed", e)
-                onError("Visualizer render failed: ${e.message}")
-                return
+                if (isCancelled) {
+                    onCancelled(); return
+                }
+                onError("Visualizer render failed: ${e.message}"); return
             }
         } else emptyList()
 
-        val textSequences = if (
-            textClips.isNotEmpty() ||
-            overlayImageClips.isNotEmpty() ||
-            overlayClips.isNotEmpty()
-        ) {
-            try {
-                TextBitmapRenderer.renderCombinedOverlays(
-                    context = context,
-                    textClips = textClips,
-                    imageClips = overlayImageClips,
-                    overlayClips = overlayClips,
-                    W = targetW, H = targetH, fps = fps,
-                    totalDurationMs = durationMs,
-                    onProgress = { p -> onProgress(0.25f + p * 0.25f) },
-                    shouldCancel = { isCancelled },
-                    imageFormat = imageFormat,
-                    jpegQuality = jpegQuality
-                )
-            } catch (e: CancellationException) {
-                cleanupSequences(vizSequences)
-                if (isCancelled) {
-                    onCancelled()
-                    return
+        val textSequences =
+            if (textClips.isNotEmpty() || overlayImageClips.isNotEmpty() || overlayClips.isNotEmpty()) {
+                try {
+                    TextBitmapRenderer.renderCombinedOverlays(
+                        context = context,
+                        textClips = textClips,
+                        imageClips = overlayImageClips,
+                        overlayClips = overlayClips,
+                        W = targetW,
+                        H = targetH,
+                        fps = fps,
+                        totalDurationMs = durationMs,
+                        onProgress = { p -> onProgress(0.25f + p * 0.25f) },
+                        shouldCancel = { isCancelled },
+                        imageFormat = imageFormat,
+                        jpegQuality = jpegQuality
+                    )
+                } catch (e: Exception) {
+                    cleanupSequences(vizSequences)
+                    if (isCancelled) {
+                        onCancelled(); return
+                    }
+                    onError("Text render failed: ${e.message}"); return
                 }
-                throw e
-            } catch (e: Exception) {
-                Log.e("EXPORT", "Text render failed", e)
-                cleanupSequences(vizSequences)
-                onError("Text render failed: ${e.message}")
-                return
-            }
-        } else emptyList()
+            } else emptyList()
 
-        val allSequences = (vizSequences + textSequences)
-            .sortedBy { it.trackIndex }
-
+        val allSequences = (vizSequences + textSequences).sortedBy { it.trackIndex }
         onProgress(0.50f)
 
         val audioToMix = mutableListOf<EditorClip>()
         audioToMix.addAll(audioOnlyClips)
-
-        vizClips.forEach { viz ->
-            val linkedId = viz.visualizer?.linkedAudioClipId ?: return@forEach
-            val linkedAudio = allClips.firstOrNull {
-                it.id == linkedId && it.isAudio && !it.isAudioEffectClip &&
-                        it.uri.toString().isNotBlank() && it.uri != Uri.EMPTY
-            }
-            if (linkedAudio != null && audioToMix.none { it.id == linkedAudio.id }) {
-                val clipStart = linkedAudio.timelineStartMs
-                val clipEnd = linkedAudio.timelineEndMs
-                if (clipEnd > rangeStart && clipStart < rangeEnd) {
-                    val leftCut = (rangeStart - clipStart).coerceAtLeast(0L)
-                    val rightCut = (clipEnd - rangeEnd).coerceAtLeast(0L)
-                    val speed = linkedAudio.speed.coerceAtLeast(0.01f)
-                    val newSourceStart = linkedAudio.sourceStartMs +
-                            (leftCut * speed).toLong()
-                    val newSourceEnd = (linkedAudio.sourceEndMs -
-                            (rightCut * speed).toLong())
-                        .coerceAtLeast(newSourceStart + 100L)
-                    val newTimelineStart = (clipStart - rangeStart)
-                        .coerceAtLeast(0L)
-                    audioToMix.add(
-                        linkedAudio.copy(
-                            sourceStartMs = newSourceStart,
-                            sourceEndMs = newSourceEnd,
-                            timelineStartMs = newTimelineStart
-                        )
-                    )
-                }
-            }
-        }
 
         val (audioLocalFiles, audioLocalClips) = try {
             withContext(Dispatchers.IO) {
@@ -698,12 +560,9 @@ class VideoExporter(
                 files to localClips
             }
         } catch (e: CancellationException) {
-            cleanupSequences(allSequences)
-            throw e
+            cleanupSequences(allSequences); throw e
         } catch (e: Exception) {
-            cleanupSequences(allSequences)
-            onError("Could not prepare audio: ${e.message}")
-            return
+            cleanupSequences(allSequences); onError("Could not prepare audio: ${e.message}"); return
         }
 
         val outputFile = createOutputFile(fileName, "mp4")
@@ -719,9 +578,7 @@ class VideoExporter(
         args.add("-t"); args.add(durSec.toString())
         args.add("-i"); args.add("anullsrc=r=44100:cl=stereo")
 
-        audioLocalFiles.forEach { f ->
-            args.add("-i"); args.add(f.absolutePath)
-        }
+        audioLocalFiles.forEach { f -> args.add("-i"); args.add(f.absolutePath) }
 
         val seqStartIdx = 2 + audioLocalFiles.size
         allSequences.forEach { seq ->
@@ -744,21 +601,13 @@ class VideoExporter(
             filterParts.add("[$inIdx:v]format=rgba[$srcLabel]")
             val startS = "%.4f".format(seq.startSec)
             val endS = "%.4f".format(seq.endSec)
-            filterParts.add(
-                "[$lastLabel][$srcLabel]overlay=0:0:" +
-                        "enable='between(t,$startS,$endS)'[$outLabel]"
-            )
+            filterParts.add("[$lastLabel][$srcLabel]overlay=0:0:enable='between(t,$startS,$endS)'[$outLabel]")
             lastLabel = outLabel
         }
         filterParts.add("[$lastLabel]format=yuv420p[outv]")
 
-        // Watermark add karo
-        val finalOutv = WatermarkHelper.addWatermarkToFilter(context, filterParts, "outv", targetW, targetH)
-
-        args.add("-filter_complex")
-        args.add(filterParts.joinToString(";"))
-        args.add("-map"); args.add("[$finalOutv]")
-        args.add("-map"); args.add("[outa]")
+        val finalOutv =
+            WatermarkHelper.addWatermarkToFilter(context, filterParts, "outv", targetW, targetH)
 
         if (audioLocalFiles.isEmpty()) {
             filterParts.add("[1:a]anull[outa]")
@@ -766,78 +615,70 @@ class VideoExporter(
             val audioLabels = mutableListOf<String>()
             audioLocalClips.forEachIndexed { idx, clip ->
                 val inputIdx = 2 + idx
-                val durSecClip = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0)
-                    .coerceAtLeast(0.1)
+                val durSecClip =
+                    ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0).coerceAtLeast(0.1)
                 val delayMs = clip.timelineStartMs.toInt().coerceAtLeast(0)
                 val speed = clip.speed.coerceAtLeast(0.01f)
-
                 val chain = mutableListOf<String>()
-                chain.add(
-                    "atrim=start=${clip.sourceStartMs / 1000.0}:duration=$durSecClip"
-                )
+                chain.add("atrim=start=${clip.sourceStartMs / 1000.0}:duration=$durSecClip")
                 chain.add("asetpts=PTS-STARTPTS")
                 if (delayMs > 0) chain.add("adelay=$delayMs|$delayMs")
                 if (speed != 1.0f) chain.add("atempo=${speed.coerceIn(0.5f, 2.0f)}")
                 if (clip.volume != 1.0f) chain.add("volume=${clip.volume}")
                 chain.add("aresample=44100")
-
                 val label = "audio$idx"
                 filterParts.add("[$inputIdx:a]${chain.joinToString(",")}[$label]")
                 audioLabels.add("[$label]")
             }
-            filterParts.add(
-                "${audioLabels.joinToString("")}amix=" +
-                        "inputs=${audioLabels.size}:duration=longest[outa]"
-            )
+            filterParts.add("${audioLabels.joinToString("")}amix=inputs=${audioLabels.size}:duration=longest[outa]")
         }
 
+        // 🚀 FIX: FFmpeg ko force karo ki wo saare inputs ko sahi se handle kare
         args.add("-filter_complex")
         args.add(filterParts.joinToString(";"))
-        args.add("-map"); args.add("[outv]")
-        args.add("-map"); args.add("[outa]")
+        args.add("-map"); args.add("[$finalOutv]")
 
-        args.addAll(
-            listOf(
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-tune", "fastdecode",
-                "-b:v", "${bitrateKbps}k",
-                "-pix_fmt", "yuv420p",
-                "-r", fps.toString(),
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-movflags", "+faststart",
-                "-threads", "0",
-                "-t", durSec.toString(),
-                outputFile.absolutePath
-            )
-        )
+        // Audio map karte waqt ? ka use karo taaki agar audio na ho to error na aaye
+        args.add("-map"); args.add("[outa]?")
 
+        args.addAll(listOf(
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-tune", "fastdecode",
+            "-b:v", "${bitrateKbps}k",
+            "-pix_fmt", "yuv420p",
+            "-r", fps.toString(),
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "+faststart",
+            "-threads", "0",
+            "-t", durSec.toString(),
+            outputFile.absolutePath
+        ))
         try {
             val argsArray = args.toTypedArray()
             val session = FFmpegKit.executeWithArgumentsAsync(
                 argsArray,
                 { s ->
                     if (isCancelled) {
-                        cleanupSequences(allSequences)
-                        onCancelled()
+                        cleanupSequences(allSequences); onCancelled()
                     } else if (ReturnCode.isSuccess(s.returnCode)) {
                         completeExport(outputFile, customFolderUri, allSequences)
                     } else {
-                        val logs = s.allLogsAsString ?: "Unknown error"
-                        cleanupSequences(allSequences)
-                        onError("Export failed:\n${logs.takeLast(1500)}")
+                        val logs = s.allLogsAsString ?: "Unknown error"; cleanupSequences(
+                            allSequences
+                        ); onError("Export failed:\n${logs.takeLast(1500)}")
                     }
                 },
                 { _ -> },
                 { stats ->
                     if (!isCancelled) {
                         try {
-                            val t = stats.time
-                            if (t > 0) {
-                                val p = ((t / (durationMs.toDouble() * 1.2))
-                                    .coerceIn(0.0, 0.95)).toFloat()
-                                onProgress(0.50f + p * 0.50f)
+                            val t = stats.time; if (t > 0) {
+                                val p = ((t / (durationMs.toDouble() * 1.2)).coerceIn(
+                                    0.0,
+                                    0.95
+                                )).toFloat(); onProgress(0.50f + p * 0.50f)
                             }
                         } catch (_: Exception) {
                         }
@@ -846,8 +687,7 @@ class VideoExporter(
             )
             sessionId = session.sessionId
         } catch (e: Exception) {
-            cleanupSequences(allSequences)
-            onError("FFmpeg error: ${e.message}")
+            cleanupSequences(allSequences); onError("FFmpeg error: ${e.message}")
         }
     }
 
@@ -866,19 +706,10 @@ class VideoExporter(
     }
 
     private fun saveToGallery(sourceFile: File, customFolderUri: String? = null): Uri? {
-        Log.e("EXPORT_SAVE", "saveToGallery: ${sourceFile.name}")
-        Log.e("EXPORT_SAVE", "File exists: ${sourceFile.exists()}, size: ${sourceFile.length()}")
-        Log.e("EXPORT_SAVE", "Custom folder: $customFolderUri")
-
         if (customFolderUri != null && customFolderUri.isNotBlank()) {
             val uri = saveToCustomFolder(sourceFile, customFolderUri)
-            if (uri != null) {
-                Log.e("EXPORT_SAVE", "SUCCESS custom: $uri")
-                return uri
-            }
-            Log.e("EXPORT_SAVE", "Custom folder FAILED, fallback to MediaStore")
+            if (uri != null) return uri
         }
-
         return try {
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, sourceFile.name)
@@ -887,67 +718,41 @@ class VideoExporter(
                     put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/MoodyEditor")
                 }
             }
-            val uri = context.contentResolver.insert(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values
-            ) ?: return null
-            context.contentResolver.openOutputStream(uri)?.use { out ->
-                sourceFile.inputStream().use { it.copyTo(out) }
-            }
-            Log.e("EXPORT_SAVE", "SUCCESS MediaStore: $uri")
+            val uri =
+                context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                    ?: return null
+            context.contentResolver.openOutputStream(uri)
+                ?.use { out -> sourceFile.inputStream().use { it.copyTo(out) } }
             uri
         } catch (e: Exception) {
-            Log.e("EXPORT_SAVE", "MediaStore save failed", e)
             null
         }
     }
 
     private fun saveToCustomFolder(sourceFile: File, folderUriString: String): Uri? {
         return try {
-            Log.e("EXPORT_SAVE", "saveToCustomFolder: $folderUriString")
-
             val treeUri = Uri.parse(folderUriString)
             val parentDocId = DocumentsContract.getTreeDocumentId(treeUri)
-            Log.e("EXPORT_SAVE", "parentDocId: $parentDocId")
-
-            val parentDocUri = DocumentsContract.buildDocumentUriUsingTree(
-                treeUri, parentDocId
-            )
-            Log.e("EXPORT_SAVE", "parentDocUri: $parentDocUri")
-
+            val parentDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentDocId)
             val mimeType = when {
                 sourceFile.name.endsWith(".mov") -> "video/quicktime"
                 sourceFile.name.endsWith(".mp4") -> "video/mp4"
                 sourceFile.name.endsWith(".mp3") -> "audio/mpeg"
                 sourceFile.name.endsWith(".m4a") -> "audio/mp4"
                 sourceFile.name.endsWith(".png") -> "image/png"
-                sourceFile.name.endsWith(".jpg") ||
-                        sourceFile.name.endsWith(".jpeg") -> "image/jpeg"
-
+                sourceFile.name.endsWith(".jpg") || sourceFile.name.endsWith(".jpeg") -> "image/jpeg"
                 else -> "application/octet-stream"
             }
-
             val docUri = DocumentsContract.createDocument(
                 context.contentResolver,
                 parentDocUri,
                 mimeType,
                 sourceFile.name
-            )
-
-            if (docUri == null) {
-                Log.e("EXPORT_SAVE", "createDocument returned null")
-                return null
-            }
-
-            Log.e("EXPORT_SAVE", "docUri: $docUri")
-
-            context.contentResolver.openOutputStream(docUri)?.use { out ->
-                sourceFile.inputStream().use { it.copyTo(out) }
-            }
-
-            Log.e("EXPORT_SAVE", "Wrote file: ${sourceFile.length()} bytes")
+            ) ?: return null
+            context.contentResolver.openOutputStream(docUri)
+                ?.use { out -> sourceFile.inputStream().use { it.copyTo(out) } }
             docUri
         } catch (e: Exception) {
-            Log.e("EXPORT_SAVE", "saveToCustomFolder FAILED", e)
             null
         }
     }
@@ -957,46 +762,26 @@ class VideoExporter(
         customFolderUri: String?,
         mimeType: String
     ): Uri? = withContext(Dispatchers.IO) {
-        Log.e("EXPORT_SAVE_AUDIO", "Audio save: ${file.name}")
-        Log.e("EXPORT_SAVE_AUDIO", "File: ${file.absolutePath}, size: ${file.length()}")
-        Log.e("EXPORT_SAVE_AUDIO", "Custom folder: $customFolderUri")
-
         if (customFolderUri != null && customFolderUri.isNotBlank()) {
             val customUri = saveToCustomFolder(file, customFolderUri)
-            if (customUri != null) {
-                Log.e("EXPORT_SAVE_AUDIO", "SUCCESS custom: $customUri")
-                return@withContext customUri
-            }
-            Log.e("EXPORT_SAVE_AUDIO", "Custom folder FAILED, fallback")
+            if (customUri != null) return@withContext customUri
         }
-
         try {
             val values = ContentValues().apply {
                 put(MediaStore.Audio.Media.DISPLAY_NAME, file.name)
                 put(MediaStore.Audio.Media.MIME_TYPE, mimeType)
                 put(MediaStore.Audio.Media.IS_MUSIC, true)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(
-                        MediaStore.Audio.Media.RELATIVE_PATH,
-                        "Music/MoodyEditor"
-                    )
+                    put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/MoodyEditor")
                 }
             }
-            val uri = context.contentResolver.insert(
-                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values
-            )
+            val uri =
+                context.contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
             if (uri != null) {
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    file.inputStream().use { it.copyTo(out) }
-                }
-                Log.e("EXPORT_SAVE_AUDIO", "SUCCESS MediaStore: $uri")
-                uri
-            } else {
-                Log.e("EXPORT_SAVE_AUDIO", "MediaStore insert null")
-                null
-            }
+                context.contentResolver.openOutputStream(uri)
+                    ?.use { out -> file.inputStream().use { it.copyTo(out) } }; uri
+            } else null
         } catch (e: Exception) {
-            Log.e("EXPORT_SAVE_AUDIO", "MediaStore save failed", e)
             null
         }
     }
@@ -1006,25 +791,17 @@ class VideoExporter(
         customFolderUri: String?,
         format: String
     ): Uri? = withContext(Dispatchers.IO) {
-        Log.e("EXPORT_SAVE_IMG", "Sequence save: ${sourceDir.absolutePath}")
-        Log.e("EXPORT_SAVE_IMG", "Custom folder: $customFolderUri")
-
         try {
             val files = sourceDir.listFiles()?.sortedBy { it.name } ?: emptyList()
-            Log.e("EXPORT_SAVE_IMG", "Found ${files.size} images")
             if (files.isEmpty()) return@withContext null
-
             val mimeType = if (format == "jpeg") "image/jpeg" else "image/png"
             val savedUris = mutableListOf<Uri>()
-
             if (customFolderUri != null && customFolderUri.isNotBlank()) {
                 try {
                     val treeUri = Uri.parse(customFolderUri)
                     val parentDocId = DocumentsContract.getTreeDocumentId(treeUri)
-                    val parentDocUri = DocumentsContract.buildDocumentUriUsingTree(
-                        treeUri, parentDocId
-                    )
-
+                    val parentDocUri =
+                        DocumentsContract.buildDocumentUriUsingTree(treeUri, parentDocId)
                     val subFolder = DocumentsContract.createDocument(
                         context.contentResolver,
                         parentDocUri,
@@ -1032,7 +809,6 @@ class VideoExporter(
                         sourceDir.name
                     )
                     val targetParent = subFolder ?: parentDocUri
-
                     files.forEach { f ->
                         try {
                             val docUri = DocumentsContract.createDocument(
@@ -1042,29 +818,17 @@ class VideoExporter(
                                 f.name
                             )
                             if (docUri != null) {
-                                context.contentResolver.openOutputStream(docUri)
-                                    ?.use { out ->
-                                        f.inputStream().use { it.copyTo(out) }
-                                    }
-                                savedUris.add(docUri)
+                                context.contentResolver.openOutputStream(docUri)?.use { out ->
+                                    f.inputStream().use { it.copyTo(out) }
+                                }; savedUris.add(docUri)
                             }
-                        } catch (e: Exception) {
-                            Log.e("EXPORT_SAVE_IMG", "Failed: ${f.name}", e)
+                        } catch (_: Exception) {
                         }
                     }
-
-                    if (savedUris.isNotEmpty()) {
-                        Log.e(
-                            "EXPORT_SAVE_IMG",
-                            "SUCCESS custom: ${savedUris.size} images"
-                        )
-                        return@withContext savedUris.first()
-                    }
-                } catch (e: Exception) {
-                    Log.e("EXPORT_SAVE_IMG", "Custom sequence FAILED", e)
+                    if (savedUris.isNotEmpty()) return@withContext savedUris.first()
+                } catch (_: Exception) {
                 }
             }
-
             files.forEach { f ->
                 try {
                     val values = ContentValues().apply {
@@ -1078,26 +842,20 @@ class VideoExporter(
                         }
                     }
                     val uri = context.contentResolver.insert(
-                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        values
                     )
                     if (uri != null) {
-                        context.contentResolver.openOutputStream(uri)?.use { out ->
-                            f.inputStream().use { it.copyTo(out) }
-                        }
-                        savedUris.add(uri)
+                        context.contentResolver.openOutputStream(uri)
+                            ?.use { out -> f.inputStream().use { it.copyTo(out) } }; savedUris.add(
+                            uri
+                        )
                     }
-                } catch (e: Exception) {
-                    Log.e("EXPORT_SAVE_IMG", "Failed: ${f.name}", e)
+                } catch (_: Exception) {
                 }
             }
-
-            Log.e(
-                "EXPORT_SAVE_IMG",
-                "SUCCESS MediaStore: ${savedUris.size} images"
-            )
             savedUris.firstOrNull()
         } catch (e: Exception) {
-            Log.e("EXPORT_SAVE_IMG", "saveSequenceToGallerySync failed", e)
             null
         }
     }
@@ -1109,7 +867,6 @@ class VideoExporter(
             } catch (_: Throwable) {
                 ""
             }
-
             val ext = when {
                 mime.startsWith("audio/mpeg") -> "mp3"
                 mime.startsWith("audio/wav") -> "wav"
@@ -1120,37 +877,25 @@ class VideoExporter(
                 mime.startsWith("video/webm") -> "webm"
                 else -> "mp4"
             }
-
             val baseName = fileName.substringBeforeLast('.')
             val realFileName = "$baseName.$ext"
             val file = File(context.cacheDir, realFileName)
 
             if (file.exists() && file.length() > 0) return file
-            val tempFile = File(
-                context.cacheDir,
-                "$realFileName.${java.util.UUID.randomUUID()}.part"
-            )
+            val tempFile =
+                File(context.cacheDir, "$realFileName.${java.util.UUID.randomUUID()}.part")
             try {
                 val input = context.contentResolver.openInputStream(uri)
                     ?: throw java.io.IOException("Could not open media URI")
-                input.use {
-                    tempFile.outputStream().use { output -> it.copyTo(output) }
-                }
-                if (tempFile.length() <= 0L) {
-                    throw java.io.IOException("Media URI produced empty file")
-                }
-                if (file.exists() && !file.delete()) {
-                    throw java.io.IOException("Could not replace cached file")
-                }
-                if (!tempFile.renameTo(file)) {
-                    throw java.io.IOException("Could not finalize cached file")
-                }
+                input.use { tempFile.outputStream().use { output -> it.copyTo(output) } }
+                if (tempFile.length() <= 0L) throw java.io.IOException("Media URI produced empty file")
+                if (file.exists() && !file.delete()) throw java.io.IOException("Could not replace cached file")
+                if (!tempFile.renameTo(file)) throw java.io.IOException("Could not finalize cached file")
             } finally {
                 tempFile.delete()
             }
             if (file.length() > 0) file else null
         } catch (e: Exception) {
-            Log.e("FFMPEG", "Copy failed", e)
             null
         }
     }

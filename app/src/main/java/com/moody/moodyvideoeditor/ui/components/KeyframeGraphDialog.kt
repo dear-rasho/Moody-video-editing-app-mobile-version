@@ -50,6 +50,8 @@ fun KeyframeGraphDialog(
     clipDurationSec: Float,
     onUpdateKeyframe: (prop: String, oldTime: Float, newTime: Float, newValue: Float) -> Unit,
     onDeleteKeyframe: (prop: String, time: Float) -> Unit,
+    onKeyframeEditStart: () -> Unit = {},
+    onKeyframeEditEnd: () -> Unit = {},
     onClose: () -> Unit
 ) {
     val activeProps = remember(keyframeMap) {
@@ -242,6 +244,7 @@ fun KeyframeGraphDialog(
                                             if (bestProp != null) {
                                                 dragProp = bestProp
                                                 dragOriginalTime = bestTime
+                                                onKeyframeEditStart()
                                             }
                                         },
                                         onDrag = { change, _ ->
@@ -271,8 +274,14 @@ fun KeyframeGraphDialog(
                                             )
                                             dragOriginalTime = newTime
                                         },
-                                        onDragEnd = { dragProp = null },
-                                        onDragCancel = { dragProp = null }
+                                        onDragEnd = {
+                                            if (dragProp != null) onKeyframeEditEnd()
+                                            dragProp = null
+                                        },
+                                        onDragCancel = {
+                                            if (dragProp != null) onKeyframeEditEnd()
+                                            dragProp = null
+                                        }
                                     )
                                 }
                         ) {

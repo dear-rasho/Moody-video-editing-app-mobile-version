@@ -15,7 +15,6 @@ import com.moody.moodyvideoeditor.data.ColorFilterValues
 import com.moody.moodyvideoeditor.data.ColorWheelState
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.MaskType
-import com.moody.moodyvideoeditor.utils.ChromaKeyEngine
 import com.moody.moodyvideoeditor.data.MotionConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -131,6 +130,10 @@ class FFmpegExecutor(
             "-s:v", "${targetW}x${targetH}",
             "-aspect", "$targetW:$targetH",
             "-pix_fmt", "yuv420p",
+            "-color_range", "tv",
+            "-colorspace", "bt709",
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
             "-threads", encoderThreads.toString()
         )
     }
@@ -264,9 +267,15 @@ class FFmpegExecutor(
                 lightningSequences + particleSequences + fireSequences + dustSequences
             val adjustmentClips = allClips.filter { it.isAdjustmentClip }
             val needsLayeredCrop = cropAlphaSequences.isNotEmpty()
+            val hasPositionedVisualClip = clips.any {
+                it.isVisualClip &&
+                        (kotlin.math.abs(it.offsetX) > 0.001f ||
+                                kotlin.math.abs(it.offsetY) > 0.001f)
+            }
 
-            val needsLayered = needsLayeredCrop || clips.map { it.trackIndex }
-                .distinct().size > 1 || maskSequences.isNotEmpty() || matteClips.isNotEmpty() ||
+            val needsLayered = needsLayeredCrop || hasPositionedVisualClip ||
+                    clips.map { it.trackIndex }
+                        .distinct().size > 1 || maskSequences.isNotEmpty() || matteClips.isNotEmpty() ||
                     allExtraSequences.isNotEmpty() || adjustmentClips.isNotEmpty() ||
                     clips.any { TransformApplier.hasAnimatedTransform(it) }
 
@@ -1011,9 +1020,12 @@ class FFmpegExecutor(
         targetH: Int
     ): String {
         filterParts.add("[$inputLabel]scale=$targetW:$targetH:flags=lanczos,setsar=1[exportv]")
-        // Watermark yahan add ho raha hai
         return WatermarkHelper.addWatermarkToFilter(context, filterParts, "exportv", targetW, targetH)
     }
+
+    /**
+     * FIXED: Crop is offset-aware, no double-crop. Preview & export match.
+     */
     private fun buildVisualTransformFilters(
         clip: EditorClip,
         targetW: Int,
@@ -1024,64 +1036,120 @@ class FFmpegExecutor(
         val filters = mutableListOf<String>()
         if (transparentPadding) filters.add("format=rgba")
 
-        // Crop is now handled via pre-rendered alpha masks (see CropAlphaRenderer)
-        filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
-        filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=${if (transparentPadding) "black@0" else "black"}")
-
         val userScale = clip.scale.coerceIn(0.1f, 5f)
         val hasScaleTrack = clip.keyframes["scale"].orEmpty().isNotEmpty()
+        val hasCropTrack = listOf("cropL", "cropR", "cropT", "cropB")
+            .any { clip.keyframes[it].orEmpty().isNotEmpty() }
+        val offsetXpx = (clip.offsetX * targetW).toInt()
+        val offsetYpx = (clip.offsetY * targetH).toInt()
+        val hasOffset = offsetXpx != 0 || offsetYpx != 0
+        val fillColor = if (transparentPadding) "black@0" else "black"
+        val preserveScaleOverscan =
+            transparentPadding &&
+                    positionByOverlay &&
+                    hasScaleTrack &&
+                    !hasCropTrack &&
+                    !CropHelper.isCropped(clip) &&
+                    !clip.mask.isActive
+
+        // ═══════════════════════════════════════════════════════════
+        //  STEP 1: Fit source into canvas (letterbox) — WITHOUT user scale
+        //  Because user scale must apply to ORIGINAL clip, not letterboxed
+        // ═══════════════════════════════════════════════════════════
         if (hasScaleTrack) {
-            val scaleExpr = KeyframeStore.escapeFfmpegExpression(
-                KeyframeStore.ffmpegExpression(clip.keyframes, "scale", clip.scale * 100f)
-            )
+            // Keep the transformed image larger than the output canvas so
+            // animated position can reveal parts that extend beyond its edges.
+            filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
+            val scaleExpr = KeyframeStore.ffmpegExpression(clip.keyframes, "scale", clip.scale * 100f)
             filters.add("scale=w='iw*($scaleExpr/100)':h='ih*($scaleExpr/100)':eval=frame")
-            filters.add("crop=w='min(iw,$targetW)':h='min(ih,$targetH)':x='(iw-ow)/2':y='(ih-oh)/2':eval=frame")
-            filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=${if (transparentPadding) "black@0" else "black"}")
+            if (!preserveScaleOverscan) {
+                val cropX = "max(0\\,min(iw-$targetW\\,(iw-$targetW)/2-$offsetXpx))"
+                val cropY = "max(0\\,min(ih-$targetH\\,(ih-$targetH)/2-$offsetYpx))"
+                filters.add(
+                    "crop=w='min(iw,$targetW)':h='min(ih,$targetH)':" +
+                            "x='$cropX':y='$cropY':eval=frame"
+                )
+                val padX = "max(0\\,min($targetW-iw\\,($targetW-iw)/2+$offsetXpx))"
+                val padY = "max(0\\,min($targetH-ih\\,($targetH-ih)/2+$offsetYpx))"
+                filters.add("pad=$targetW:$targetH:x='$padX':y='$padY':color=$fillColor:eval=frame")
+            }
         } else if (kotlin.math.abs(userScale - 1.0f) > 0.01f) {
-            filters.add(
-                "scale=iw*${String.format(Locale.US, "%.4f", userScale)}:ih*${
-                    String.format(
-                        Locale.US,
-                        "%.4f",
-                        userScale
-                    )
-                }"
-            )
-            if (userScale < 1f) filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=${if (transparentPadding) "black@0" else "black"}")
-            else filters.add("crop=$targetW:$targetH")
+            // Static user scale
+            if (userScale > 1.0f) {
+                // ═══════════════════════════════════════════════════
+                //  ZOOM-IN: Fit FIRST to canvas, then scale up, then crop shifted
+                //  This ensures black bars stay outside the crop window
+                // ═══════════════════════════════════════════════════
+                filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
+                filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=$fillColor")
+                val scaleFmt = String.format(Locale.US, "%.4f", userScale)
+                filters.add("scale=iw*$scaleFmt:ih*$scaleFmt")
+                // Shift crop window: offset moves clip, so crop must move same direction
+                // Formula: crop_x = (iw - targetW)/2 + offsetXpx  → clip shifts right, crop window shifts right too
+                // But since scaled size > target, we need CENTER + offset
+                val cropX = "max(0\\,min(iw-$targetW\\,(iw-$targetW)/2-$offsetXpx))"
+                val cropY = "max(0\\,min(ih-$targetH\\,(ih-$targetH)/2-$offsetYpx))"
+                filters.add("crop=$targetW:$targetH:$cropX:$cropY")
+            } else {
+                // ═══════════════════════════════════════════════════
+                //  ZOOM-OUT: Fit, scale down, pad to canvas (no crop)
+                // ═══════════════════════════════════════════════════
+                filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
+                val scaleFmt = String.format(Locale.US, "%.4f", userScale)
+                filters.add("scale=iw*$scaleFmt:ih*$scaleFmt")
+                filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=$fillColor")
+            }
+        } else {
+            // ═══════════════════════════════════════════════════════════
+            //  NO SCALE: Fit + pad
+            //  If offset exists, we need to SHIFT the clip inside the canvas
+            //  so user sees the shift (like preview)
+            // ═══════════════════════════════════════════════════════════
+            filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
+            if (hasOffset) {
+                // Pad with extra space to allow shifting without cutting
+                // Extra = |offsetX| + |offsetY| max
+                val extraX = kotlin.math.abs(offsetXpx).coerceAtLeast(0)
+                val extraY = kotlin.math.abs(offsetYpx).coerceAtLeast(0)
+                val padW = targetW + extraX * 2
+                val padH = targetH + extraY * 2
+                filters.add("pad=$padW:$padH:(ow-iw)/2:(oh-ih)/2:color=$fillColor")
+                // Then crop target size, shifted by offset
+                val cropX = "(iw-$targetW)/2+$offsetXpx"
+                val cropY = "(ih-$targetH)/2+$offsetYpx"
+                filters.add("crop=$targetW:$targetH:$cropX:$cropY")
+            } else {
+                filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=$fillColor")
+            }
         }
 
+        // ═══════════════════════════════════════════════════════════
+        //  ROTATION (unchanged)
+        // ═══════════════════════════════════════════════════════════
         val hasRotationTrack = clip.keyframes["rotation"].orEmpty().isNotEmpty()
         if (hasRotationTrack) {
-            val rotationExpr = KeyframeStore.escapeFfmpegExpression(
-                KeyframeStore.ffmpegExpression(clip.keyframes, "rotation", clip.rotation)
-            )
-            filters.add(
-                "rotate=angle='($rotationExpr)*PI/180':c=${if (transparentPadding) "black@0" else "black"}:" +
-                        "ow=$targetW:oh=$targetH"
-            )
+            val rotationExpr = KeyframeStore.ffmpegExpression(clip.keyframes, "rotation", clip.rotation)
+            val angleExpr = "(($rotationExpr)*PI/180)"
+            val outputSize =
+                if (preserveScaleOverscan) "ow='rotw($angleExpr)':oh='roth($angleExpr)'"
+                else "ow=$targetW:oh=$targetH"
+            filters.add("rotate=angle='$angleExpr':c=$fillColor:$outputSize")
         } else if (kotlin.math.abs(clip.rotation) > 0.1f) {
-            filters.add(
-                "rotate=${
-                    String.format(
-                        Locale.US,
-                        "%.4f",
-                        Math.toRadians(clip.rotation.toDouble())
-                    )
-                }:c=${if (transparentPadding) "black@0" else "black"}:ow=$targetW:oh=$targetH"
+            val angle = String.format(
+                Locale.US,
+                "%.4f",
+                Math.toRadians(clip.rotation.toDouble())
             )
+            val outputSize =
+                if (preserveScaleOverscan) "ow='rotw($angle)':oh='roth($angle)'"
+                else "ow=$targetW:oh=$targetH"
+            filters.add("rotate=$angle:c=$fillColor:$outputSize")
         }
 
-        val offsetXpx = (clip.offsetX * targetW).toInt();
-        val offsetYpx = (clip.offsetY * targetH).toInt()
-        if (!positionByOverlay && (offsetXpx != 0 || offsetYpx != 0)) {
-            filters.add("crop=$targetW:$targetH:max(0\\,min(iw-$targetW\\,(iw-$targetW)/2+$offsetXpx)):max(0\\,min(ih-$targetH\\,(ih-$targetH)/2+$offsetYpx))")
-        }
         if (transparentPadding) filters.add("format=rgba")
         filters.add("setsar=1")
         return filters
     }
-
     private fun buildAudioOnlyMix(
         filterParts: MutableList<String>,
         audioLocalFiles: List<File>,
@@ -1282,6 +1350,7 @@ class FFmpegExecutor(
         }
         return filters
     }
+
     private fun exportLayeredTracks(
         clips: List<EditorClip>,
         allClips: List<EditorClip>,
@@ -1347,87 +1416,102 @@ class FFmpegExecutor(
                     "color=c=black:s=${targetW}x${targetH}:r=$fps"
                 )
             )
-
+            // ═══════════════════════════════════════════════════════════
+            //  FIX: Input index tracking — ab sequence + order correct hai
+            //  Order: video files → audio files → black bg → mattes → silence
+            //         → sequences → cropAlpha → masks
+            // ═══════════════════════════════════════════════════════════
             val matteInputIndices = mutableMapOf<String, Int>()
-            var nextMatteIdx = backgroundInputIdx + 1
+            var nextInputIdx = backgroundInputIdx + 1
+
+            // 1. Matte inputs
             colorMettes.forEach { matte ->
                 val pngFile = renderMatteToPng(matte.matteStyle, targetW, targetH)
                 args.addAll(
                     listOf(
-                        "-loop",
-                        "1",
-                        "-framerate",
-                        fps.toString(),
-                        "-t",
-                        (matte.durationMs / 1000.0).coerceAtLeast(0.1).toString(),
-                        "-i",
-                        pngFile.absolutePath
+                        "-loop", "1",
+                        "-framerate", fps.toString(),
+                        "-t", (matte.durationMs / 1000.0).coerceAtLeast(0.1).toString(),
+                        "-i", pngFile.absolutePath
                     )
                 )
-                matteInputIndices[matte.id] = nextMatteIdx++
+                matteInputIndices[matte.id] = nextInputIdx++
             }
 
-            val silenceInputIdx = nextMatteIdx
+            // 2. Silence input
+            val silenceInputIdx = nextInputIdx++
             args.addAll(
                 listOf(
-                    "-f",
-                    "lavfi",
-                    "-t",
-                    durationSec.toString(),
-                    "-i",
-                    "anullsrc=r=44100:cl=stereo"
+                    "-f", "lavfi",
+                    "-t", durationSec.toString(),
+                    "-i", "anullsrc=r=44100:cl=stereo"
                 )
             )
-            val sequenceStartIdx = silenceInputIdx + 1
-            val combinedSequences = sequences + extraSequences
-            addSequenceInputs(args, combinedSequences)
 
-            // 🆕 Crop alpha mask inputs
-            val cropAlphaInputIndices = mutableMapOf<String, Int>()
-            var nextCropAlphaIdx = sequenceStartIdx + combinedSequences.size + maskSequences.size
-            cropAlphaSequences.forEach { seq ->
-                if (seq.isStatic && seq.staticFile != null) {
-                    args.addAll(listOf(
-                        "-loop", "1", "-framerate", fps.toString(),
-                        "-t", durationSec.toString(),
-                        "-i", seq.staticFile.absolutePath
-                    ))
-                } else {
-                    args.addAll(listOf(
-                        "-framerate", seq.fps.toString(),
-                        "-start_number", "1",
-                        "-i", seq.pattern
-                    ))
+            // 3. Sequence inputs (text overlays)
+            val combinedSequences = sequences + extraSequences
+            val sequenceStartIdx = nextInputIdx
+            combinedSequences.forEach { seq ->
+                if (seq.startSec > 0.0001) {
+                    args.add("-itsoffset")
+                    args.add("%.4f".format(seq.startSec))
                 }
-                cropAlphaInputIndices[seq.clipId] = nextCropAlphaIdx++
+                args.addAll(
+                    listOf(
+                        "-framerate", seq.fps.toString(),
+                        "-start_number", seq.startNumber.toString(),
+                        "-i", seq.pattern
+                    )
+                )
+                nextInputIdx++
             }
 
+            // 4. Crop alpha inputs
+            val cropAlphaInputIndices = mutableMapOf<String, Int>()
+            cropAlphaSequences.forEach { seq ->
+                if (seq.isStatic && seq.staticFile != null) {
+                    args.addAll(
+                        listOf(
+                            "-loop", "1",
+                            "-framerate", fps.toString(),
+                            "-t", durationSec.toString(),
+                            "-i", seq.staticFile.absolutePath
+                        )
+                    )
+                } else {
+                    args.addAll(
+                        listOf(
+                            "-framerate", seq.fps.toString(),
+                            "-start_number", "1",
+                            "-i", seq.pattern
+                        )
+                    )
+                }
+                cropAlphaInputIndices[seq.clipId] = nextInputIdx++
+            }
+
+            // 5. Mask inputs — YAHI BUG THA
             val maskInputIndices = mutableMapOf<String, Int>()
-            var nextMaskInputIdx = nextCropAlphaIdx
             maskSequences.forEach { seq ->
-                if (seq.staticFile != null) args.addAll(
-                    listOf(
-                        "-loop",
-                        "1",
-                        "-framerate",
-                        fps.toString(),
-                        "-t",
-                        durationSec.toString(),
-                        "-i",
-                        seq.staticFile.absolutePath
+                if (seq.staticFile != null) {
+                    args.addAll(
+                        listOf(
+                            "-loop", "1",
+                            "-framerate", fps.toString(),
+                            "-t", durationSec.toString(),
+                            "-i", seq.staticFile.absolutePath
+                        )
                     )
-                )
-                else args.addAll(
-                    listOf(
-                        "-framerate",
-                        seq.fps.toString(),
-                        "-start_number",
-                        "1",
-                        "-i",
-                        seq.pattern
+                } else {
+                    args.addAll(
+                        listOf(
+                            "-framerate", seq.fps.toString(),
+                            "-start_number", "1",
+                            "-i", seq.pattern
+                        )
                     )
-                )
-                maskInputIndices[seq.clipId] = nextMaskInputIdx++
+                }
+                maskInputIndices[seq.clipId] = nextInputIdx++
             }
 
             val filterParts = mutableListOf<String>()
@@ -1578,7 +1662,6 @@ class FFmpegExecutor(
                             "mask_ready${item.clipIdx}"
                         } else unmasked
 
-                        // 🆕 Apply crop alpha mask
                         val cropAlphaIdx = cropAlphaInputIndices[clip.id]
                         if (cropAlphaIdx != null) {
                             filterParts.add("[$cropAlphaIdx:v]format=gray,setpts=PTS-STARTPTS+${startSec}/TB[crop_pts${item.clipIdx}]")
@@ -1589,17 +1672,54 @@ class FFmpegExecutor(
 
                         val outLabel = "canvas_c${item.clipIdx}"
                         if (!isBlendActive) {
-                            val baseX = 50f + clip.offsetX * 100f
-                            val baseY = 50f + clip.offsetY * 100f
-                            val localTimeExpression =
-                                "(t-${String.format(Locale.US, "%.6f", startSec)})"
-                            val x = KeyframeStore.escapeFfmpegExpression(
-                                "((${KeyframeStore.ffmpegExpression(clip.keyframes, "x", baseX, localTimeExpression)}-50)*$targetW/100)"
-                            )
-                            val y = KeyframeStore.escapeFfmpegExpression(
-                                "((${KeyframeStore.ffmpegExpression(clip.keyframes, "y", baseY, localTimeExpression)}-50)*$targetH/100)"
-                            )
-                            filterParts.add("[$canvasLabel][$layerLabel]overlay=x='$x':y='$y':eval=frame:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
+                            val hasXKf = clip.keyframes["x"].orEmpty().isNotEmpty()
+                            val hasYKf = clip.keyframes["y"].orEmpty().isNotEmpty()
+
+                            val preserveScaleOverscan =
+                                clip.keyframes["scale"].orEmpty().isNotEmpty() &&
+                                        listOf("cropL", "cropR", "cropT", "cropB")
+                                            .none { clip.keyframes[it].orEmpty().isNotEmpty() } &&
+                                        !CropHelper.isCropped(clip) &&
+                                        !clip.mask.isActive
+
+                            if (preserveScaleOverscan) {
+                                val baseX = 50f + clip.offsetX * 100f
+                                val baseY = 50f + clip.offsetY * 100f
+                                val localTimeExpression =
+                                    "(t-${String.format(Locale.US, "%.6f", startSec)})"
+                                val xPosition = KeyframeStore.escapeFfmpegExpression(
+                                    KeyframeStore.ffmpegExpression(
+                                        clip.keyframes,
+                                        "x",
+                                        baseX,
+                                        localTimeExpression
+                                    )
+                                )
+                                val yPosition = KeyframeStore.escapeFfmpegExpression(
+                                    KeyframeStore.ffmpegExpression(
+                                        clip.keyframes,
+                                        "y",
+                                        baseY,
+                                        localTimeExpression
+                                    )
+                                )
+                                val x = "((main_w-overlay_w)/2+(($xPosition-50)*$targetW/100))"
+                                val y = "((main_h-overlay_h)/2+(($yPosition-50)*$targetH/100))"
+                                filterParts.add("[$canvasLabel][$layerLabel]overlay=x='$x':y='$y':eval=frame:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
+                            } else if (!hasXKf && !hasYKf) {
+                                // Static position — crop already handled offset
+                                filterParts.add("[$canvasLabel][$layerLabel]overlay=0:0:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
+                            } else {
+                                // Animated position — overlay must shift
+                                val baseX = 50f + clip.offsetX * 100f
+                                val baseY = 50f + clip.offsetY * 100f
+                                val localTimeExpression = "(t-${String.format(Locale.US, "%.6f", startSec)})"
+
+                                val x = "((${KeyframeStore.ffmpegExpression(clip.keyframes, "x", baseX, localTimeExpression)}-50)*$targetW/100)"
+                                val y = "((${KeyframeStore.ffmpegExpression(clip.keyframes, "y", baseY, localTimeExpression)}-50)*$targetH/100)"
+
+                                filterParts.add("[$canvasLabel][$layerLabel]overlay=x='$x':y='$y':eval=frame:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
+                            }
                         }
                         else {
                             val ffMode = ffmpegBlendName(blendKey);
@@ -1645,8 +1765,7 @@ class FFmpegExecutor(
                             val startSec = adj.timelineStartMs / 1000.0;
                             val endSec = adj.timelineEndMs / 1000.0
                             if (endSec > startSec + 0.01) {
-                                val startExpr = String.format(Locale.US, "%.4f", startSec);
-                                val endExpr = String.format(Locale.US, "%.4f", endSec)
+                                val enable = adjustmentLayerEnableExpression(adj, allClips)
                                 val uid = "adj_${item.clipIdx}"
                                 filterParts.add("[$canvasLabel]split=2[canvas_${uid}_base][canvas_${uid}_src]")
 
@@ -1657,7 +1776,7 @@ class FFmpegExecutor(
                                     currentChain = "canvas_${uid}_adjstep"
                                 }
                                 if (currentChain != "canvas_${uid}_src") {
-                                    filterParts.add("[canvas_${uid}_base][$currentChain]overlay=0:0:enable='between(t,$startExpr,$endExpr)'[canvas_${uid}_final]")
+                                    filterParts.add("[canvas_${uid}_base][$currentChain]overlay=0:0:enable='$enable'[canvas_${uid}_final]")
                                     canvasLabel = "canvas_${uid}_final"
                                 }
                             }
@@ -2466,27 +2585,35 @@ class FFmpegExecutor(
     ): List<String> {
         val filters = mutableListOf<String>()
 
-        // Filter Layers Above
-        allClips.filter { it.isFilterLayerClip && it.trackIndex > clip.trackIndex && it.timelineEndMs > clip.timelineStartMs && it.timelineStartMs < clip.timelineEndMs }
-            .sortedBy { it.trackIndex }.forEach { layer ->
-                val cfv = ColorFilterValues(
-                    layer.filters.brightness,
-                    layer.filters.contrast,
-                    layer.filters.saturation,
-                    layer.filters.hue,
-                    layer.filters.grayscale,
-                    layer.filters.sepia,
-                    layer.filters.invert,
-                    layer.filters.blur,
-                    layer.filters.opacity
-                )
-                val str = colorFilterValuesToFfmpeg(cfv)
-                if (str.isNotBlank()) filters.add(str)
-            }
+        val filterLayers = allClips.filter {
+            it.isFilterLayerClip &&
+                    it.timelineEndMs > clip.timelineStartMs &&
+                    it.timelineStartMs < clip.timelineEndMs
+        }.sortedBy { it.trackIndex }
+        val effectLayers = allClips.filter {
+            it.isEffectClip &&
+                    it.trackIndex > clip.trackIndex &&
+                    it.timelineEndMs > clip.timelineStartMs &&
+                    it.timelineStartMs < clip.timelineEndMs
+        }.sortedBy { it.trackIndex }
+        if (!clip.adjustments.isDefault) {
+            val adjustmentFilter = buildFullAdjustmentFilter(clip.adjustments)
+            if (adjustmentFilter.isNotBlank()) filters.add(adjustmentFilter)
+        }
 
-        // Effect Layers Above
-        allClips.filter { it.isEffectClip && it.trackIndex > clip.trackIndex && it.timelineEndMs > clip.timelineStartMs && it.timelineStartMs < clip.timelineEndMs }
-            .sortedBy { it.trackIndex }.forEach { effClip ->
+        val ownFilter = clip.filters.toColorFilterValues()
+        val hasColorFilterLut = EffectsEngine.hasColorEffect(ownFilter) ||
+                filterLayers.any { EffectsEngine.hasColorEffect(it.filters.toColorFilterValues()) } ||
+                effectLayers.any { effect ->
+                    effect.effectState?.filters?.let(EffectsEngine::hasColorEffect) == true ||
+                            effect.effectState?.animatedColor != null
+                }
+        if (hasColorFilterLut) filters.add("format=rgb24")
+        if (EffectsEngine.hasColorEffect(ownFilter)) {
+            filters.add(colorFilterValuesToFfmpeg(ownFilter))
+        }
+
+        effectLayers.forEach { effClip ->
                 val start =
                     ((effClip.timelineStartMs - clip.timelineStartMs).coerceAtLeast(0L)) / 1000.0
                 val end =
@@ -2533,67 +2660,56 @@ class FFmpegExecutor(
                 }
             }
 
-        // 🆕 COLOR WHEELS FROM ADJUSTMENT LAYERS ABOVE — PER CLIP
-        // Full range RGB force karo taaki LUT preview jaisa exactly kaam kare
-        allClips.filter { e ->
+        filterLayers.forEach { layer ->
+            val start = (layer.timelineStartMs - clip.timelineStartMs).coerceAtLeast(0L)
+            val end = (layer.timelineEndMs - clip.timelineStartMs).coerceAtMost(clip.durationMs)
+            if (end <= start) return@forEach
+
+            val enable = filterLayerEnableExpression(layer, filterLayers, clip)
+            val layerValues = layer.filters.toColorFilterValues()
+            if (EffectsEngine.hasColorEffect(layerValues)) {
+                filters.add(colorFilterValuesToFfmpeg(layerValues, enable))
+            }
+        }
+
+        val adjustmentColorWheels = allClips.filter { e ->
             e.isAdjustmentClip &&
                     e.colorWheel.hasAnyChange &&
                     e.trackIndex > clip.trackIndex &&
                     e.timelineEndMs > clip.timelineStartMs &&
                     e.timelineStartMs < clip.timelineEndMs
-        }.sortedBy { it.trackIndex }.forEach { adjLayer ->
-            val relStartSec =
-                (adjLayer.timelineStartMs - clip.timelineStartMs).coerceAtLeast(0L) / 1000.0
-            val relEndSec =
-                (adjLayer.timelineEndMs - clip.timelineStartMs).coerceAtMost(clip.durationMs) / 1000.0
-            val coversWhole = relStartSec < 0.01 && relEndSec > (clip.durationMs / 1000.0) - 0.01
+        }.sortedBy { it.trackIndex }
 
-            filters.add("scale=in_color_matrix=bt709:in_range=tv:out_color_matrix=bt709:out_range=pc:flags=bilinear")
-            filters.add("format=rgb24")
+        if (adjustmentColorWheels.isNotEmpty() || clip.colorWheel.hasAnyChange) {
+            if (!hasColorFilterLut) {
+                filters.add("scale=in_color_matrix=bt709:in_range=tv:out_color_matrix=bt709:out_range=pc:flags=bilinear")
+                filters.add("format=rgb24")
+            }
 
-            if (coversWhole) filters.add(buildColorWheelFilter(adjLayer.colorWheel))
-            else filters.add(buildColorWheelFilter(adjLayer.colorWheel, relStartSec, relEndSec))
+            if (clip.colorWheel.hasAnyChange) {
+                filters.add(buildColorWheelFilter(clip.colorWheel))
+            }
+
+            adjustmentColorWheels.forEach { adjLayer ->
+                val relStartSec =
+                    (adjLayer.timelineStartMs - clip.timelineStartMs).coerceAtLeast(0L) / 1000.0
+                val relEndSec =
+                    (adjLayer.timelineEndMs - clip.timelineStartMs).coerceAtMost(clip.durationMs) / 1000.0
+                val coversWhole =
+                    relStartSec < 0.01 && relEndSec > (clip.durationMs / 1000.0) - 0.01
+
+                if (coversWhole) filters.add(buildColorWheelFilter(adjLayer.colorWheel))
+                else filters.add(
+                    buildColorWheelFilter(adjLayer.colorWheel, relStartSec, relEndSec)
+                )
+            }
 
             filters.add("scale=in_range=pc:out_range=tv")
             filters.add("format=yuv420p")
-        }
-
-        // Clip's own color wheel
-        if (clip.colorWheel.hasAnyChange) {
-            filters.add("scale=in_color_matrix=bt709:in_range=tv:out_color_matrix=bt709:out_range=pc:flags=bilinear")
-            filters.add("format=rgb24")
-            filters.add(buildColorWheelFilter(clip.colorWheel))
-            filters.add("scale=in_range=pc:out_range=tv")
+        } else if (hasColorFilterLut) {
             filters.add("format=yuv420p")
         }
 
-        // Clip Filters
-        val f = clip.filters
-        if (f.brightness != 100f || f.contrast != 100f || f.saturation != 100f) {
-            val eq = mutableListOf<String>()
-            if (f.brightness != 100f) eq.add(
-                "brightness=${
-                    ((f.brightness - 100f) / 100f).coerceIn(
-                        -1f,
-                        1f
-                    )
-                }"
-            )
-            if (f.contrast != 100f) eq.add("contrast=${(f.contrast / 100f).coerceIn(0f, 2f)}")
-            if (f.saturation != 100f) eq.add("saturation=${(f.saturation / 100f).coerceIn(0f, 3f)}")
-            if (eq.isNotEmpty()) filters.add("eq=${eq.joinToString(":")}")
-        }
-        if (f.hue != 0f) filters.add("hue=h=${f.hue}")
-        if (f.grayscale > 0f) filters.add("format=gray")
-        if (f.invert > 0f) filters.add("negate")
-
-        // Clip Adjustments
-        if (!clip.adjustments.isDefault) {
-            val adjF = buildFullAdjustmentFilter(clip.adjustments)
-            if (adjF.isNotBlank()) filters.add(adjF)
-        }
-
-        // Light Leaks
         allClips.filter { it.isEffectClip && it.effectState?.lightLeak != null && it.trackIndex > clip.trackIndex && it.timelineEndMs > clip.timelineStartMs && it.timelineStartMs < clip.timelineEndMs }
             .sortedBy { it.trackIndex }.forEach { leak ->
                 val filter = LightLeakEngine.buildFfmpegFilter(
@@ -2606,11 +2722,9 @@ class FFmpegExecutor(
                 if (filter.isNotBlank()) filters.add(filter)
             }
 
-        // 🟩 CHROMA KEY — green/blue screen removal
         if (clip.chromaKey.isActive) {
             val ckFilter = ChromaKeyEngine.buildFfmpegFilter(clip.chromaKey)
             if (ckFilter.isNotBlank()) {
-                // chromakey needs rgb format for best results
                 filters.add("format=rgba")
                 filters.add(ckFilter)
             }
@@ -2661,7 +2775,9 @@ class FFmpegExecutor(
         val baseChain = layers.mapNotNull { layer ->
             val s = ((layer.timelineStartMs - rangeStartMs).coerceAtLeast(0L)) / 1000.0
             val e = (layer.timelineEndMs - rangeStartMs) / 1000.0
-            if (e - s < 0.02) null else "volume=enable=between(t,%.3f,%.3f):volume=0".format(s, e)
+            if (e - s < 0.02) null else "volume=0:enable='between(t,%.3f,%.3f)'".format(
+                Locale.US, s, e
+            )
         }.joinToString(",").ifEmpty { "anull" }
         filterParts.add("[${splitLabels[0]}]$baseChain[fxn0]")
 
@@ -2678,10 +2794,11 @@ class FFmpegExecutor(
             )
             filterParts.add(
                 "[${splitLabels[i + 1]}]${
-                    if (fx.isNotBlank()) "volume=enable=not(between(t,%.3f,%.3f)):volume=0,$fx".format(
-                        s,
-                        e
-                    ) else "volume=enable=not(between(t,%.3f,%.3f)):volume=0".format(s, e)
+                    if (fx.isNotBlank()) "volume=0:enable='not(between(t,%.3f,%.3f))',$fx".format(
+                        Locale.US, s, e
+                    ) else "volume=0:enable='not(between(t,%.3f,%.3f))'".format(
+                        Locale.US, s, e
+                    )
                 }[fxn${i + 1}]"
             )
         }
@@ -2738,90 +2855,99 @@ class FFmpegExecutor(
         }
     }
 
-    private fun colorFilterValuesToFfmpeg(cf: ColorFilterValues): String {
-        val parts = mutableListOf<String>()
-        if (cf.brightness != 100f) parts.add(
-            "lutrgb=r='val*${
-                String.format(
-                    Locale.US,
-                    "%.4f",
-                    (cf.brightness / 100f).coerceIn(0f, 3f)
-                )
-            }':g='val*${
-                String.format(
-                    Locale.US,
-                    "%.4f",
-                    (cf.brightness / 100f).coerceIn(0f, 3f)
-                )
-            }':b='val*${String.format(Locale.US, "%.4f", (cf.brightness / 100f).coerceIn(0f, 3f))}'"
-        )
-        if (cf.contrast != 100f) parts.add(
-            "eq=contrast=${
-                String.format(
-                    Locale.US,
-                    "%.4f",
-                    (cf.contrast / 100f).coerceIn(0f, 3f)
-                )
-            }"
-        )
-        if (cf.saturation != 100f) parts.add(
-            "eq=saturation=${
-                String.format(
-                    Locale.US,
-                    "%.4f",
-                    (cf.saturation / 100f).coerceIn(0f, 3f)
-                )
-            }"
-        )
-        if (cf.hue != 0f) parts.add("hue=h=${cf.hue}")
-        if (cf.grayscale > 0f) parts.add(
-            "eq=saturation=${
-                String.format(
-                    Locale.US,
-                    "%.4f",
-                    (1f - (cf.grayscale / 100f).coerceIn(0f, 1f))
-                )
-            }"
-        )
-        if (cf.sepia > 0f) {
-            val a = (cf.sepia / 100f).coerceIn(0f, 1f);
-            val f = Locale.US
-            val sr = 0.393f;
-            val sg = 0.769f;
-            val sb = 0.189f;
-            val mr = 0.349f;
-            val mg = 0.686f;
-            val mb = 0.168f;
-            val hr = 0.272f;
-            val hg = 0.534f;
-            val hb = 0.131f
-            parts.add(
-                "colorchannelmixer=rr=${
-                    "%.4f".format(
-                        f,
-                        (1f - a) + a * sr
-                    )
-                }:rg=${"%.4f".format(f, a * sg)}:rb=${"%.4f".format(f, a * sb)}:ra=0:gr=${
-                    "%.4f".format(
-                        f,
-                        a * mr
-                    )
-                }:gg=${"%.4f".format(f, (1f - a) + a * mg)}:gb=${
-                    "%.4f".format(
-                        f,
-                        a * mb
-                    )
-                }:ga=0:br=${"%.4f".format(f, a * hr)}:bg=${"%.4f".format(f, a * hg)}:bb=${
-                    "%.4f".format(
-                        f,
-                        (1f - a) + a * hb
-                    )
-                }:ba=0"
-            )
-        }
-        if (cf.invert > 0f) parts.add("negate")
-        return parts.joinToString(",")
+    private fun colorFilterValuesToFfmpeg(cf: ColorFilterValues, enable: String? = null): String {
+        if (!EffectsEngine.hasColorEffect(cf)) return ""
+        val lutFile = ensureColorFilterLut(cf)
+        val safePath = lutFile.absolutePath.replace("\\", "/")
+            .replace(":", "\\:")
+            .replace("'", "\\'")
+            .replace(" ", "\\ ")
+        val enableOption = enable?.let { ":enable='$it'" }.orEmpty()
+        return "lut3d=file=$safePath:interp=tetrahedral$enableOption"
     }
+
+    @Synchronized
+    private fun ensureColorFilterLut(filter: ColorFilterValues): File {
+        val key = MessageDigest.getInstance("SHA-256")
+            .digest(filter.toString().toByteArray(Charsets.UTF_8))
+            .take(12)
+            .joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
+        val file = File(context.cacheDir, "color-filter-preview-parity-v1-$key.cube")
+        if (file.exists() && file.length() > 0L) return file
+
+        val lutSize = 65
+        val maxIndex = lutSize - 1
+        val matrix = EffectsEngine.buildColorMatrix(filter)
+        val contents = buildString {
+            appendLine("TITLE \"Moody Color Filter Preview Parity\"")
+            appendLine("LUT_3D_SIZE $lutSize")
+            appendLine("DOMAIN_MIN 0.0 0.0 0.0")
+            appendLine("DOMAIN_MAX 1.0 1.0 1.0")
+            for (blue in 0 until lutSize) {
+                for (green in 0 until lutSize) {
+                    for (red in 0 until lutSize) {
+                        val output = FilterPixelEngine.apply(
+                            red * 255f / maxIndex,
+                            green * 255f / maxIndex,
+                            blue * 255f / maxIndex,
+                            matrix
+                        )
+                        append(
+                            """%.6f %.6f %.6f
+""".format(
+                                Locale.US,
+                                output.first / 255f,
+                                output.second / 255f,
+                                output.third / 255f
+                            )
+                        )
+                    }
+                }
+            }
+        }
+        file.writeText(contents)
+        return file
+    }
+
+    private fun filterLayerEnableExpression(
+        layer: EditorClip,
+        layers: List<EditorClip>,
+        baseClip: EditorClip
+    ): String {
+        fun relativeSeconds(ms: Long) = String.format(
+            Locale.US,
+            "%.4f",
+            (ms - baseClip.timelineStartMs).coerceAtLeast(0L) / 1000.0
+        )
+
+        val start = relativeSeconds(layer.timelineStartMs)
+        val end = relativeSeconds(layer.timelineEndMs.coerceAtMost(baseClip.timelineEndMs))
+        val conditions = mutableListOf("gte(t,$start)", "lt(t,$end)")
+        layers.filter {
+            it.trackIndex > layer.trackIndex &&
+                    it.timelineEndMs > layer.timelineStartMs &&
+                    it.timelineStartMs < layer.timelineEndMs
+        }.forEach { higherLayer ->
+            val higherStart = relativeSeconds(higherLayer.timelineStartMs)
+            val higherEnd =
+                relativeSeconds(higherLayer.timelineEndMs.coerceAtMost(baseClip.timelineEndMs))
+            conditions.add("not(gte(t,$higherStart)*lt(t,$higherEnd))")
+        }
+        return conditions.joinToString("*")
+    }
+
+    private fun com.moody.moodyvideoeditor.data.FilterState.toColorFilterValues() =
+        ColorFilterValues(
+            brightness = brightness,
+            contrast = contrast,
+            saturation = saturation,
+            hue = hue,
+            grayscale = grayscale,
+            sepia = sepia,
+            invert = invert,
+            blur = blur,
+            opacity = opacity
+        )
 
     private fun ffmpegBlendName(key: String): String = when (key.lowercase()) {
         "multiply" -> "multiply"; "screen" -> "screen"; "overlay" -> "overlay"; "darken" -> "darken"; "lighten" -> "lighten"
@@ -2838,6 +2964,19 @@ class FFmpegExecutor(
             Log.e("FFMPEG_ARGS", "FULL COMMAND:")
             Log.e("FFMPEG_ARGS", argsArray.joinToString(" "))
             Log.e("FFMPEG_ARGS", "========================================")
+
+            // 🛡️ SAFETY: FFmpeg if() crash workaround — pre-check
+            argsArray.forEachIndexed { idx, arg ->
+                if (idx > 0 && argsArray[idx - 1] == "-filter_complex") {
+                    if (arg.contains("if(")) {
+                        onError(
+                            "Internal error: keyframe expression uses if() which FFmpeg " +
+                                    "cannot parse. This should never happen — please report."
+                        )
+                        return
+                    }
+                }
+            }
 
             val session = FFmpegKit.executeWithArgumentsAsync(
                 argsArray,
@@ -2908,12 +3047,34 @@ class FFmpegExecutor(
         }
     }
 
+    private fun applyColorWheelExportPixel(
+        r: Float,
+        g: Float,
+        b: Float,
+        state: ColorWheelState
+    ): Triple<Float, Float, Float> {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            return ColorWheelEngine.applyPixel(r, g, b, state)
+        }
+
+        val matrix = ColorWheelEngine.buildColorMatrix(state) ?: return Triple(r, g, b)
+        val values = matrix.array
+        return Triple(
+            (values[0] * r + values[1] * g + values[2] * b + values[3] * 255f + values[4])
+                .coerceIn(0f, 255f),
+            (values[5] * r + values[6] * g + values[7] * b + values[8] * 255f + values[9])
+                .coerceIn(0f, 255f),
+            (values[10] * r + values[11] * g + values[12] * b + values[13] * 255f + values[14])
+                .coerceIn(0f, 255f)
+        )
+    }
+
     @Synchronized
     private fun ensureColorWheelLut(state: ColorWheelState): File {
         val key = MessageDigest.getInstance("SHA-256")
             .digest(state.toString().toByteArray(Charsets.UTF_8)).take(12)
             .joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
-        val file = File(context.cacheDir, "color-wheel-v10-exact-$key.cube")
+        val file = File(context.cacheDir, "color-wheel-v11-preview-parity-$key.cube")
         if (file.exists() && file.length() > 0L) {
             Log.e("CW_LUT", "♻️ Reusing existing LUT: ${file.name} (${file.length()} bytes)")
             return file
@@ -2925,7 +3086,7 @@ class FFmpegExecutor(
             appendLine("DOMAIN_MIN 0.0 0.0 0.0")
             appendLine("DOMAIN_MAX 1.0 1.0 1.0")
             for (b in 0 until 33) for (g in 0 until 33) for (r in 0 until 33) {
-                val out = ColorWheelEngine.applyPixel(
+                val out = applyColorWheelExportPixel(
                     r * 255f / 32f,
                     g * 255f / 32f,
                     b * 255f / 32f,
@@ -2990,33 +3151,64 @@ class FFmpegExecutor(
 
     private fun buildFullAdjustmentFilter(adj: AdjustmentData): String {
         val parts = mutableListOf<String>()
-        val std = FFmpegFilters.build(adj)
-        if (std.isNotBlank()) parts.add(std)
-
-        if (adj.reds != 0f || adj.oranges != 0f || adj.yellows != 0f || adj.greens != 0f || adj.cyans != 0f || adj.blues != 0f || adj.purples != 0f || adj.magentas != 0f || adj.skinTones != 0f) {
+        if (ColorMatrixBuilder.hasRealTimeAdjustments(adj)) {
             val lutPath =
                 ensureAdjustmentLut(adj).absolutePath.replace("\\", "\\\\").replace("'", "\\'")
-            parts.add("format=rgb24"); parts.add("lut3d=file='$lutPath':interp=tetrahedral"); parts.add(
-                "format=yuv420p"
+            parts.add("format=rgb24")
+            parts.add("lut3d=file='$lutPath':interp=tetrahedral")
+            parts.add("format=yuv420p")
+        }
+        val spatial = FFmpegFilters.build(adj)
+        if (spatial.isNotBlank()) parts.add(spatial)
+        return parts.joinToString(",")
+    }
+
+    private fun adjustmentLayerEnableExpression(
+        adjustmentClip: EditorClip,
+        allClips: List<EditorClip>
+    ): String {
+        fun seconds(ms: Long) = String.format(Locale.US, "%.4f", ms / 1000.0)
+        val conditions = mutableListOf(
+            "gte(t,${seconds(adjustmentClip.timelineStartMs)})",
+            "lt(t,${seconds(adjustmentClip.timelineEndMs)})"
+        )
+        allClips.filter {
+            it.isAdjustmentClip &&
+                    it.trackIndex > adjustmentClip.trackIndex &&
+                    it.timelineEndMs > adjustmentClip.timelineStartMs &&
+                    it.timelineStartMs < adjustmentClip.timelineEndMs
+        }.forEach { higherLayer ->
+            conditions.add(
+                "not(gte(t,${seconds(higherLayer.timelineStartMs)})*" +
+                        "lt(t,${seconds(higherLayer.timelineEndMs)}))"
             )
         }
-        return parts.joinToString(",")
+        return conditions.joinToString("*")
     }
 
     @Synchronized
     private fun ensureAdjustmentLut(adj: AdjustmentData): File {
-        val keyData =
-            "${adj.reds}_${adj.oranges}_${adj.yellows}_${adj.greens}_${adj.cyans}_${adj.blues}_${adj.purples}_${adj.magentas}_${adj.skinTones}"
-        val key = MessageDigest.getInstance("SHA-256").digest(keyData.toByteArray(Charsets.UTF_8))
+        val key = MessageDigest.getInstance("SHA-256").digest(adj.toString().toByteArray(Charsets.UTF_8))
             .take(12).joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
-        val file = File(context.cacheDir, "adjustment-hsl-v3-$key.cube")
+        val file = File(context.cacheDir, "adjustment-preview-parity-v4-$key.cube")
         if (file.exists() && file.length() > 0L) return file
 
+        val lutSize = 65
+        val lutMaxIndex = lutSize - 1
+        val colorMatrix = ColorMatrixBuilder.build(adj)
         val contents = buildString {
-            appendLine("TITLE \"Moody Adjustment HSL\""); appendLine("LUT_3D_SIZE 33")
-            appendLine("DOMAIN_MIN 0.0 0.0 0.0"); appendLine("DOMAIN_MAX 1.0 1.0 1.0")
-            for (b in 0 until 33) for (g in 0 until 33) for (r in 0 until 33) {
-                val out = applyAdjustmentPixel(r * 255f / 32f, g * 255f / 32f, b * 255f / 32f, adj)
+            appendLine("TITLE \"Moody Adjustment Preview Parity\"")
+            appendLine("LUT_3D_SIZE $lutSize")
+            appendLine("DOMAIN_MIN 0.0 0.0 0.0")
+            appendLine("DOMAIN_MAX 1.0 1.0 1.0")
+            for (b in 0 until lutSize) for (g in 0 until lutSize) for (r in 0 until lutSize) {
+                val out = AdjustmentPixelEngine.apply(
+                    r * 255f / lutMaxIndex,
+                    g * 255f / lutMaxIndex,
+                    b * 255f / lutMaxIndex,
+                    adj,
+                    colorMatrix
+                )
                 append(
                     """%.6f %.6f %.6f
 """.format(Locale.US, out.first / 255f, out.second / 255f, out.third / 255f)
@@ -3025,145 +3217,5 @@ class FFmpegExecutor(
         }
         file.writeText(contents)
         return file
-    }
-
-    private fun applyAdjustmentPixel(
-        rIn: Float,
-        gIn: Float,
-        bIn: Float,
-        adj: AdjustmentData
-    ): Triple<Float, Float, Float> {
-        val rn = rIn / 255f;
-        val gn = gIn / 255f;
-        val bn = bIn / 255f
-        val maxC = maxOf(rn, gn, bn);
-        val minC = minOf(rn, gn, bn)
-        var h = 0f;
-        var s = 0f;
-        val v = maxC
-        if (maxC != minC) {
-            val d = maxC - minC; s = d / maxC
-            h = when (maxC) {
-                rn -> ((gn - bn) / d + (if (gn < bn) 6f else 0f)) * 60f; gn -> ((bn - rn) / d + 2f) * 60f; else -> ((rn - gn) / d + 4f) * 60f
-            }
-        }
-        var lumDelta = 0f;
-        var satDelta = 0f
-        if (adj.reds != 0f) {
-            val w = hueWeight(
-                h,
-                0f,
-                30f,
-                s
-            ); lumDelta += (adj.reds / 100f) * w; satDelta += (adj.reds / 100f) * w
-        }
-        if (adj.oranges != 0f) {
-            val w = hueWeight(
-                h,
-                30f,
-                25f,
-                s
-            ); lumDelta += (adj.oranges / 100f) * w; satDelta += (adj.oranges / 100f) * w
-        }
-        if (adj.yellows != 0f) {
-            val w = hueWeight(
-                h,
-                60f,
-                30f,
-                s
-            ); lumDelta += (adj.yellows / 100f) * w; satDelta += (adj.yellows / 100f) * w
-        }
-        if (adj.greens != 0f) {
-            val w = hueWeight(
-                h,
-                120f,
-                45f,
-                s
-            ); lumDelta += (adj.greens / 100f) * w; satDelta += (adj.greens / 100f) * w
-        }
-        if (adj.cyans != 0f) {
-            val w = hueWeight(
-                h,
-                180f,
-                30f,
-                s
-            ); lumDelta += (adj.cyans / 100f) * w; satDelta += (adj.cyans / 100f) * w
-        }
-        if (adj.blues != 0f) {
-            val w = hueWeight(
-                h,
-                240f,
-                30f,
-                s
-            ); lumDelta += (adj.blues / 100f) * w; satDelta += (adj.blues / 100f) * w
-        }
-        if (adj.purples != 0f) {
-            val w = hueWeight(
-                h,
-                280f,
-                25f,
-                s
-            ); lumDelta += (adj.purples / 100f) * w; satDelta += (adj.purples / 100f) * w
-        }
-        if (adj.magentas != 0f) {
-            val w = hueWeight(
-                h,
-                300f,
-                25f,
-                s
-            ); lumDelta += (adj.magentas / 100f) * w; satDelta += (adj.magentas / 100f) * w
-        }
-        if (adj.skinTones != 0f) {
-            val w = hueWeight(
-                h,
-                25f,
-                20f,
-                s
-            ); lumDelta += (adj.skinTones / 100f) * w; satDelta += (adj.skinTones / 100f) * w
-        }
-
-        val newV = (v + lumDelta * 0.85f).coerceIn(0f, 1f);
-        val newS = (s + satDelta * 0.60f).coerceIn(0f, 1f)
-        val c = newV * newS;
-        val x = c * (1f - kotlin.math.abs((h / 60f) % 2f - 1f));
-        val m = newV - c
-        var r2 = 0f;
-        var g2 = 0f;
-        var b2 = 0f
-        when {
-            h < 60f -> {
-                r2 = c; g2 = x; b2 = 0f
-            }; h < 120f -> {
-            r2 = x; g2 = c; b2 = 0f
-        }
-
-            h < 180f -> {
-                r2 = 0f; g2 = c; b2 = x
-            }; h < 240f -> {
-            r2 = 0f; g2 = x; b2 = c
-        }
-
-            h < 300f -> {
-                r2 = x; g2 = 0f; b2 = c
-            }; else -> {
-            r2 = c; g2 = 0f; b2 = x
-        }
-        }
-        return Triple(
-            (r2 + m).coerceIn(0f, 1f) * 255f,
-            (g2 + m).coerceIn(0f, 1f) * 255f,
-            (b2 + m).coerceIn(0f, 1f) * 255f
-        )
-    }
-
-    private fun hueWeight(hue: Float, targetHue: Float, range: Float, sat: Float): Float {
-        var diff = kotlin.math.abs(hue - targetHue)
-        diff = kotlin.math.min(diff, 360f - diff)
-        return (1f - smoothstep(range * 0.25f, range, diff)) * smoothstep(0.02f, 0.15f, sat)
-    }
-
-    private fun smoothstep(edge0: Float, edge1: Float, x: Float): Float {
-        val t = ((x - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
-        return t * t * (3f - 2f * t)
     }
 }

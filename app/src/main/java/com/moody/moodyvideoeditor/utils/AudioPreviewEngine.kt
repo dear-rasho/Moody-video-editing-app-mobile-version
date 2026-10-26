@@ -1,6 +1,7 @@
 package com.moody.moodyvideoeditor.utils
 
 import android.media.audiofx.Equalizer
+import android.media.audiofx.NoiseSuppressor
 import android.media.audiofx.PresetReverb
 import android.os.Handler
 import android.os.Looper
@@ -14,6 +15,7 @@ object AudioPreviewEngine {
 
     private val equalizers = mutableListOf<Equalizer>()
     private val reverbs = mutableListOf<PresetReverb>()
+    private val noiseSuppressors = mutableListOf<NoiseSuppressor>()
     private var currentFx: String? = null
 
     private val handler = Handler(Looper.getMainLooper())
@@ -157,6 +159,8 @@ object AudioPreviewEngine {
                 )
             )
 
+            "noise_reduction" -> tryNoiseSuppressor(sessionId)
+
             // Reverb effects
             "echo", "reverb" -> tryReverb(sessionId, PresetReverb.PRESET_MEDIUMROOM)
             "cave", "stadium" -> tryReverb(sessionId, PresetReverb.PRESET_LARGEROOM)
@@ -198,6 +202,17 @@ object AudioPreviewEngine {
         }
     }
 
+    private fun tryNoiseSuppressor(sessionId: Int) {
+        if (!NoiseSuppressor.isAvailable()) return
+        try {
+            val suppressor = NoiseSuppressor.create(sessionId) ?: return
+            suppressor.enabled = true
+            noiseSuppressors.add(suppressor)
+        } catch (_: RuntimeException) {
+            // Noise suppression is device-dependent; export uses FFmpeg's software filter.
+        }
+    }
+
     private fun resetPitch(player: ExoPlayer) {
         try {
             player.playbackParameters = PlaybackParameters(1f, 1f)
@@ -226,6 +241,15 @@ object AudioPreviewEngine {
             }
         }
         reverbs.clear()
+
+        noiseSuppressors.forEach {
+            try {
+                it.enabled = false
+                it.release()
+            } catch (_: RuntimeException) {
+            }
+        }
+        noiseSuppressors.clear()
 
         currentFx = null
     }

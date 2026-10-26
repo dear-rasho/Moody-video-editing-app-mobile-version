@@ -144,7 +144,7 @@ object KeyframeStore {
     fun clearAll(map: KeyframeMap): KeyframeMap = emptyMap()
 
 
-    //  AUTO-KEYFRAME — mirrors keyframeStore.js autoKeyframeIfActive()
+    // Auto-keyframe only properties that already have an animation track.
 
     fun autoKeyframeIfActive(
         map: KeyframeMap,
@@ -152,7 +152,7 @@ object KeyframeStore {
         time: Float,
         value: Float
     ): KeyframeMap {
-        if (!hasAnyKeyframes(map)) return map
+        if (getKeyframes(map, prop).isEmpty()) return map
 
         val list = getKeyframes(map, prop).toMutableList()
         val idx = findIndex(list, time, STRICT_TOLERANCE)
@@ -201,6 +201,7 @@ object KeyframeStore {
         if (keyframes.isEmpty()) return ffmpegNumber(baseValue)
         if (keyframes.size == 1) return ffmpegNumber(keyframes.first().value)
 
+        // Formula: if(t < end, interp, prev) == prev + (interp - prev) * lt(t, end)
         var expression = ffmpegNumber(keyframes.last().value)
         for (index in keyframes.lastIndex downTo 1) {
             val start = keyframes[index - 1]
@@ -209,13 +210,18 @@ object KeyframeStore {
             val progress = "(($timeExpression-${ffmpegNumber(start.time)})/${ffmpegNumber(duration)})"
             val easedProgress = ffmpegEaseExpression(progress, start.ease)
             val interpolated = "(${ffmpegNumber(start.value)}+(${ffmpegNumber(end.value)}-${ffmpegNumber(start.value)})*($easedProgress))"
-            expression = "if(lt($timeExpression,${ffmpegNumber(end.time)}),$interpolated,$expression)"
+            expression = "($expression+($interpolated-$expression)*lt($timeExpression,${ffmpegNumber(end.time)}))"
         }
-        expression = "if(lt($timeExpression,${ffmpegNumber(keyframes.first().time)}),${ffmpegNumber(keyframes.first().value)},$expression)"
+        val firstValue = ffmpegNumber(keyframes.first().value)
+        expression = "($expression+($firstValue-$expression)*lt($timeExpression,${ffmpegNumber(keyframes.first().time)}))"
         return expression
     }
 
-    fun escapeFfmpegExpression(expression: String): String = expression.replace(",", "\\,")
+    fun escapeFfmpegExpression(expression: String): String {
+        // Har comma ko escape karo jo pehle se escaped nahi hai.
+        // Negative lookbehind (?<!\\\\) ensure karta hai ke double-escape na ho.
+        return expression.replace(Regex("(?<!\\\\),"), "\\\\,")
+    }
 
     fun rebaseToTime(map: KeyframeMap, cutMs: Long): KeyframeMap {
         if (cutMs <= 0L) return map
@@ -245,25 +251,26 @@ object KeyframeStore {
         return when (ease) {
             "easeIn", "quadIn" -> "pow($p,2)"
             "easeOut", "quadOut" -> "(1-pow(1-$p,2))"
-            "easeInOut", "quadInOut" -> "if(lt($p,0.5),2*pow($p,2),1-pow(-2*$p+2,2)/2)"
+            "easeInOut", "quadInOut" -> "(1-pow(-2*$p+2,2)/2)+(2*pow($p,2)-(1-pow(-2*$p+2,2)/2))*lt($p,0.5))"
+                .let { "(2*pow($p,2)*lt($p,0.5)+(1-pow(-2*$p+2,2)/2)*(1-lt($p,0.5)))" }
             "cubicIn" -> "pow($p,3)"
             "cubicOut" -> "(1-pow(1-$p,3))"
-            "cubicInOut" -> "if(lt($p,0.5),4*pow($p,3),1-pow(-2*$p+2,3)/2)"
+            "cubicInOut" -> "(4*pow($p,3)*lt($p,0.5)+(1-pow(-2*$p+2,3)/2)*(1-lt($p,0.5)))"
             "quartIn" -> "pow($p,4)"
             "quartOut" -> "(1-pow(1-$p,4))"
-            "quartInOut" -> "if(lt($p,0.5),8*pow($p,4),1-pow(-2*$p+2,4)/2)"
+            "quartInOut" -> "(8*pow($p,4)*lt($p,0.5)+(1-pow(-2*$p+2,4)/2)*(1-lt($p,0.5)))"
             "quintIn" -> "pow($p,5)"
             "quintOut" -> "(1-pow(1-$p,5))"
-            "quintInOut" -> "if(lt($p,0.5),16*pow($p,5),1-pow(-2*$p+2,5)/2)"
+            "quintInOut" -> "(16*pow($p,5)*lt($p,0.5)+(1-pow(-2*$p+2,5)/2)*(1-lt($p,0.5)))"
             "sineIn" -> "(1-cos($p*PI/2))"
             "sineOut" -> "sin($p*PI/2)"
             "sineInOut" -> "(1-cos(PI*$p))/2"
-            "expoIn" -> "if(eq($p,0),0,pow(2,10*$p-10))"
-            "expoOut" -> "if(eq($p,1),1,1-pow(2,-10*$p))"
-            "expoInOut" -> "if(eq($p,0),0,if(eq($p,1),1,if(lt($p,0.5),pow(2,20*$p-10)/2,(2-pow(2,-20*$p+10))/2)))"
+            "expoIn" -> "(pow(2,10*$p-10)*(1-eq($p,0)))"
+            "expoOut" -> "(1-pow(2,-10*$p)*(1-eq($p,1))+eq($p,1))"
+            "expoInOut" -> "(pow(2,20*$p-10)/2*lt($p,0.5)+(2-pow(2,-20*$p+10))/2*(1-lt($p,0.5)))"
             "circIn" -> "(1-sqrt(1-pow($p,2)))"
             "circOut" -> "sqrt(1-pow($p-1,2))"
-            "circInOut" -> "if(lt($p,0.5),(1-sqrt(1-pow(2*$p,2)))/2,(sqrt(1-pow(-2*$p+2,2))+1)/2)"
+            "circInOut" -> "((1-sqrt(1-pow(2*$p,2)))/2*lt($p,0.5)+(sqrt(1-pow(-2*$p+2,2))+1)/2*(1-lt($p,0.5)))"
             "linear" -> p
             else -> p
         }
