@@ -163,14 +163,6 @@ private val CATEGORIES = listOf(
         )
     ),
     Cat(
-        "Brush", "🖌️", listOf(
-            "brush draw", "brush stop", "brush clear",
-            "brush neon color cyan width 25",
-            "brush gradient red to blue",
-            "brush solid"
-        )
-    ),
-    Cat(
         "Audio", "🔊", listOf(
             "audio echo", "audio reverb", "audio robot",
             "audio underwater", "audio studio"

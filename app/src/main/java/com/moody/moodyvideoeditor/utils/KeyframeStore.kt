@@ -14,7 +14,7 @@ import java.util.Locale
 // - Auto-keyframe behavior
 object KeyframeStore {
 
-    private const val DEFAULT_EASE = "quadInOut"
+    private const val DEFAULT_EASE = "linear"
     private const val TOLERANCE = 0.05f
     private const val STRICT_TOLERANCE = 0.02f
 

@@ -47,21 +47,25 @@ object WatermarkHelper {
         escapedPath = escapedPath.replace(":", "\\:")
         escapedPath = escapedPath.replace("'", "\\'")
 
-        // Size: Video ki choti side (min dimension) ka 18% (Har ratio mein barabar aur bada lagega)
+        // Keep the watermark proportional across portrait and landscape exports.
         val wmWidth = (Math.min(targetW, targetH) * 0.18f).toInt().coerceAtLeast(80)
 
         try {
-            // 1. Image ko load kiya
-            filterParts.add("movie='$escapedPath',format=rgba,scale=$wmWidth:-1[wm_raw]")
+            filterParts.add("movie='$escapedPath',format=rgba,scale=$wmWidth:-1[wm]")
 
-            // 2. FIX: Black box ab proportional hai (Image se 10% bada hoga har ratio mein same dikhega)
-            filterParts.add("[wm_raw]pad=iw*1.1:ih*1.1:(ow-iw)/2:(oh-ih)/2:color=black@0.6[wm]")
-
-            // 3. Position: Bilkul Bottom-Right (Neeche touch karega)
-            filterParts.add("[$finalVideoLabel][wm]overlay=W-w-10:H-h[final_wm]")
+            val (x, y) = when (SettingsConsumer.watermarkPosition) {
+                "top_right" -> "W-w-10" to "10"
+                "bottom_left" -> "10" to "H-h-10"
+                "bottom_right" -> "W-w-10" to "H-h-10"
+                else -> "10" to "10"
+            }
+            filterParts.add(
+                "[$finalVideoLabel][wm]overlay=x='$x':y='$y'[final_wm]"
+            )
 
             return "final_wm"
         } catch (e: Throwable) {
+            Log.e("WATERMARK", "Failed to add watermark filter", e)
             return finalVideoLabel
         }
     }

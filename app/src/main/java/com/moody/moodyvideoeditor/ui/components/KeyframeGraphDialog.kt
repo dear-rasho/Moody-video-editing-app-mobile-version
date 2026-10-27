@@ -48,8 +48,12 @@ fun KeyframeGraphDialog(
     clipName: String,
     keyframeMap: Map<String, List<Keyframe>>,
     clipDurationSec: Float,
+    readOnly: Boolean = false,
     onUpdateKeyframe: (prop: String, oldTime: Float, newTime: Float, newValue: Float) -> Unit,
     onDeleteKeyframe: (prop: String, time: Float) -> Unit,
+    selectedKeyframe: Pair<String, Float>? = null,
+    selectAllKeyframes: Boolean = false,
+    onSelectKeyframe: (prop: String, time: Float) -> Unit = { _, _ -> },
     onKeyframeEditStart: () -> Unit = {},
     onKeyframeEditEnd: () -> Unit = {},
     onClose: () -> Unit
@@ -70,7 +74,21 @@ fun KeyframeGraphDialog(
         "cropL" to Color(0xFFF472B6),
         "cropR" to Color(0xFFFB923C),
         "cropT" to Color(0xFFFACC15),
-        "cropB" to Color(0xFF84CC16)
+        "cropB" to Color(0xFF84CC16),
+        "spotlight.sourceX" to Color(0xFFFFC857),
+        "spotlight.sourceY" to Color(0xFFFFE08A),
+        "spotlight.targetX" to Color(0xFF3DD6D0),
+        "spotlight.targetY" to Color(0xFF79E8E2),
+        "spotlight.rotation" to Color(0xFFFF8C42),
+        "spotlight.intensity" to Color(0xFFFF4FD8),
+        "spotlight.radius" to Color(0xFF8A7DFF),
+        "spotlight.softness" to Color(0xFF9ECA55),
+        "spotlight.colorR" to Color(0xFFFF6B6B),
+        "spotlight.colorG" to Color(0xFF7EE081),
+        "spotlight.colorB" to Color(0xFF6B9BFF),
+        "spotlight.targetColorR" to Color(0xFFFF9898),
+        "spotlight.targetColorG" to Color(0xFFA3ECA8),
+        "spotlight.targetColorB" to Color(0xFF9BB9FF)
     )
 
     val propRanges = remember(keyframeMap, activeProps) {
@@ -209,6 +227,37 @@ fun KeyframeGraphDialog(
                                 .width(canvasWidthDp.dp)
                                 .fillMaxSize()
                                 .pointerInput(activeProps, propRanges, clipDurationSec) {
+                                    detectTapGestures { offset ->
+                                        val padL = 44f
+                                        val padT = 20f
+                                        val padR = 20f
+                                        val padB = 34f
+                                        val plotW = size.width - padL - padR
+                                        val plotH = size.height - padT - padB
+                                        var best: Pair<String, Float>? = null
+                                        var bestDistSq = 26f * 26f
+                                        activeProps.forEach { prop ->
+                                            val range = propRanges[prop] ?: return@forEach
+                                            (keyframeMap[prop] ?: emptyList()).forEach { keyframe ->
+                                                val x = padL + keyframe.time / clipDurationSec * plotW
+                                                val y = padT + plotH * (
+                                                        1f - (keyframe.value - range.first) /
+                                                                (range.second - range.first)
+                                                        )
+                                                val dx = offset.x - x
+                                                val dy = offset.y - y
+                                                val distanceSq = dx * dx + dy * dy
+                                                if (distanceSq < bestDistSq) {
+                                                    bestDistSq = distanceSq
+                                                    best = prop to keyframe.time
+                                                }
+                                            }
+                                        }
+                                        best?.let { onSelectKeyframe(it.first, it.second) }
+                                    }
+                                }
+                                .pointerInput(activeProps, propRanges, clipDurationSec) {
+                                    if (!readOnly) {
                                     detectDragGestures(
                                         onDragStart = { offset ->
                                             val padL = 44f
@@ -283,6 +332,7 @@ fun KeyframeGraphDialog(
                                             dragProp = null
                                         }
                                     )
+                                    }
                                 }
                         ) {
                             val padL = 44f
@@ -350,18 +400,49 @@ fun KeyframeGraphDialog(
                                     val y = padT + plotH * (1f - (kf.value - range.first) / span)
                                     val isActive = dragProp == prop &&
                                             abs(kf.time - dragOriginalTime) < 0.05f
+                                    val isSelected = selectedKeyframe?.first == prop &&
+                                            abs(selectedKeyframe.second - kf.time) < 0.05f
+                                    val isEaseSelected = selectAllKeyframes || isSelected
 
-                                    drawCircle(
-                                        color = if (isActive) Color.White else color,
-                                        radius = if (isActive) 9f else 7f,
-                                        center = Offset(x, y)
-                                    )
-                                    drawCircle(
-                                        color = Color.White,
-                                        radius = if (isActive) 9f else 7f,
-                                        center = Offset(x, y),
-                                        style = Stroke(width = if (isActive) 2.5f else 1.5f)
-                                    )
+                                    if (isEaseSelected) {
+                                        drawCircle(
+                                            Color(0xFF1689FF),
+                                            radius = 12f,
+                                            center = Offset(x, y),
+                                            style = Stroke(width = 3f)
+                                        )
+                                    }
+
+                                    if (kf.ease != "linear" || isEaseSelected) {
+                                        val markerColor = if (isEaseSelected || isActive) {
+                                            Color(0xFF1689FF)
+                                        } else {
+                                            color
+                                        }
+                                        val markerPath = Path().apply {
+                                            moveTo(x - 9f, y - 7f)
+                                            lineTo(x + 9f, y - 7f)
+                                            cubicTo(x + 9f, y - 2f, x + 3f, y - 3f, x + 3f, y)
+                                            cubicTo(x + 3f, y + 3f, x + 9f, y + 2f, x + 9f, y + 7f)
+                                            lineTo(x - 9f, y + 7f)
+                                            cubicTo(x - 9f, y + 2f, x - 3f, y + 3f, x - 3f, y)
+                                            cubicTo(x - 3f, y - 3f, x - 9f, y - 2f, x - 9f, y - 7f)
+                                            close()
+                                        }
+                                        drawPath(markerPath, markerColor)
+                                    } else {
+                                        val diamond = Path().apply {
+                                            moveTo(x, y - 8f)
+                                            lineTo(x + 8f, y)
+                                            lineTo(x, y + 8f)
+                                            lineTo(x - 8f, y)
+                                            close()
+                                        }
+                                        drawPath(
+                                            diamond,
+                                            if (isActive) Color.White else color
+                                        )
+                                    }
                                 }
                             }
 

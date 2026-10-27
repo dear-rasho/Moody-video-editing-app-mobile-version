@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.sp
 data class Feature(val key: String, val label: String, val icon: String)
 
 val FEATURES = listOf(
+    Feature("spotlight", "Spotlight", "🔦"),
     Feature("matte", "Matte", "🎨"),
     Feature("chromakey", "Chroma", "🟩"),
     Feature("trim", "Trim", "✂️"),
@@ -49,6 +50,7 @@ val FEATURES = listOf(
     Feature("captions", "Auto Cap", "🎙️"),
     Feature("manual_captions", "Manual Cap", "✍️"),
     Feature("animations", "Animate", "🎞️"),
+    Feature("keyframe_easing", "Keyframe Ease", "📈"),
     Feature("filters", "Filters", "🎨"),
     Feature("effects", "Effects", "✨"),
     Feature("adjustments", "Adjust", "🎚️"),
@@ -57,7 +59,6 @@ val FEATURES = listOf(
     Feature("overlays", "Overlays", "🎬"),
     Feature("transitions", "Transitions", "⇄"),
     Feature("mask", "Mask", "▣"),
-    Feature("brush", "Brush", "🖌️"),
     Feature("visualizer", "Visualizer", "🎵"),
     Feature("transform", "Transform", "🔲"),
     Feature("crop", "Crop", "📐"),

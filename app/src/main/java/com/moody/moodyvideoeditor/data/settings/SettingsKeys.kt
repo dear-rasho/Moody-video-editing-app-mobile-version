@@ -15,6 +15,7 @@ object SettingsKeys {
     val DEFAULT_IMAGE_DURATION_MS = intPreferencesKey("default_image_duration_ms")
     val DEFAULT_EXPORT_RESOLUTION = stringPreferencesKey("default_export_resolution")
     val DEFAULT_ASPECT_RATIO = stringPreferencesKey("default_aspect_ratio")
+    val WATERMARK_POSITION = stringPreferencesKey("watermark_position")
 
     // ─── Tab 2: Edit ───
     val STEP_FRAMES = intPreferencesKey("step_frames")
@@ -47,6 +48,7 @@ object SettingsDefaults {
     const val DEFAULT_IMAGE_DURATION_MS = 3000
     const val DEFAULT_EXPORT_RESOLUTION = "1080p"
     const val DEFAULT_ASPECT_RATIO = "16:9"
+    const val WATERMARK_POSITION = "top_left"
 
     const val STEP_FRAMES = 10
     const val ADJUST_STEP = 10

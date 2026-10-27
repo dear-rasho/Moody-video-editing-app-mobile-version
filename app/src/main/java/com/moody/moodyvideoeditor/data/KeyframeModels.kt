@@ -8,7 +8,7 @@ data class Keyframe(
     val ease: String = DEFAULT_EASE
 ) {
     companion object {
-        const val DEFAULT_EASE = "quadInOut"
+        const val DEFAULT_EASE = "linear"
     }
 }
 
@@ -24,7 +24,13 @@ object KeyframeLibrary {
         "x", "y",
         "scale", "rotation",
         "anchorX", "anchorY",
-        "cropL", "cropR", "cropT", "cropB"
+        "cropL", "cropR", "cropT", "cropB",
+        "spotlight.sourceX", "spotlight.sourceY",
+        "spotlight.targetX", "spotlight.targetY",
+        "spotlight.rotation", "spotlight.intensity",
+        "spotlight.radius", "spotlight.softness",
+        "spotlight.colorR", "spotlight.colorG", "spotlight.colorB",
+        "spotlight.targetColorR", "spotlight.targetColorG", "spotlight.targetColorB"
     )
 
     // 25 easing functions — mirrors keyframeStore.js easeFn()

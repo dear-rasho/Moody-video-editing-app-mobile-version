@@ -13,6 +13,7 @@ data class AppSettings(
     val defaultImageDurationMs: Int = SettingsDefaults.DEFAULT_IMAGE_DURATION_MS,
     val defaultExportResolution: String = SettingsDefaults.DEFAULT_EXPORT_RESOLUTION,
     val defaultAspectRatio: String = SettingsDefaults.DEFAULT_ASPECT_RATIO,
+    val watermarkPosition: String = SettingsDefaults.WATERMARK_POSITION,
 
     // ─── Tab 2: Edit ───
     val stepFrames: Int = SettingsDefaults.STEP_FRAMES,

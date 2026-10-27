@@ -48,6 +48,10 @@ data class TextState(
     val gradientColor1: Long = 0xFFFF0066,
     val gradientColor2: Long = 0xFF0066FF,
     val gradientAngle: Float = 90f,
+    val gradientStartX: Float = 0.5f,
+    val gradientStartY: Float = 0f,
+    val gradientEndX: Float = 0.5f,
+    val gradientEndY: Float = 1f,
 
     // Shadow
     val shadowEnabled: Boolean = false,

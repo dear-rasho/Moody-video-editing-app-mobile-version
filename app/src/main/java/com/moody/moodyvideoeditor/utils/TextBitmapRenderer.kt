@@ -43,7 +43,9 @@ data class TextOverlaySequence(
     val endSec: Double,
     val trackIndex: Int = 0,
     val workingDirectory: File? = null,
-    val imageFormat: String = "png"
+    val imageFormat: String = "png",
+    val blendMode: String = "normal",
+    val isStaticImage: Boolean = false
 )
 
 private data class OverlayRenderBuffer(
@@ -59,6 +61,58 @@ object TextBitmapRenderer {
     private const val TAG = "TEXT_RENDER"
     private const val CHUNK_SIZE = 60
     private const val MAX_PARALLEL_CHUNKS = 4
+
+    suspend fun renderOverlaysByTrack(
+        context: Context,
+        textClips: List<EditorClip>,
+        imageClips: List<EditorClip> = emptyList(),
+        overlayClips: List<EditorClip> = emptyList(),
+        W: Int,
+        H: Int,
+        fps: Int,
+        totalDurationMs: Long,
+        onProgress: (Float) -> Unit = {},
+        shouldCancel: () -> Boolean = { false },
+        imageFormat: String = "png",
+        jpegQuality: Int = 90
+    ): List<TextOverlaySequence> {
+        val trackIndices = (
+                textClips.map { it.trackIndex } +
+                        imageClips.map { it.trackIndex } +
+                        overlayClips.map { it.trackIndex }
+                ).distinct().sorted()
+        if (trackIndices.isEmpty()) return emptyList()
+
+        val rendered = mutableListOf<TextOverlaySequence>()
+        try {
+            trackIndices.forEachIndexed { index, trackIndex ->
+                if (shouldCancel()) throw CancellationException("Text rendering cancelled")
+                val trackSequences = renderCombinedOverlays(
+                    context = context,
+                    textClips = textClips.filter { it.trackIndex == trackIndex },
+                    imageClips = imageClips.filter { it.trackIndex == trackIndex },
+                    overlayClips = overlayClips.filter { it.trackIndex == trackIndex },
+                    W = W,
+                    H = H,
+                    fps = fps,
+                    totalDurationMs = totalDurationMs,
+                    onProgress = { progress ->
+                        onProgress((index + progress) / trackIndices.size)
+                    },
+                    shouldCancel = shouldCancel,
+                    imageFormat = imageFormat,
+                    jpegQuality = jpegQuality
+                )
+                rendered += trackSequences
+            }
+        } catch (error: Exception) {
+            rendered.mapNotNull { it.workingDirectory }.distinct().forEach { directory ->
+                directory.deleteRecursively()
+            }
+            throw error
+        }
+        return rendered
+    }
 
     suspend fun renderCombinedOverlays(
         context: Context,
@@ -139,10 +193,16 @@ object TextBitmapRenderer {
             val totalChunks = (totalFrames + CHUNK_SIZE - 1) / CHUNK_SIZE
             val completedCounter = AtomicInteger(0)
             val nextChunk = AtomicInteger(0)
+            val pixelCount = W.toLong() * H
+            val parallelChunkLimit = when {
+                pixelCount >= 3840L * 2160L -> 1
+                pixelCount >= 1920L * 1080L -> 2
+                else -> MAX_PARALLEL_CHUNKS
+            }
 
             val sequences = coroutineScope {
                 val results = arrayOfNulls<TextOverlaySequence>(totalChunks)
-                List(minOf(MAX_PARALLEL_CHUNKS, totalChunks)) {
+                List(minOf(parallelChunkLimit, totalChunks)) {
                     async {
                         while (true) {
                             currentCoroutineContext().ensureActive()
@@ -833,12 +893,14 @@ object TextBitmapRenderer {
             }
 
             if (st.gradientEnabled) {
-                val rad = Math.toRadians(st.gradientAngle.toDouble())
-                val dirX = kotlin.math.cos(rad).toFloat()
-                val dirY = kotlin.math.sin(rad).toFloat()
-                val extent = 600f
+                val gradientWidth = lines.maxOfOrNull { basePaint.measureText(it) }
+                    ?.coerceAtLeast(1f) ?: 1f
+                val gradientHeight = (lineHeightPx * lines.size).coerceAtLeast(1f)
                 fillPaint.shader = LinearGradient(
-                    -dirX * extent, -dirY * extent, dirX * extent, dirY * extent,
+                    (st.gradientStartX.coerceIn(0f, 1f) - 0.5f) * gradientWidth,
+                    (st.gradientStartY.coerceIn(0f, 1f) - 0.5f) * gradientHeight,
+                    (st.gradientEndX.coerceIn(0f, 1f) - 0.5f) * gradientWidth,
+                    (st.gradientEndY.coerceIn(0f, 1f) - 0.5f) * gradientHeight,
                     st.gradientColor1.toInt(), st.gradientColor2.toInt(), Shader.TileMode.CLAMP
                 )
             } else {

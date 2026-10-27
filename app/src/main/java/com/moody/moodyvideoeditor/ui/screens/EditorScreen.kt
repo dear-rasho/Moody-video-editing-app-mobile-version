@@ -63,6 +63,7 @@ import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.data.RatioLibrary
 import com.moody.moodyvideoeditor.data.TextState
+import com.moody.moodyvideoeditor.data.SpotlightState
 import com.moody.moodyvideoeditor.data.TransitionState
 import com.moody.moodyvideoeditor.data.VisualizerState
 import com.moody.moodyvideoeditor.ui.components.ControlBar
@@ -79,7 +80,6 @@ import com.moody.moodyvideoeditor.ui.features.AudioPanel
 import com.moody.moodyvideoeditor.ui.features.AutoCaptionsPanel
 import com.moody.moodyvideoeditor.ui.features.BeatsPanel
 import com.moody.moodyvideoeditor.ui.features.BlendModePanel
-import com.moody.moodyvideoeditor.ui.features.BrushPanel
 
 import com.moody.moodyvideoeditor.ui.features.ColorMattePanel
 import com.moody.moodyvideoeditor.ui.features.ColorRemoverPanel
@@ -90,12 +90,14 @@ import com.moody.moodyvideoeditor.ui.features.ExportDialog
 import com.moody.moodyvideoeditor.ui.features.ExportOverlay
 import com.moody.moodyvideoeditor.ui.features.FiltersPanel
 import com.moody.moodyvideoeditor.ui.features.FreezePanel
+import com.moody.moodyvideoeditor.ui.features.KeyframeEasingPanel
 import com.moody.moodyvideoeditor.ui.features.ManualCaptionsPanel
 import com.moody.moodyvideoeditor.ui.features.MaskPanel
 
 import com.moody.moodyvideoeditor.ui.features.OverlaysPanel
 import com.moody.moodyvideoeditor.ui.features.PromptPanel
 import com.moody.moodyvideoeditor.ui.features.SpeedPanel
+import com.moody.moodyvideoeditor.ui.features.SpotlightPanel
 import com.moody.moodyvideoeditor.ui.features.StickersPanel
 import com.moody.moodyvideoeditor.ui.features.TextPanel
 import com.moody.moodyvideoeditor.ui.features.TransformPanel
@@ -104,7 +106,6 @@ import com.moody.moodyvideoeditor.ui.features.TrimPanel
 import com.moody.moodyvideoeditor.ui.features.VisualizerPanel
 import com.moody.moodyvideoeditor.ui.features.VolumePanel
 import com.moody.moodyvideoeditor.utils.AudioPreviewEngine
-import com.moody.moodyvideoeditor.utils.BrushConfigHolder
 import com.moody.moodyvideoeditor.utils.CropEngine
 import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.utils.PromptEngine
@@ -212,17 +213,10 @@ fun EditorScreen(
     var filterEditLayerId by remember { mutableStateOf<String?>(null) }
     var effectEditLayerId by remember { mutableStateOf<String?>(null) }
     var matteEditLayerId by remember { mutableStateOf<String?>(null) }
+    var spotlightEditLayerId by remember { mutableStateOf<String?>(null) }
 
     var isMaskPenMode by remember { mutableStateOf(false) }
     var isMaskHandMode by remember { mutableStateOf(false) }
-
-    val brushConfig by BrushConfigHolder.config.collectAsState()
-    val isDrawingMode = brushConfig.isDrawingMode
-    val brushType = brushConfig.type
-    val brushColor = brushConfig.color
-    val brushWidth = brushConfig.width
-    val brushOpacity = brushConfig.opacity
-    val brushGradient = brushConfig.gradient
 
     var pendingUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var pendingVizImageUri by remember { mutableStateOf<String?>(null) }
@@ -728,6 +722,11 @@ fun EditorScreen(
                     if (key == "filters") filterEditLayerId = null
                     if (key == "effects") effectEditLayerId = null
                     if (key == "wheel") viewModel.prepareColorWheelLayer()
+                    if (key == "spotlight") {
+                        val spotlightClip = selected?.takeIf { it.isSpotlightClip }
+                            ?: viewModel.createSpotlightClip()
+                        spotlightEditLayerId = spotlightClip.id
+                    }
                     activePanel = key
                 },
                 scrollState = featureScrollState
@@ -853,6 +852,54 @@ fun EditorScreen(
                     onClose = {
                         viewModel.clearPreviewMatte()
                         matteEditLayerId = null
+                        activePanel = null
+                    }
+                )
+            }
+            "spotlight" -> {
+                val editLayer = spotlightEditLayerId?.let { id ->
+                    state.clips.firstOrNull { it.id == id && it.isSpotlightClip }
+                }
+                SpotlightPanel(
+                    editLayerId = editLayer?.id,
+                    initialState = editLayer?.spotlight ?: SpotlightState(),
+                    keyframeMap = editLayer?.keyframes ?: emptyMap(),
+                    currentTimeSec = editLayer?.let {
+                        KeyframeStore.clipLocalTimeSeconds(
+                            state.currentPosMs,
+                            it.timelineStartMs,
+                            it.durationMs
+                        )
+                    } ?: 0f,
+                    clipDurationSec = (editLayer?.durationMs ?: 5_000L) / 1000f,
+                    onToggleKeyframe = { property ->
+                        editLayer?.let { viewModel.selectClip(it) }
+                        viewModel.toggleKeyframeAtPlayhead(property)
+                    },
+                    onUpdateKeyframe = { property, oldTime, newTime, newValue ->
+                        viewModel.updateKeyframeInGraph(property, oldTime, newTime, newValue)
+                    },
+                    onDeleteKeyframe = { property, time ->
+                        viewModel.deleteKeyframeFromGraph(property, time)
+                    },
+                    onKeyframeEditStart = { viewModel.beginKeyframeGraphEdit() },
+                    onKeyframeEditEnd = { viewModel.commitKeyframeGraphEdit() },
+                    onCreate = { spotlight ->
+                        val created = viewModel.createSpotlightClip()
+                        viewModel.updateSpotlight(created.id, spotlight)
+                        spotlightEditLayerId = created.id
+                        activePanel = null
+                    },
+                    onUpdate = { spotlight ->
+                        editLayer?.let { viewModel.updateSpotlight(it.id, spotlight) }
+                    },
+                    onDelete = {
+                        editLayer?.let { viewModel.removeSpotlight(it.id) }
+                        spotlightEditLayerId = null
+                        activePanel = null
+                    },
+                    onClose = {
+                        spotlightEditLayerId = null
                         activePanel = null
                     }
                 )
@@ -1171,66 +1218,11 @@ fun EditorScreen(
                 }
             )
 
-            "brush" -> {
-                val brushClip = selected?.takeIf { it.isBrushClip }
-                    ?: state.clips.lastOrNull { it.isBrushClip }
-                BrushPanel(
-                    isDrawing = isDrawingMode,
-                    activeType = brushType,
-                    activeColor = brushColor,
-                    activeWidth = brushWidth,
-                    activeOpacity = brushOpacity,
-                    activeGradient = brushGradient,
-                    strokeCount = brushClip?.brush?.strokes?.size ?: 0,
-                    hasBrushLayer = brushClip != null,
-                    onToggleDrawing = {
-                        BrushConfigHolder.update {
-                            it.copy(isDrawingMode = !it.isDrawingMode)
-                        }
-                    },
-                    onTypeChanged = { newType ->
-                        BrushConfigHolder.update { it.copy(type = newType) }
-                    },
-                    onColorChanged = { newColor ->
-                        BrushConfigHolder.update { it.copy(color = newColor) }
-                    },
-                    onWidthChanged = { newWidth ->
-                        BrushConfigHolder.update { it.copy(width = newWidth) }
-                    },
-                    onOpacityChanged = { newOpacity ->
-                        BrushConfigHolder.update { it.copy(opacity = newOpacity) }
-                    },
-                    onGradientChanged = { newGradient ->
-                        BrushConfigHolder.update { it.copy(gradient = newGradient) }
-                    },
-                    onUndoStroke = {
-                        brushClip?.let {
-                            viewModel.undoLastStrokeOnBrushClip(it.id)
-                        }
-                    },
-                    onClearStrokes = {
-                        brushClip?.let {
-                            viewModel.clearBrushClipStrokes(it.id)
-                        }
-                    },
-                    onCreateLayer = {
-                        viewModel.createBrushClip()
-                        BrushConfigHolder.update { it.copy(isDrawingMode = true) }
-                    },
-                    onClose = {
-                        activePanel = null
-                        BrushConfigHolder.update { it.copy(isDrawingMode = false) }
-                    }
-                )
-            }
-
             "crop" -> CropPanel(
                 clip = selected,
                 playheadMs = state.currentPosMs,
                 hasClipSelected = selected != null &&
-                        (selected.isVisualClip ||
-                                selected.isColorMatteClip ||
-                                selected.isBrushClip),
+                        (selected.isVisualClip || selected.isColorMatteClip),
                 onCropChanged = { prop, value01 ->
                     viewModel.changeTransformProperty(prop, value01)
                 },
@@ -1268,7 +1260,6 @@ fun EditorScreen(
                     onToggleKeyframe = { prop ->
                         viewModel.toggleKeyframeAtPlayhead(prop)
                     },
-                    onSetEase = { ease -> viewModel.setEaseAtPlayhead(ease) },
                     onResetAll = { viewModel.resetAllSelectedTransforms() },
                     onUpdateKeyframe = { prop, oldT, newT, newV ->
                         viewModel.updateKeyframeInGraph(prop, oldT, newT, newV)
@@ -1278,6 +1269,27 @@ fun EditorScreen(
                     },
                     onKeyframeEditStart = { viewModel.beginKeyframeGraphEdit() },
                     onKeyframeEditEnd = { viewModel.commitKeyframeGraphEdit() },
+                    onClose = { activePanel = null }
+                )
+            }
+
+            "keyframe_easing" -> {
+                val playheadTimeSec = selected?.let {
+                    KeyframeStore.clipLocalTimeSeconds(
+                        state.currentPosMs, it.timelineStartMs, it.durationMs
+                    )
+                } ?: 0f
+                KeyframeEasingPanel(
+                    clipId = selected?.id,
+                    keyframeMap = selected?.keyframes ?: emptyMap(),
+                    playheadTimeSec = playheadTimeSec,
+                    hasTimelineKeyframes = state.clips.any {
+                        KeyframeStore.hasAnyKeyframes(it.keyframes)
+                    },
+                    onApplySelected = { ease ->
+                        viewModel.setEaseAtPlayhead(ease)
+                    },
+                    onApplyTimeline = viewModel::setTimelineKeyframeEases,
                     onClose = { activePanel = null }
                 )
             }
@@ -2486,21 +2498,10 @@ fun EditorScreen(
                     multiSelectedIds = state.multiSelectedIds,
                     previewFilters = state.previewFilters,
                     previewEffectState = state.previewEffectState,
-                    isDrawingMode = isDrawingMode,
-                    activeBrushType = brushType,
-                    activeBrushColor = brushColor,
-                    activeBrushWidth = brushWidth,
-                    activeBrushOpacity = brushOpacity,
                     isMaskPenMode = isMaskPenMode,
                     isMaskHandMode = isMaskHandMode,
                     onMaskGestureStart = { viewModel.beginGroupGesture() },
                     onMaskGestureEnd = { viewModel.endGroupGesture() },
-                    onBrushStrokeComplete = { stroke ->
-                        val targetBrush = state.selectedClip?.takeIf { it.isBrushClip }
-                            ?: state.clips.lastOrNull { it.isBrushClip }
-                        val strokeWithGradient = stroke.copy(gradient = brushGradient)
-                        viewModel.addStrokeToBrushClip(targetBrush?.id, strokeWithGradient)
-                    },
                     onMaskPointAdd = { x, y -> viewModel.addMaskPoint(x, y) },
                     onMaskAnchorMove = { index, x, y ->
                         viewModel.moveMaskAnchor(index, x, y)
@@ -2534,16 +2535,19 @@ fun EditorScreen(
                     onTextTransformChanged = { clipId: String, s: Float, r: Float ->
                         viewModel.updateSelectedTransformBulk(clipId, s, r)
                     },
+                    onTextGradientPointChanged = { clipId, isStartPoint, x, y ->
+                        viewModel.updateTextGradientPoint(clipId, isStartPoint, x, y)
+                    },
                     onStickerPositionChanged = { clipId: String, x: Float, y: Float ->
                         viewModel.updateSelectedPositionBulk(clipId, x, y)
                     },
                     onStickerTransformChanged = { clipId: String, s: Float, r: Float ->
                         viewModel.updateSelectedTransformBulk(clipId, s, r)
                     },
-                    onBrushPositionChanged = { clipId: String, x: Float, y: Float ->
+                    onLayerPositionChanged = { clipId: String, x: Float, y: Float ->
                         viewModel.updateSelectedPositionBulk(clipId, x, y)
                     },
-                    onBrushTransformChanged = { clipId: String, s: Float, r: Float ->
+                    onLayerTransformChanged = { clipId: String, s: Float, r: Float ->
                         viewModel.updateSelectedTransformBulk(clipId, s, r)
                     },
                     onVisualizerPositionChanged = { clipId: String, x: Float, y: Float ->
@@ -2551,6 +2555,9 @@ fun EditorScreen(
                     },
                     onVisualizerTransformChanged = { clipId: String, s: Float, r: Float ->
                         viewModel.updateSelectedTransformBulk(clipId, s, r)
+                    },
+                    onSpotlightChanged = { clipId, spotlight ->
+                        viewModel.updateSpotlight(clipId, spotlight)
                     },
                 )
 
@@ -2591,7 +2598,7 @@ fun EditorScreen(
                 onRatioClick = { activePanel = "ratio" },
                 isMuted = state.isMuted,
                 onMuteToggle = { viewModel.toggleMute() },
-                onMagnet = { viewModel.closeGapsFromPlayhead() },
+                onMagnet = { viewModel.closeGapsAfterSelectedClip() },
                 onDelete = {
                     if (state.multiSelectedIds.isNotEmpty()) {
                         viewModel.deleteSelectedClips()
@@ -2713,15 +2720,16 @@ fun EditorScreen(
                                 matteEditLayerId = clip.id
                                 activePanel = "matte"
                             }
+                            clip.isSpotlightClip -> {
+                                spotlightEditLayerId = clip.id
+                                activePanel = "spotlight"
+                            }
                             clip.isEffectClip -> {
                                 effectEditLayerId = clip.id
                                 activePanel = "effects"
                             }
                             clip.isVisualizerClip -> {
                                 activePanel = "visualizer"
-                            }
-                            clip.isBrushClip -> {
-                                activePanel = "brush"
                             }
                             clip.isAudioEffectClip -> {
                                 activePanel = "audiofx"

@@ -54,13 +54,13 @@ data class EditorClip(
     val transition: TransitionState? = null,
     val ratio: RatioState? = null,
     val mask: MaskState = MaskState(),
-    val brush: BrushState = BrushState(),
     val lightLeak: LightLeakState? = null,
 
     // Color Matte — full style (solid / ramp / 4-color)
     val matteStyle: ColorMatteStyle = ColorMatteStyle(),
 
     val visualizer: VisualizerState? = null,
+    val spotlight: SpotlightState? = null,
     val chromaKey: ChromaKeyState = ChromaKeyState(),
 
     val keyframes: Map<String, List<Keyframe>> = emptyMap()
@@ -79,9 +79,9 @@ data class EditorClip(
     val isAdjustmentClip: Boolean get() = type == "adjustment/plain"
     val isOverlayClip: Boolean get() = type == "overlay/plain"
 
-    val isBrushClip: Boolean get() = type == "brush/plain"
     val isVisualizerClip: Boolean get() = type == "visualizer/plain"
     val isColorMatteClip: Boolean get() = type == "matte/plain"
+    val isSpotlightClip: Boolean get() = type == "spotlight/plain"
 
     // Backward-compat accessor — returns solid color if legacy code refers
     val matteColor: Long get() = matteStyle.solidColor
@@ -93,12 +93,12 @@ data class EditorClip(
             !isAudio && isVisualClip -> 90
             isAudio && !isAudioEffectClip -> 80
             isColorMatteClip -> 70
+            isSpotlightClip -> 65
             isTextClip -> 60
             isStickerClip -> 55
             isVisualizerClip -> 50
             isOverlayClip -> 45
             isEffectClip -> 40
-            isBrushClip -> 35
             isAdjustmentClip -> 30
             isFilterLayerClip -> 25
             else -> 10

@@ -1,6 +1,5 @@
 package com.moody.moodyvideoeditor.utils
 
-import com.moody.moodyvideoeditor.data.BrushType
 
 import com.moody.moodyvideoeditor.data.EffectLibrary
 import com.moody.moodyvideoeditor.data.FilterState
@@ -81,7 +80,7 @@ object PromptExecutor {
                 }
 
                 CmdType.TIGHTEN -> {
-                    viewModel.closeGapsFromPlayhead()
+                    viewModel.closeGapsAfterSelectedClip()
                     applied.add("tighten track")
                 }
 
@@ -807,118 +806,6 @@ object PromptExecutor {
                             val suffix = clampedIntensity?.let { " @${it.toInt()}%" } ?: ""
                             applied.add("audio ${label}${suffix}")
                         }
-                    }
-
-                    CmdType.BRUSH_GRADIENT -> {
-                        if (cmd.key == "off") {
-                            BrushConfigHolder.update {
-                                it.copy(gradient = it.gradient.copy(enabled = false))
-                            }
-                            applied.add("brush gradient off")
-                        } else {
-                            val parts = cmd.stringValue?.split(",")
-                                ?: emptyList()
-                            if (parts.size >= 3) {
-                                try {
-                                    val color1 = 0xFF000000L or
-                                            parts[0].removePrefix("#").toLong(16)
-                                    val color2 = 0xFF000000L or
-                                            parts[1].removePrefix("#").toLong(16)
-                                    val hasMid = parts.size >= 4
-                                    val color3 = if (hasMid) {
-                                        0xFF000000L or
-                                                parts[2].removePrefix("#").toLong(16)
-                                    } else 0L
-                                    val mode = parts.last()
-
-                                    BrushConfigHolder.update { config ->
-                                        config.copy(
-                                            gradient = config.gradient.copy(
-                                                enabled = true,
-                                                color1 = color1,
-                                                color2 = color2,
-                                                color3 = color3,
-                                                hasMid = hasMid,
-                                                mode = mode
-                                            )
-                                        )
-                                    }
-                                    applied.add(
-                                        "brush gradient ${parts[0]} → ${parts[1]}" +
-                                                if (hasMid) " → ${parts[2]}" else ""
-                                    )
-                                } catch (e: Exception) {
-                                    errors.add("brush gradient: invalid colors")
-                                }
-                            } else {
-                                errors.add("brush gradient: need 2 colors")
-                            }
-                        }
-                    }
-
-                    CmdType.BRUSH_TYPE -> {
-                        val brushType = when (cmd.key.lowercase()) {
-                            "pen" -> BrushType.PEN
-                            "marker" -> BrushType.MARKER
-                            "chalk" -> BrushType.CHALK
-                            "neon" -> BrushType.NEON
-                            "glow" -> BrushType.GLOW
-                            "spray" -> BrushType.SPRAY
-                            else -> null
-                        }
-                        if (brushType == null) {
-                            errors.add("brush: unknown type '${cmd.key}'")
-                        } else {
-                            BrushConfigHolder.update { config ->
-                                var updated = config.copy(type = brushType)
-                                cmd.value1?.let { w ->
-                                    updated = updated.copy(
-                                        width = w.coerceIn(1f, 200f)
-                                    )
-                                }
-                                cmd.stringValue?.let { hex ->
-                                    try {
-                                        val colorLong =
-                                            0xFF000000L or hex.removePrefix("#")
-                                                .toLong(16)
-                                        updated = updated.copy(color = colorLong)
-                                    } catch (_: Exception) {
-                                    }
-                                }
-                                updated
-                            }
-                            applied.add("brush type: ${cmd.key}")
-                        }
-                    }
-
-                    CmdType.BRUSH_DRAW -> {
-                        if (cmd.key == "on") {
-                            // Ensure a brush clip exists
-                            val hasBrush = viewModel.state.value.clips.any {
-                                it.isBrushClip
-                            }
-                            if (!hasBrush) {
-                                viewModel.createBrushClip()
-                            }
-                            BrushConfigHolder.update {
-                                it.copy(isDrawingMode = true)
-                            }
-                            applied.add("brush draw enabled")
-                        } else {
-                            BrushConfigHolder.update {
-                                it.copy(isDrawingMode = false)
-                            }
-                            applied.add("brush draw disabled")
-                        }
-                    }
-
-                    CmdType.BRUSH_CLEAR -> {
-                        val s = viewModel.state.value
-                        val lastBrush = s.clips.lastOrNull { it.isBrushClip }
-                        if (lastBrush != null) {
-                            viewModel.clearBrushClipStrokes(lastBrush.id)
-                        }
-                        applied.add("brush cleared")
                     }
 
                     CmdType.COLOR_WHEEL -> {
@@ -1775,11 +1662,11 @@ object PromptExecutor {
                         val col1 = c1?.let { parseColor(it) }
                         val col2 = c2b?.let { parseColor(it) }
                         if (col1 != null && col2 != null) {
-                            st = st.copy(
+                            val base = angle?.let { st.withGradientAngle(it) } ?: st
+                            st = base.copy(
                                 gradientEnabled = true,
                                 gradientColor1 = col1,
-                                gradientColor2 = col2,
-                                gradientAngle = angle ?: st.gradientAngle
+                                gradientColor2 = col2
                             )
                         }
                         i += if (angle != null) 5 else 4
@@ -1788,15 +1675,16 @@ object PromptExecutor {
                         val col1 = c1?.let { parseColor(it) }
                         val col2 = c2?.let { parseColor(it) }
                         if (col1 != null && col2 != null) {
-                            st = st.copy(
+                            val base = angle?.let { st.withGradientAngle(it) } ?: st
+                            st = base.copy(
                                 gradientEnabled = true,
                                 gradientColor1 = col1,
-                                gradientColor2 = col2,
-                                gradientAngle = angle ?: st.gradientAngle
+                                gradientColor2 = col2
                             )
                         }
                         i += if (angle != null) 4 else 3
                     }
+
                 }
 
                 "maxwidth", "wrap" -> {
@@ -2104,6 +1992,19 @@ object PromptExecutor {
             }
         }
         return st
+    }
+
+    private fun TextState.withGradientAngle(angle: Float): TextState {
+        val radians = Math.toRadians(angle.toDouble())
+        val dx = kotlin.math.cos(radians).toFloat() * 0.5f
+        val dy = kotlin.math.sin(radians).toFloat() * 0.5f
+        return copy(
+            gradientAngle = angle,
+            gradientStartX = 0.5f - dx,
+            gradientStartY = 0.5f - dy,
+            gradientEndX = 0.5f + dx,
+            gradientEndY = 0.5f + dy
+        )
     }
 
     private fun anchorCoords(key: String): Pair<Float, Float> = when (key) {

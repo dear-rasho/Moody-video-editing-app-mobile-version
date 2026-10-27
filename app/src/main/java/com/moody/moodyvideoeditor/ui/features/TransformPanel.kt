@@ -41,7 +41,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.Keyframe
-import com.moody.moodyvideoeditor.ui.components.EasingGraphPicker
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.ui.components.KeyframeGraphDialog
 import com.moody.moodyvideoeditor.utils.KeyframeStore
@@ -58,7 +57,6 @@ fun TransformPanel(
     clipDurationSec: Float = 5f,
     onPropertyChanged: (String, Float) -> Unit,
     onToggleKeyframe: (String) -> Unit,
-    onSetEase: (String) -> Unit,
     onResetAll: () -> Unit,
     onUpdateKeyframe: (String, Float, Float, Float) -> Unit = { _, _, _, _ -> },
     onDeleteKeyframe: (String, Float) -> Unit = { _, _ -> },
@@ -67,7 +65,6 @@ fun TransformPanel(
     onClose: () -> Unit
 ) {
     var showGraph by remember { mutableStateOf(false) }
-    var graphsExpanded by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
 
     if (showGraph) {
@@ -109,62 +106,6 @@ fun TransformPanel(
                 }
         ) {
 
-
-            //  📊 GRAPHS TOGGLE — AT TOP
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(36.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF181818))
-                    .pointerInput(Unit) {
-                        detectTapGestures {
-                            focusManager.clearFocus()
-                            graphsExpanded = !graphsExpanded
-                        }
-                    },
-                contentAlignment = Alignment.CenterStart
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        if (graphsExpanded) "▼" else "▶",
-                        color = Color(0xFF4F9DFF), fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "📊  Easing Graphs",
-                        color = Color.White, fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        "Tap to ${if (graphsExpanded) "hide" else "show"}",
-                        color = Color(0xFF666666), fontSize = 9.sp
-                    )
-                }
-            }
-
-
-            //  EASING GRAPHS PANEL (expandable)
-
-            if (graphsExpanded) {
-                Spacer(Modifier.height(6.dp))
-                EasingGraphPicker(
-                    currentEase = if (KeyframeStore.getPropsWithKeyframeAt(
-                            keyframeMap, currentTimeSec
-                        ).isNotEmpty()
-                    )
-                        KeyframeStore.getEaseAtTime(keyframeMap, currentTimeSec)
-                    else
-                        KeyframeStore.getEaseAtTime(keyframeMap, 0f),
-                    onPick = onSetEase
-                )
-            }
 
             Spacer(Modifier.height(8.dp))
 

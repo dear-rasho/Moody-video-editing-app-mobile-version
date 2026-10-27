@@ -62,6 +62,7 @@ object SettingsConsumer {
     val defaultImageDurationMs: Int get() = _current.value.defaultImageDurationMs
     val defaultExportResolution: String get() = _current.value.defaultExportResolution
     val defaultAspectRatio: String get() = _current.value.defaultAspectRatio
+    val watermarkPosition: String get() = _current.value.watermarkPosition
 
     // Tab 2 — Edit
     val stepFrames: Int get() = _current.value.stepFrames

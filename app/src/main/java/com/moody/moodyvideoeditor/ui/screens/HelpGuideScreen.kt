@@ -535,16 +535,6 @@ private fun CommandsContent() {
     )
 
     CommandCategory(
-        "🖌️ Brush", listOf(
-            "brush draw", "brush stop", "brush clear",
-            "brush pen", "brush neon", "brush marker",
-            "brush neon color cyan width 25",
-            "brush gradient red to blue",
-            "brush solid"
-        )
-    )
-
-    CommandCategory(
         "🔊 Audio", listOf(
             "audio echo", "audio reverb", "audio robot",
             "audio underwater", "audio studio",
@@ -694,11 +684,7 @@ private fun GuideContent() {
     )
 
     GuideSection(
-        "🖌️ Brush & Mask", listOf(
-            "Brush panel → Create layer → Start Drawing",
-            "Preview pe finger se draw karo",
-            "Brush: pen/marker/chalk/neon/glow/spray",
-            "Gradient support (start/mid/end colors)",
+        "🎭 Mask", listOf(
             "Mask → Circle/Rect/Linear/Heart/Custom",
             "Custom → Pen tool → tap points → close on first point"
         )

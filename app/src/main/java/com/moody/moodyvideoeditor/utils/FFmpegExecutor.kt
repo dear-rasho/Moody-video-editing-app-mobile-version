@@ -591,6 +591,7 @@ class FFmpegExecutor(
         onFrameProgress: (Int, Int) -> Unit = { _, _ -> }
     ) {
         isCancelled = false
+        var generatedSequences = emptyList<TextOverlaySequence>()
         try {
             if (!outputDir.exists()) outputDir.mkdirs()
             val effectiveStart = rangeStartMs.coerceAtLeast(0L)
@@ -607,24 +608,28 @@ class FFmpegExecutor(
             val overlayClips =
                 trimmedAllClips.filter { it.isOverlayClip || (it.isEffectClip && it.effectState?.overlay != null) }
             val vizClips = trimmedAllClips.filter { it.isVisualizerClip }
+            val spotlightClips = trimmedAllClips.filter { it.isSpotlightClip }
 
             val textSequences =
-                if (textClips.isNotEmpty() || overlayImageClips.isNotEmpty() || overlayClips.isNotEmpty()) {
-                    TextBitmapRenderer.renderCombinedOverlays(
-                        context,
-                        textClips,
-                        overlayImageClips,
-                        overlayClips,
-                        targetW,
-                        targetH,
-                        fps,
-                        effectiveDurMs,
+                if (textClips.isNotEmpty() || overlayImageClips.isNotEmpty() ||
+                    overlayClips.isNotEmpty()
+                ) {
+                    TextBitmapRenderer.renderOverlaysByTrack(
+                        context = context,
+                        textClips = textClips,
+                        imageClips = overlayImageClips,
+                        overlayClips = overlayClips,
+                        W = targetW,
+                        H = targetH,
+                        fps = fps,
+                        totalDurationMs = effectiveDurMs,
                         onProgress = { p -> onProgress(p * 0.25f) },
                         shouldCancel = { isCancelled },
                         imageFormat = imageFormat,
                         jpegQuality = jpegQuality
                     )
                 } else emptyList()
+            generatedSequences = textSequences
 
             val vizSequences = if (vizClips.isNotEmpty()) {
                 VisualizerBitmapRenderer.renderCombinedOverlays(
@@ -642,8 +647,24 @@ class FFmpegExecutor(
                     jpegQuality = jpegQuality
                 )
             } else emptyList()
+            generatedSequences = textSequences + vizSequences
 
-            val allSequences = (textSequences + vizSequences).sortedBy { it.trackIndex }
+            val spotlightSequences = if (spotlightClips.isNotEmpty()) {
+                SpotlightBitmapRenderer.render(
+                    context = context,
+                    clips = spotlightClips,
+                    width = targetW,
+                    height = targetH,
+                    fps = fps,
+                    totalDurationMs = effectiveDurMs,
+                    onProgress = { p -> onProgress(0.50f + p * 0.10f) },
+                    shouldCancel = { isCancelled }
+                )
+            } else emptyList()
+
+            val allSequences =
+                (textSequences + vizSequences + spotlightSequences).sortedBy { it.trackIndex }
+            generatedSequences = allSequences
             val baseVisualClips = trimmedAllClips.filter {
                 it.isVisualClip && it.uri.toString()
                     .isNotBlank() && it.uri != Uri.EMPTY && it.trackIndex == 0
@@ -693,9 +714,14 @@ class FFmpegExecutor(
                 if (seq.startSec > 0.0001) {
                     args.add("-itsoffset"); args.add("%.4f".format(seq.startSec))
                 }
-                args.add("-framerate"); args.add(seq.fps.toString()); args.add("-start_number"); args.add(
-                seq.startNumber.toString()
-            )
+                if (seq.isStaticImage) {
+                    args.add("-loop"); args.add("1")
+                    args.add("-framerate"); args.add(seq.fps.toString())
+                    args.add("-t"); args.add((seq.endSec - seq.startSec).coerceAtLeast(0.01).toString())
+                } else {
+                    args.add("-framerate"); args.add(seq.fps.toString())
+                    args.add("-start_number"); args.add(seq.startNumber.toString())
+                }
                 args.add("-i"); args.add(seq.pattern)
             }
 
@@ -741,13 +767,18 @@ class FFmpegExecutor(
             var lastLabel = "basev"
             allSequences.forEachIndexed { idx, seq ->
                 val inIdx = seqStartIdx + idx
-                filterParts.add("[$inIdx:v]format=rgba[seqsrc$idx]")
-                filterParts.add(
-                    "[$lastLabel][seqsrc$idx]overlay=0:0:enable='between(t,%.4f,%.4f)'[ov$idx]".format(
-                        seq.startSec,
-                        seq.endSec
+                addSequenceSourceFilter(filterParts, inIdx, "seqsrc$idx", seq)
+                val enable = "between(t,%.4f,%.4f)".format(seq.startSec, seq.endSec)
+                if (seq.blendMode.equals("addition", ignoreCase = true)) {
+                    filterParts.add("[$lastLabel]format=rgba[baseadd$idx]")
+                    filterParts.add(
+                        "[baseadd$idx][seqsrc$idx]blend=all_mode=addition:shortest=0:enable='$enable'[ov$idx]"
                     )
-                )
+                } else {
+                    filterParts.add(
+                        "[$lastLabel][seqsrc$idx]overlay=0:0:enable='$enable'[ov$idx]"
+                    )
+                }
                 lastLabel = "ov$idx"
             }
             filterParts.add("[$lastLabel]format=yuv420p[outv]")
@@ -762,12 +793,19 @@ class FFmpegExecutor(
             val session = FFmpegKit.executeWithArgumentsAsync(
                 args.toTypedArray(),
                 { s ->
-                    if (isCancelled) onError("Sequence export cancelled")
+                    if (isCancelled) {
+                        cleanupSequences(allSequences)
+                        onError("Sequence export cancelled")
+                    }
                     else if (ReturnCode.isSuccess(s.returnCode)) {
                         val files = outputDir.listFiles()
                             ?.filter { it.name.startsWith("MoodyExport_frame_") } ?: emptyList()
+                        cleanupSequences(allSequences)
                         if (files.isNotEmpty()) onSuccess(outputDir) else onError("No images created")
-                    } else onError("Sequence failed:\n${(s.allLogsAsString ?: "").takeLast(1200)}")
+                    } else {
+                        cleanupSequences(allSequences)
+                        onError("Sequence failed:\n${(s.allLogsAsString ?: "").takeLast(1200)}")
+                    }
                 },
                 { _ -> },
                 { stats ->
@@ -787,8 +825,10 @@ class FFmpegExecutor(
             )
             currentSession = session
         } catch (e: CancellationException) {
+            cleanupSequences(generatedSequences)
             throw e
         } catch (e: Exception) {
+            cleanupSequences(generatedSequences)
             onError("Sequence export crash: ${e.message}")
         }
     }
@@ -984,9 +1024,14 @@ class FFmpegExecutor(
             if (seq.startSec > 0.0001) {
                 args.add("-itsoffset"); args.add("%.4f".format(seq.startSec))
             }
-            args.add("-framerate"); args.add(seq.fps.toString()); args.add("-start_number"); args.add(
-            seq.startNumber.toString()
-        )
+            if (seq.isStaticImage) {
+                args.add("-loop"); args.add("1")
+                args.add("-framerate"); args.add(seq.fps.toString())
+                args.add("-t"); args.add((seq.endSec - seq.startSec).coerceAtLeast(0.01).toString())
+            } else {
+                args.add("-framerate"); args.add(seq.fps.toString())
+                args.add("-start_number"); args.add(seq.startNumber.toString())
+            }
             args.add("-i"); args.add(seq.pattern)
         }
     }
@@ -1000,17 +1045,36 @@ class FFmpegExecutor(
         var lastLabel = baseLabel
         sequences.forEachIndexed { idx, seq ->
             val inIdx = seqStartIdx + idx
-            filterParts.add("[$inIdx:v]format=rgba[seqsrc$idx]")
-            filterParts.add(
-                "[$lastLabel][seqsrc$idx]overlay=0:0:enable='between(t,%.4f,%.4f)'[ov$idx]".format(
-                    seq.startSec,
-                    seq.endSec
+            addSequenceSourceFilter(filterParts, inIdx, "seqsrc$idx", seq)
+            val enable = "between(t,%.4f,%.4f)".format(seq.startSec, seq.endSec)
+            if (seq.blendMode.equals("addition", ignoreCase = true)) {
+                filterParts.add("[$lastLabel]format=rgba[baseadd$idx]")
+                filterParts.add(
+                    "[baseadd$idx][seqsrc$idx]blend=all_mode=addition:shortest=0:enable='$enable'[ov$idx]"
                 )
-            )
+            } else {
+                filterParts.add(
+                    "[$lastLabel][seqsrc$idx]overlay=0:0:enable='$enable'[ov$idx]"
+                )
+            }
             lastLabel = "ov$idx"
         }
         filterParts.add("[$lastLabel]null[outv]")
         return "outv"
+    }
+
+    private fun addSequenceSourceFilter(
+        filterParts: MutableList<String>,
+        inputIndex: Int,
+        outputLabel: String,
+        sequence: TextOverlaySequence
+    ) {
+        val filter = if (sequence.blendMode.equals("addition", ignoreCase = true)) {
+            "format=rgba,geq=r='r(X,Y)*alpha(X,Y)/255':g='g(X,Y)*alpha(X,Y)/255':b='b(X,Y)*alpha(X,Y)/255':a='alpha(X,Y)'"
+        } else {
+            "format=rgba"
+        }
+        filterParts.add("[$inputIndex:v]$filter[$outputLabel]")
     }
 
     private fun enforceOutputDimensions(
@@ -1456,13 +1520,24 @@ class FFmpegExecutor(
                     args.add("-itsoffset")
                     args.add("%.4f".format(seq.startSec))
                 }
-                args.addAll(
-                    listOf(
-                        "-framerate", seq.fps.toString(),
-                        "-start_number", seq.startNumber.toString(),
-                        "-i", seq.pattern
+                if (seq.isStaticImage) {
+                    args.addAll(
+                        listOf(
+                            "-loop", "1",
+                            "-framerate", seq.fps.toString(),
+                            "-t", (seq.endSec - seq.startSec).coerceAtLeast(0.01).toString(),
+                            "-i", seq.pattern
+                        )
                     )
-                )
+                } else {
+                    args.addAll(
+                        listOf(
+                            "-framerate", seq.fps.toString(),
+                            "-start_number", seq.startNumber.toString(),
+                            "-i", seq.pattern
+                        )
+                    )
+                }
                 nextInputIdx++
             }
 
@@ -1739,23 +1814,27 @@ class FFmpegExecutor(
 
                     2 -> {
                         val seq = item.sequence ?: return@forEach
-                        filterParts.add("[${item.inputIndex}:v]format=rgba[seqsrc_${item.sequenceIdx}]")
-                        filterParts.add(
-                            "[$canvasLabel][seqsrc_${item.sequenceIdx}]overlay=0:0:enable='between(t,${
-                                String.format(
-                                    Locale.US,
-                                    "%.4f",
-                                    seq.startSec
-                                )
-                            },${
-                                String.format(
-                                    Locale.US,
-                                    "%.4f",
-                                    seq.endSec
-                                )
-                            })'[canvas_s${item.sequenceIdx}]"
+                        addSequenceSourceFilter(
+                            filterParts,
+                            item.inputIndex,
+                            "seqsrc_${item.sequenceIdx}",
+                            seq
                         )
-                        canvasLabel = "canvas_s${item.sequenceIdx}"
+                        val startSec = String.format(Locale.US, "%.4f", seq.startSec)
+                        val endSec = String.format(Locale.US, "%.4f", seq.endSec)
+                        val enable = "between(t,$startSec,$endSec)"
+                        val outLabel = "canvas_s${item.sequenceIdx}"
+                        if (seq.blendMode.equals("addition", ignoreCase = true)) {
+                            filterParts.add("[$canvasLabel]format=rgba[canvas_add_${item.sequenceIdx}]")
+                            filterParts.add(
+                                "[canvas_add_${item.sequenceIdx}][seqsrc_${item.sequenceIdx}]blend=all_mode=addition:shortest=0:enable='$enable'[$outLabel]"
+                            )
+                        } else {
+                            filterParts.add(
+                                "[$canvasLabel][seqsrc_${item.sequenceIdx}]overlay=0:0:enable='$enable'[$outLabel]"
+                            )
+                        }
+                        canvasLabel = outLabel
                     }
 
                     3 -> {
@@ -1843,6 +1922,8 @@ class FFmpegExecutor(
             val finalVideo = enforceOutputDimensions(filterParts, "outv", targetW, targetH)
             args.addAll(
                 listOf(
+                    "-filter_complex_threads",
+                    "1",
                     "-filter_complex",
                     filterParts.joinToString(";"),
                     "-map",

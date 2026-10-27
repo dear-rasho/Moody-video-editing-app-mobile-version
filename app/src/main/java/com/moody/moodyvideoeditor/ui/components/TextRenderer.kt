@@ -21,8 +21,6 @@ import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.utils.AnimationsEngine
 import com.moody.moodyvideoeditor.utils.FontLibrary
-import kotlin.math.cos
-import kotlin.math.sin
 
 // Mirrors js/workspace/textRenderer.js
 @Composable
@@ -43,17 +41,18 @@ fun TextOverlay(
     val family = FontLibrary.familyFor(text.fontFamily)
     val solidColor = Color(text.color)
 
-    // GRADIENT (angle properly rotates the ramp)
     val gradient: Brush? = if (text.gradientEnabled) {
-        val rad = Math.toRadians(text.gradientAngle.toDouble())
-        val dx = cos(rad).toFloat()
-        val dy = sin(rad).toFloat()
-        // Big radius so gradient spans any text size
         val extent = 600f
         Brush.linearGradient(
             colors = listOf(Color(text.gradientColor1), Color(text.gradientColor2)),
-            start = Offset(-dx * extent, -dy * extent),
-            end = Offset(dx * extent, dy * extent)
+            start = Offset(
+                (text.gradientStartX.coerceIn(0f, 1f) - 0.5f) * extent * 2f,
+                (text.gradientStartY.coerceIn(0f, 1f) - 0.5f) * extent * 2f
+            ),
+            end = Offset(
+                (text.gradientEndX.coerceIn(0f, 1f) - 0.5f) * extent * 2f,
+                (text.gradientEndY.coerceIn(0f, 1f) - 0.5f) * extent * 2f
+            )
         )
     } else null
 

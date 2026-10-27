@@ -2060,12 +2060,11 @@ object VisualizerEngine {
             }
 
             if (ts.gradientEnabled) {
-                val rad = Math.toRadians(ts.gradientAngle.toDouble())
-                val dx = cos(rad).toFloat() * circleRadius
-                val dy = sin(rad).toFloat() * circleRadius
                 fillPaint.shader = LinearGradient(
-                    c.cx - dx, c.cy - dy,
-                    c.cx + dx, c.cy + dy,
+                    c.cx + (ts.gradientStartX.coerceIn(0f, 1f) - 0.5f) * circleRadius * 2f,
+                    c.cy + (ts.gradientStartY.coerceIn(0f, 1f) - 0.5f) * circleRadius * 2f,
+                    c.cx + (ts.gradientEndX.coerceIn(0f, 1f) - 0.5f) * circleRadius * 2f,
+                    c.cy + (ts.gradientEndY.coerceIn(0f, 1f) - 0.5f) * circleRadius * 2f,
                     ts.gradientColor1.toInt(),
                     ts.gradientColor2.toInt(),
                     Shader.TileMode.CLAMP

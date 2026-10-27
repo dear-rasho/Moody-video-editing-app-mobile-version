@@ -154,7 +154,7 @@ object SavedTemplateRepository {
         val arr = o.optJSONArray("clips") ?: JSONArray()
         for (i in 0 until arr.length()) {
             val obj = arr.optJSONObject(i) ?: continue
-            clips.add(clipFromJson(obj))
+            if (obj.optString("type") != "brush/plain") clips.add(clipFromJson(obj))
         }
         return EditorState(
             clips = clips,
@@ -213,9 +213,9 @@ object SavedTemplateRepository {
         c.transition?.let { put("transition", transitionToJson(it)) }
         c.ratio?.let { put("ratio", ratioToJson(it)) }
         put("mask", maskToJson(c.mask))
-        put("brush", brushToJson(c.brush))
         put("matteStyle", matteStyleToJson(c.matteStyle))
         c.visualizer?.let { put("visualizer", visualizerToJson(it)) }
+        c.spotlight?.let { put("spotlight", it.toJson()) }
 
         val kfObj = JSONObject()
         c.keyframes.forEach { (prop, list) ->
@@ -276,9 +276,9 @@ object SavedTemplateRepository {
             transition = o.optJSONObject("transition")?.let { transitionFromJson(it) },
             ratio = o.optJSONObject("ratio")?.let { ratioFromJson(it) },
             mask = maskFromJson(o.optJSONObject("mask")),
-            brush = brushFromJson(o.optJSONObject("brush")),
             matteStyle = matteStyleFromJson(o.optJSONObject("matteStyle")),
             visualizer = o.optJSONObject("visualizer")?.let { visualizerFromJson(it) },
+            spotlight = o.optJSONObject("spotlight")?.let { SpotlightState.fromJson(it) },
             keyframes = keyframesFromJson(o.optJSONObject("keyframes"))
         )
     }
@@ -575,12 +575,6 @@ object SavedTemplateRepository {
             overlayColor = o.optLong("overlayColor", 0xFF000000L)
         )
     }
-
-    private fun brushToJson(b: BrushState) = JSONObject().apply {
-        put("strokes", JSONArray())
-    }
-
-    private fun brushFromJson(o: JSONObject?): BrushState = BrushState()
 
     private fun matteStyleToJson(s: ColorMatteStyle) = JSONObject().apply {
         put("mode", s.mode.name); put("solidColor", s.solidColor)

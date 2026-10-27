@@ -55,6 +55,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun setDefaultImageDurationMs(v: Int) = updateDraft { copy(defaultImageDurationMs = v) }
     fun setDefaultExportResolution(v: String) = updateDraft { copy(defaultExportResolution = v) }
     fun setDefaultAspectRatio(v: String) = updateDraft { copy(defaultAspectRatio = v) }
+    fun setWatermarkPosition(v: String) = updateDraft { copy(watermarkPosition = v) }
 
     fun setStepFrames(v: Int) = updateDraft { copy(stepFrames = v) }
     fun setAdjustStep(v: Int) = updateDraft { copy(adjustStep = v) }

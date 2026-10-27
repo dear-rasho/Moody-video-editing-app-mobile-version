@@ -8,6 +8,13 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import java.io.IOException
 
+private val WATERMARK_POSITIONS = setOf(
+    "top_left",
+    "top_right",
+    "bottom_left",
+    "bottom_right"
+)
+
 // ═══════════════════════════════════════════════════════════════
 //  SETTINGS REPOSITORY
 //  Single source of truth for all app settings.
@@ -40,6 +47,9 @@ class SettingsRepository(private val context: Context) {
                     ?: SettingsDefaults.DEFAULT_EXPORT_RESOLUTION,
                 defaultAspectRatio = prefs[SettingsKeys.DEFAULT_ASPECT_RATIO]
                     ?: SettingsDefaults.DEFAULT_ASPECT_RATIO,
+                watermarkPosition = prefs[SettingsKeys.WATERMARK_POSITION]
+                    ?.takeIf { it in WATERMARK_POSITIONS }
+                    ?: SettingsDefaults.WATERMARK_POSITION,
 
                 // Tab 2
                 stepFrames = prefs[SettingsKeys.STEP_FRAMES]
@@ -91,6 +101,9 @@ class SettingsRepository(private val context: Context) {
             prefs[SettingsKeys.DEFAULT_IMAGE_DURATION_MS] = settings.defaultImageDurationMs
             prefs[SettingsKeys.DEFAULT_EXPORT_RESOLUTION] = settings.defaultExportResolution
             prefs[SettingsKeys.DEFAULT_ASPECT_RATIO] = settings.defaultAspectRatio
+            prefs[SettingsKeys.WATERMARK_POSITION] =
+                settings.watermarkPosition.takeIf { it in WATERMARK_POSITIONS }
+                    ?: SettingsDefaults.WATERMARK_POSITION
 
             // Tab 2
             prefs[SettingsKeys.STEP_FRAMES] = settings.stepFrames
@@ -116,6 +129,7 @@ class SettingsRepository(private val context: Context) {
             } ?: run {
                 prefs.remove(SettingsKeys.DEFAULT_EXPORT_FOLDER_URI)
             }
+
         }
     }
 

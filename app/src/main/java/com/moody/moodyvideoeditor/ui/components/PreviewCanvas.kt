@@ -102,9 +102,6 @@ import androidx.media3.ui.PlayerView
 import coil.compose.rememberAsyncImagePainter
 import coil.decode.BitmapFactoryDecoder
 import coil.request.ImageRequest
-import com.moody.moodyvideoeditor.data.BrushPoint
-import com.moody.moodyvideoeditor.data.BrushStroke
-import com.moody.moodyvideoeditor.data.BrushType
 import com.moody.moodyvideoeditor.data.ColorFilterValues
 import com.moody.moodyvideoeditor.data.ColorMatteMode
 import com.moody.moodyvideoeditor.data.EditorClip
@@ -114,8 +111,10 @@ import com.moody.moodyvideoeditor.data.MaskAnimatableProps
 import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.OverlayState
+import com.moody.moodyvideoeditor.data.SpotlightState
+import com.moody.moodyvideoeditor.ui.features.SpotlightOverlay
+import com.moody.moodyvideoeditor.utils.SpotlightAnimation
 import com.moody.moodyvideoeditor.utils.BlurEngine
-import com.moody.moodyvideoeditor.utils.BrushEngine
 import com.moody.moodyvideoeditor.utils.ChromaKeyEngine
 import com.moody.moodyvideoeditor.utils.ColorMatrixBuilder
 import com.moody.moodyvideoeditor.utils.ColorWheelEngine
@@ -134,6 +133,7 @@ import com.moody.moodyvideoeditor.utils.TransformApplier
 import com.moody.moodyvideoeditor.utils.TransitionRenderer
 import com.moody.moodyvideoeditor.utils.applyTransparentCrop
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -330,12 +330,6 @@ fun PreviewCanvas(
     previewFilters: FilterState? = null,
     previewEffectState: EffectState? = null,
     previewMatte: com.moody.moodyvideoeditor.data.PreviewMatteState? = null,
-    isDrawingMode: Boolean = false,
-    activeBrushType: BrushType = BrushType.PEN,
-    activeBrushColor: Long = 0xFFFF0000,
-    activeBrushWidth: Float = 20f,
-    activeBrushOpacity: Float = 1f,
-    onBrushStrokeComplete: (BrushStroke) -> Unit = {},
     isMaskPenMode: Boolean = false,
     isMaskHandMode: Boolean = false,
     onMaskGestureStart: () -> Unit = {},
@@ -355,12 +349,14 @@ fun PreviewCanvas(
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit = { _, _, _, _, _ -> },
     onTextPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onTextTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onTextGradientPointChanged: (String, Boolean, Float, Float) -> Unit = { _, _, _, _ -> },
     onStickerPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onStickerTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
-    onBrushPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
-    onBrushTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onLayerPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onLayerTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onVisualizerPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
-    onVisualizerTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> }
+    onVisualizerTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onSpotlightChanged: (String, SpotlightState) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
 
@@ -390,19 +386,22 @@ fun PreviewCanvas(
     val videoTrackIdx = activeVisual?.trackIndex ?: 0
 
     val activeTransitionClip = remember(currentPosMs, clips) {
-        clips.firstOrNull { c ->
+        clips.filter { c ->
             !c.isAudio && c.transition != null && c.transition.isActive &&
                     currentPosMs >= c.timelineStartMs && currentPosMs < c.timelineStartMs + c.transition.durationMs
-        }
+        }.maxByOrNull { it.trackIndex }
     }
 
     val outgoingClip = remember(activeTransitionClip?.id, clips) {
         activeTransitionClip?.let { tc ->
             clips.filter {
-                it.isVisualClip && it.id != tc.id && it.timelineEndMs <= tc.timelineStartMs + 50L
+                it.isVisualClip && it.id != tc.id &&
+                        it.trackIndex == tc.trackIndex &&
+                        it.timelineEndMs <= tc.timelineStartMs + 50L
             }.maxByOrNull { it.timelineEndMs }
         }
     }
+    val latestPreviewPositionMs by rememberUpdatedState(currentPosMs)
 
     val transitionBitmapCache = remember { mutableMapOf<String, Bitmap>() }
 
@@ -411,7 +410,9 @@ fun PreviewCanvas(
             clips.forEach { rightClip ->
                 if (rightClip.transition?.isActive == true) {
                     val outgoing = clips.filter {
-                        it.isVisualClip && it.id != rightClip.id && it.timelineEndMs <= rightClip.timelineStartMs + 50L
+                        it.isVisualClip && it.id != rightClip.id &&
+                                it.trackIndex == rightClip.trackIndex &&
+                                it.timelineEndMs <= rightClip.timelineStartMs + 50L
                     }.maxByOrNull { it.timelineEndMs }
 
                     if (outgoing != null && !transitionBitmapCache.containsKey(outgoing.id)) {
@@ -447,29 +448,77 @@ fun PreviewCanvas(
         }
     }
     var outgoingBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(outgoingClip?.id) {
+    LaunchedEffect(
+        outgoingClip?.id,
+        activeTransitionClip?.id,
+        activeTransitionClip?.transition?.key,
+        activeTransitionClip?.transition?.durationMs
+    ) {
+        val oc = outgoingClip ?: return@LaunchedEffect
+        val transitionState = activeTransitionClip?.transition ?: return@LaunchedEffect
         outgoingBitmap?.takeIf { !it.isRecycled }?.recycle()
         outgoingBitmap = null
-        val oc = outgoingClip ?: return@LaunchedEffect
-        val bmp = withContext(Dispatchers.IO) {
-            try {
-                if (oc.type.startsWith("image/")) {
+
+        if (oc.type.startsWith("image/")) {
+            val bitmap = withContext(Dispatchers.IO) {
+                try {
                     context.contentResolver.openInputStream(oc.uri)
                         ?.use { stream -> android.graphics.BitmapFactory.decodeStream(stream) }
-                } else {
-                    val retriever = MediaMetadataRetriever()
-                    retriever.setDataSource(context, oc.uri)
-                    val timeUs = (oc.sourceEndMs - 33).coerceAtLeast(0L) * 1000L
-                    val b =
-                        retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                    retriever.release()
-                    b
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("TRANSITION", "Could not load outgoing image frame", e)
+                    null
                 }
-            } catch (e: Exception) {
-                null
             }
+            outgoingBitmap = bitmap
+            return@LaunchedEffect
         }
-        outgoingBitmap = bmp
+
+        val retriever = MediaMetadataRetriever()
+        try {
+            withContext(Dispatchers.IO) {
+                retriever.setDataSource(context, oc.uri)
+            }
+            var lastFrameTimeMs = Long.MIN_VALUE
+            while (true) {
+                val nowMs = latestPreviewPositionMs
+                val elapsedMs = (nowMs - activeTransitionClip.timelineStartMs)
+                    .coerceIn(0L, transitionState.durationMs)
+                val sourceTransitionDurationMs =
+                    (transitionState.durationMs * oc.speed.coerceAtLeast(0.01f)).toLong()
+                val frameTimeMs = (
+                        oc.sourceEndMs - sourceTransitionDurationMs +
+                                (elapsedMs * oc.speed.coerceAtLeast(0.01f)).toLong()
+                        ).coerceIn(
+                        oc.sourceStartMs,
+                        (oc.sourceEndMs - 1L).coerceAtLeast(oc.sourceStartMs)
+                    )
+
+                if (frameTimeMs != lastFrameTimeMs) {
+                    val bitmap = withContext(Dispatchers.IO) {
+                        retriever.getFrameAtTime(
+                            frameTimeMs * 1000L,
+                            MediaMetadataRetriever.OPTION_CLOSEST
+                        )
+                    }
+                    if (bitmap != null) {
+                        outgoingBitmap?.takeIf { !it.isRecycled }?.recycle()
+                        outgoingBitmap = bitmap
+                    } else {
+                        Log.w("TRANSITION", "No outgoing video frame at $frameTimeMs ms")
+                    }
+                    lastFrameTimeMs = frameTimeMs
+                }
+                kotlinx.coroutines.delay(50L)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("TRANSITION", "Could not render outgoing transition frames", e)
+        } finally {
+            retriever.release()
+        }
     }
 
     DisposableEffect(Unit) {
@@ -827,6 +876,7 @@ fun PreviewCanvas(
                                     activeTransitionClip == null &&
                                     !TransformApplier.hasAnimatedTransform(clip) &&
                                     activeClips.none { it.id != clip.id && it.isVisualClip } &&
+                                    activeClips.none { it.isSpotlightClip } &&
                                     allOverlays.isEmpty()
 
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
@@ -1032,7 +1082,7 @@ fun PreviewCanvas(
                                         }
                                     }
                                 }
-                                if (clip.id == selectedClipId && !isDrawingMode) {
+                                if (clip.id == selectedClipId) {
                                     LayerTransformHandles(
                                         clipId = clip.id,
                                         scale = videoTransform2.scale,
@@ -1191,8 +1241,7 @@ fun PreviewCanvas(
                                             shape = RoundedCornerShape(4.dp)
                                         ) else Modifier
                                     )
-                                    .pointerInput(clip.id, isSelected, isMulti, isDrawingMode) {
-                                        if (isDrawingMode) return@pointerInput
+                                    .pointerInput(clip.id, isSelected, isMulti) {
                                         awaitEachGesture {
                                             awaitFirstDown(requireUnconsumed = true)
                                             onGroupGestureStart()
@@ -1261,8 +1310,7 @@ fun PreviewCanvas(
                                             onGroupGestureEnd()
                                         }
                                     }
-                                    .pointerInput(clip.id, isMulti, isDrawingMode) {
-                                        if (isDrawingMode) return@pointerInput
+                                    .pointerInput(clip.id, isMulti) {
                                         detectTapGestures { if (!isMulti) onClipSelected(clip.id) }
                                     }
                             ) {
@@ -1375,7 +1423,7 @@ fun PreviewCanvas(
                                         )
                                     }
                                 }
-                                if (isSelected && !isDrawingMode) {
+                                if (isSelected) {
                                     LayerTransformHandles(
                                         clipId = clip.id,
                                         scale = imgTransform.scale,
@@ -1409,6 +1457,26 @@ fun PreviewCanvas(
                                 }
                             }
                         }
+                    }
+
+                    clip.isSpotlightClip -> {
+                        val localTimeSec = KeyframeStore.clipLocalTimeSeconds(
+                            currentPosMs,
+                            clip.timelineStartMs,
+                            clip.durationMs
+                        )
+                        val spotlight = SpotlightAnimation.sample(
+                            clip.spotlight ?: SpotlightState(),
+                            clip.keyframes,
+                            localTimeSec
+                        )
+                        SpotlightOverlay(
+                            spotlight = spotlight,
+                            isSelected = clip.id == selectedClipId,
+                            onGestureStart = onGroupGestureStart,
+                            onGestureEnd = onGroupGestureEnd,
+                            onChange = { onSpotlightChanged(clip.id, it) }
+                        )
                     }
 
                     clip.isColorMatteClip -> {
@@ -1463,8 +1531,7 @@ fun PreviewCanvas(
                                             shape = RoundedCornerShape(4.dp)
                                         ) else Modifier
                                     )
-                                    .pointerInput(clip.id, isSel, isMulti, isDrawingMode) {
-                                        if (isDrawingMode) return@pointerInput
+                                    .pointerInput(clip.id, isSel, isMulti) {
                                         awaitEachGesture {
                                             awaitFirstDown(requireUnconsumed = true)
                                             onGroupGestureStart()
@@ -1529,11 +1596,11 @@ fun PreviewCanvas(
                                                         newRot
                                                     )
                                                     else {
-                                                        onBrushPositionChanged(
+                                                        onLayerPositionChanged(
                                                             clip.id,
                                                             newX,
                                                             newY
-                                                        ); onBrushTransformChanged(
+                                                        ); onLayerTransformChanged(
                                                             clip.id,
                                                             newScale,
                                                             newRot
@@ -1544,8 +1611,7 @@ fun PreviewCanvas(
                                             onGroupGestureEnd()
                                         }
                                     }
-                                    .pointerInput(clip.id, isMulti, isDrawingMode) {
-                                        if (isDrawingMode) return@pointerInput
+                                    .pointerInput(clip.id, isMulti) {
                                         detectTapGestures { if (!isMulti) onClipSelected(clip.id) }
                                     }
                             ) {
@@ -1564,7 +1630,7 @@ fun PreviewCanvas(
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 }
-                                if (isSel && !isDrawingMode) {
+                                if (isSel) {
                                     LayerTransformHandles(
                                         clipId = clip.id,
                                         scale = matteTransform.scale,
@@ -1572,7 +1638,7 @@ fun PreviewCanvas(
                                         positionX = matteTransform.x,
                                         positionY = matteTransform.y,
                                         onPositionChanged = { x, y ->
-                                            onBrushPositionChanged(
+                                            onLayerPositionChanged(
                                                 clip.id,
                                                 x,
                                                 y
@@ -1581,7 +1647,7 @@ fun PreviewCanvas(
                                         onGestureStart = onGroupGestureStart,
                                         onGestureEnd = onGroupGestureEnd,
                                         onTransformChanged = { s, r ->
-                                            onBrushTransformChanged(
+                                            onLayerTransformChanged(
                                                 clip.id,
                                                 s,
                                                 r
@@ -1613,7 +1679,6 @@ fun PreviewCanvas(
                                     currentPosMs = currentPosMs,
                                     isSelected = clip.id == selectedClipId,
                                     isMulti = clip.id in multiSelectedIds,
-                                    isDrawingMode = isDrawingMode,
                                     onSelect = { onClipSelected(clip.id) },
                                     onGroupGestureStart = onGroupGestureStart,
                                     onGroupGestureEnd = onGroupGestureEnd,
@@ -1632,6 +1697,7 @@ fun PreviewCanvas(
                                             r
                                         )
                                     },
+                                    onGradientPointChanged = onTextGradientPointChanged,
                                     onDeleteLayer = { onDeleteLayer(clip.id) },
                                 )
                             }
@@ -1658,7 +1724,6 @@ fun PreviewCanvas(
                                     currentPosMs = currentPosMs,
                                     isSelected = clip.id == selectedClipId,
                                     isMulti = clip.id in multiSelectedIds,
-                                    isDrawingMode = isDrawingMode,
                                     onSelect = { onClipSelected(clip.id) },
                                     onGroupGestureStart = onGroupGestureStart,
                                     onGroupGestureEnd = onGroupGestureEnd,
@@ -1733,9 +1798,7 @@ fun PreviewCanvas(
                                         isMulti,
                                         canvasW,
                                         canvasH,
-                                        isDrawingMode
                                     ) {
-                                        if (isDrawingMode) return@pointerInput
                                         awaitEachGesture {
                                             awaitFirstDown(requireUnconsumed = true)
                                             onGroupGestureStart()
@@ -1815,12 +1878,11 @@ fun PreviewCanvas(
                                             onGroupGestureEnd()
                                         }
                                     }
-                                    .pointerInput(clip.id, isMulti, isDrawingMode) {
-                                        if (isDrawingMode) return@pointerInput
+                                    .pointerInput(clip.id, isMulti) {
                                         detectTapGestures { if (!isMulti) onClipSelected(clip.id) }
                                     }
                             ) {
-                                if (isSel && !isDrawingMode) {
+                                if (isSel) {
                                     LayerTransformHandles(
                                         clipId = clip.id,
                                         scale = (vs.size / 0.32f) * 100f,
@@ -1850,220 +1912,6 @@ fun PreviewCanvas(
                         }
                     }
 
-                    clip.isBrushClip -> {
-                        val brushLocalSec =
-                            ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
-                        val brushTransform = TransformApplier.resolveLive(clip, brushLocalSec)
-                        val isSelected = clip.id == selectedClipId
-                        val isMulti = clip.id in multiSelectedIds
-                        val borderColor = when {
-                            isSelected -> Color(0xFF60EFFF); isMulti -> Color(0xFFFFD166); else -> Color.Transparent
-                        }
-
-                        if (clip.brush.strokes.isEmpty()) {
-                            if (isDrawingMode && clip.id == selectedClipId) {
-                                Box(
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .graphicsLayer { alpha = 0.55f }
-                                        .border(2.dp, Color(0xFF7C3AED), RoundedCornerShape(8.dp)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    androidx.compose.foundation.layout.Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(
-                                            6.dp
-                                        )
-                                    ) {
-                                        Text("✏️", fontSize = 32.sp)
-                                        Text(
-                                            "Draw here",
-                                            color = Color(0xFF7C3AED),
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Text(
-                                            "Drag your finger to draw a stroke",
-                                            color = Color(0xFFAAAAAA),
-                                            fontSize = 10.sp
-                                        )
-                                    }
-                                }
-                            }
-                            return@forEach
-                        }
-
-                        MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
-                            Box(
-                                modifier = Modifier
-                                    .matchParentSize()
-                                    .graphicsLayer {
-                                        compositingStrategy = CompositingStrategy.Offscreen
-                                        blendMode = blendKeyToCompose(clip.blendMode)
-                                        val w = size.width;
-                                        val h = size.height
-                                        translationX =
-                                            (brushTransform.x - 50f) / 100f * w + combinedMotion.tx
-                                        translationY =
-                                            (brushTransform.y - 50f) / 100f * h + combinedMotion.ty
-                                        scaleX =
-                                            (brushTransform.scale / 100f) * combinedMotion.scale
-                                        scaleY =
-                                            (brushTransform.scale / 100f) * combinedMotion.scale
-                                        rotationZ =
-                                            brushTransform.rotation + combinedMotion.rotation
-                                        alpha = opacityAlpha
-                                        transformOrigin = TransformOrigin(
-                                            pivotFractionX = brushTransform.anchorX / 100f,
-                                            pivotFractionY = brushTransform.anchorY / 100f
-                                        )
-                                    }
-                                    .then(
-                                        if (isSelected || isMulti) Modifier.border(
-                                            width = if (isSelected) 1.5.dp else 1.dp,
-                                            color = borderColor,
-                                            shape = RoundedCornerShape(4.dp)
-                                        ) else Modifier
-                                    )
-                                    .pointerInput(clip.id, isSelected, isMulti, isDrawingMode) {
-                                        if (isDrawingMode) return@pointerInput
-                                        awaitEachGesture {
-                                            awaitFirstDown(requireUnconsumed = true)
-                                            onGroupGestureStart()
-                                            val baseX = brushTransform.x;
-                                            val baseY = brushTransform.y
-                                            val baseScale = brushTransform.scale;
-                                            val baseRot = brushTransform.rotation
-                                            var accumPanX = 0f;
-                                            var accumPanY = 0f;
-                                            var accumZoom = 1f;
-                                            var accumRot = 0f
-                                            var lastDist = 0f;
-                                            var lastAngle = 0f;
-                                            var hasMulti = false
-                                            if (!isSelected && !isMulti) onClipSelected(clip.id)
-                                            var continueGesture = true
-                                            while (continueGesture) {
-                                                val event = awaitPointerEvent()
-                                                val pressed = event.changes.filter { it.pressed }
-                                                if (pressed.isEmpty()) {
-                                                    continueGesture = false
-                                                } else {
-                                                    if (pressed.size == 1) {
-                                                        val ch = pressed.first();
-                                                        val pan = ch.position - ch.previousPosition
-                                                        accumPanX += pan.x; accumPanY += pan.y; ch.consume()
-                                                    } else if (pressed.size >= 2) {
-                                                        val c1 = pressed[0];
-                                                        val c2 = pressed[1]
-                                                        val d = c1.position - c2.position
-                                                        val dist =
-                                                            kotlin.math.sqrt(d.x * d.x + d.y * d.y)
-                                                        val angle = kotlin.math.atan2(d.y, d.x)
-                                                        if (hasMulti && lastDist > 1f) {
-                                                            accumZoom *= dist / lastDist
-                                                            accumRot += Math.toDegrees(
-                                                                normalizeAngle(angle - lastAngle).toDouble()
-                                                            ).toFloat()
-                                                        }
-                                                        lastDist = dist; lastAngle =
-                                                            angle; hasMulti = true
-                                                        c1.consume(); c2.consume()
-                                                    }
-                                                    val newX =
-                                                        (baseX + accumPanX / size.width * 100f).coerceIn(
-                                                            0f,
-                                                            100f
-                                                        )
-                                                    val newY =
-                                                        (baseY + accumPanY / size.height * 100f).coerceIn(
-                                                            0f,
-                                                            100f
-                                                        )
-                                                    val newScale =
-                                                        (baseScale * accumZoom).coerceIn(10f, 500f)
-                                                    val newRot = baseRot + accumRot
-                                                    if (isMulti) onGroupGesture(
-                                                        clip.id,
-                                                        newX,
-                                                        newY,
-                                                        newScale,
-                                                        newRot
-                                                    )
-                                                    else {
-                                                        onBrushPositionChanged(
-                                                            clip.id,
-                                                            newX,
-                                                            newY
-                                                        ); onBrushTransformChanged(
-                                                            clip.id,
-                                                            newScale,
-                                                            newRot
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                            onGroupGestureEnd()
-                                        }
-                                    }
-                                    .pointerInput(clip.id, isMulti, isDrawingMode) {
-                                        if (isDrawingMode) return@pointerInput
-                                        detectTapGestures { if (!isMulti) onClipSelected(clip.id) }
-                                    }
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .applyTransparentCrop(
-                                            brushTransform.cropL,
-                                            brushTransform.cropR,
-                                            brushTransform.cropT,
-                                            brushTransform.cropB
-                                        )
-                                ) {
-                                    Canvas(modifier = Modifier.fillMaxSize()) {
-                                        clip.brush.strokes.forEach { stroke ->
-                                            BrushEngine.drawStroke(
-                                                scope = this,
-                                                stroke = stroke,
-                                                viewW = size.width,
-                                                viewH = size.height,
-                                                currentTimeMs = (currentPosMs - clip.timelineStartMs).coerceAtLeast(
-                                                    0L
-                                                )
-                                            )
-                                        }
-                                    }
-                                }
-                                if (isSelected && !isDrawingMode) {
-                                    LayerTransformHandles(
-                                        clipId = clip.id,
-                                        scale = brushTransform.scale,
-                                        rotation = brushTransform.rotation,
-                                        positionX = brushTransform.x,
-                                        positionY = brushTransform.y,
-                                        onPositionChanged = { x, y ->
-                                            onBrushPositionChanged(
-                                                clip.id,
-                                                x,
-                                                y
-                                            )
-                                        },
-                                        onGestureStart = onGroupGestureStart,
-                                        onGestureEnd = onGroupGestureEnd,
-                                        onTransformChanged = { s, r ->
-                                            onBrushTransformChanged(
-                                                clip.id,
-                                                s,
-                                                r
-                                            )
-                                        },
-                                        onDelete = { onDeleteLayer(clip.id) },
-                                    )
-                                }
-                            }
-                        }
-                    }
                 }
             }
 
@@ -2428,7 +2276,7 @@ fun PreviewCanvas(
             if (activeTransitionClip != null) {
                 val oc = outgoingClip
                 if (oc != null) {
-                    val transBitmap = transitionBitmapCache[oc.id] ?: outgoingBitmap
+                    val transBitmap = outgoingBitmap ?: transitionBitmapCache[oc.id]
                     if (transBitmap != null && !transBitmap.isRecycled) {
                         val ts = activeTransitionClip.transition!!
                         val progress =
@@ -2455,24 +2303,6 @@ fun PreviewCanvas(
                     onDeletePoint = onMaskPointDelete, onClosePath = onClosePath,
                     onMaskMove = onMaskMove, onMaskStateChanged = onMaskStateChanged
                 )
-            }
-
-            if (isDrawingMode && !isMaskPenMode && !isMaskHandMode) {
-                val brushClip =
-                    clips.firstOrNull { it.isBrushClip && currentPosMs >= it.timelineStartMs && currentPosMs < it.timelineEndMs }
-                        ?: clips.lastOrNull { it.isBrushClip }
-                if (brushClip != null) {
-                    BrushDrawLayer(
-                        brushType = activeBrushType,
-                        brushColor = activeBrushColor,
-                        brushWidth = activeBrushWidth,
-                        brushOpacity = activeBrushOpacity,
-                        clipStartMs = brushClip.timelineStartMs,
-                        clipEndMs = brushClip.timelineEndMs,
-                        currentPosMs = currentPosMs,
-                        onStrokeComplete = onBrushStrokeComplete
-                    )
-                }
             }
 
         }
@@ -3410,84 +3240,6 @@ private fun transformMaskWithTwoFingers(
 }
 
 @Composable
-private fun BrushDrawLayer(
-    brushType: BrushType,
-    brushColor: Long,
-    brushWidth: Float,
-    brushOpacity: Float,
-    clipStartMs: Long,
-    clipEndMs: Long,
-    currentPosMs: Long,
-    onStrokeComplete: (BrushStroke) -> Unit
-) {
-    var currentPoints by remember { mutableStateOf<List<BrushPoint>>(emptyList()) }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(brushType, brushColor, brushWidth, brushOpacity) {
-                detectDragGestures(
-                    onDragStart = { offset ->
-                        currentPoints = listOf(
-                            BrushPoint(
-                                (offset.x / size.width).coerceIn(0f, 1f),
-                                (offset.y / size.height).coerceIn(0f, 1f)
-                            )
-                        )
-                    },
-                    onDrag = { change, _ ->
-                        change.consume(); currentPoints = currentPoints + BrushPoint(
-                        (change.position.x / size.width).coerceIn(
-                            0f,
-                            1f
-                        ), (change.position.y / size.height).coerceIn(0f, 1f)
-                    )
-                    },
-                    onDragEnd = {
-                        if (currentPoints.isNotEmpty()) {
-                            val localStart = (currentPosMs - clipStartMs).coerceAtLeast(0L);
-                            val localEnd = (clipEndMs - clipStartMs).coerceAtLeast(localStart + 1)
-                            onStrokeComplete(
-                                BrushStroke(
-                                    id = UUID.randomUUID().toString(),
-                                    type = brushType,
-                                    color = brushColor,
-                                    width = brushWidth,
-                                    opacity = brushOpacity,
-                                    points = currentPoints,
-                                    startMs = localStart,
-                                    endMs = localEnd
-                                )
-                            )
-                        }
-                        currentPoints = emptyList()
-                    },
-                    onDragCancel = { currentPoints = emptyList() }
-                )
-            }
-    ) {
-        if (currentPoints.isNotEmpty()) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                BrushEngine.drawStroke(
-                    scope = this,
-                    stroke = BrushStroke(
-                        id = "temp",
-                        type = brushType,
-                        color = brushColor,
-                        width = brushWidth,
-                        opacity = brushOpacity,
-                        points = currentPoints,
-                        startMs = 0,
-                        endMs = Long.MAX_VALUE
-                    ),
-                    viewW = size.width,
-                    viewH = size.height,
-                    currentTimeMs = 0
-                )
-            }
-        }
-    }
-}
-@Composable
 private fun TextBackgroundRenderer(
     state: com.moody.moodyvideoeditor.data.TextState,
     textWidthDp: Float,
@@ -3561,13 +3313,13 @@ private fun InteractiveTextOverlay(
     currentPosMs: Long,
     isSelected: Boolean,
     isMulti: Boolean = false,
-    isDrawingMode: Boolean = false,
     onSelect: () -> Unit,
     onGroupGestureStart: () -> Unit,
     onGroupGestureEnd: () -> Unit,
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit,
     onPositionChanged: (Float, Float) -> Unit,
     onTransformChanged: (Float, Float) -> Unit,
+    onGradientPointChanged: (String, Boolean, Float, Float) -> Unit,
     onDeleteLayer: () -> Unit,
 ) {
     if (textState.content.isBlank()) return
@@ -3692,14 +3444,20 @@ private fun InteractiveTextOverlay(
     val textWidthConstraintDp = with(density) { tightMeasure.size.width.toDp() }
     val solidColor = Color(textState.color)
     val gradient: Brush? = if (textState.gradientEnabled) {
-        val rad = Math.toRadians(textState.gradientAngle.toDouble());
-        val dx = kotlin.math.cos(rad).toFloat();
-        val dy = kotlin.math.sin(rad).toFloat(); Brush.linearGradient(
+        Brush.linearGradient(
             colors = listOf(
                 Color(
                     textState.gradientColor1
                 ), Color(textState.gradientColor2)
-            ), start = Offset(-dx * 600f, -dy * 600f), end = Offset(dx * 600f, dy * 600f)
+            ),
+            start = Offset(
+                textState.gradientStartX.coerceIn(0f, 1f) * finalMeasure.size.width,
+                textState.gradientStartY.coerceIn(0f, 1f) * finalMeasure.size.height
+            ),
+            end = Offset(
+                textState.gradientEndX.coerceIn(0f, 1f) * finalMeasure.size.width,
+                textState.gradientEndY.coerceIn(0f, 1f) * finalMeasure.size.height
+            )
         )
     } else null
     val shadowStyle: androidx.compose.ui.graphics.Shadow? =
@@ -3721,6 +3479,8 @@ private fun InteractiveTextOverlay(
     val selectionHeightDp = (textHeightDp + bgPadY).coerceAtLeast(20f)
     val outerWidthDp = selectionWidthDp;
     val outerHeightDp = selectionHeightDp
+    val gradientPaddingX = (outerWidthDp - textWidthDp).coerceAtLeast(0f) / 2f
+    val gradientPaddingY = (outerHeightDp - textHeightDp).coerceAtLeast(0f) / 2f
     val scaleFactor = sampled.scale / 100f;
     val handleW = (outerWidthDp * scaleFactor).dp;
     val handleH = (outerHeightDp * scaleFactor).dp
@@ -3748,8 +3508,7 @@ private fun InteractiveTextOverlay(
                         BlurredEdgeTreatment.Unbounded
                     ) else Modifier
                 )
-                .pointerInput(clip.id, canvasW, canvasH, isDrawingMode) {
-                    if (isDrawingMode) return@pointerInput
+                .pointerInput(clip.id, canvasW, canvasH) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         if (down.isConsumed) return@awaitEachGesture
@@ -3889,6 +3648,55 @@ private fun InteractiveTextOverlay(
                                     paint
                                 )
                                 }
+                                if (isSelected && !isMulti && textState.gradientEnabled) {
+                                BoxWithConstraints(
+                                    modifier = Modifier.matchParentSize(),
+                                    contentAlignment = Alignment.TopStart
+                                ) {
+                                    val startX = gradientPaddingX + textState.gradientStartX.coerceIn(0f, 1f) * textWidthDp
+                                    val startY = gradientPaddingY + textState.gradientStartY.coerceIn(0f, 1f) * textHeightDp
+                                    val endX = gradientPaddingX + textState.gradientEndX.coerceIn(0f, 1f) * textWidthDp
+                                    val endY = gradientPaddingY + textState.gradientEndY.coerceIn(0f, 1f) * textHeightDp
+                                    Canvas(Modifier.matchParentSize()) {
+                                        drawLine(
+                                            Color.White.copy(alpha = 0.9f),
+                                            Offset(startX.dp.toPx(), startY.dp.toPx()),
+                                            Offset(endX.dp.toPx(), endY.dp.toPx()),
+                                            strokeWidth = 2.dp.toPx()
+                                        )
+                                    }
+                                    GradientPointHandle(
+                                        label = "A",
+                                        color = Color(textState.gradientColor1),
+                                        x = startX,
+                                        y = startY,
+                                        textWidth = textWidthDp,
+                                        textHeight = textHeightDp,
+                                        paddingX = gradientPaddingX,
+                                        paddingY = gradientPaddingY,
+                                        onDragStart = onGroupGestureStart,
+                                        onDragEnd = onGroupGestureEnd,
+                                        onPositionChanged = { x, y ->
+                                            onGradientPointChanged(clip.id, true, x, y)
+                                        }
+                                    )
+                                    GradientPointHandle(
+                                        label = "B",
+                                        color = Color(textState.gradientColor2),
+                                        x = endX,
+                                        y = endY,
+                                        textWidth = textWidthDp,
+                                        textHeight = textHeightDp,
+                                        paddingX = gradientPaddingX,
+                                        paddingY = gradientPaddingY,
+                                        onDragStart = onGroupGestureStart,
+                                        onDragEnd = onGroupGestureEnd,
+                                        onPositionChanged = { x, y ->
+                                            onGradientPointChanged(clip.id, false, x, y)
+                                        }
+                                    )
+                                }
+                                }
                             }
                         }
                     }
@@ -3948,7 +3756,7 @@ private fun InteractiveTextOverlay(
                 )
             }
         }
-        if (isSelected && !isDrawingMode) {
+        if (isSelected) {
             Box(modifier = Modifier
                 .graphicsLayer {
                     val posTx = (clampedX - 50f) / 100f * refPx;
@@ -3976,6 +3784,52 @@ private fun InteractiveTextOverlay(
 }
 
 @Composable
+private fun BoxScope.GradientPointHandle(
+    label: String,
+    color: Color,
+    x: Float,
+    y: Float,
+    textWidth: Float,
+    textHeight: Float,
+    paddingX: Float,
+    paddingY: Float,
+    onDragStart: () -> Unit,
+    onDragEnd: () -> Unit,
+    onPositionChanged: (Float, Float) -> Unit
+) {
+    val density = LocalDensity.current
+    val latestX by rememberUpdatedState(x)
+    val latestY by rememberUpdatedState(y)
+    val latestOnPositionChanged by rememberUpdatedState(onPositionChanged)
+    val latestOnDragEnd by rememberUpdatedState(onDragEnd)
+    Box(
+        modifier = Modifier
+            .offset(x = (x - 14f).dp, y = (y - 14f).dp)
+            .size(28.dp)
+            .clip(CircleShape)
+            .background(color)
+            .border(2.dp, Color.White, CircleShape)
+            .pointerInput(label, textWidth, textHeight, paddingX, paddingY) {
+                detectDragGestures(
+                    onDragStart = { onDragStart() },
+                    onDragEnd = { latestOnDragEnd() },
+                    onDragCancel = { latestOnDragEnd() }
+                ) { change, dragAmount ->
+                    change.consume()
+                    val deltaX = with(density) { dragAmount.x.toDp().value }
+                    val deltaY = with(density) { dragAmount.y.toDp().value }
+                    val nextX = (latestX + deltaX / textWidth.coerceAtLeast(1f)).coerceIn(0f, 1f)
+                    val nextY = (latestY + deltaY / textHeight.coerceAtLeast(1f)).coerceIn(0f, 1f)
+                    latestOnPositionChanged(nextX, nextY)
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
 private fun InteractiveStickerOverlay(
     clip: EditorClip,
     stickerState: com.moody.moodyvideoeditor.data.StickerState,
@@ -3984,7 +3838,6 @@ private fun InteractiveStickerOverlay(
     currentPosMs: Long,
     isSelected: Boolean,
     isMulti: Boolean = false,
-    isDrawingMode: Boolean = false,
     onSelect: () -> Unit,
     onGroupGestureStart: () -> Unit,
     onGroupGestureEnd: () -> Unit,
@@ -4050,8 +3903,7 @@ private fun InteractiveStickerOverlay(
                     ) else Modifier
                 )
                 .padding(6.dp)
-                .pointerInput(clip.id, isSelected, isMulti, canvasW, canvasH, isDrawingMode) {
-                    if (isDrawingMode) return@pointerInput
+                .pointerInput(clip.id, isSelected, isMulti, canvasW, canvasH) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         if (down.isConsumed) return@awaitEachGesture
@@ -4125,7 +3977,7 @@ private fun InteractiveStickerOverlay(
                 fontSize = effStickerSizeSp,
                 modifier = Modifier.onSizeChanged { stickerSize = it })
         }
-        if (isSelected && !isDrawingMode) {
+        if (isSelected) {
             Box(modifier = Modifier
                 .graphicsLayer {
                     val posTx = (clampedX - 50f) / 100f * refPx;

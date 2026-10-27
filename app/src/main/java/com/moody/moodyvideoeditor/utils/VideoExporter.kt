@@ -156,13 +156,19 @@ class VideoExporter(
             rangeStart,
             rangeEnd
         )
+        val spotlightClips = trimClipsToRange(
+            clips.filter { it.isSpotlightClip },
+            rangeStart,
+            rangeEnd
+        )
         val vizClips =
             clips.filter { it.isVisualizerClip && it.timelineEndMs > rangeStart && it.timelineStartMs < rangeEnd }
 
         val exportDurationMs = rangeEnd - rangeStart
         val hasBaseVideo = trimmedVisualClips.isNotEmpty() || trimmedMatteClips.isNotEmpty()
         val hasSynthetic =
-            trimmedTextClips.isNotEmpty() || overlayImageClips.isNotEmpty() || vizClips.isNotEmpty()
+            trimmedTextClips.isNotEmpty() || overlayImageClips.isNotEmpty() ||
+                    vizClips.isNotEmpty() || spotlightClips.isNotEmpty()
 
         when {
             hasBaseVideo -> {
@@ -170,7 +176,7 @@ class VideoExporter(
                 onProgress(0.01f)
 
                 val textSequences = try {
-                    TextBitmapRenderer.renderCombinedOverlays(
+                    TextBitmapRenderer.renderOverlaysByTrack(
                         context = context,
                         textClips = trimmedTextClips,
                         imageClips = overlayImageClips,
@@ -216,7 +222,29 @@ class VideoExporter(
                     }
                 } else emptyList()
 
-                val allSequences = (textSequences + vizSequences).sortedBy { it.trackIndex }
+                val spotlightSequences = if (spotlightClips.isNotEmpty()) {
+                    try {
+                        SpotlightBitmapRenderer.render(
+                            context = context,
+                            clips = spotlightClips,
+                            width = targetW,
+                            height = targetH,
+                            fps = fps,
+                            totalDurationMs = exportDurationMs,
+                            onProgress = { p -> onProgress(0.40f + p * 0.10f) },
+                            shouldCancel = { isCancelled }
+                        )
+                    } catch (e: Exception) {
+                        cleanupSequences(textSequences + vizSequences)
+                        if (isCancelled) {
+                            onCancelled(); return
+                        }
+                        onError("Spotlight render failed: ${e.message}"); return
+                    }
+                } else emptyList()
+
+                val allSequences =
+                    (textSequences + vizSequences + spotlightSequences).sortedBy { it.trackIndex }
                 onProgress(0.40f)
 
                 ffmpeg = FFmpegExecutor(
@@ -265,6 +293,7 @@ class VideoExporter(
                         overlayImageClips = overlayImageClips,
                         overlayClips = trimmedOverlayClips,
                         vizClips = vizClips,
+                        spotlightClips = spotlightClips,
                         matteClips = trimmedMatteClips,
                         audioOnlyClips = audioOnlyClips,
                         rangeStart = rangeStart,
@@ -474,6 +503,7 @@ class VideoExporter(
         overlayImageClips: List<EditorClip>,
         overlayClips: List<EditorClip>,
         vizClips: List<EditorClip>,
+        spotlightClips: List<EditorClip> = emptyList(),
         matteClips: List<EditorClip> = emptyList(),
         audioOnlyClips: List<EditorClip>,
         rangeStart: Long,
@@ -515,9 +545,11 @@ class VideoExporter(
         } else emptyList()
 
         val textSequences =
-            if (textClips.isNotEmpty() || overlayImageClips.isNotEmpty() || overlayClips.isNotEmpty()) {
+            if (textClips.isNotEmpty() || overlayImageClips.isNotEmpty() ||
+                overlayClips.isNotEmpty()
+            ) {
                 try {
-                    TextBitmapRenderer.renderCombinedOverlays(
+                    TextBitmapRenderer.renderOverlaysByTrack(
                         context = context,
                         textClips = textClips,
                         imageClips = overlayImageClips,
@@ -540,7 +572,29 @@ class VideoExporter(
                 }
             } else emptyList()
 
-        val allSequences = (vizSequences + textSequences).sortedBy { it.trackIndex }
+        val spotlightSequences = if (spotlightClips.isNotEmpty()) {
+            try {
+                SpotlightBitmapRenderer.render(
+                    context = context,
+                    clips = spotlightClips,
+                    width = targetW,
+                    height = targetH,
+                    fps = fps,
+                    totalDurationMs = durationMs,
+                    onProgress = { p -> onProgress(0.50f + p * 0.10f) },
+                    shouldCancel = { isCancelled }
+                )
+            } catch (e: Exception) {
+                cleanupSequences(vizSequences + textSequences)
+                if (isCancelled) {
+                    onCancelled(); return
+                }
+                onError("Spotlight render failed: ${e.message}"); return
+            }
+        } else emptyList()
+
+        val allSequences =
+            (vizSequences + textSequences + spotlightSequences).sortedBy { it.trackIndex }
         onProgress(0.50f)
 
         val audioToMix = mutableListOf<EditorClip>()
@@ -585,8 +639,14 @@ class VideoExporter(
             if (seq.startSec > 0.0001) {
                 args.add("-itsoffset"); args.add("%.4f".format(seq.startSec))
             }
-            args.add("-framerate"); args.add(seq.fps.toString())
-            args.add("-start_number"); args.add(seq.startNumber.toString())
+            if (seq.isStaticImage) {
+                args.add("-loop"); args.add("1")
+                args.add("-framerate"); args.add(seq.fps.toString())
+                args.add("-t"); args.add((seq.endSec - seq.startSec).coerceAtLeast(0.01).toString())
+            } else {
+                args.add("-framerate"); args.add(seq.fps.toString())
+                args.add("-start_number"); args.add(seq.startNumber.toString())
+            }
             args.add("-i"); args.add(seq.pattern)
         }
 
@@ -598,10 +658,24 @@ class VideoExporter(
             val inIdx = seqStartIdx + idx
             val srcLabel = "seqsrc$idx"
             val outLabel = "ov$idx"
-            filterParts.add("[$inIdx:v]format=rgba[$srcLabel]")
+            val sourceFilter = if (seq.blendMode.equals("addition", ignoreCase = true)) {
+                "format=rgba,geq=r='r(X,Y)*alpha(X,Y)/255':g='g(X,Y)*alpha(X,Y)/255':b='b(X,Y)*alpha(X,Y)/255':a='alpha(X,Y)'"
+            } else {
+                "format=rgba"
+            }
+            filterParts.add("[$inIdx:v]$sourceFilter[$srcLabel]")
             val startS = "%.4f".format(seq.startSec)
             val endS = "%.4f".format(seq.endSec)
-            filterParts.add("[$lastLabel][$srcLabel]overlay=0:0:enable='between(t,$startS,$endS)'[$outLabel]")
+            if (seq.blendMode.equals("addition", ignoreCase = true)) {
+                filterParts.add("[$lastLabel]format=rgba[baseadd$idx]")
+                filterParts.add(
+                    "[baseadd$idx][$srcLabel]blend=all_mode=addition:shortest=0:enable='between(t,$startS,$endS)'[$outLabel]"
+                )
+            } else {
+                filterParts.add(
+                    "[$lastLabel][$srcLabel]overlay=0:0:enable='between(t,$startS,$endS)'[$outLabel]"
+                )
+            }
             lastLabel = outLabel
         }
         filterParts.add("[$lastLabel]format=yuv420p[outv]")

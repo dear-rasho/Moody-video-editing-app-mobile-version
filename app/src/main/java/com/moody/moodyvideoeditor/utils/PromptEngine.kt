@@ -12,7 +12,6 @@ enum class CmdType {
     COLOR_WHEEL, FONT, ALIGN, ANCHOR, KEYFRAME,
     RATIO, TIGHTEN, GRAPH, CLEAR_KEYFRAMES,
     TEMPLATE,
-    BRUSH_GRADIENT, BRUSH_TYPE, BRUSH_DRAW, BRUSH_CLEAR,
     BEAT_ANIMATION,
     VISUALIZER,
     COLOR_MATTE,
@@ -597,85 +596,6 @@ object PromptEngine {
                 extra = extra,
                 raw = text
             )
-        }
-
-        // ═══════════════════════════════════════════════════════
-        //  BRUSH COMMANDS
-        // ═══════════════════════════════════════════════════════
-
-        // BRUSH GRADIENT — supports 2/3 colors + reverse
-        Regex(
-            """^brush\s+gradient\s+(?:#([0-9a-fA-F]{6})|([a-z]+))\s+to\s+(?:#([0-9a-fA-F]{6})|([a-z]+))(?:\s+to\s+(?:#([0-9a-fA-F]{6})|([a-z]+)))?(?:\s+(reverse))?$""",
-            RegexOption.IGNORE_CASE
-        ).find(text)?.let { m ->
-            val c1 = m.groupValues[1].ifBlank { colorNameToHex(m.groupValues[2]) }
-            val c2 = m.groupValues[3].ifBlank { colorNameToHex(m.groupValues[4]) }
-            val c3 = m.groupValues[5].ifBlank {
-                if (m.groupValues[6].isNotBlank()) colorNameToHex(m.groupValues[6])
-                else ""
-            }
-            val isReverse = m.groupValues[7].equals("reverse", ignoreCase = true)
-
-            val payload = buildString {
-                append("#$c1")
-                append(",")
-                append("#$c2")
-                if (c3.isNotBlank()) {
-                    append(",")
-                    append("#$c3")
-                }
-                append(",")
-                append(if (isReverse) "reverse" else "linear")
-            }
-
-            return ParsedCommand(
-                CmdType.BRUSH_GRADIENT,
-                "set",
-                stringValue = payload,
-                raw = text
-            )
-        }
-
-        if (lower == "brush solid" || lower == "brush no gradient") {
-            return ParsedCommand(CmdType.BRUSH_GRADIENT, "off", raw = text)
-        }
-
-        // BRUSH TYPE — pen/marker/chalk/neon/glow/spray [color X] [width N]
-        Regex(
-            """^brush\s+(pen|marker|chalk|neon|glow|spray)(?:\s+color\s+(?:#([0-9a-fA-F]{6})|([a-z]+)))?(?:\s+width\s+([\d.]+))?$""",
-            RegexOption.IGNORE_CASE
-        ).find(text)?.let { m ->
-            val type = m.groupValues[1].lowercase()
-
-            val hexGroup = m.groupValues[2]
-            val nameGroup = m.groupValues[3]
-            val colorHex = when {
-                hexGroup.isNotBlank() -> hexGroup
-                nameGroup.isNotBlank() -> colorNameToHex(nameGroup)
-                else -> null
-            }
-
-            val width = m.groupValues[4].toFloatOrNull()
-
-            return ParsedCommand(
-                CmdType.BRUSH_TYPE,
-                type,
-                value1 = width,
-                stringValue = colorHex?.let { "#$it" },
-                raw = text
-            )
-        }
-
-        if (lower == "brush draw" || lower == "start drawing" || lower == "draw") {
-            return ParsedCommand(CmdType.BRUSH_DRAW, "on", raw = text)
-        }
-
-        if (lower == "brush stop" || lower == "stop drawing") {
-            return ParsedCommand(CmdType.BRUSH_DRAW, "off", raw = text)
-        }
-
-        if (lower == "brush clear" || lower == "clear brush") {
-            return ParsedCommand(CmdType.BRUSH_CLEAR, "clear", raw = text)
         }
 
         // ═══════════════════════════════════════════════════════

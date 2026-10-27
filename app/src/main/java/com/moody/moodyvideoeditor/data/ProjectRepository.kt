@@ -169,7 +169,9 @@ object ProjectRepository {
         val arr = o.optJSONArray("clips") ?: JSONArray()
         for (i in 0 until arr.length()) {
             val obj = arr.optJSONObject(i)
-            if (obj != null) clips.add(clipFromJson(obj))
+            if (obj != null && obj.optString("type") != "brush/plain") {
+                clips.add(clipFromJson(obj))
+            }
         }
         return EditorState(
             clips = clips,
@@ -256,12 +258,12 @@ object ProjectRepository {
         if (ratio != null) put("ratio", ratioToJson(ratio))
 
         put("mask", maskToJson(c.mask))
-        put("brush", brushToJson(c.brush))
         put("matteStyle", matteStyleToJson(c.matteStyle))
         put("chromaKey", chromaKeyToJson(c.chromaKey))
 
         val visualizer = c.visualizer
         if (visualizer != null) put("visualizer", visualizerToJson(visualizer))
+        c.spotlight?.let { put("spotlight", it.toJson()) }
 
 
         // Keyframes
@@ -330,10 +332,10 @@ object ProjectRepository {
             transition = o.optJSONObject("transition")?.let { transitionFromJson(it) },
             ratio = o.optJSONObject("ratio")?.let { ratioFromJson(it) },
             mask = maskFromJson(o.optJSONObject("mask")),
-            brush = brushFromJson(o.optJSONObject("brush")),
             matteStyle = matteStyleFromJson(o.optJSONObject("matteStyle")),
             chromaKey = chromaKeyFromJson(o.optJSONObject("chromaKey")),
             visualizer = o.optJSONObject("visualizer")?.let { visualizerFromJson(it) },
+            spotlight = o.optJSONObject("spotlight")?.let { SpotlightState.fromJson(it) },
             keyframes = keyframesFromJson(o.optJSONObject("keyframes"))
         )
     }
@@ -910,6 +912,10 @@ object ProjectRepository {
         put("gradientColor1", t.gradientColor1)
         put("gradientColor2", t.gradientColor2)
         put("gradientAngle", t.gradientAngle.toDouble())
+        put("gradientStartX", t.gradientStartX.toDouble())
+        put("gradientStartY", t.gradientStartY.toDouble())
+        put("gradientEndX", t.gradientEndX.toDouble())
+        put("gradientEndY", t.gradientEndY.toDouble())
         put("shadowEnabled", t.shadowEnabled)
         put("shadowColor", t.shadowColor)
         put("shadowBlur", t.shadowBlur.toDouble())
@@ -958,6 +964,10 @@ object ProjectRepository {
                 if (segObj != null) segments.add(textSegmentFromJson(segObj))
             }
         }
+        val gradientAngle = o.optDouble("gradientAngle", 90.0).toFloat()
+        val angleRadians = Math.toRadians(gradientAngle.toDouble())
+        val legacyDx = kotlin.math.cos(angleRadians).toFloat() * 0.5f
+        val legacyDy = kotlin.math.sin(angleRadians).toFloat() * 0.5f
         return TextState(
             content = o.optString("content", ""),
             fontFamily = o.optString("fontFamily", "Arial"),
@@ -974,7 +984,11 @@ object ProjectRepository {
             gradientEnabled = o.optBoolean("gradientEnabled", false),
             gradientColor1 = o.optLong("gradientColor1", 0xFFFF0066L),
             gradientColor2 = o.optLong("gradientColor2", 0xFF0066FFL),
-            gradientAngle = o.optDouble("gradientAngle", 90.0).toFloat(),
+            gradientAngle = gradientAngle,
+            gradientStartX = o.optDouble("gradientStartX", 0.5 - legacyDx.toDouble()).toFloat(),
+            gradientStartY = o.optDouble("gradientStartY", 0.5 - legacyDy.toDouble()).toFloat(),
+            gradientEndX = o.optDouble("gradientEndX", 0.5 + legacyDx.toDouble()).toFloat(),
+            gradientEndY = o.optDouble("gradientEndY", 0.5 + legacyDy.toDouble()).toFloat(),
             shadowEnabled = o.optBoolean("shadowEnabled", false),
             shadowColor = o.optLong("shadowColor", 0xFF000000L),
             shadowBlur = o.optDouble("shadowBlur", 8.0).toFloat(),
@@ -1277,108 +1291,6 @@ object ProjectRepository {
             keyframes = snapshotKfs
         )
     }
-
-    //  BRUSH
-
-
-    private fun brushToJson(b: BrushState) = JSONObject().apply {
-        val arr = JSONArray()
-        b.strokes.forEach { s ->
-            arr.put(JSONObject().apply {
-                put("id", s.id)
-                put("type", s.type.name)
-                put("color", s.color)
-                put("width", s.width.toDouble())
-                put("opacity", s.opacity.toDouble())
-                put("startMs", s.startMs)
-                put("endMs", s.endMs)
-
-                val ptsArr = JSONArray()
-                s.points.forEach { p ->
-                    ptsArr.put(JSONObject().apply {
-                        put("x", p.x.toDouble())
-                        put("y", p.y.toDouble())
-                    })
-                }
-                put("points", ptsArr)
-
-                put("gradient", JSONObject().apply {
-                    put("enabled", s.gradient.enabled)
-                    put("color1", s.gradient.color1)
-                    put("color2", s.gradient.color2)
-                    put("color3", s.gradient.color3)
-                    put("hasMid", s.gradient.hasMid)
-                    put("mode", s.gradient.mode)
-                })
-            })
-        }
-        put("strokes", arr)
-    }
-
-    private fun brushFromJson(o: JSONObject?): BrushState {
-        if (o == null) return BrushState()
-        val strokes = mutableListOf<BrushStroke>()
-        val arr = o.optJSONArray("strokes")
-        if (arr != null) {
-            for (i in 0 until arr.length()) {
-                val s = arr.optJSONObject(i)
-                if (s != null) {
-                    val pts = mutableListOf<BrushPoint>()
-                    val pArr = s.optJSONArray("points")
-                    if (pArr != null) {
-                        for (j in 0 until pArr.length()) {
-                            val p = pArr.optJSONObject(j)
-                            if (p != null) {
-                                pts.add(
-                                    BrushPoint(
-                                        x = p.optDouble("x", 0.0).toFloat(),
-                                        y = p.optDouble("y", 0.0).toFloat()
-                                    )
-                                )
-                            }
-                        }
-                    }
-
-                    val gradObj = s.optJSONObject("gradient")
-                    val grad = if (gradObj != null) {
-                        BrushGradient(
-                            enabled = gradObj.optBoolean("enabled", false),
-                            color1 = gradObj.optLong("color1", 0xFFFF0000L),
-                            color2 = gradObj.optLong("color2", 0xFF00FF00L),
-                            color3 = gradObj.optLong("color3", 0x00000000L),
-                            hasMid = gradObj.optBoolean("hasMid", false),
-                            mode = gradObj.optString("mode", "linear")
-                        )
-                    } else BrushGradient()
-
-                    val type = try {
-                        BrushType.valueOf(s.optString("type", "PEN"))
-                    } catch (e: Exception) {
-                        BrushType.PEN
-                    }
-
-                    strokes.add(
-                        BrushStroke(
-                            id = s.optString(
-                                "id",
-                                java.util.UUID.randomUUID().toString()
-                            ),
-                            type = type,
-                            color = s.optLong("color", 0xFFFF0000L),
-                            width = s.optDouble("width", 20.0).toFloat(),
-                            opacity = s.optDouble("opacity", 1.0).toFloat(),
-                            points = pts,
-                            startMs = s.optLong("startMs", 0L),
-                            endMs = s.optLong("endMs", Long.MAX_VALUE),
-                            gradient = grad
-                        )
-                    )
-                }
-            }
-        }
-        return BrushState(strokes = strokes)
-    }
-
 
     //  COLOR MATTE STYLE
 

@@ -5,29 +5,24 @@ import com.moody.moodyvideoeditor.data.EditorClip
 object TimelineTools {
 
 
-    //  MAGNET — close gaps from playhead onwards (SAME layer)
+    // MAGNET — pack clips after the selected clip on the same track.
 
-    fun closeGapsFromPlayhead(
+    fun closeGapsAfterClip(
         track: List<EditorClip>,
-        playheadMs: Long
+        anchorClipId: String
     ): List<EditorClip> {
         if (track.size < 2) return track
         val sorted = track.sortedBy { it.timelineStartMs }
-
-        var chainStartIdx = -1
-        for (i in sorted.indices) {
-            if (sorted[i].timelineEndMs >= playheadMs) {
-                chainStartIdx = i
-                break
-            }
-        }
-        if (chainStartIdx < 0) return track
+        val anchorIdx = sorted.indexOfFirst { it.id == anchorClipId }
+        if (anchorIdx < 0 || anchorIdx == sorted.lastIndex) return track
 
         val result = sorted.toMutableList()
-        var cursor = result[chainStartIdx].timelineStartMs
-        for (i in chainStartIdx until result.size) {
-            result[i] = result[i].copy(timelineStartMs = cursor)
-            cursor += result[i].durationMs
+        var cursor = result[anchorIdx].timelineEndMs
+        for (i in anchorIdx + 1 until result.size) {
+            val clip = result[i]
+            val startMs = maxOf(clip.timelineStartMs, cursor)
+            result[i] = clip.copy(timelineStartMs = startMs)
+            cursor = startMs + clip.durationMs
         }
         return result
     }

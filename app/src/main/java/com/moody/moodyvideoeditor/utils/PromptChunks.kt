@@ -564,30 +564,6 @@ Rules:
 """.trimIndent()
 
     // ═══════════════════════════════════════════════════════════
-    //  11. BRUSH
-    // ═══════════════════════════════════════════════════════════
-    val BRUSH = """
-## 🖌️ BRUSH
-  brush draw                    enable drawing mode
-  brush stop                    disable drawing mode
-  brush clear                   clear all strokes
-
-  brush pen | marker | chalk | neon | glow | spray
-  brush TYPE color COLOR width WIDTH
-
-  brush gradient COLOR1 to COLOR2
-  brush gradient COLOR1 to COLOR2 to COLOR3
-  brush gradient COLOR1 to COLOR2 reverse
-  brush solid
-
-Examples:
-  brush draw
-  brush neon color cyan width 25
-  brush gradient red to blue
-  brush gradient cyan to magenta
-""".trimIndent()
-
-    // ═══════════════════════════════════════════════════════════
     //  12. VISUALIZER
     // ═══════════════════════════════════════════════════════════
     val VISUALIZER = """
@@ -753,8 +729,6 @@ Example:
             "Shadows / midtones / highlights / HDR", COLOR_WHEEL),
         PromptChunk("transitions", "⇄", "Transitions",
             "100+ transition presets, per-clip patterns", TRANSITIONS),
-        PromptChunk("brush", "🖌️", "Brush",
-            "Drawing, gradients, brush types", BRUSH),
         PromptChunk("visualizer", "🎵", "Visualizer",
             "Audio-reactive visualizer", VISUALIZER),
         PromptChunk("audio", "🎙️", "Audio FX",

@@ -1,8 +1,10 @@
 package com.moody.moodyvideoeditor.ui.features
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -50,6 +52,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
 import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.ui.components.ColorPickerField
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
@@ -796,19 +799,19 @@ private fun GradientSub(
             latestOnChange(latestState.copy(gradientEnabled = it))
         }
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(28.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(
-                    Brush.linearGradient(
-                        colors = listOf(
-                            Color(state.gradientColor1),
-                            Color(state.gradientColor2)
-                        )
-                    )
-                )
+        GradientRampControl(
+            startX = state.gradientStartX,
+            startY = state.gradientStartY,
+            endX = state.gradientEndX,
+            endY = state.gradientEndY,
+            color1 = Color(state.gradientColor1),
+            color2 = Color(state.gradientColor2),
+            onStartChange = { x, y ->
+                latestOnChange(latestState.copy(gradientStartX = x, gradientStartY = y))
+            },
+            onEndChange = { x, y ->
+                latestOnChange(latestState.copy(gradientEndX = x, gradientEndY = y))
+            }
         )
 
         key("gradA") {
@@ -840,9 +843,65 @@ private fun GradientSub(
             )
         }
 
-        SliderRow("Angle", state.gradientAngle, 0f..360f) {
-            latestOnChange(latestState.copy(gradientAngle = it))
-        }
+    }
+}
+
+@Composable
+private fun GradientRampControl(
+    startX: Float,
+    startY: Float,
+    endX: Float,
+    endY: Float,
+    color1: Color,
+    color2: Color,
+    onStartChange: (Float, Float) -> Unit,
+    onEndChange: (Float, Float) -> Unit
+) {
+    var activeHandle by remember { mutableStateOf(0) }
+    val latestStartX by rememberUpdatedState(startX)
+    val latestStartY by rememberUpdatedState(startY)
+    val latestEndX by rememberUpdatedState(endX)
+    val latestEndY by rememberUpdatedState(endY)
+    Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(88.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF181818))
+            .pointerInput(Unit) {
+                fun updateGradientHandle(position: Offset) {
+                    var x = (position.x / size.width).coerceIn(0f, 1f)
+                    val y = (position.y / size.height).coerceIn(0f, 1f)
+                    val otherX = if (activeHandle == 0) latestEndX else latestStartX
+                    val otherY = if (activeHandle == 0) latestEndY else latestStartY
+                    if (kotlin.math.abs(x - otherX) < 0.01f && kotlin.math.abs(y - otherY) < 0.01f) {
+                        x = if (otherX <= 0.98f) otherX + 0.02f else otherX - 0.02f
+                    }
+                    if (activeHandle == 0) onStartChange(x, y) else onEndChange(x, y)
+                }
+
+                detectDragGestures(
+                    onDragStart = { position ->
+                        val start = Offset(latestStartX * size.width, latestStartY * size.height)
+                        val end = Offset(latestEndX * size.width, latestEndY * size.height)
+                        activeHandle = if ((position - start).getDistance() <= (position - end).getDistance()) 0 else 1
+                        updateGradientHandle(position)
+                    },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        updateGradientHandle(change.position)
+                    }
+                )
+            }
+    ) {
+        val start = Offset(startX * size.width, startY * size.height)
+        val end = Offset(endX * size.width, endY * size.height)
+        drawRect(Brush.linearGradient(listOf(color1, color2), start = start, end = end))
+        drawLine(Color.White.copy(alpha = 0.75f), start, end, strokeWidth = 2.dp.toPx())
+        drawCircle(Color(0xFFFF4F9A), radius = 9.dp.toPx(), center = start)
+        drawCircle(Color.White, radius = 9.dp.toPx(), center = start, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
+        drawCircle(Color(0xFF54B6FF), radius = 9.dp.toPx(), center = end)
+        drawCircle(Color.White, radius = 9.dp.toPx(), center = end, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
     }
 }
 

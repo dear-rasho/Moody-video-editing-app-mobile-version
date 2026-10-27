@@ -7,8 +7,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.BeatsState
-import com.moody.moodyvideoeditor.data.BrushState
-import com.moody.moodyvideoeditor.data.BrushStroke
 import com.moody.moodyvideoeditor.data.ColorMatteDefaults
 import com.moody.moodyvideoeditor.data.ColorMatteMode
 import com.moody.moodyvideoeditor.data.ColorMatteStyle
@@ -29,6 +27,7 @@ import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.data.PreviewMatteState
 import com.moody.moodyvideoeditor.data.RatioState
 import com.moody.moodyvideoeditor.data.StickerState
+import com.moody.moodyvideoeditor.data.SpotlightState
 import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.data.TransitionLibrary
 import com.moody.moodyvideoeditor.data.TransitionState
@@ -45,6 +44,7 @@ import com.moody.moodyvideoeditor.utils.HistoryManager
 import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.utils.MaskEngine
 import com.moody.moodyvideoeditor.utils.SettingsConsumer
+import com.moody.moodyvideoeditor.utils.SpotlightAnimation
 import com.moody.moodyvideoeditor.utils.SpeedEngine
 import com.moody.moodyvideoeditor.utils.TimelineEngine
 import com.moody.moodyvideoeditor.utils.TimelineTools
@@ -189,7 +189,7 @@ class EditorViewModel : ViewModel() {
             .loadProject(context, projectId) ?: return false
 
         val fixedClips = loaded.clips.map { clip ->
-            if (clip.isTextClip || clip.isStickerClip || clip.isBrushClip ||
+            if (clip.isTextClip || clip.isStickerClip ||
                 clip.type.startsWith("image/")
             ) {
                 clip.copy(sourceTotalMs = Long.MAX_VALUE)
@@ -226,7 +226,7 @@ class EditorViewModel : ViewModel() {
             .load(context, templateId) ?: return false
 
         val fixedClips = loaded.clips.map { clip ->
-            if (clip.isTextClip || clip.isStickerClip || clip.isBrushClip ||
+            if (clip.isTextClip || clip.isStickerClip ||
                 clip.isEffectClip || clip.isAdjustmentClip ||
                 clip.isOverlayClip ||
                 clip.isColorMatteClip || clip.isFilterLayerClip ||
@@ -796,6 +796,8 @@ class EditorViewModel : ViewModel() {
     fun moveClip(clipId: String, targetTrackIndex: Int, newIsAudio: Boolean, newTimelineMs: Long) {
         val s = _state.value
         val clip = s.clips.firstOrNull { it.id == clipId } ?: return
+        val targetTrack = targetTrackIndex.coerceAtLeast(0)
+        val targetStart = newTimelineMs.coerceAtLeast(0L)
 
         val isMulti = s.multiSelectedIds.size > 1 && clipId in s.multiSelectedIds
         if (isMulti) {
@@ -804,7 +806,7 @@ class EditorViewModel : ViewModel() {
         }
 
         if (clip.isAudio && !clip.isAudioEffectClip) {
-            val movedDelta = newTimelineMs - clip.timelineStartMs
+            val movedDelta = targetStart - clip.timelineStartMs
             if (movedDelta != 0L) {
                 val list = _state.value.clips.toMutableList()
                 var changed = false
@@ -826,14 +828,12 @@ class EditorViewModel : ViewModel() {
 
         val groupId = clip.linkGroupId
         if (groupId != null) {
-            moveLinkedGroup(clipId, targetTrackIndex, newIsAudio, newTimelineMs)
+            moveLinkedGroup(clipId, targetTrack, newIsAudio, targetStart)
             return
         }
 
         val sourceTrack = clip.trackIndex
         val isAudio = clip.isAudio
-        val targetTrack = targetTrackIndex.coerceAtLeast(0)
-        val targetStart = newTimelineMs.coerceAtLeast(0L)
 
         if (targetTrack != sourceTrack) {
             val draggedEnd = targetStart + clip.durationMs
@@ -1001,6 +1001,8 @@ class EditorViewModel : ViewModel() {
         val groupId = movedClip.linkGroupId ?: return
         val group = s.clips.filter { it.linkGroupId == groupId }
         if (group.isEmpty()) return
+        val targetTrack = targetTrackIndex.coerceAtLeast(0)
+        val targetStart = newTimelineMs.coerceAtLeast(0L)
 
         val anchor = group.maxByOrNull { it.linkAnchorPriority } ?: movedClip
         val anchorIsMoved = anchor.id == movedClipId
@@ -1008,14 +1010,16 @@ class EditorViewModel : ViewModel() {
         val list = s.clips.toMutableList()
 
         if (anchorIsMoved) {
-            val timeDelta = newTimelineMs - anchor.timelineStartMs
+            val earliestStart = group.minOf { it.timelineStartMs }
+            val timeDelta = (targetStart - anchor.timelineStartMs)
+                .coerceAtLeast(-earliestStart)
             group.forEach { c ->
                 val idx = list.indexOfFirst { it.id == c.id }
                 if (idx < 0) return@forEach
                 if (c.id == anchor.id) {
                     list[idx] = c.copy(
-                        trackIndex = targetTrackIndex,
-                        timelineStartMs = newTimelineMs
+                        trackIndex = targetTrack,
+                        timelineStartMs = (c.timelineStartMs + timeDelta).coerceAtLeast(0L)
                     )
                 } else {
                     val newStart = (c.timelineStartMs + timeDelta).coerceAtLeast(0L)
@@ -1026,8 +1030,8 @@ class EditorViewModel : ViewModel() {
             val idx = list.indexOfFirst { it.id == movedClipId }
             if (idx >= 0) {
                 list[idx] = movedClip.copy(
-                    trackIndex = targetTrackIndex,
-                    timelineStartMs = newTimelineMs
+                    trackIndex = targetTrack,
+                    timelineStartMs = targetStart
                 )
             }
         }
@@ -1039,7 +1043,7 @@ class EditorViewModel : ViewModel() {
             it.copy(
                 clips = list,
                 selectedClipId = movedClipId,
-                selectedTrackIndex = targetTrackIndex,
+                selectedTrackIndex = targetTrack,
                 selectedIsAudio = newIsAudio,
                 visualLayerCount = maxOf(it.visualLayerCount, maxVisual + 1),
                 audioLayerCount = maxOf(it.audioLayerCount, maxAudio + 1)
@@ -1079,7 +1083,11 @@ class EditorViewModel : ViewModel() {
         }
 
         val trackDelta = newTrackIndex - anchor.trackIndex
-        val timeDelta = newTimelineMs - anchor.timelineStartMs
+        val earliestStart = s.clips
+            .filter { it.id in targetIds }
+            .minOfOrNull { it.timelineStartMs } ?: anchor.timelineStartMs
+        val timeDelta = (newTimelineMs - anchor.timelineStartMs)
+            .coerceAtLeast(-earliestStart)
 
         val list = s.clips.toMutableList()
         for (i in list.indices) {
@@ -1182,19 +1190,38 @@ class EditorViewModel : ViewModel() {
         return newIdx
     }
 
-    fun closeGapsFromPlayhead() {
+    fun closeGapsAfterSelectedClip() {
         val sel = _state.value.selectedClip ?: return
-        pushHistory()
         val s = _state.value
         val list = if (sel.isAudio) s.timelineAudioList() else s.timelineVisualList()
         val track = list.getOrNull(sel.trackIndex) ?: return
-        val updated = TimelineTools.closeGapsFromPlayhead(track, s.currentPosMs)
+        val updated = TimelineTools.closeGapsAfterClip(track, sel.id)
+        val changedStarts = updated.associate { it.id to it.timelineStartMs }
+            .filter { (id, startMs) ->
+                track.firstOrNull { it.id == id }?.timelineStartMs != startMs
+            }
+        if (changedStarts.isEmpty()) return
+
+        pushHistory()
+        val movedDeltas = changedStarts.mapNotNull { (id, startMs) ->
+            val original = track.firstOrNull { it.id == id } ?: return@mapNotNull null
+            val delta = startMs - original.timelineStartMs
+            if (original.linkedId == null || delta == 0L) null
+            else original.linkedId to delta
+        }.toMap()
 
         _state.update { st ->
-            val newList = (if (sel.isAudio) st.timelineAudioList()
-            else st.timelineVisualList()).toMutableList()
-            newList[sel.trackIndex] = updated
-            st.withTrackList(sel.isAudio, newList)
+            val updates = changedStarts.toMutableMap()
+            val linkedClips = st.clips.filter { it.linkedId in movedDeltas.keys }
+            linkedClips.forEach { linked ->
+                val delta = movedDeltas[linked.linkedId] ?: return@forEach
+                updates.putIfAbsent(linked.id, (linked.timelineStartMs + delta).coerceAtLeast(0L))
+            }
+            st.copy(
+                clips = st.clips.map { clip ->
+                    updates[clip.id]?.let { clip.copy(timelineStartMs = it) } ?: clip
+                }
+            )
         }
         updateHistoryFlags()
     }
@@ -2009,6 +2036,64 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
+    fun createSpotlightClip(): EditorClip {
+        val s = _state.value
+        val durationMs = 5_000L
+        val clip = EditorClip(
+            id = UUID.randomUUID().toString(),
+            uri = Uri.EMPTY,
+            name = "Spotlight",
+            type = "spotlight/plain",
+            sourceStartMs = 0L,
+            sourceEndMs = durationMs,
+            timelineStartMs = s.currentPosMs,
+            trackIndex = 0,
+            isAudio = false,
+            sourceTotalMs = Long.MAX_VALUE,
+            spotlight = SpotlightState()
+        )
+        pushHistory()
+        val added = addClipOnNewLayer(clip, (s.selectedClip?.trackIndex ?: 0) + 1)
+        updateHistoryFlags()
+        return added
+    }
+
+    fun updateSpotlight(layerId: String, spotlight: SpotlightState) {
+        val current = _state.value
+        val clip = current.clips.firstOrNull { it.id == layerId && it.isSpotlightClip }
+            ?: return
+        val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+            current.currentPosMs, clip.timelineStartMs, clip.durationMs
+        )
+        updateClipDirect(layerId) { clip ->
+            if (!clip.isSpotlightClip) return@updateClipDirect clip
+            val base = SpotlightAnimation.sample(
+                clip.spotlight ?: SpotlightState(),
+                clip.keyframes,
+                currentTimeSec
+            )
+            clip.copy(
+                spotlight = spotlight,
+                keyframes = SpotlightAnimation.updateAutoKeyframes(
+                    base,
+                    spotlight,
+                    clip.keyframes,
+                    currentTimeSec
+                )
+            )
+        }
+    }
+
+    fun removeSpotlight(layerId: String) {
+        val clip = _state.value.clips.firstOrNull { it.id == layerId } ?: return
+        if (!clip.isSpotlightClip) return
+        pushHistory()
+        val list = _state.value.clips.toMutableList()
+        list.removeAll { it.id == layerId }
+        _state.update { it.copy(clips = list, selectedClipId = null) }
+        updateHistoryFlags()
+    }
+
     fun updateClipTextState(clipId: String, newState: TextState) {
         updateClipDirect(clipId) { clip ->
             if (clip.isTextClip) {
@@ -2017,6 +2102,29 @@ class EditorViewModel : ViewModel() {
                     name = "📝 ${newState.content.take(18).ifBlank { "Text" }}"
                 )
             } else clip
+        }
+    }
+
+    fun updateTextGradientPoint(
+        clipId: String,
+        isStartPoint: Boolean,
+        x: Float,
+        y: Float
+    ) {
+        updateClipDirect(clipId) { clip ->
+            val textState = clip.textState ?: return@updateClipDirect clip
+            val updatedTextState = if (isStartPoint) {
+                textState.copy(
+                    gradientStartX = x.coerceIn(0f, 1f),
+                    gradientStartY = y.coerceIn(0f, 1f)
+                )
+            } else {
+                textState.copy(
+                    gradientEndX = x.coerceIn(0f, 1f),
+                    gradientEndY = y.coerceIn(0f, 1f)
+                )
+            }
+            clip.copy(textState = updatedTextState)
         }
     }
 
@@ -2249,95 +2357,6 @@ class EditorViewModel : ViewModel() {
                     keyframes = kf
                 )
             } else c.copy(stickerState = ss.copy(scale = scale, rotation = rotation))
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  BRUSH
-    // ═══════════════════════════════════════════════════════════
-
-    fun createBrushClip(initial: BrushState = BrushState()) {
-        val s = _state.value
-        val clip = EditorClip(
-            id = UUID.randomUUID().toString(), uri = Uri.EMPTY,
-            name = "🖌️ Brush", type = "brush/plain",
-            sourceStartMs = 0L, sourceEndMs = 5000L,
-            timelineStartMs = s.currentPosMs, trackIndex = 0,
-            isAudio = false, sourceTotalMs = Long.MAX_VALUE,
-            brush = initial
-        )
-        pushHistory()
-        addClipOnNewLayer(clip, (s.selectedClip?.trackIndex ?: 0) + 1)
-        updateHistoryFlags()
-    }
-
-    fun addStrokeToBrushClip(clipId: String?, stroke: BrushStroke) {
-        val s = _state.value
-        val targetId = clipId
-            ?: s.selectedClip?.takeIf { it.isBrushClip }?.id
-            ?: s.clips.lastOrNull { it.isBrushClip }?.id
-
-        if (targetId == null) {
-            createBrushClip(BrushState(strokes = listOf(stroke)))
-            return
-        }
-        updateClipDirect(targetId) { clip ->
-            val newStrokes = clip.brush.strokes + stroke
-            clip.copy(brush = clip.brush.copy(strokes = newStrokes))
-        }
-    }
-
-    fun removeStrokeFromBrushClip(clipId: String, strokeId: String) {
-        updateClipDirect(clipId) { clip ->
-            clip.copy(
-                brush = clip.brush.copy(
-                    strokes = clip.brush.strokes.filter { it.id != strokeId }
-                )
-            )
-        }
-    }
-
-    fun clearBrushClipStrokes(clipId: String) {
-        updateClipDirect(clipId) { clip -> clip.copy(brush = BrushState()) }
-    }
-
-    fun undoLastStrokeOnBrushClip(clipId: String) {
-        updateClipDirect(clipId) { clip ->
-            val s = clip.brush.strokes
-            if (s.isEmpty()) clip
-            else clip.copy(brush = clip.brush.copy(strokes = s.dropLast(1)))
-        }
-    }
-
-    fun addBrushStroke(stroke: BrushStroke) {
-        val sel = _state.value.selectedClip ?: return
-        updateClipDirect(sel.id) { clip ->
-            clip.copy(brush = clip.brush.copy(strokes = clip.brush.strokes + stroke))
-        }
-    }
-
-    fun removeBrushStroke(strokeId: String) {
-        val sel = _state.value.selectedClip ?: return
-        updateClipDirect(sel.id) { clip ->
-            clip.copy(
-                brush = clip.brush.copy(
-                    strokes = clip.brush.strokes.filter { it.id != strokeId }
-                )
-            )
-        }
-    }
-
-    fun clearBrushStrokes() {
-        val sel = _state.value.selectedClip ?: return
-        updateClipDirect(sel.id) { it.copy(brush = BrushState()) }
-    }
-
-    fun undoLastBrushStroke() {
-        val sel = _state.value.selectedClip ?: return
-        val strokes = sel.brush.strokes
-        if (strokes.isEmpty()) return
-        updateClipDirect(sel.id) {
-            it.copy(brush = it.brush.copy(strokes = strokes.dropLast(1)))
         }
     }
 
@@ -3124,7 +3143,16 @@ class EditorViewModel : ViewModel() {
             )
         } else {
             val live = TransformApplier.resolveLive(sel, currentTimeSec)
-            val currentValue = when (prop) {
+            val currentValue = if (sel.isSpotlightClip &&
+                prop in SpotlightAnimation.properties
+            ) {
+                val sampled = SpotlightAnimation.sample(
+                    sel.spotlight ?: SpotlightState(),
+                    sel.keyframes,
+                    currentTimeSec
+                )
+                SpotlightAnimation.value(sampled, prop)
+            } else when (prop) {
                 "x" -> live.x
                 "y" -> live.y
                 "scale" -> live.scale
@@ -3152,6 +3180,35 @@ class EditorViewModel : ViewModel() {
         val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
             _state.value.currentPosMs, sel.timelineStartMs, sel.durationMs
         )
+        if (sel.isSpotlightClip) {
+            val hasSpotlightKeyframe = SpotlightAnimation.properties.any {
+                KeyframeStore.hasKeyframeAt(sel.keyframes, it, currentTimeSec)
+            }
+            val updatedKeyframes = if (hasSpotlightKeyframe) {
+                SpotlightAnimation.properties.fold(sel.keyframes) { keyframes, property ->
+                    KeyframeStore.removeKeyframe(keyframes, property, currentTimeSec)
+                }
+            } else {
+                val sampled = SpotlightAnimation.sample(
+                    sel.spotlight ?: SpotlightState(),
+                    sel.keyframes,
+                    currentTimeSec
+                )
+                SpotlightAnimation.properties.fold(sel.keyframes) { keyframes, property ->
+                    KeyframeStore.setKeyframe(
+                        keyframes,
+                        property,
+                        currentTimeSec,
+                        SpotlightAnimation.value(sampled, property)
+                    )
+                }
+            }
+            val updated = sel.copy(keyframes = updatedKeyframes)
+            if (updated != sel) pushHistory()
+            updateClipDirect(sel.id) { updated }
+            updateHistoryFlags()
+            return
+        }
         val hasAny = KeyframeStore.hasAnyKeyframeAt(sel.keyframes, currentTimeSec)
 
         val updated = if (hasAny) {
@@ -3200,6 +3257,28 @@ class EditorViewModel : ViewModel() {
         )
         if (updated != sel) pushHistory()
         updateClipDirect(sel.id) { updated }
+        updateHistoryFlags()
+    }
+
+    fun setTimelineKeyframeEases(ease: String) {
+        updateKeyframeEases { clip ->
+            clip.copy(
+                keyframes = clip.keyframes.mapValues { (_, frames) ->
+                    frames.map { it.copy(ease = ease) }
+                }
+            )
+        }
+    }
+
+    private inline fun updateKeyframeEases(
+        transform: (EditorClip) -> EditorClip
+    ) {
+        val current = _state.value
+        val updated = current.clips.map(transform)
+        if (updated == current.clips) return
+        pushHistory()
+        _state.update { it.copy(clips = updated) }
+        updateHistoryFlags()
     }
 
     fun beginKeyframeGraphEdit() {

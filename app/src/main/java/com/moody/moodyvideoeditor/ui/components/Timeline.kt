@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -64,6 +65,7 @@ import com.moody.moodyvideoeditor.data.EditorState
 import com.moody.moodyvideoeditor.utils.TimelineRuler
 import com.moody.moodyvideoeditor.utils.TimelineZoom
 import com.moody.moodyvideoeditor.utils.WaveformEngine
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -86,7 +88,7 @@ private const val SNAP_ENTER_PX = 14f
 private const val SNAP_RELEASE_PX = 28f
 private const val SNAP_MIN_GAP_MS = 50L
 
-private const val LONG_PRESS_MS = 400L
+private const val LONG_PRESS_MS = 1_300L
 
 private const val MIN_PX_PER_SEC = 4f
 private const val MAX_PX_PER_SEC = 220f
@@ -106,7 +108,8 @@ private data class DragVisual(
     val isAudio: Boolean = false,
     val targetTrack: Int = -1,
     val needsNewLayer: Boolean = false,
-    val sourceTrack: Int = -1
+    val sourceTrack: Int = -1,
+    val targetTimeMs: Long = 0L
 )
 
 
@@ -205,10 +208,12 @@ fun Timeline(
         dragVisual.targetTrack,
         dragVisual.isAudio,
         dragVisual.needsNewLayer,
+        dragVisual.targetTimeMs,
+        viewportWidthPx,
         viewportHeightPx
     ) {
         if (!dragVisual.active) return@LaunchedEffect
-        if (viewportHeightPx <= 0f) return@LaunchedEffect
+        if (viewportHeightPx <= 0f || viewportWidthPx <= labelWidthPx) return@LaunchedEffect
 
         val trackHeightPx = with(density) {
             (if (dragVisual.isAudio) AUDIO_TRACK_HEIGHT else VISUAL_TRACK_HEIGHT)
@@ -256,6 +261,24 @@ fun Timeline(
             val clamped = scrollTarget.coerceIn(0, vScroll.maxValue)
             if (clamped != vScroll.value) {
                 vScroll.animateScrollTo(clamped)
+            }
+        }
+
+        if (totalMs > 0L && contentWidthPx > 0f) {
+            val timelineViewportWidth = viewportWidthPx - labelWidthPx
+            val targetContentX =
+                dragVisual.targetTimeMs.coerceAtLeast(0L).toFloat() /
+                        totalMs.toFloat() * contentWidthPx
+            val targetViewportX = targetContentX - hScroll.value
+            val edgeMargin = with(density) { 48.dp.toPx() }
+            val scrollDelta = when {
+                targetViewportX < edgeMargin && hScroll.value > 0 -> -24f
+                targetViewportX > timelineViewportWidth - edgeMargin &&
+                        hScroll.value < hScroll.maxValue -> 24f
+                else -> 0f
+            }
+            if (scrollDelta != 0f) {
+                hScroll.scrollTo((hScroll.value + scrollDelta.toInt()).coerceIn(0, hScroll.maxValue))
             }
         }
     }
@@ -1354,6 +1377,9 @@ private fun ClipCard(
     haptic: HapticFeedback
 ) {
     val density = LocalDensity.current
+    val latestClipState = rememberUpdatedState(clip)
+    val latestAllClipsState = rememberUpdatedState(allClips)
+    val latestCurrentPosMs = rememberUpdatedState(currentPosMs)
 
 
     val barColor = clipColor(clip)
@@ -1386,7 +1412,7 @@ private fun ClipCard(
             )
             .graphicsLayer {
                 if (isDragging || clipLifted) {
-                    translationX = accumDragX
+                    translationX = if (clipLifted) 0f else accumDragX
                     translationY = accumDragY
                     alpha = 0.85f
                     scaleX = 1.05f
@@ -1414,43 +1440,47 @@ private fun ClipCard(
             .pointerInput(clip.id, contentWidthPx, totalMs, pxPerMs, stepPx) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    val dragClip = latestClipState.value
                     accumDragX = 0f
                     accumDragY = 0f
-                    // FIX: dragStartTimeMs ko clip.timelineStartMs (current pos) se hi rakho
-                    dragStartTimeMs = clip.timelineStartMs
-                    dragStartTrack = clip.trackIndex
-                    dragTargetTimeMs = clip.timelineStartMs
-                    dragTargetTrack = clip.trackIndex
+                    dragStartTimeMs = dragClip.timelineStartMs
+                    dragStartTrack = dragClip.trackIndex
+                    dragTargetTimeMs = dragClip.timelineStartMs
+                    dragTargetTrack = dragClip.trackIndex
                     clipLifted = false
 
                     var totalMove = 0f
-                    var longPressSuccess = false
-
-                    val startTime = System.currentTimeMillis()
-                    while (System.currentTimeMillis() - startTime < LONG_PRESS_MS) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id }
-                        if (change == null || !change.pressed) {
-                            break
-                        }
-                        val delta = change.position - down.position
-                        totalMove = kotlin.math.sqrt(
-                            delta.x * delta.x + delta.y * delta.y
-                        )
-                        if (totalMove > 20f) {
-                            break
-                        }
-                    }
-
-                    if (System.currentTimeMillis() - startTime >= LONG_PRESS_MS &&
-                        totalMove <= 20f
+                    val trimHandleHitWidthPx = with(density) { 16.dp.toPx() }
+                    if (down.position.x <= trimHandleHitWidthPx ||
+                        down.position.x >= size.width - trimHandleHitWidthPx
                     ) {
-                        longPressSuccess = true
+                        return@awaitEachGesture
                     }
+                    val longPressSuccess = withTimeoutOrNull(LONG_PRESS_MS) {
+                        var waitingForLongPress = true
+                        while (waitingForLongPress) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id }
+                                ?: return@withTimeoutOrNull false
+                            if (!change.pressed || change.isConsumed) {
+                                return@withTimeoutOrNull false
+                            }
+                            val delta = change.position - down.position
+                            totalMove = kotlin.math.sqrt(
+                                delta.x * delta.x + delta.y * delta.y
+                            )
+                            waitingForLongPress =
+                                change.pressed && !change.isConsumed && totalMove <= 20f
+                            if (!waitingForLongPress) {
+                                return@withTimeoutOrNull false
+                            }
+                        }
+                        false
+                    } ?: true
 
                     if (!longPressSuccess) {
                         if (totalMove < 12f) {
-                            onClipTapped(clip)
+                            onClipTapped(dragClip)
                         }
                         return@awaitEachGesture
                     }
@@ -1458,9 +1488,11 @@ private fun ClipCard(
                     if (com.moody.moodyvideoeditor.utils.SettingsConsumer.hapticFeedback) {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     }
+                    down.consume()
                     clipLifted = true
                     onDragStart()
 
+                    try {
                     var continueDrag = true
                     while (continueDrag) {
                         val event = awaitPointerEvent()
@@ -1474,16 +1506,18 @@ private fun ClipCard(
 
                         val panX = ch.position.x - down.position.x
                         val panY = ch.position.y - down.position.y
-                        accumDragX = panX
+                        val minPanX = -dragStartTimeMs.toFloat() * pxPerMs
+                        val boundedPanX = panX.coerceAtLeast(minPanX)
+                        accumDragX = boundedPanX
                         accumDragY = panY
 
                         val virtualStartMs = (dragStartTimeMs +
-                                (panX / pxPerMs).toLong()).coerceAtLeast(0L)
-                        val virtualEndMs = virtualStartMs + clip.durationMs
+                                (boundedPanX / pxPerMs).toLong()).coerceAtLeast(0L)
+                        val virtualEndMs = virtualStartMs + dragClip.durationMs
 
                         val targets = mutableListOf<SnapTarget>()
-                        allClips.filter { it.id != clip.id }.forEach { other ->
-                            if (other.isAudio != clip.isAudio) return@forEach
+                        latestAllClipsState.value.filter { it.id != dragClip.id }.forEach { other ->
+                            if (other.isAudio != dragClip.isAudio) return@forEach
                             targets.add(
                                 SnapTarget(
                                     other.timelineStartMs,
@@ -1497,7 +1531,7 @@ private fun ClipCard(
                                 )
                             )
                         }
-                        targets.add(SnapTarget(currentPosMs, "Playhead"))
+                        targets.add(SnapTarget(latestCurrentPosMs.value, "Playhead"))
 
                         val snapEnabled =
                             com.moody.moodyvideoeditor.utils.SettingsConsumer.snapToGrid
@@ -1527,7 +1561,7 @@ private fun ClipCard(
                         val finalTimeMs: Long
                         if (captured != null) {
                             finalTimeMs = if (snapAtEnd) {
-                                (captured.timeMs - clip.durationMs).coerceAtLeast(0L)
+                                (captured.timeMs - dragClip.durationMs).coerceAtLeast(0L)
                             } else {
                                 captured.timeMs
                             }
@@ -1541,25 +1575,26 @@ private fun ClipCard(
                         dragTargetTimeMs = finalTimeMs
 
                         val steps = (panY / stepPx).roundToInt()
-                        val newTrack = if (clip.isAudio) {
+                        val newTrack = if (dragClip.isAudio) {
                             (dragStartTrack + steps).coerceAtLeast(0)
                         } else {
                             (dragStartTrack - steps).coerceAtLeast(0)
                         }
                         dragTargetTrack = newTrack
 
-                        val maxTrack = if (clip.isAudio) audioLayerCount
+                        val maxTrack = if (dragClip.isAudio) audioLayerCount
                         else visualLayerCount
                         val needsNew = newTrack >= maxTrack
 
                         onDragVisualUpdate(
                             DragVisual(
                                 active = true,
-                                clipId = clip.id,
-                                isAudio = clip.isAudio,
+                                clipId = dragClip.id,
+                                isAudio = dragClip.isAudio,
                                 targetTrack = newTrack.coerceAtMost(maxTrack),
                                 needsNewLayer = needsNew,
-                                sourceTrack = dragStartTrack
+                                sourceTrack = dragStartTrack,
+                                targetTimeMs = finalTimeMs
                             )
                         )
 
@@ -1569,13 +1604,13 @@ private fun ClipCard(
                     clipLifted = false
                     onSnapGuideUpdate(-1f, null)
 
-                    if (dragTargetTrack != clip.trackIndex ||
-                        dragTargetTimeMs != clip.timelineStartMs
+                    if (dragTargetTrack != dragClip.trackIndex ||
+                        dragTargetTimeMs != dragClip.timelineStartMs
                     ) {
                         onMoveClip(
-                            clip.id,
+                            dragClip.id,
                             dragTargetTrack,
-                            clip.isAudio,
+                            dragClip.isAudio,
                             dragTargetTimeMs
                         )
                     }
@@ -1583,6 +1618,14 @@ private fun ClipCard(
                     accumDragX = 0f
                     accumDragY = 0f
                     onDragEnd()
+                    } catch (cancelled: CancellationException) {
+                        clipLifted = false
+                        accumDragX = 0f
+                        accumDragY = 0f
+                        onSnapGuideUpdate(-1f, null)
+                        onDragCancel()
+                        throw cancelled
+                    }
                 }
             },
         contentAlignment = Alignment.Center
@@ -1926,7 +1969,12 @@ private fun TrimHandleRight(
                             val deltaMs = captured.timeMs - currentClip.timelineStartMs
                             val finalSourceEnd =
                                 currentClip.sourceStartMs + (deltaMs * speed).toLong()
-                            latestOnTrimRight.value(finalSourceEnd.coerceAtMost(maxEnd))
+                            latestOnTrimRight.value(
+                                finalSourceEnd.coerceIn(
+                                    startMs + EditorClip.MIN_DURATION_MS,
+                                    maxEnd
+                                )
+                            )
                             val guideX = (captured.timeMs.toFloat() /
                                     latestTotalMs.value.toFloat()) * latestContentWidthPx.value
                             latestOnSnapGuideUpdate.value(guideX, "Snap: ${captured.label}")
@@ -2203,13 +2251,13 @@ private fun clipColor(clip: EditorClip): Color = when {
     }
 
     clip.isVisualizerClip -> Color(0xFFFFD166)
+    clip.isSpotlightClip -> Color(0xFFFFD35A)
     clip.isAudioFxClip -> Color(0xFFA855F7)
     clip.isSoundFxClip -> Color(0xFF3B82F6)
     clip.isFilterLayerClip -> Color(0xFFEC4899)
     clip.isAudio -> Color(0xFF10B981)
     clip.isTextClip -> Color(0xFFEC4899)
     clip.isStickerClip -> Color(0xFFF59E0B)
-    clip.isBrushClip -> Color(0xFF8B5CF6)
     clip.isEffectClip -> Color(0xFFA855F7)
     clip.isAdjustmentClip -> Color(0xFF06B6D4)
     clip.isOverlayClip -> Color(0xFF3B82F6)

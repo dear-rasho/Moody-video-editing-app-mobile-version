@@ -378,8 +378,34 @@ private fun ProjectTab(draft: AppSettings, vm: SettingsViewModel) {
                 options = listOf("16:9", "9:16", "1:1", "4:5", "3:4", "21:9"),
                 onSelect = vm::setDefaultAspectRatio
             )
+
+            CardDivider()
+
+            DropdownRow(
+                label = "Watermark position",
+                current = watermarkPositionLabel(draft.watermarkPosition),
+                options = listOf("Top left", "Top right", "Bottom left", "Bottom right"),
+                onSelect = { selected ->
+                    vm.setWatermarkPosition(
+                        when (selected) {
+                            "Top right" -> "top_right"
+                            "Bottom left" -> "bottom_left"
+                            "Bottom right" -> "bottom_right"
+                            else -> "top_left"
+                        }
+                    )
+                }
+            )
         }
+
     }
+}
+
+private fun watermarkPositionLabel(position: String): String = when (position) {
+    "top_right" -> "Top right"
+    "bottom_left" -> "Bottom left"
+    "bottom_right" -> "Bottom right"
+    else -> "Top left"
 }
 
 // ═══════════════════════════════════════════════════════════════
