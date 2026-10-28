@@ -34,4 +34,42 @@ class AdjustmentPixelEngineTest {
 
         assertEquals(input, adjusted)
     }
+
+    @Test
+    fun yellowAdjustmentChangesYellowHueWithoutChangingBlueHue() {
+        val yellow = AdjustmentPixelEngine.applyColorChannels(
+            220f,
+            160f,
+            30f,
+            AdjustmentData(yellows = 100f)
+        )
+        val blue = Triple(30f, 80f, 220f)
+        val unchangedBlue = AdjustmentPixelEngine.applyColorChannels(
+            blue.first,
+            blue.second,
+            blue.third,
+            AdjustmentData(yellows = 100f)
+        )
+
+        assertTrue(yellow != Triple(220f, 160f, 30f))
+        assertEquals(blue, unchangedBlue)
+    }
+
+    @Test
+    fun colorChannelValuesClampToSupportedRange() {
+        val atLimit = AdjustmentPixelEngine.applyColorChannels(
+            204f,
+            51f,
+            26f,
+            AdjustmentData(reds = 500f, skinTones = -500f)
+        )
+        val beyondLimit = AdjustmentPixelEngine.applyColorChannels(
+            204f,
+            51f,
+            26f,
+            AdjustmentData(reds = 1000f, skinTones = -1000f)
+        )
+
+        assertEquals(atLimit, beyondLimit)
+    }
 }
