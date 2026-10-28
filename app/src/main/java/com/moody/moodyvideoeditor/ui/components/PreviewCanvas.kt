@@ -590,9 +590,8 @@ fun PreviewCanvas(
     val combinedFilter =
         if (filterList.isNotEmpty()) EffectsEngine.combineFilters(filterList) else null
 
-    val previewOverlays = previewEffectState?.overlay?.let {
-        listOf(
-            OverlayState(
+    val previewOverlay = previewEffectState?.overlay?.let {
+        OverlayState(
                 type = it.type,
                 intensity = it.intensity,
                 color = it.color,
@@ -605,12 +604,15 @@ fun PreviewCanvas(
                 glowRadius = it.glowRadius,
                 glowColor = it.glowColor
             )
-        )
-    } ?: emptyList()
+    }
 
     val allOverlays =
-        EffectsEngine.collectActiveOverlays(clips, currentPosMs, videoTrackIdx).toMutableList()
-            .apply { addAll(previewOverlays) }
+        EffectsEngine.collectActiveOverlays(
+            clips,
+            currentPosMs,
+            videoTrackIdx,
+            hiddenVisualTracks
+        )
 
     val activeFilterLayer = clips.filter {
         it.isFilterLayerClip && currentPosMs >= it.timelineStartMs && currentPosMs < it.timelineEndMs && !hiddenVisualTracks.contains(
@@ -1915,7 +1917,18 @@ fun PreviewCanvas(
 
             if (allOverlays.isNotEmpty()) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    allOverlays.forEach { ov -> OverlayEngine.draw(this, timeSec, ov) }
+                    allOverlays.forEach { activeOverlay ->
+                        OverlayEngine.draw(
+                            this,
+                            activeOverlay.localTimeSec,
+                            activeOverlay.state
+                        )
+                    }
+                    previewOverlay?.let { OverlayEngine.draw(this, timeSec, it) }
+                }
+            } else if (previewOverlay != null) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    OverlayEngine.draw(this, timeSec, previewOverlay)
                 }
             }
 
@@ -3344,17 +3357,22 @@ private fun InteractiveTextOverlay(
     val frame = if (isDragging) rawFrame.copy(translateX = 0f, translateY = 0f) else rawFrame
     val currentSampled by rememberUpdatedState(sampled);
     val currentFrame by rememberUpdatedState(frame)
-    val displayContent = if (textState.animation.equals("typewriter", ignoreCase = true)) {
-        val total = textState.content.length;
-        val visible = (progress * total).toInt().coerceIn(0, total); textState.content.substring(
-            0,
-            visible
+    val displayContent = if (!textState.animation.equals("none", ignoreCase = true)) {
+        com.moody.moodyvideoeditor.utils.CaptionPresetLibrary.visibleText(
+            textState.content,
+            textState.animation,
+            progress
         )
-    } else textState.content
-    if (displayContent.isEmpty() && textState.animation.equals(
-            "typewriter",
-            ignoreCase = true
+    } else {
+        com.moody.moodyvideoeditor.utils.CaptionPresetLibrary.visibleText(
+            textState.content,
+            textState.captionPresetAnimation,
+            presetProgress
         )
+    }
+    if (displayContent.isEmpty() &&
+        (textState.animation.equals("typewriter", ignoreCase = true) ||
+                textState.captionPresetAnimation.equals("typewriter", ignoreCase = true))
     ) return
     val density = LocalDensity.current
     val canvasWpx = with(density) { canvasW.dp.toPx() };
@@ -3493,7 +3511,13 @@ private fun InteractiveTextOverlay(
                 .graphicsLayer {
                     val posTx = (clampedX - 50f) / 100f * refPx;
                     val posTy = (clampedY - 50f) / 100f * refPx
-                    translationX = posTx + frame.translateX; translationY = posTy + frame.translateY
+                    val alignmentOffsetX = when (textState.alignment) {
+                        "left" -> -(canvasWpx - with(density) { outerWidthDp.dp.toPx() }) / 2f
+                        "right" -> (canvasWpx - with(density) { outerWidthDp.dp.toPx() }) / 2f
+                        else -> 0f
+                    }
+                    translationX = posTx + alignmentOffsetX + frame.translateX
+                    translationY = posTy + frame.translateY
                     scaleX = (sampled.scale / 100f) * frame.scaleX; scaleY =
                     (sampled.scale / 100f) * frame.scaleY
                     rotationZ = sampled.rotation + frame.rotationZ; rotationX =

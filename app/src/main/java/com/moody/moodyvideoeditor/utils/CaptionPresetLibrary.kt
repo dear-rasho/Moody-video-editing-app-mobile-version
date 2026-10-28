@@ -38,7 +38,15 @@ object CaptionPresetLibrary {
         "overshootPop" to "Overshoot Pop",
         "crossSlide" to "Cross Slide",
         "zoomIn" to "Zoom In",
-        "popScale" to "Pop Scale"
+        "popScale" to "Pop Scale",
+        "typewriter" to "Typewriter",
+        "fadeDown" to "Fade Down",
+        "slideLeft" to "Slide Left",
+        "slideRight" to "Slide Right",
+        "flicker" to "Flicker",
+        "cinematicBlur" to "Cinematic Blur",
+        "flip3DX" to "3D Flip",
+        "pulse" to "Pulse"
     )
 
     private val definitions = listOf(
@@ -106,6 +114,12 @@ object CaptionPresetLibrary {
     val presets: List<CaptionPreset> = colorPresets + animatedPresets
 
     fun find(id: String?): CaptionPreset? = presets.firstOrNull { it.id == id }
+
+    fun visibleText(text: String, animation: String?, progress: Float): String {
+        if (!animation.equals("typewriter", ignoreCase = true)) return text
+        val visible = (text.length * progress.coerceIn(0f, 1f)).toInt()
+        return text.substring(0, visible.coerceIn(0, text.length))
+    }
 
     fun hasMovingHighlight(id: String?): Boolean =
         find(id)?.mode?.let { it != CaptionPresetMode.WORD_COLORS } ?: false

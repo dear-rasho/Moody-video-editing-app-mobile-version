@@ -2,6 +2,7 @@ package com.moody.moodyvideoeditor
 
 import com.moody.moodyvideoeditor.utils.CaptionGenerator
 import com.moody.moodyvideoeditor.utils.CaptionSegment
+import com.moody.moodyvideoeditor.utils.WhisperAudioExtractor
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -40,16 +41,19 @@ class CaptionGeneratorTest {
     }
 
     @Test
-    fun pcmIsSplitIntoOrderedBoundedRangesForIncrementalTranscription() {
+    fun audioDurationIsSplitIntoOrderedBoundedChunksForIncrementalTranscription() {
         assertEquals(
-            listOf(0..3, 4..7, 8..9),
-            CaptionGenerator.buildPcmChunkRanges(sampleCount = 10, chunkSamples = 4)
+            listOf(0L to 15_000L, 15_000L to 15_000L, 30_000L to 4_000L),
+            WhisperAudioExtractor.buildChunkRanges(
+                durationMs = 34_000L,
+                chunkDurationMs = 15_000L
+            )
         )
     }
 
     @Test
-    fun invalidPcmChunkSizesProduceNoRanges() {
-        assertEquals(emptyList<IntRange>(), CaptionGenerator.buildPcmChunkRanges(0, 4))
-        assertEquals(emptyList<IntRange>(), CaptionGenerator.buildPcmChunkRanges(10, 0))
+    fun invalidAudioChunkDurationsProduceNoRanges() {
+        assertEquals(emptyList<Pair<Long, Long>>(), WhisperAudioExtractor.buildChunkRanges(0, 15_000))
+        assertEquals(emptyList<Pair<Long, Long>>(), WhisperAudioExtractor.buildChunkRanges(10_000, 0))
     }
 }

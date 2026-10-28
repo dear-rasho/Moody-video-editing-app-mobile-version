@@ -8,7 +8,9 @@ import kotlin.math.min
 data class TransitionExportStep(
     val durationMs: Long,
     val offsetMs: Long,
-    val ffmpegTransition: String
+    val ffmpegTransition: String,
+    val lightLeakColor: String? = null,
+    val lightLeakMovesRight: Boolean = true
 )
 
 object TransitionExportPlan {
@@ -30,6 +32,8 @@ object TransitionExportPlan {
                 ?.takeIf { it.isActive }
                 ?.let { TransitionLibrary.find(it.key) }
             val isActive = state?.isActive == true
+            val lightLeakStyle = preset?.let { TransitionLibrary.lightLeakStyle(it.key) }
+            val isLightLeak = lightLeakStyle != null
             val requestedDuration = if (isActive) {
                 state!!.durationMs.coerceIn(200L, 3000L)
             } else {
@@ -44,8 +48,14 @@ object TransitionExportPlan {
             TransitionExportStep(
                 durationMs = durationMs,
                 offsetMs = offsetMs,
-                ffmpegTransition = preset?.ffmpegXfade
+                ffmpegTransition = if (isLightLeak) {
+                    "fade"
+                } else {
+                    preset?.ffmpegXfade
                     ?.takeIf { it.isNotBlank() } ?: "fade"
+                },
+                lightLeakColor = lightLeakStyle?.colorHex,
+                lightLeakMovesRight = lightLeakStyle?.movesRight ?: true
             )
         }
     }

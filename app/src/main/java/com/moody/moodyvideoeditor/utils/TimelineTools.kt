@@ -27,6 +27,43 @@ object TimelineTools {
         return result
     }
 
+    fun closeGapToNextClipAcrossVisualTracks(
+        clips: List<EditorClip>,
+        anchorClip: EditorClip
+    ): List<EditorClip> {
+        if (anchorClip.isAudio) return clips
+
+        val hasLaterClipOnAnchorTrack = clips.any {
+            !it.isAudio &&
+                    it.trackIndex == anchorClip.trackIndex &&
+                    it.id != anchorClip.id &&
+                    it.timelineStartMs >= anchorClip.timelineEndMs
+        }
+        if (hasLaterClipOnAnchorTrack) return clips
+
+        val nextClip = clips.asSequence()
+            .filter {
+                !it.isAudio &&
+                        it.id != anchorClip.id &&
+                        it.timelineStartMs > anchorClip.timelineEndMs
+            }
+            .minWithOrNull(compareBy<EditorClip>({ it.timelineStartMs }, { it.trackIndex }))
+            ?: return clips
+
+        val movedNextClip = nextClip.copy(timelineStartMs = anchorClip.timelineEndMs)
+        val trackAfterMove = clips
+            .filter { !it.isAudio && it.trackIndex == nextClip.trackIndex }
+            .map { if (it.id == nextClip.id) movedNextClip else it }
+        val repackedTrack = closeGapsAfterClip(trackAfterMove, nextClip.id)
+        val newStarts = repackedTrack.associate { it.id to it.timelineStartMs }
+        return clips.map { clip ->
+            newStarts[clip.id]?.let { startMs ->
+                if (startMs != clip.timelineStartMs) clip.copy(timelineStartMs = startMs)
+                else clip
+            } ?: clip
+        }
+    }
+
 
     fun selectForwardOnLayer(
         track: List<EditorClip>,

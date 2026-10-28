@@ -11,7 +11,7 @@ class CaptionPresetLibraryTest {
 
     @Test
     fun exposesAllPreviewablePresetsAndLegacyAnimations() {
-        assertEquals(32, CaptionPresetLibrary.presets.size)
+        assertEquals(40, CaptionPresetLibrary.presets.size)
         CaptionPresetLibrary.presets.forEach { preset ->
             assertTrue(
                 CaptionPresetLibrary.colorRanges(
@@ -28,9 +28,27 @@ class CaptionPresetLibraryTest {
                 listOf(
                     "fadeIn", "fadeUp", "slideUp", "popIn", "bounceIn",
                     "blurryReveal", "characterRise", "jellyBounce",
-                    "overshootPop", "crossSlide", "zoomIn", "popScale"
+                    "overshootPop", "crossSlide", "zoomIn", "popScale",
+                    "typewriter", "fadeDown", "slideLeft", "slideRight",
+                    "flicker", "cinematicBlur", "flip3DX", "pulse"
                 )
             )
+        )
+    }
+
+    @Test
+    fun typewriterPresetRevealsTextProgressively() {
+        assertEquals(
+            "Moody",
+            CaptionPresetLibrary.visibleText("Moody Editing App", "typewriter", 0.35f)
+        )
+        assertEquals(
+            "Moody Editing App",
+            CaptionPresetLibrary.visibleText("Moody Editing App", "typewriter", 1f)
+        )
+        assertEquals(
+            "Moody Editing App",
+            CaptionPresetLibrary.visibleText("Moody Editing App", "fadeUp", 0.35f)
         )
     }
 

@@ -92,10 +92,10 @@ object TextRenderContract {
 
     data class GlowLayer(val fontScale: Float, val blurScale: Float, val alpha: Float)
     fun glowLayers(): List<GlowLayer> = listOf(
-        GlowLayer(1.00f, 0.45f, 1.00f),
-        GlowLayer(1.06f, 0.90f, 0.85f),
-        GlowLayer(1.18f, 1.50f, 0.65f),
-        GlowLayer(1.35f, 2.40f, 0.40f),
+        GlowLayer(1.00f, 0.45f, 0.72f),
+        GlowLayer(1.00f, 0.95f, 0.48f),
+        GlowLayer(1.00f, 1.80f, 0.24f),
+        GlowLayer(1.00f, 3.00f, 0.12f),
     )
 
     fun weight(st: TextState): Boolean = st.fontWeight == "bold"

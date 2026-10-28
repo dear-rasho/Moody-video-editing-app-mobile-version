@@ -16,6 +16,22 @@ object WhisperAudioExtractor {
 
     private const val TAG = "WhisperAudio"
     private const val TARGET_SAMPLE_RATE = 16000
+    private const val PCM_BYTES_PER_SAMPLE = 4
+
+    internal fun buildChunkRanges(
+        durationMs: Long,
+        chunkDurationMs: Long
+    ): List<Pair<Long, Long>> {
+        if (durationMs <= 0L || chunkDurationMs <= 0L) return emptyList()
+        val ranges = mutableListOf<Pair<Long, Long>>()
+        var startMs = 0L
+        while (startMs < durationMs) {
+            val lengthMs = minOf(chunkDurationMs, durationMs - startMs)
+            ranges += startMs to lengthMs
+            startMs += lengthMs
+        }
+        return ranges
+    }
 
     suspend fun extractPcm(
         context: Context,
@@ -120,6 +136,63 @@ object WhisperAudioExtractor {
             null
         } finally {
             outFile.delete()
+        }
+    }
+
+    suspend fun forEachPcmChunk(
+        context: Context,
+        uri: Uri,
+        sourceStartMs: Long,
+        sourceDurationMs: Long,
+        chunkDurationMs: Long,
+        onChunk: suspend (
+            chunkIndex: Int,
+            chunkCount: Int,
+            chunkStartMs: Long,
+            pcm: FloatArray
+        ) -> Unit
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (sourceStartMs < 0L || sourceDurationMs <= 0L || chunkDurationMs <= 0L) {
+            return@withContext false
+        }
+
+        val inputFile = copyToCache(context, uri) ?: return@withContext false
+        val outputFile = File(context.cacheDir, "whisper_chunk_${System.currentTimeMillis()}.pcm")
+        val chunkRanges = buildChunkRanges(sourceDurationMs, chunkDurationMs)
+        val chunkCount = chunkRanges.size
+
+        try {
+            chunkRanges.forEachIndexed { chunkIndex, (chunkStartMs, chunkLengthMs) ->
+                val absoluteStartMs = sourceStartMs + chunkStartMs
+                val cmd = "-y " +
+                        "-ss ${String.format(Locale.US, "%.3f", absoluteStartMs / 1000.0)} " +
+                        "-i \"${inputFile.absolutePath}\" " +
+                        "-t ${String.format(Locale.US, "%.3f", chunkLengthMs / 1000.0)} " +
+                        "-vn -ar $TARGET_SAMPLE_RATE -ac 1 -f f32le " +
+                        "-acodec pcm_f32le \"${outputFile.absolutePath}\""
+                val session = FFmpegKit.execute(cmd)
+                if (!ReturnCode.isSuccess(session.returnCode)) {
+                    Log.e(TAG, "Chunk extraction failed: ${session.allLogsAsString}")
+                    return@withContext false
+                }
+                if (!outputFile.exists() || outputFile.length() == 0L) {
+                    Log.e(TAG, "PCM chunk output is empty at ${chunkStartMs}ms")
+                    return@withContext false
+                }
+
+                val bytes = outputFile.readBytes()
+                val pcm = FloatArray(bytes.size / PCM_BYTES_PER_SAMPLE)
+                java.nio.ByteBuffer.wrap(bytes)
+                    .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    .asFloatBuffer()
+                    .get(pcm)
+                outputFile.delete()
+                onChunk(chunkIndex, chunkCount, chunkStartMs, pcm)
+            }
+            true
+        } finally {
+            inputFile.delete()
+            outputFile.delete()
         }
     }
 

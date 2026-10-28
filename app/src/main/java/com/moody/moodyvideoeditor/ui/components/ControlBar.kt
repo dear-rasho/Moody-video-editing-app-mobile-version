@@ -2,20 +2,21 @@ package com.moody.moodyvideoeditor.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Redo
+import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
@@ -35,100 +36,125 @@ import com.moody.moodyvideoeditor.utils.VideoUtils
 @Composable
 fun ControlBar(
     onMediaClick: () -> Unit,
-    onAddVisualLayer: () -> Unit = {},
-    onAddAudioLayer: () -> Unit = {},
     currentRatio: String = "16:9",
     onRatioClick: () -> Unit = {},
-    // 🆕 5 icons moved from PlaybackControls
+    isPlaying: Boolean = false,
+    canUndo: Boolean = false,
+    canRedo: Boolean = false,
+    seekStepSeconds: Int = 3,
+    onSeekBy: (Long) -> Unit = {},
+    onPlayPause: () -> Unit = {},
+    onUndo: () -> Unit = {},
+    onRedo: () -> Unit = {},
     isMuted: Boolean = false,
+    hasKeyframeAtPlayhead: Boolean = false,
     onMuteToggle: () -> Unit = {},
-    onMagnet: () -> Unit = {},
+    onKeyframe: () -> Unit = {},
     onDelete: () -> Unit = {},
+    onMagnet: () -> Unit = {},
     onDuplicate: () -> Unit = {},
-    onCopy: () -> Unit = {},
-    onCut: () -> Unit = {},
-    onPaste: () -> Unit = {},
-    canCopy: Boolean = false,
-    canPaste: Boolean = false,
     hasVideo: Boolean = true,
     currentPosMs: Long = 0L,
     totalDurationMs: Long = 0L
 ) {
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(48.dp)
             .background(Color(0xFF0A0A0A))
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        PillButton("＋ Media", onMediaClick)
-        PillButton("＋V", onAddVisualLayer)
-        PillButton("＋A", onAddAudioLayer)
-        PillButton("🖼️ $currentRatio", onRatioClick)
-
-        // ─── Moved from PlaybackControls ───
-        IconButton(
-            onClick = onMuteToggle,
-            enabled = hasVideo,
-            modifier = Modifier.size(32.dp)
+        Row(
+            modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Icon(
-                if (isMuted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
-                "Mute",
-                tint = if (isMuted) Color(0xFFFF6B6B) else Color(0xFF7C3AED),
-                modifier = Modifier.size(18.dp)
-            )
-        }
-
-        PillButton("🧲", onMagnet)
-
-        IconButton(
-            onClick = onDuplicate,
-            enabled = hasVideo,
-            modifier = Modifier.size(32.dp)
-        ) {
-            Icon(
-                Icons.Filled.ContentCopy, "Duplicate",
-                tint = if (hasVideo) Color(0xFF7C3AED) else Color(0xFF444444),
-                modifier = Modifier.size(18.dp)
-            )
-        }
-
-        if (canPaste) {
-            PillButton("Paste", onPaste, highlight = Color(0xFF22C55E))
-        } else {
-            PillButton("Copy", onCopy, enabled = hasVideo && canCopy)
-            PillButton("Cut", onCut, enabled = hasVideo && canCopy, highlight = Color(0xFFFFB84D))
-        }
-
-        IconButton(
-            onClick = onDelete,
-            enabled = hasVideo,
-            modifier = Modifier.size(32.dp)
-        ) {
-            Icon(
-                Icons.Filled.Delete, "Delete",
-                tint = if (hasVideo) Color(0xFFFF6B6B) else Color(0xFF444444),
-                modifier = Modifier.size(18.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        // Time display
-        Text(
-            "${VideoUtils.formatDuration(currentPosMs)} / ${
-                VideoUtils.formatDuration(
-                    totalDurationMs
+            PillButton("＋Media", onMediaClick, horizontalPadding = 6.dp)
+            PillButton(currentRatio, onRatioClick, horizontalPadding = 6.dp)
+            IconButton(onClick = onMagnet, enabled = hasVideo, modifier = Modifier.size(26.dp)) {
+                Text("🧲", fontSize = 14.sp)
+            }
+            IconButton(onClick = onDuplicate, enabled = hasVideo, modifier = Modifier.size(26.dp)) {
+                Icon(
+                    Icons.Filled.ContentCopy,
+                    "Duplicate",
+                    tint = if (hasVideo) Color.White else Color(0xFF444444),
+                    modifier = Modifier.size(16.dp)
                 )
-            }",
-            color = Color(0xFF888888),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold
-        )
+            }
+        }
+        Row(
+            modifier = Modifier.align(Alignment.Center),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            IconButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Filled.Undo, "Undo", tint = if (canUndo) Color.White else Color(0xFF444444))
+            }
+            PillButton(
+                "-${seekStepSeconds}s",
+                onClick = { onSeekBy(-seekStepSeconds.coerceAtLeast(1) * 1000L) },
+                enabled = hasVideo,
+                horizontalPadding = 4.dp
+            )
+            IconButton(onClick = onPlayPause, enabled = hasVideo, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    "Play or pause",
+                    tint = if (hasVideo) Color(0xFF7C3AED) else Color(0xFF444444)
+                )
+            }
+            PillButton(
+                "+${seekStepSeconds}s",
+                onClick = { onSeekBy(seekStepSeconds.coerceAtLeast(1) * 1000L) },
+                enabled = hasVideo,
+                horizontalPadding = 4.dp
+            )
+            IconButton(onClick = onRedo, enabled = canRedo, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Filled.Redo, "Redo", tint = if (canRedo) Color.White else Color(0xFF444444))
+            }
+        }
+
+        Row(
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(0.dp)
+        ) {
+            Text(
+                "${VideoUtils.formatDuration(currentPosMs)}/${VideoUtils.formatDuration(totalDurationMs)}",
+                color = Color(0xFF888888),
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+            IconButton(onClick = onMuteToggle, enabled = hasVideo, modifier = Modifier.size(26.dp)) {
+                Icon(
+                    if (isMuted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
+                    if (isMuted) "Unmute" else "Mute",
+                    tint = if (hasVideo) Color.White else Color(0xFF444444),
+                    modifier = Modifier.size(17.dp)
+                )
+            }
+            IconButton(onClick = onKeyframe, enabled = hasVideo, modifier = Modifier.size(26.dp)) {
+                Text(
+                    "◆",
+                    color = when {
+                        hasKeyframeAtPlayhead -> Color(0xFF4F9DFF)
+                        hasVideo -> Color.White
+                        else -> Color(0xFF444444)
+                    },
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            IconButton(onClick = onDelete, enabled = hasVideo, modifier = Modifier.size(26.dp)) {
+                Icon(
+                    Icons.Filled.Delete,
+                    "Delete",
+                    tint = if (hasVideo) Color(0xFFFF6B6B) else Color(0xFF444444),
+                    modifier = Modifier.size(17.dp)
+                )
+            }
+        }
     }
 }
 
@@ -137,7 +163,8 @@ private fun PillButton(
     text: String,
     onClick: () -> Unit,
     enabled: Boolean = true,
-    highlight: Color = Color.White
+    highlight: Color = Color.White,
+    horizontalPadding: androidx.compose.ui.unit.Dp = 10.dp
 ) {
     Box(
         modifier = Modifier
@@ -147,7 +174,7 @@ private fun PillButton(
             .pointerInput(text, enabled) {
                 if (enabled) detectTapGestures { onClick() }
             }
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = horizontalPadding),
         contentAlignment = Alignment.Center
     ) {
         Text(

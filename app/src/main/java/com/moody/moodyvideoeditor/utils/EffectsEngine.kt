@@ -19,6 +19,7 @@ import kotlin.math.sin
 // - Multi-effect stacking
 object EffectsEngine {
 
+    data class ActiveOverlay(val state: OverlayState, val localTimeSec: Float)
 
     //  MOTION FRAME — mirrors effectRenderer.js computeMotion()
 
@@ -273,20 +274,23 @@ object EffectsEngine {
     fun collectActiveOverlays(
         clips: List<EditorClip>,
         timeMs: Long,
-        videoTrackIdx: Int
-    ): List<OverlayState> {
-        val result = mutableListOf<OverlayState>()
+        videoTrackIdx: Int,
+        hiddenVisualTracks: Set<Int> = emptySet()
+    ): List<ActiveOverlay> {
+        val result = mutableListOf<ActiveOverlay>()
 
         // 1) Overlays inside effect layers (above video) — convert OverlayConfig → OverlayState
         clips.filter {
             it.isEffectClip &&
                     it.trackIndex > videoTrackIdx &&
-                    timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs
+                    timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs &&
+                    it.trackIndex !in hiddenVisualTracks
         }.sortedBy { it.trackIndex }
             .forEach { clip ->
                 clip.effectState?.overlay?.let { cfg: OverlayConfig ->
                     result.add(
-                        OverlayState(
+                        ActiveOverlay(
+                            state = OverlayState(
                             type = cfg.type,
                             intensity = cfg.intensity,
                             color = cfg.color,
@@ -294,7 +298,12 @@ object EffectsEngine {
                             size = cfg.size,
                             opacity = cfg.opacity,
                             speed = cfg.speed,
-                            shape = cfg.shape
+                            shape = cfg.shape,
+                            glowEnabled = cfg.glowEnabled,
+                            glowRadius = cfg.glowRadius,
+                            glowColor = cfg.glowColor
+                            ),
+                            localTimeSec = (timeMs - clip.timelineStartMs) / 1000f
                         )
                     )
                 }
@@ -304,10 +313,18 @@ object EffectsEngine {
         clips.filter {
             it.isOverlayClip &&
                     it.trackIndex > videoTrackIdx &&
-                    timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs
+                    timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs &&
+                    it.trackIndex !in hiddenVisualTracks
         }.sortedBy { it.trackIndex }
             .forEach { clip ->
-                clip.overlay?.let { result.add(it) }
+                clip.overlay?.let {
+                    result.add(
+                        ActiveOverlay(
+                            state = it,
+                            localTimeSec = (timeMs - clip.timelineStartMs) / 1000f
+                        )
+                    )
+                }
             }
 
         return result

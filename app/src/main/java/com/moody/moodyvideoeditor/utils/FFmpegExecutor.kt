@@ -1,5 +1,6 @@
 package com.moody.moodyvideoeditor.utils
 
+import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -136,6 +137,24 @@ class FFmpegExecutor(
             "-color_trc", "bt709",
             "-threads", encoderThreads.toString()
         )
+    }
+
+    private fun recommendedFfmpegThreads(targetW: Int, targetH: Int): Int {
+        val cpuLimit = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+        val pixelCount = targetW.toLong() * targetH
+        val resolutionLimit = when {
+            pixelCount >= 3840L * 2160L -> 2
+            pixelCount >= 2560L * 1440L -> 3
+            else -> 6
+        }
+        val memoryClassMb = context.getSystemService(ActivityManager::class.java)?.memoryClass ?: 256
+        val memoryLimit = when {
+            memoryClassMb <= 192 -> 1
+            memoryClassMb <= 256 -> 2
+            memoryClassMb <= 384 -> 4
+            else -> 6
+        }
+        return minOf(cpuLimit, resolutionLimit, memoryLimit).coerceAtLeast(1)
     }
 
     suspend fun export(
@@ -1929,7 +1948,7 @@ class FFmpegExecutor(
             args.addAll(
                 listOf(
                     "-filter_complex_threads",
-                    "1",
+                    recommendedFfmpegThreads(targetW, targetH).toString(),
                     "-filter_complex",
                     filterParts.joinToString(";"),
                     "-map",
@@ -2408,11 +2427,43 @@ class FFmpegExecutor(
                 clips.map { it.transition },
                 fps
             )
+            val exportDurationSec = (totalDurationMs / 1000.0).coerceAtLeast(0.1)
             var currentLabel = "nv0"
             for (i in 1 until clips.size) {
                 val step = transitionSteps[i - 1]
                 filterParts.add("[$currentLabel][nv$i]xfade=transition=${step.ffmpegTransition}:duration=${step.durationMs / 1000.0}:offset=${step.offsetMs / 1000.0}[xfd$i]")
                 currentLabel = "xfd$i"
+                step.lightLeakColor?.let { lightColor ->
+                    val startSec = step.offsetMs / 1000.0
+                    val durationSec = (step.durationMs / 1000.0).coerceAtLeast(0.001)
+                    val endSec = startSec + durationSec
+                    val progressExpr = "clip((T-$startSec)/$durationSec,0,1)"
+                    val centerX = if (step.lightLeakMovesRight) {
+                        "W*$progressExpr"
+                    } else {
+                        "W*(1-$progressExpr)"
+                    }
+                    val centerY = "H*(0.25+0.5*$progressExpr)"
+                    val radius = "max(W,H)*0.72"
+                    val radialAlpha = "clip(1-hypot(X-$centerX,Y-$centerY)/($radius),0,1)"
+                    val beamAlpha = "clip(1-abs(X-$centerX)/(W*0.5),0,1)"
+                    val pulse = "sin(PI*$progressExpr)*0.68"
+                    val alphaExpr =
+                        "255*clip(1-(1-($radialAlpha)*($pulse))*(1-($beamAlpha)*($pulse)),0,1)"
+                    val leakLabel = "transition_leak_$i"
+                    val blendedLabel = "transition_light_$i"
+                    filterParts.add(
+                        "color=c=0x${lightColor}:s=${targetW}x${targetH}:r=$fps:d=$exportDurationSec," +
+                                "format=rgba," +
+                                "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='$alphaExpr'[$leakLabel]"
+                    )
+                    filterParts.add(
+                        "[$currentLabel][$leakLabel]overlay=x=0:y=0:format=auto:" +
+                                "eof_action=pass:repeatlast=0:" +
+                                "enable='between(t,$startSec,$endSec)'[$blendedLabel]"
+                    )
+                    currentLabel = blendedLabel
+                }
             }
 
             clips.forEachIndexed { idx, clip ->
@@ -2457,7 +2508,7 @@ class FFmpegExecutor(
             args.addAll(
                 listOf(
                     "-filter_complex_threads",
-                    "1",
+                    recommendedFfmpegThreads(targetW, targetH).toString(),
                     "-filter_complex",
                     filterParts.joinToString(";"),
                     "-map",
@@ -2468,7 +2519,14 @@ class FFmpegExecutor(
                     totalDurSec.toString()
                 )
             )
-            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH, 1))
+            args.addAll(
+                buildFastVideoArgs(
+                    bitrateKbps,
+                    targetW,
+                    targetH,
+                    recommendedFfmpegThreads(targetW, targetH)
+                )
+            )
             args.addAll(
                 listOf(
                     "-r",

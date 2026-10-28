@@ -760,11 +760,18 @@ object TextBitmapRenderer {
         clipDurationMs: Long
     ) {
         try {
-            val content = if (st.animation.equals("typewriter", ignoreCase = true)) {
-                val total = st.content.length
-                val visible = (progress * total).toInt().coerceIn(0, total)
-                st.content.substring(0, visible)
-            } else st.content
+            val content = if (!st.animation.equals("none", ignoreCase = true)) {
+                CaptionPresetLibrary.visibleText(st.content, st.animation, progress)
+            } else {
+                val presetProgress = if (st.captionPresetAnimation.equals("none", true)) 1f
+                else (localTimeMs / 1000f /
+                        st.captionPresetAnimationDuration.coerceAtLeast(0.1f)).coerceIn(0f, 1f)
+                CaptionPresetLibrary.visibleText(
+                    st.content,
+                    st.captionPresetAnimation,
+                    presetProgress
+                )
+            }
 
             if (content.isEmpty()) return
 
@@ -807,8 +814,24 @@ object TextBitmapRenderer {
             val clampedY = sampled.y.coerceIn(-50f, 150f)
 
             val minDim = minOf(W, H).toFloat()
-            val cx = W / 2f + (clampedX - 50f) / 100f * minDim
+            val maxLineWidth = lines.maxOfOrNull { basePaint.measureText(it) } ?: 0f
+            val alignmentOffsetX = when (st.alignment) {
+                "left" -> -(W - maxLineWidth) / 2f
+                "right" -> (W - maxLineWidth) / 2f
+                else -> 0f
+            }
+            val cx = W / 2f + (clampedX - 50f) / 100f * minDim + alignmentOffsetX
             val cy = H / 2f + (clampedY - 50f) / 100f * minDim
+            val textDrawAlign = when (st.alignment) {
+                "left" -> Paint.Align.LEFT
+                "right" -> Paint.Align.RIGHT
+                else -> Paint.Align.CENTER
+            }
+            val textDrawX = when (st.alignment) {
+                "left" -> -maxLineWidth / 2f
+                "right" -> maxLineWidth / 2f
+                else -> 0f
+            }
 
             val fm = basePaint.fontMetrics
 
@@ -850,7 +873,7 @@ object TextBitmapRenderer {
                     val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         this.typeface = typeface
                         this.textSize = fontSize * layer.fontScale
-                        textAlign = basePaint.textAlign
+                        textAlign = textDrawAlign
                         letterSpacing = basePaint.letterSpacing
                         color = glowColorInt
                         alpha = (alphaInt * layer.alpha).toInt().coerceIn(0, 255)
@@ -858,7 +881,7 @@ object TextBitmapRenderer {
                     }
                     lines.forEachIndexed { i, line ->
                         val lineY = firstBaseline + i * lineHeightPx
-                        canvas.drawText(line, 0f, lineY, glowPaint)
+                        canvas.drawText(line, textDrawX, lineY, glowPaint)
                     }
                 }
             }
@@ -867,7 +890,7 @@ object TextBitmapRenderer {
                 val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     this.typeface = typeface
                     this.textSize = fontSize
-                    textAlign = basePaint.textAlign
+                    textAlign = textDrawAlign
                     letterSpacing = basePaint.letterSpacing
                     shader = null
                     color = st.color.toInt()
@@ -881,7 +904,7 @@ object TextBitmapRenderer {
                 }
                 lines.forEachIndexed { i, line ->
                     val lineY = firstBaseline + i * lineHeightPx
-                    canvas.drawText(line, 0f, lineY, shadowPaint)
+                    canvas.drawText(line, textDrawX, lineY, shadowPaint)
                 }
             }
 
@@ -889,7 +912,7 @@ object TextBitmapRenderer {
                 val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     this.typeface = typeface
                     this.textSize = fontSize
-                    textAlign = basePaint.textAlign
+                    textAlign = textDrawAlign
                     letterSpacing = basePaint.letterSpacing
                     shader = null
                     color = st.strokeColor.toInt()
@@ -906,14 +929,14 @@ object TextBitmapRenderer {
                 }
                 lines.forEachIndexed { i, line ->
                     val lineY = firstBaseline + i * lineHeightPx
-                    canvas.drawText(line, 0f, lineY, strokePaint)
+                    canvas.drawText(line, textDrawX, lineY, strokePaint)
                 }
             }
 
             val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 this.typeface = typeface
                 this.textSize = fontSize
-                textAlign = basePaint.textAlign
+                textAlign = textDrawAlign
                 letterSpacing = basePaint.letterSpacing
                 alpha = alphaInt
                 setShadowLayer(0f, 0f, 0f, 0)
@@ -949,7 +972,7 @@ object TextBitmapRenderer {
             if (captionRanges.isEmpty()) {
                 lines.forEachIndexed { i, line ->
                     val lineY = firstBaseline + i * lineHeightPx
-                    canvas.drawText(line, 0f, lineY, fillPaint)
+                    canvas.drawText(line, textDrawX, lineY, fillPaint)
                 }
             } else {
                 fillPaint.textAlign = Paint.Align.LEFT

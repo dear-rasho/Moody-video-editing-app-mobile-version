@@ -190,6 +190,10 @@ object FontLibrary {
     //  CATEGORIES
     // ═══════════════════════════════════════════════════════════
     val FONT_CATEGORIES: Map<String, List<String>> = mapOf(
+        "all" to FONT_METADATA.map { it.name },
+        "english" to FONT_METADATA.filter {
+            it.language in setOf("Script", "Display", "Gothic", "Modern", "System")
+        }.map { it.name },
         "arabic" to FONT_METADATA.filter { it.language == "Arabic" }.map { it.name },
         "urdu" to FONT_METADATA.filter { it.language == "Urdu" }.map { it.name },
         "hindi" to FONT_METADATA.filter { it.language == "Hindi" }.map { it.name },
@@ -197,16 +201,48 @@ object FontLibrary {
         "display" to FONT_METADATA.filter { it.language == "Display" }.map { it.name },
         "gothic" to FONT_METADATA.filter { it.language == "Gothic" }.map { it.name },
         "modern" to FONT_METADATA.filter { it.language == "Modern" }.map { it.name },
-        "system" to FONT_METADATA.filter { it.language == "System" }.map { it.name }
+        "system" to FONT_METADATA.filter { it.language == "System" }.map { it.name },
+        "music" to FONT_METADATA.filter {
+            it.name in setOf(
+                "Audiowide", "Kaluk Sans", "Kaluk Sans Bold",
+                "Kaluk Sans Black", "Kaluk Sans ExtraBold",
+                "Lobster", "Oleo Script Swash Caps",
+                "Oleo Script Swash Caps Bold", "Arizonia",
+                "Damion", "Grand Hotel", "Neonderthaw",
+                "Yesteryear", "Uncial Antiqua"
+            )
+        }.map { it.name },
+        "education" to FONT_METADATA.filter {
+            it.name == "Arial" || it.name == "Roboto" ||
+                    it.name == "Georgia" || it.name == "Oswald" ||
+                    it.name == "Oswald Medium" || it.name == "Palanquin Dark" ||
+                    it.name == "Kaluk Sans" || it.name == "Poppins" ||
+                    it.name == "Poppins Medium" || it.name == "Poppins SemiBold"
+        }.map { it.name },
+        "titles" to FONT_METADATA.filter {
+            it.name in setOf(
+                "Anton", "Bangers", "BBH Bartle", "Caprasimo",
+                "Carter One", "Chango", "Creepster", "Erica One",
+                "Nosifer", "Oi", "Oswald Bold", "Poppins Black",
+                "Poppins ExtraBold", "DynaPuff Bold",
+                "Uncial Antiqua", "Unifraktur Maguntia"
+            )
+        }.map { it.name }
     )
 
     fun allFonts(): List<String> = FONT_METADATA.map { it.name }
 
     fun categories(): List<String> = listOf(
+        "all", "english", "music", "education", "titles",
         "arabic", "urdu", "hindi", "script", "display", "gothic", "modern", "system"
     )
 
     fun categoryLabel(key: String): String = when (key) {
+        "all" -> "🔤 All"
+        "english" -> "🇬🇧 English"
+        "music" -> "🎵 Music"
+        "education" -> "📚 Education"
+        "titles" -> "🏷️ Titles"
         "arabic" -> "🇸🇦 Arabic"
         "urdu" -> "🇵🇰 Urdu"
         "hindi" -> "🇮🇳 Hindi"

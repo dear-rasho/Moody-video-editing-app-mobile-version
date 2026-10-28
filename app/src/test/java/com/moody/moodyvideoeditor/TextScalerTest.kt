@@ -24,4 +24,13 @@ class TextScalerTest {
         assertEquals(36f, TextRenderContract.scaledFontSize(36f, 720f), 0.001f)
         assertEquals(1200f, TextRenderContract.scaledFontSize(400f, 2160f), 0.001f)
     }
+
+    @Test
+    fun glowLayersKeepTheTextGlyphShapeInsteadOfExpandingItsOutline() {
+        assertEquals(4, TextRenderContract.glowLayers().size)
+        assertEquals(
+            listOf(1f, 1f, 1f, 1f),
+            TextRenderContract.glowLayers().map { it.fontScale }
+        )
+    }
 }

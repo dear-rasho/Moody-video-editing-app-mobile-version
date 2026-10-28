@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
 import com.moody.moodyvideoeditor.data.OverlayState
 import kotlin.math.abs
 import kotlin.math.cos
@@ -15,6 +16,7 @@ import kotlin.math.sin
 // Mirrors js/workspace/overlayRenderer.js
 // Deterministic overlay rendering — same frame = same pattern.
 object OverlayEngine {
+    private const val REFERENCE_HEIGHT = 720f
 
     // Mirrors JS hash(n) — pseudo-random deterministic
     fun hash(n: Double): Double {
@@ -33,21 +35,25 @@ object OverlayEngine {
         overlay: OverlayState
     ) {
         if (!overlay.isActive) return
-        val W = scope.size.width
-        val H = scope.size.height
-        val I = (overlay.intensity / 100f).coerceIn(0f, 2f)
-        val opacityM = overlay.opacity.coerceIn(0f, 1f)
-        val sizeM = overlay.size.coerceIn(0.2f, 20.0f)
-        val speedM = overlay.speed.coerceIn(0.2f, 20.0f)
-        val color = Color(overlay.color.toULong().toLong())
-        val color2 = Color(overlay.color2.toULong().toLong())
-        val glowCol = Color(overlay.glowColor.toULong().toLong())
+        val heightScale = (scope.size.height / REFERENCE_HEIGHT).coerceAtLeast(0.001f)
+        scope.withTransform({
+            scale(heightScale, heightScale, Offset.Zero)
+        }) {
+            val W = size.width / heightScale
+            val H = size.height / heightScale
+            val I = (overlay.intensity / 100f).coerceIn(0f, 2f)
+            val opacityM = overlay.opacity.coerceIn(0f, 1f)
+            val sizeM = overlay.size.coerceIn(0.2f, 20.0f)
+            val speedM = overlay.speed.coerceIn(0.2f, 20.0f)
+            val color = Color(overlay.color.toULong().toLong())
+            val color2 = Color(overlay.color2.toULong().toLong())
+            val glowCol = Color(overlay.glowColor.toULong().toLong())
 
-        val t = time * speedM
-        val effectiveI = I * opacityM
-        val effectiveSize = sizeM
+            val t = time * speedM
+            val effectiveI = I * opacityM
+            val effectiveSize = sizeM
 
-        when (overlay.type) {
+            when (overlay.type) {
             "rain" -> drawRain(
                 scope, W, H, t, effectiveI, color,
                 overlay.glowEnabled, overlay.glowRadius, glowCol
@@ -127,7 +133,8 @@ object OverlayEngine {
             "vignette" -> drawVignette(scope, W, H, t, effectiveI)
             "blackBars" -> drawBlackBars(scope, W, H, effectiveI)
             "vhsLines" -> drawVhsLines(scope, W, H, t, effectiveI)
-            "glitchBars" -> drawGlitchBars(scope, W, H, t, effectiveI)
+                "glitchBars" -> drawGlitchBars(this, W, H, t, effectiveI)
+            }
         }
     }
 

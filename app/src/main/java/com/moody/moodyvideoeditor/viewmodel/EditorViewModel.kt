@@ -1214,15 +1214,24 @@ class EditorViewModel : ViewModel() {
         val list = if (sel.isAudio) s.timelineAudioList() else s.timelineVisualList()
         val track = list.getOrNull(sel.trackIndex) ?: return
         val updated = TimelineTools.closeGapsAfterClip(track, sel.id)
-        val changedStarts = updated.associate { it.id to it.timelineStartMs }
+        val sameTrackChanged = updated.associate { it.id to it.timelineStartMs }
             .filter { (id, startMs) ->
                 track.firstOrNull { it.id == id }?.timelineStartMs != startMs
             }
+        val changedStarts = if (sameTrackChanged.isNotEmpty() || sel.isAudio) {
+            sameTrackChanged
+        } else {
+            TimelineTools.closeGapToNextClipAcrossVisualTracks(s.clips, sel)
+                .associate { it.id to it.timelineStartMs }
+                .filter { (id, startMs) ->
+                    s.clips.firstOrNull { it.id == id }?.timelineStartMs != startMs
+                }
+        }
         if (changedStarts.isEmpty()) return
 
         pushHistory()
         val movedDeltas = changedStarts.mapNotNull { (id, startMs) ->
-            val original = track.firstOrNull { it.id == id } ?: return@mapNotNull null
+            val original = s.clips.firstOrNull { it.id == id } ?: return@mapNotNull null
             val delta = startMs - original.timelineStartMs
             if (original.linkedId == null || delta == 0L) null
             else original.linkedId to delta
@@ -2399,9 +2408,9 @@ class EditorViewModel : ViewModel() {
             .firstOrNull { it.id == s.selectedClipId }
             ?.textState ?: selectedTextClips.first().textState ?: TextState()
         val isMultiTextSelection = selectedTextClips.size > 1
-        forEachSelectedClip { clip ->
+        val updatedClips = s.clips.map { clip ->
             val currentText = clip.textState
-            if (!clip.isTextClip || currentText == null) {
+            if (clip.id !in targetIds || !clip.isTextClip || currentText == null) {
                 clip
             } else {
                 val updatedText = if (isMultiTextSelection) {
@@ -2415,6 +2424,33 @@ class EditorViewModel : ViewModel() {
                 )
             }
         }
+        if (updatedClips == s.clips) return
+        pushHistory()
+        _state.update { it.copy(clips = updatedClips) }
+        updateHistoryFlags()
+    }
+
+    fun updateSelectedTextAlignment(alignment: String) {
+        val normalizedAlignment = alignment.lowercase()
+        if (normalizedAlignment !in setOf("left", "center", "right")) return
+        val s = _state.value
+        val targetIds = if (s.multiSelectedIds.isNotEmpty()) {
+            s.multiSelectedIds
+        } else {
+            setOfNotNull(s.selectedClipId)
+        }
+        val updatedClips = s.clips.map { clip ->
+            val textState = clip.textState
+            if (clip.id in targetIds && clip.isTextClip && textState != null) {
+                clip.copy(textState = textState.copy(alignment = normalizedAlignment))
+            } else {
+                clip
+            }
+        }
+        if (updatedClips == s.clips) return
+        pushHistory()
+        _state.update { it.copy(clips = updatedClips) }
+        updateHistoryFlags()
     }
 
     fun getSelectedTextState(): TextState {
@@ -2986,16 +3022,35 @@ class EditorViewModel : ViewModel() {
     fun applyOverlay(newOverlay: OverlayState) {
         val s = _state.value
         val baseClip = s.selectedClip
+        val overlayStartMs = s.currentPosMs.coerceAtLeast(0L)
+        val overlayDurationMs = baseClip
+            ?.takeIf {
+                it.isVisualClip &&
+                        overlayStartMs >= it.timelineStartMs &&
+                        overlayStartMs < it.timelineEndMs
+            }
+            ?.let { it.timelineEndMs - overlayStartMs }
+            ?.coerceAtLeast(EditorClip.MIN_DURATION_MS)
+            ?: 3000L
+        val topVisualTrack = s.clips
+            .filter {
+                it.isVisualClip &&
+                        overlayStartMs >= it.timelineStartMs &&
+                        overlayStartMs < it.timelineEndMs
+            }
+            .maxOfOrNull { it.trackIndex }
+            ?: baseClip?.trackIndex
+            ?: 0
         val clip = EditorClip(
             id = UUID.randomUUID().toString(), uri = Uri.EMPTY,
             name = "🎬 ${newOverlay.type}", type = "overlay/plain",
-            sourceStartMs = 0L, sourceEndMs = baseClip?.durationMs ?: 3000L,
-            timelineStartMs = baseClip?.timelineStartMs ?: s.currentPosMs,
+            sourceStartMs = 0L, sourceEndMs = overlayDurationMs,
+            timelineStartMs = overlayStartMs,
             trackIndex = 0, isAudio = false, sourceTotalMs = Long.MAX_VALUE,
             overlay = newOverlay
         )
         pushHistory()
-        addClipOnNewLayer(clip, (baseClip?.trackIndex ?: 0) + 1)
+        addClipOnNewLayer(clip, topVisualTrack + 1)
         updateHistoryFlags()
     }
 

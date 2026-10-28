@@ -70,6 +70,7 @@ fun TextPanel(
     hasTextClipSelected: Boolean,
     startInEdit: Boolean = false,
     onTextChanged: (TextState) -> Unit,
+    onAlignmentChanged: ((String) -> Unit)? = null,
     onDraftTextChanged: (String) -> Unit = {},
     onCreateNew: () -> Unit,
     onRemove: () -> Unit,
@@ -266,7 +267,10 @@ fun TextPanel(
 
             "alignment" -> AlignmentSub(
                 current = currentText.alignment,
-                onPick = { onTextChanged(currentText.copy(alignment = it)) },
+                onPick = {
+                    if (onAlignmentChanged != null) onAlignmentChanged(it)
+                    else onTextChanged(currentText.copy(alignment = it))
+                },
                 onBack = { subView = "options" }
             )
 
@@ -601,13 +605,19 @@ private fun AddTextSub(
 
 @Composable
 private fun FontsSub(current: String, onPick: (String) -> Unit, onBack: () -> Unit) {
-    var activeCategory by remember { mutableStateOf("arabic") }
+    var activeCategory by remember { mutableStateOf("english") }
 
     val fontList = remember(activeCategory) {
         FontLibrary.FONT_CATEGORIES[activeCategory] ?: emptyList()
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 520.dp)
+            .verticalScrollWithScrollbar(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         BackHeader("Fonts (${FontLibrary.allFonts().size})", onBack)
 
         Row(

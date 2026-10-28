@@ -59,43 +59,34 @@ object CaptionGenerator {
             }
             onProgress(0.15f)
 
-            // ─── Extract PCM ───
-            onStatus("Extracting audio…")
-            val pcm = withContext(Dispatchers.IO) {
-                WhisperAudioExtractor.extractPcm(
-                    context = context,
-                    uri = clip.uri,
-                    sourceStartMs = clip.sourceStartMs,
-                    sourceDurationMs = clip.sourceDurationMs
-                )
-            }
-            if (pcm == null || pcm.isEmpty()) {
-                return Result(false, 0, "", emptyList(), "Audio extraction failed")
-            }
-
-            val durationSec = pcm.size.toFloat() / 16000f
+            val durationSec = clip.sourceDurationMs.coerceAtLeast(0L) / 1000f
             if (durationSec < 0.5f) {
                 return Result(false, 0, "", emptyList(), "Audio too short (< 0.5s)")
             }
 
             onProgress(0.30f)
 
-            val chunkSamples = TRANSCRIPTION_CHUNK_SECONDS * SAMPLE_RATE
-            val chunkRanges = buildPcmChunkRanges(pcm.size, chunkSamples)
             val allTimelineSegments = mutableListOf<CaptionSegment>()
             var detectedLanguage = "unknown"
             var transcriptionLanguage = language
             var totalAdded = 0
 
-            chunkRanges.forEachIndexed { index, range ->
+            onStatus("Preparing audio chunks…")
+            val extractionSucceeded = WhisperAudioExtractor.forEachPcmChunk(
+                context = context,
+                uri = clip.uri,
+                sourceStartMs = clip.sourceStartMs,
+                sourceDurationMs = clip.sourceDurationMs,
+                chunkDurationMs = TRANSCRIPTION_CHUNK_SECONDS * 1000L
+            ) { index, chunkCount, chunkStartMs, chunkPcm ->
                 currentCoroutineContext().ensureActive()
-                val chunkStartMs = range.first.toLong() * 1000L / SAMPLE_RATE
-                onStatus(
-                    "Transcribing ${index + 1}/${chunkRanges.size} " +
-                            "(${"%.1f".format(chunkStartMs / 1000f)}s / " +
-                            "${"%.1f".format(durationSec)}s) · $totalAdded layers added"
-                )
-                val chunkPcm = pcm.copyOfRange(range.first, range.last + 1)
+                withContext(Dispatchers.Main) {
+                    onStatus(
+                        "Transcribing ${index + 1}/$chunkCount " +
+                                "(${"%.1f".format(chunkStartMs / 1000f)}s / " +
+                                "${"%.1f".format(durationSec)}s) · $totalAdded layers added"
+                    )
+                }
                 val result = withContext(Dispatchers.Default) {
                     WhisperEngine.transcribe(chunkPcm, transcriptionLanguage)
                 }
@@ -134,42 +125,58 @@ object CaptionGenerator {
                     clip.durationMs,
                     clip.speed
                 )
-                allTimelineSegments += timelineSegments
-
-                timelineSegments.forEach { segment ->
-                    currentCoroutineContext().ensureActive()
-                    try {
-                        val presetId =
-                            captionPresetId ?: CaptionPresetLibrary.presets.first().id
-                        val chunks = buildPresetChunks(
-                            text = segment.text,
-                            startMs = clip.timelineStartMs + segment.startMs,
-                            endMs = clip.timelineStartMs + segment.endMs,
-                            grouping = grouping,
-                            wordsPerLayer = wordsPerLayer,
-                            wordsPerLine = wordsPerLine
-                        )
-                        chunks.forEach { (text, start, end) ->
-                            viewModel.createTextClipAtTime(
-                                textState = CaptionPresetLibrary.applyTo(
-                                    text,
-                                    presetId,
-                                    highlightColor
-                                ),
-                                startMs = start,
-                                endMs = end
+                withContext(Dispatchers.Main) {
+                    allTimelineSegments += timelineSegments
+                    timelineSegments.forEach { segment ->
+                        currentCoroutineContext().ensureActive()
+                        try {
+                            val presetId =
+                                captionPresetId ?: CaptionPresetLibrary.presets.first().id
+                            val chunks = buildPresetChunks(
+                                text = segment.text,
+                                startMs = clip.timelineStartMs + segment.startMs,
+                                endMs = clip.timelineStartMs + segment.endMs,
+                                grouping = grouping,
+                                wordsPerLayer = wordsPerLayer,
+                                wordsPerLine = wordsPerLine
                             )
-                            totalAdded++
+                            chunks.forEach { (text, start, end) ->
+                                viewModel.createTextClipAtTime(
+                                    textState = CaptionPresetLibrary.applyTo(
+                                        text,
+                                        presetId,
+                                        highlightColor
+                                    ),
+                                    startMs = start,
+                                    endMs = end
+                                )
+                                totalAdded++
+                            }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (t: Throwable) {
+                            Log.e(TAG, "Failed to add \"${segment.text}\"", t)
                         }
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (t: Throwable) {
-                        Log.e(TAG, "Failed to add \"${segment.text}\"", t)
                     }
+                    onProgress(
+                        0.30f + 0.55f * (index + 1).toFloat() / chunkCount.coerceAtLeast(1)
+                    )
+                    onStatus("Added $totalAdded caption layers")
                 }
+            }
 
-                val completedSamples = range.last + 1
-                onProgress(0.35f + 0.5f * completedSamples / pcm.size)
+            if (!extractionSucceeded) {
+                if (totalAdded == 0) {
+                    return Result(false, 0, detectedLanguage, emptyList(), "Audio extraction failed")
+                }
+                onProgress(1f)
+                return Result(
+                    true,
+                    totalAdded,
+                    detectedLanguage,
+                    allTimelineSegments.sortedBy { it.startMs },
+                    "Audio extraction stopped after partial caption generation"
+                )
             }
 
             if (allTimelineSegments.isEmpty()) {
@@ -197,22 +204,6 @@ object CaptionGenerator {
         }
     }
 
-    internal fun buildPcmChunkRanges(
-        sampleCount: Int,
-        chunkSamples: Int
-    ): List<IntRange> {
-        if (sampleCount <= 0 || chunkSamples <= 0) return emptyList()
-        val ranges = mutableListOf<IntRange>()
-        var start = 0
-        while (start < sampleCount) {
-            val endExclusive = minOf(start.toLong() + chunkSamples, sampleCount.toLong()).toInt()
-            ranges += start until endExclusive
-            start = endExclusive
-        }
-        return ranges
-    }
-
-    private const val SAMPLE_RATE = 16_000
     private const val TRANSCRIPTION_CHUNK_SECONDS = 15
 
     internal fun fitSegmentsToClipDuration(

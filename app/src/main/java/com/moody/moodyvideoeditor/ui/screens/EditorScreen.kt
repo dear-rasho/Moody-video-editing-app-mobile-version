@@ -778,6 +778,7 @@ fun EditorScreen(
                         state.multiSelectedIds.isNotEmpty(),
                 startInEdit = openTextEditor,
                 onTextChanged = { viewModel.updateSelectedText(it) },
+                onAlignmentChanged = { viewModel.updateSelectedTextAlignment(it) },
                 onDraftTextChanged = { content ->
                     viewModel.updateSelectedText(
                         viewModel.getSelectedTextState().copy(content = content)
@@ -2384,6 +2385,11 @@ fun EditorScreen(
         screenHeightDp < 800 -> 200.dp
         else -> 230.dp
     }
+    val visibleTimelineHeight = if (activePanel != null && activePanel != "export") {
+        (timelineHeight / 2).coerceAtLeast(80.dp)
+    } else {
+        timelineHeight
+    }
 
     Column(
         modifier = Modifier
@@ -2557,7 +2563,7 @@ fun EditorScreen(
             }
 
             // ═══════════════════════════════════════════════════════════
-            //  3. CONTROL BAR (＋Media, ＋V, ＋A, ratio) — fixed 48dp
+            //  3. CONTROL BAR — media, playback, undo and redo
             // ═══════════════════════════════════════════════════════════
             ControlBar(
                 onMediaClick = {
@@ -2572,41 +2578,11 @@ fun EditorScreen(
                         )
                     )
                 },
-                onAddVisualLayer = { viewModel.addVisualLayer() },
-                onAddAudioLayer = { viewModel.addAudioLayer() },
                 currentRatio = state.aspectRatio,
                 onRatioClick = { activePanel = "ratio" },
-                isMuted = state.isMuted,
-                onMuteToggle = { viewModel.toggleMute() },
-                onMagnet = { viewModel.closeGapsAfterSelectedClip() },
-                onDelete = {
-                    if (state.multiSelectedIds.isNotEmpty()) {
-                        viewModel.deleteSelectedClips()
-                    } else if (!viewModel.deleteKeyframesAtPlayhead()) {
-                        viewModel.deleteCurrentClip()
-                    }
-                },
-                onDuplicate = { viewModel.duplicateCurrentClip() },
-                onCopy = { viewModel.copySelectedClips() },
-                onCut = { viewModel.cutSelectedClips() },
-                onPaste = { viewModel.pasteClipsAtPlayhead() },
-                canCopy = state.selectedClipId != null ||
-                        state.multiSelectedIds.isNotEmpty(),
-                canPaste = state.clipboardAction == "paste",
-                hasVideo = state.clips.isNotEmpty(),
-                currentPosMs = state.currentPosMs,
-                totalDurationMs = state.totalDurationMs
-            )
-
-            // ═══════════════════════════════════════════════════════════
-            //  4. PLAYBACK CONTROLS (2 rows — tools + zoom)
-            // ═══════════════════════════════════════════════════════════
-            PlaybackControls(
                 isPlaying = isPlaybackActive,
-                hasVideo = state.clips.isNotEmpty(),
                 canUndo = state.canUndo,
                 canRedo = state.canRedo,
-                hasKeyframeAtPlayhead = viewModel.hasKeyframeAtPlayhead(),
                 seekStepSeconds = settings.playheadSeekStepSeconds,
                 onSeekBy = { offsetMs ->
                     val totalDuration = state.totalDurationMs.coerceAtLeast(0L)
@@ -2614,41 +2590,6 @@ fun EditorScreen(
                         (state.currentPosMs + offsetMs).coerceIn(0L, totalDuration)
                     )
                 },
-                onSelectBackward = { viewModel.selectBackward() },
-                onSelectForward = { viewModel.selectForward() },
-                onSelectAll = { viewModel.selectAllClips() },
-                onSelectAllTrack = { viewModel.selectAllOnCurrentTrack() },
-                onDeselectAll = { viewModel.deselectAll() },
-                onLink = { viewModel.linkSelectedClips() },
-                onUnlink = {
-                    state.selectedClip?.let {
-                        viewModel.unlinkClip(it.id)
-                    }
-                },
-                isLinked = state.selectedClip?.let {
-                    it.linkGroupId != null || it.linkedId != null
-                } == true,
-                canLink = state.multiSelectedIds.size >= 2 &&
-                        state.selectedClip?.let {
-                            it.linkGroupId == null && it.linkedId == null
-                        } != false,
-                onSplit = { viewModel.splitCurrentClip() },
-                canSplit = state.selectedClip?.let { sel ->
-                    state.currentPosMs > (sel.timelineStartMs + EditorClip.MIN_DURATION_MS) &&
-                            state.currentPosMs < (sel.timelineEndMs - EditorClip.MIN_DURATION_MS)
-                } ?: false,
-                onTrimLeft = { viewModel.trimLeft() },
-                onTrimRight = { viewModel.trimRight() },
-                canTrimLeft = state.selectedClip?.let { sel ->
-                    state.currentPosMs > (sel.timelineStartMs + EditorClip.MIN_DURATION_MS)
-                } ?: false,
-                canTrimRight = state.selectedClip?.let { sel ->
-                    state.currentPosMs < (sel.timelineEndMs - EditorClip.MIN_DURATION_MS)
-                } ?: false,
-                zoomSlider = state.timelineZoom,
-                totalSec = state.totalDurationMs / 1000f,
-                viewportContentWidthDp = 320f,
-                onZoomChange = { viewModel.setTimelineZoom(it) },
                 onPlayPause = {
                     if (isPlaybackActive) {
                         isPlaybackActive = false
@@ -2684,7 +2625,72 @@ fun EditorScreen(
                 },
                 onUndo = { viewModel.undo() },
                 onRedo = { viewModel.redo() },
-                onKeyframe = { viewModel.toggleKeyframeAll() }
+                isMuted = state.isMuted,
+                hasKeyframeAtPlayhead = viewModel.hasKeyframeAtPlayhead(),
+                onMuteToggle = { viewModel.toggleMute() },
+                onKeyframe = { viewModel.toggleKeyframeAll() },
+                onMagnet = { viewModel.closeGapsAfterSelectedClip() },
+                onDuplicate = { viewModel.duplicateCurrentClip() },
+                onDelete = {
+                    if (state.multiSelectedIds.isNotEmpty()) {
+                        viewModel.deleteSelectedClips()
+                    } else if (!viewModel.deleteKeyframesAtPlayhead()) {
+                        viewModel.deleteCurrentClip()
+                    }
+                },
+                hasVideo = state.clips.isNotEmpty(),
+                currentPosMs = state.currentPosMs,
+                totalDurationMs = state.totalDurationMs
+            )
+
+            // ═══════════════════════════════════════════════════════════
+            //  4. EDITING TOOLS — one horizontally scrollable row
+            // ═══════════════════════════════════════════════════════════
+            PlaybackControls(
+                hasVideo = state.clips.isNotEmpty(),
+                onCopy = { viewModel.copySelectedClips() },
+                onCut = { viewModel.cutSelectedClips() },
+                onPaste = { viewModel.pasteClipsAtPlayhead() },
+                canCopy = state.selectedClipId != null ||
+                        state.multiSelectedIds.isNotEmpty(),
+                canPaste = state.clipboardAction == "paste",
+                onAddVisualLayer = { viewModel.addVisualLayer() },
+                onAddAudioLayer = { viewModel.addAudioLayer() },
+                onSelectBackward = { viewModel.selectBackward() },
+                onSelectForward = { viewModel.selectForward() },
+                onSelectAll = { viewModel.selectAllClips() },
+                onSelectAllTrack = { viewModel.selectAllOnCurrentTrack() },
+                onDeselectAll = { viewModel.deselectAll() },
+                onLink = { viewModel.linkSelectedClips() },
+                onUnlink = {
+                    state.selectedClip?.let {
+                        viewModel.unlinkClip(it.id)
+                    }
+                },
+                isLinked = state.selectedClip?.let {
+                    it.linkGroupId != null || it.linkedId != null
+                } == true,
+                canLink = state.multiSelectedIds.size >= 2 &&
+                        state.selectedClip?.let {
+                            it.linkGroupId == null && it.linkedId == null
+                        } != false,
+                onSplit = { viewModel.splitCurrentClip() },
+                canSplit = state.selectedClip?.let { sel ->
+                    state.currentPosMs > (sel.timelineStartMs + EditorClip.MIN_DURATION_MS) &&
+                            state.currentPosMs < (sel.timelineEndMs - EditorClip.MIN_DURATION_MS)
+                } ?: false,
+                onTrimLeft = { viewModel.trimLeft() },
+                onTrimRight = { viewModel.trimRight() },
+                canTrimLeft = state.selectedClip?.let { sel ->
+                    state.currentPosMs > (sel.timelineStartMs + EditorClip.MIN_DURATION_MS)
+                } ?: false,
+                canTrimRight = state.selectedClip?.let { sel ->
+                    state.currentPosMs < (sel.timelineEndMs - EditorClip.MIN_DURATION_MS)
+                } ?: false,
+                zoomSlider = state.timelineZoom,
+                totalSec = state.totalDurationMs / 1000f,
+                viewportContentWidthDp = 320f,
+                onZoomChange = { viewModel.setTimelineZoom(it) }
             )
 
             // ═══════════════════════════════════════════════════════════
@@ -2693,7 +2699,7 @@ fun EditorScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(timelineHeight)
+                    .height(visibleTimelineHeight)
             ) {
                 Timeline(
                     state = state,

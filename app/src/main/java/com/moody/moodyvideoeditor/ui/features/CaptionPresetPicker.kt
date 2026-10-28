@@ -85,15 +85,22 @@ fun CaptionPresetPicker(
                 rowPresets.forEachIndexed { columnIndex, preset ->
                     val active = preset.id == selectedPresetId
                     val presetIndex = rowIndex * 2 + columnIndex
+                    val animationElapsed =
+                        ((previewClock + presetIndex * 0.13f) % 0.9f + 0.12f) % 0.9f
+                    val animationProgress = (animationElapsed / 0.45f).coerceIn(0f, 1f)
+                    val sample = CaptionPresetLibrary.visibleText(
+                        "Moody Editing App",
+                        preset.animation,
+                        animationProgress
+                    )
                     val preview = buildAnnotatedString {
-                        val sample = "Moody Editing App"
                         append(sample)
                         CaptionPresetLibrary.colorRanges(
                             text = sample,
                             presetId = preset.id,
                             highlightColor = highlightColor,
-                            elapsedMs = (previewClock * 1000f).toLong(),
-                            durationMs = 1_800L
+                            elapsedMs = (animationElapsed * 1000f).toLong(),
+                            durationMs = 900L
                         ).forEach { range ->
                             addStyle(
                                 SpanStyle(color = Color(range.color)),
@@ -102,11 +109,9 @@ fun CaptionPresetPicker(
                             )
                         }
                     }
-                    val animationElapsed =
-                        (previewClock + presetIndex * 0.13f) % 0.9f
                     val frame = AnimationsEngine.computeFrame(
                         animation = preset.animation,
-                        progress = (animationElapsed / 0.45f).coerceIn(0f, 1f),
+                        progress = animationProgress,
                         elapsedSec = animationElapsed
                     )
                     val previewModifier = Modifier
