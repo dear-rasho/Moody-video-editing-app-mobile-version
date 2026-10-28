@@ -75,7 +75,7 @@ fun AnimationsPanel(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScrollWithTwoFinger(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             AnimationsEngine.CATEGORIES.forEach { cat ->
@@ -114,7 +114,7 @@ fun AnimationsPanel(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScrollWithTwoFinger(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             currentCategory.animations.forEach { anim ->

@@ -424,7 +424,18 @@ object TextBitmapRenderer {
                     val st = clip.textState
                     if (st != null) {
                         val animDur = st.animationDuration.coerceAtLeast(0.1f)
-                        if (!st.animation.equals("none", ignoreCase = true) && localSec < animDur) {
+                        if ((!st.animation.equals("none", ignoreCase = true) ||
+                                !st.captionPresetAnimation.equals("none", ignoreCase = true)) &&
+                            localSec < animDur
+                        ) {
+                            anyAnimated = true
+                        }
+                        if (!st.captionPresetAnimation.equals("none", ignoreCase = true) &&
+                            localSec < st.captionPresetAnimationDuration.coerceAtLeast(0.1f)
+                        ) {
+                            anyAnimated = true
+                        }
+                        if (CaptionPresetLibrary.hasMovingHighlight(st.captionPresetId)) {
                             anyAnimated = true
                         }
                     }
@@ -579,13 +590,31 @@ object TextBitmapRenderer {
         if (st.content.isBlank()) return
         val animSec = if (st.animation.equals("none", true)) 0f else st.animationDuration.coerceAtLeast(0.1f)
         val progress = if (animSec <= 0f) 1f else (localTimeSec / animSec).coerceIn(0f, 1f)
+        val presetProgress = if (st.captionPresetAnimation.equals("none", true)) 1f
+        else (localTimeSec / st.captionPresetAnimationDuration.coerceAtLeast(0.1f)).coerceIn(0f, 1f)
         val frame = try {
-            AnimationsEngine.computeFrame(st.animation, progress, localTimeSec)
+            AnimationsEngine.computeTextFrame(
+                st.animation,
+                st.captionPresetAnimation,
+                progress,
+                localTimeSec,
+                presetProgress
+            )
         } catch (_: Throwable) {
             AnimationsEngine.Frame()
         }
         val sampled = TransformApplier.resolveLive(clip, localTimeSec)
-        drawTextWithFrame(canvas, st, frame, progress, W, H, sampled)
+        drawTextWithFrame(
+            canvas,
+            st,
+            frame,
+            progress,
+            W,
+            H,
+            sampled,
+            (localTimeSec * 1000f).toLong(),
+            clip.durationMs
+        )
     }
 
     private fun drawStickerClipAtTime(canvas: Canvas, clip: EditorClip, localTimeSec: Float, W: Int, H: Int) {
@@ -726,7 +755,9 @@ object TextBitmapRenderer {
         frame: AnimationsEngine.Frame,
         progress: Float,
         W: Int, H: Int,
-        sampled: TransformValues
+        sampled: TransformValues,
+        localTimeMs: Long,
+        clipDurationMs: Long
     ) {
         try {
             val content = if (st.animation.equals("typewriter", ignoreCase = true)) {
@@ -907,14 +938,110 @@ object TextBitmapRenderer {
                 fillPaint.color = st.color.toInt()
             }
 
-            lines.forEachIndexed { i, line ->
-                val lineY = firstBaseline + i * lineHeightPx
-                canvas.drawText(line, 0f, lineY, fillPaint)
+            val captionRanges = CaptionPresetLibrary.colorRanges(
+                text = content,
+                presetId = st.captionPresetId,
+                highlightColor = st.captionHighlightColor,
+                elapsedMs = localTimeMs,
+                durationMs = clipDurationMs,
+                preserveGradient = st.gradientEnabled
+            )
+            if (captionRanges.isEmpty()) {
+                lines.forEachIndexed { i, line ->
+                    val lineY = firstBaseline + i * lineHeightPx
+                    canvas.drawText(line, 0f, lineY, fillPaint)
+                }
+            } else {
+                fillPaint.textAlign = Paint.Align.LEFT
+                fillPaint.shader = null
+                val maxLineWidth = lines.maxOfOrNull { fillPaint.measureText(it) } ?: 0f
+                val alignOffset = when (st.alignment) {
+                    "left" -> -maxLineWidth / 2f
+                    else -> 0f
+                }
+                var lineStart = 0
+                lines.forEachIndexed { lineIndex, line ->
+                    val lineEnd = lineStart + line.length
+                    val lineWidth = fillPaint.measureText(line)
+                    var x = when (st.alignment) {
+                        "left" -> alignOffset
+                        "right" -> maxLineWidth / 2f - lineWidth
+                        else -> -lineWidth / 2f
+                    }
+                    var charIndex = lineStart
+                    while (charIndex < lineEnd) {
+                        val range = captionRanges.firstOrNull {
+                            charIndex >= it.start && charIndex < it.end
+                        }
+                        var runEnd = charIndex + 1
+                        while (runEnd < lineEnd &&
+                            captionRanges.firstOrNull {
+                                runEnd >= it.start && runEnd < it.end
+                            }?.color == range?.color
+                        ) {
+                            runEnd++
+                        }
+                        val run = content.substring(charIndex, runEnd)
+                        val baseRunColor = when {
+                            range != null -> range.color
+                            st.gradientEnabled -> sampleTextGradient(
+                                st = st,
+                                x = x + fillPaint.measureText(run) / 2f + maxLineWidth / 2f,
+                                y = lineIndex * lineHeightPx + lineHeightPx / 2f,
+                                width = maxLineWidth.coerceAtLeast(1f),
+                                height = (lineHeightPx * lines.size).coerceAtLeast(1f)
+                            )
+                            else -> st.color
+                        }
+                        val runColor = baseRunColor.toInt()
+                        fillPaint.color = Color.argb(
+                            alphaInt,
+                            Color.red(runColor),
+                            Color.green(runColor),
+                            Color.blue(runColor)
+                        )
+                        canvas.drawText(run, x, firstBaseline + lineIndex * lineHeightPx, fillPaint)
+                        x += fillPaint.measureText(run)
+                        charIndex = runEnd
+                    }
+                    lineStart = lineEnd + 1
+                }
             }
 
             canvas.restore()
         } catch (e: Throwable) {
             Log.e(TAG, "drawTextWithFrame failed", e)
         }
+    }
+
+    private fun sampleTextGradient(
+        st: com.moody.moodyvideoeditor.data.TextState,
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float
+    ): Long {
+        val startX = st.gradientStartX.coerceIn(0f, 1f) * width
+        val startY = st.gradientStartY.coerceIn(0f, 1f) * height
+        val endX = st.gradientEndX.coerceIn(0f, 1f) * width
+        val endY = st.gradientEndY.coerceIn(0f, 1f) * height
+        val dx = endX - startX
+        val dy = endY - startY
+        val denominator = dx * dx + dy * dy
+        val amount = if (denominator <= 0.0001f) 0f else (
+            ((x - startX) * dx + (y - startY) * dy) / denominator
+        ).coerceIn(0f, 1f)
+        val start = st.gradientColor1.toInt()
+        val end = st.gradientColor2.toInt()
+        fun channel(shift: Int): Int {
+            val a = (start ushr shift) and 0xFF
+            val b = (end ushr shift) and 0xFF
+            return (a + (b - a) * amount).toInt().coerceIn(0, 255)
+        }
+        return (
+            (channel(24).toLong() shl 24) or
+                (channel(16).toLong() shl 16) or
+                (channel(8).toLong() shl 8) or channel(0).toLong()
+            )
     }
 }

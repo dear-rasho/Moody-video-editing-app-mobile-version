@@ -3326,12 +3326,17 @@ private fun InteractiveTextOverlay(
     val clampedY = sampled.y.coerceIn(-50f, 150f)
     val animDur = textState.animationDuration.coerceAtLeast(0.1f);
     val progress = (localTimeSec / animDur).coerceIn(0f, 1f)
+    val presetProgress = (
+        localTimeSec / textState.captionPresetAnimationDuration.coerceAtLeast(0.1f)
+        ).coerceIn(0f, 1f)
     var isDragging by remember { mutableStateOf(false) }
     val rawFrame = try {
-        com.moody.moodyvideoeditor.utils.AnimationsEngine.computeFrame(
+        com.moody.moodyvideoeditor.utils.AnimationsEngine.computeTextFrame(
             textState.animation,
+            textState.captionPresetAnimation,
             progress,
-            localTimeSec
+            localTimeSec,
+            presetProgress
         )
     } catch (_: Throwable) {
         com.moody.moodyvideoeditor.utils.AnimationsEngine.Frame()
@@ -3672,17 +3677,38 @@ private fun InteractiveTextOverlay(
                         )
                     )
                 }
-                val annotatedDisplay =
-                    if (textState.backgroundEnabled && textState.backgroundType == "character") AnnotatedString(
+                val captionColorRanges =
+                    com.moody.moodyvideoeditor.utils.CaptionPresetLibrary.colorRanges(
                         text = displayContent,
-                        spanStyles = listOf(
-                            AnnotatedString.Range(
-                                item = SpanStyle(
-                                    background = Color(textState.backgroundColor1).copy(alpha = textState.backgroundOpacity / 100f)
-                                ), start = 0, end = displayContent.length
-                            )
+                        presetId = textState.captionPresetId,
+                        highlightColor = textState.captionHighlightColor,
+                        elapsedMs = (currentPosMs - clip.timelineStartMs).coerceAtLeast(0L),
+                        durationMs = clip.durationMs,
+                        preserveGradient = textState.gradientEnabled
+                    )
+                val annotatedBuilder = AnnotatedString.Builder(displayContent)
+                if (textState.backgroundEnabled && textState.backgroundType == "character" &&
+                    displayContent.isNotEmpty()
+                ) {
+                    annotatedBuilder.addStyle(
+                        SpanStyle(
+                            background = Color(textState.backgroundColor1)
+                                .copy(alpha = textState.backgroundOpacity / 100f)
+                        ),
+                        0,
+                        displayContent.length
+                    )
+                }
+                if (!textState.gradientEnabled) {
+                    captionColorRanges.forEach { range ->
+                        annotatedBuilder.addStyle(
+                            SpanStyle(color = Color(range.color)),
+                            range.start,
+                            range.end
                         )
-                    ) else AnnotatedString(displayContent)
+                    }
+                }
+                val annotatedDisplay = annotatedBuilder.toAnnotatedString()
                 Text(
                     text = annotatedDisplay,
                     color = if (gradient != null) Color.Unspecified else solidColor,
@@ -3702,6 +3728,38 @@ private fun InteractiveTextOverlay(
                         lineHeight = finalLineHeightSp
                     )
                 )
+                if (gradient != null && captionColorRanges.isNotEmpty()) {
+                    val highlightBuilder = AnnotatedString.Builder(displayContent)
+                    highlightBuilder.addStyle(
+                        SpanStyle(color = Color.Transparent),
+                        0,
+                        displayContent.length
+                    )
+                    captionColorRanges.forEach { range ->
+                        highlightBuilder.addStyle(
+                            SpanStyle(color = Color(range.color)),
+                            range.start,
+                            range.end
+                        )
+                    }
+                    Text(
+                        text = highlightBuilder.toAnnotatedString(),
+                        color = Color.Transparent,
+                        fontSize = finalFontSizeSp,
+                        fontWeight = weight,
+                        fontStyle = fontSty,
+                        fontFamily = family,
+                        textAlign = textAlignValue,
+                        softWrap = true,
+                        maxLines = Int.MAX_VALUE,
+                        overflow = TextOverflow.Visible,
+                        modifier = Modifier.width(textWidthConstraintDp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            letterSpacing = finalLetterSpacingSp,
+                            lineHeight = finalLineHeightSp
+                        )
+                    )
+                }
             }
         }
         if (isSelected) {

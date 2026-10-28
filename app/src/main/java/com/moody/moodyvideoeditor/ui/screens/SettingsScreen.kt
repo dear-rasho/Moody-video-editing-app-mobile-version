@@ -423,6 +423,19 @@ private fun EditTab(draft: AppSettings, vm: SettingsViewModel) {
     ) {
         SettingsCard {
             NumberSpinnerRow(
+                label = "Playhead seek step",
+                value = draft.playheadSeekStepSeconds.toFloat(),
+                unit = "s",
+                step = 1f,
+                min = 1f,
+                max = 60f,
+                decimals = 0,
+                onValueChange = { vm.setPlayheadSeekStepSeconds(it.toInt()) }
+            )
+
+            CardDivider()
+
+            NumberSpinnerRow(
                 label = "Step forward/back",
                 value = draft.stepFrames.toFloat(),
                 unit = "frames",

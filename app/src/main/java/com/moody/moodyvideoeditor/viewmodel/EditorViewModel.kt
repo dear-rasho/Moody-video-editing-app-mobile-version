@@ -3,6 +3,7 @@ package com.moody.moodyvideoeditor.viewmodel
 import com.moody.moodyvideoeditor.data.OverlayConfig
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import com.moody.moodyvideoeditor.data.AdjustmentData
@@ -55,6 +56,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import androidx.lifecycle.viewModelScope
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.cos
@@ -67,6 +72,8 @@ class EditorViewModel : ViewModel() {
     val state: StateFlow<EditorState> = _state.asStateFlow()
 
     private val history = HistoryManager()
+    private var clipboardClips: List<EditorClip> = emptyList()
+    private var clipboardIsCut = false
 
     val exportState: StateFlow<ExportUiState> = ExportStateHolder.state
 
@@ -572,9 +579,9 @@ class EditorViewModel : ViewModel() {
                 selectedClipId = videoClip.id,
                 selectedTrackIndex = 0,
                 selectedIsAudio = false,
+                multiSelectedIds = setOf(videoClip.id, audioClip.id),
                 visualLayerCount = maxOf(st.visualLayerCount, 3),
                 audioLayerCount = maxOf(st.audioLayerCount, 2),
-                multiSelectedIds = emptySet(),
                 timelineLockedMs = lockedMs // 🆕
             )
         }
@@ -719,7 +726,9 @@ class EditorViewModel : ViewModel() {
                 selectedClipId = videoClip.id,
                 selectedTrackIndex = visualPlacement.trackIndex,
                 selectedIsAudio = false,
-                multiSelectedIds = emptySet(),
+                multiSelectedIds = audioClip?.let {
+                    setOf(videoClip.id, it.id)
+                } ?: emptySet(),
                 timelineLockedMs = lockedMs
             )
         }
@@ -728,10 +737,19 @@ class EditorViewModel : ViewModel() {
 
     fun selectClip(clip: EditorClip) {
         _state.update {
+            val linkedIds = it.clips.asSequence()
+                .filter { candidate ->
+                    (clip.linkedId != null && candidate.linkedId == clip.linkedId) ||
+                            (clip.linkGroupId != null &&
+                                    candidate.linkGroupId == clip.linkGroupId)
+                }
+                .map { candidate -> candidate.id }
+                .toSet() + clip.id
             it.copy(
                 selectedClipId = clip.id,
                 selectedTrackIndex = clip.trackIndex,
                 selectedIsAudio = clip.isAudio,
+                multiSelectedIds = linkedIds.takeIf { ids -> ids.size > 1 } ?: emptySet(),
                 currentIndex = it.clips.indexOf(clip).coerceAtLeast(0)
             )
         }
@@ -1322,20 +1340,32 @@ class EditorViewModel : ViewModel() {
     fun unlinkClip(clipId: String) {
         val s = _state.value
         val clip = s.clips.firstOrNull { it.id == clipId } ?: return
-        val gid = clip.linkGroupId ?: return
+        val gid = clip.linkGroupId
+        val linkedId = clip.linkedId
+        if (gid == null && linkedId == null) return
 
         pushHistory()
         val list = s.clips.toMutableList()
-        val idx = list.indexOfFirst { it.id == clipId }
-        if (idx < 0) return
-        list[idx] = list[idx].copy(linkGroupId = null)
-
-        val remaining = list.filter { it.linkGroupId == gid }
-        if (remaining.size == 1) {
-            val rIdx = list.indexOfFirst { it.linkGroupId == gid }
-            if (rIdx >= 0) list[rIdx] = list[rIdx].copy(linkGroupId = null)
+        if (linkedId != null) {
+            list.replaceAll { current ->
+                if (current.linkedId == linkedId) current.copy(linkedId = null)
+                else current
+            }
         }
-        _state.update { it.copy(clips = list) }
+
+        if (gid != null) {
+            val idx = list.indexOfFirst { it.id == clipId }
+            if (idx >= 0) list[idx] = list[idx].copy(linkGroupId = null)
+
+            val remaining = list.filter { it.linkGroupId == gid }
+            if (remaining.size == 1) {
+                val rIdx = list.indexOfFirst { it.linkGroupId == gid }
+                if (rIdx >= 0) list[rIdx] = list[rIdx].copy(linkGroupId = null)
+            }
+        }
+        _state.update {
+            it.copy(clips = list, multiSelectedIds = emptySet())
+        }
         updateHistoryFlags()
     }
 
@@ -1919,6 +1949,143 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
+    private fun selectedClipboardIds(state: EditorState): Set<String> {
+        val ids = if (state.multiSelectedIds.isNotEmpty()) {
+            state.multiSelectedIds.toMutableSet()
+        } else {
+            setOfNotNull(state.selectedClipId).toMutableSet()
+        }
+        var changed: Boolean
+        do {
+            changed = false
+            state.clips.forEach { clip ->
+                if (clip.id !in ids) return@forEach
+                val relatedIds = state.clips.asSequence()
+                    .filter { related ->
+                        (clip.linkedId != null && related.linkedId == clip.linkedId) ||
+                                (clip.linkGroupId != null &&
+                                        related.linkGroupId == clip.linkGroupId)
+                    }
+                    .map { it.id }
+                relatedIds.forEach { if (ids.add(it)) changed = true }
+            }
+        } while (changed)
+        return ids
+    }
+
+    fun copySelectedClips() {
+        val s = _state.value
+        val ids = selectedClipboardIds(s)
+        val selected = s.clips.filter { it.id in ids }
+        if (selected.isEmpty()) return
+        clipboardClips = selected
+        clipboardIsCut = false
+        _state.update { it.copy(clipboardAction = "paste") }
+    }
+
+    fun cutSelectedClips() {
+        val s = _state.value
+        val ids = selectedClipboardIds(s)
+        val selected = s.clips.filter { it.id in ids }
+        if (selected.isEmpty()) return
+
+        clipboardClips = selected
+        clipboardIsCut = true
+        pushHistory()
+        _state.update {
+            it.copy(
+                clips = it.clips.filterNot { clip -> clip.id in ids },
+                selectedClipId = null,
+                multiSelectedIds = emptySet(),
+                clipboardAction = "paste"
+            )
+        }
+        cleanupStaleBeats()
+        updateHistoryFlags()
+    }
+
+    fun pasteClipsAtPlayhead() {
+        val s = _state.value
+        if (clipboardClips.isEmpty()) {
+            _state.update { it.copy(clipboardAction = null) }
+            return
+        }
+
+        val anchorStartMs = clipboardClips.minOf { it.timelineStartMs }
+        val maxTrackByType = s.clips.groupBy { it.isAudio }
+            .mapValues { (_, clips) -> clips.maxOfOrNull { it.trackIndex } ?: -1 }
+        val placedTracks = mutableListOf<EditorClip>()
+
+        fun findPasteTrack(source: EditorClip, startMs: Long): Int {
+            val duration = source.durationMs
+            val highestTrack = maxOf(
+                maxTrackByType[source.isAudio] ?: -1,
+                placedTracks.filter { it.isAudio == source.isAudio }
+                    .maxOfOrNull { it.trackIndex } ?: -1
+            )
+            for (track in source.trackIndex..(highestTrack + 1)) {
+                val occupied = s.clips.any {
+                    it.isAudio == source.isAudio && it.trackIndex == track &&
+                            it.timelineStartMs < startMs + duration &&
+                            startMs < it.timelineEndMs
+                } || placedTracks.any {
+                    it.isAudio == source.isAudio && it.trackIndex == track &&
+                            it.timelineStartMs < startMs + duration &&
+                            startMs < it.timelineEndMs
+                }
+                if (!occupied) return track
+            }
+            return maxOf(source.trackIndex, highestTrack + 1)
+        }
+
+        val linkedIds = clipboardClips.mapNotNull { it.linkedId }.distinct()
+            .associateWith { "lk-${UUID.randomUUID()}" }
+        val groupIds = clipboardClips.mapNotNull { it.linkGroupId }.distinct()
+            .associateWith { "lg-${UUID.randomUUID()}" }
+
+        clipboardClips.forEach { source ->
+            val startMs = (s.currentPosMs + source.timelineStartMs - anchorStartMs)
+                .coerceAtLeast(0L)
+            val pasted = source.copy(
+                id = UUID.randomUUID().toString(),
+                name = if (clipboardIsCut) source.name else "${source.name} copy",
+                timelineStartMs = startMs,
+                trackIndex = findPasteTrack(source, startMs),
+                linkedId = source.linkedId?.let { linkedIds[it] },
+                linkGroupId = source.linkGroupId?.let { groupIds[it] }
+            )
+            placedTracks.add(pasted)
+        }
+        if (placedTracks.isEmpty()) return
+
+        pushHistory()
+        val allClips = s.clips + placedTracks
+        val primary = placedTracks.firstOrNull { !it.isAudio } ?: placedTracks.first()
+        _state.update {
+            it.copy(
+                clips = allClips,
+                selectedClipId = primary.id,
+                selectedTrackIndex = primary.trackIndex,
+                selectedIsAudio = primary.isAudio,
+                multiSelectedIds = placedTracks.map { clip -> clip.id }.toSet(),
+                visualLayerCount = maxOf(
+                    it.visualLayerCount,
+                    (allClips.filterNot { clip -> clip.isAudio }
+                        .maxOfOrNull { clip -> clip.trackIndex } ?: -1) + 1
+                ),
+                audioLayerCount = maxOf(
+                    it.audioLayerCount,
+                    (allClips.filter { clip -> clip.isAudio }
+                        .maxOfOrNull { clip -> clip.trackIndex } ?: -1) + 1
+                ),
+                clipboardAction = null
+            )
+        }
+        clipboardClips = emptyList()
+        clipboardIsCut = false
+        updateHistoryFlags()
+    }
+
     fun duplicateCurrentClip() {
         val sel = _state.value.selectedClip ?: return
         val s = _state.value
@@ -1945,16 +2112,106 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
-    fun addFreezeFrame(durationMs: Long) {
-        val sel = _state.value.selectedClip ?: return
-        if (sel.isAudio) return
-        pushHistory()
-        val freezeClip = FreezeEngine.makeFreezeClip(sel, sel.timelineEndMs, durationMs)
-        val list = _state.value.clips.toMutableList()
-        list.add(freezeClip)
-        TimelineEngine.recalcTrackTimings(list, sel.trackIndex, false)
-        _state.update { it.copy(clips = list, selectedClipId = freezeClip.id) }
-        updateHistoryFlags()
+    fun addFreezeFrame(
+        context: Context,
+        durationMs: Long,
+        onError: (String) -> Unit = {}
+    ) {
+        val stateAtRequest = _state.value
+        val source = stateAtRequest.selectedClip?.takeIf {
+            it.isVisualClip && it.type.startsWith("video/")
+        } ?: return
+        val freezeAtMs = stateAtRequest.currentPosMs
+        if (freezeAtMs !in source.timelineStartMs until source.timelineEndMs ||
+            durationMs <= 0L
+        ) return
+
+        viewModelScope.launch {
+            val freezeClip = try {
+                withContext(Dispatchers.IO) {
+                    FreezeEngine.captureFreezeClip(context, source, freezeAtMs, durationMs)
+                }
+            } catch (error: Exception) {
+                Log.e("EditorViewModel", "Failed to create freeze frame", error)
+                onError(error.message ?: "Could not create freeze frame.")
+                return@launch
+            }
+
+            val currentState = _state.value
+            val currentSource = currentState.clips.firstOrNull { it.id == source.id }
+            if (currentSource == null ||
+                currentSource.uri != source.uri ||
+                currentSource.timelineStartMs != source.timelineStartMs ||
+                currentSource.sourceStartMs != source.sourceStartMs ||
+                currentSource.sourceEndMs != source.sourceEndMs
+            ) {
+                freezeClip.uri.path?.let { java.io.File(it).delete() }
+                onError("Video or playhead changed before the freeze frame was ready. Try again.")
+                return@launch
+            }
+
+            val freezeEndMs = freezeAtMs + durationMs
+            val list = currentState.clips.toMutableList()
+            val sourceIndex = list.indexOfFirst { it.id == source.id }
+            if (sourceIndex < 0) return@launch
+            val pairedAudio = source.linkedId?.let { linkId ->
+                list.firstOrNull {
+                    it.linkedId == linkId && it.isAudio && !it.isAudioEffectClip
+                }
+            }
+            val splitAudio = pairedAudio?.let {
+                FreezeEngine.splitLinkedAudioAroundFreeze(it, freezeAtMs, durationMs)
+            }.orEmpty()
+            val tailLinkedId = if (splitAudio.size > 1) {
+                "lk-${UUID.randomUUID()}"
+            } else null
+            list.removeAt(sourceIndex)
+            list.addAll(
+                FreezeEngine.splitAroundFreeze(
+                    source,
+                    freezeClip,
+                    freezeAtMs,
+                    tailLinkedId
+                )
+            )
+
+            if (pairedAudio != null && splitAudio.isNotEmpty()) {
+                val audioIndex = list.indexOfFirst { it.id == pairedAudio.id }
+                if (audioIndex >= 0) {
+                    list.removeAt(audioIndex)
+                    list.addAll(
+                        splitAudio.mapIndexed { index, clip ->
+                            if (index == splitAudio.lastIndex && splitAudio.size > 1) {
+                                clip.copy(linkedId = tailLinkedId)
+                            } else clip
+                        }
+                    )
+                }
+            }
+
+            for (index in list.indices) {
+                val clip = list[index]
+                if (clip.id != source.id &&
+                    clip.trackIndex == source.trackIndex &&
+                    !clip.isAudio &&
+                    clip.timelineStartMs >= source.timelineEndMs
+                ) {
+                    list[index] = clip.copy(timelineStartMs = clip.timelineStartMs + durationMs)
+                }
+            }
+
+            pushHistory()
+            _state.update {
+                it.copy(
+                    clips = list,
+                    selectedClipId = freezeClip.id,
+                    selectedTrackIndex = freezeClip.trackIndex,
+                    selectedIsAudio = false,
+                    multiSelectedIds = emptySet()
+                )
+            }
+            updateHistoryFlags()
+        }
     }
 
     fun setSpeed(speed: Float) {
@@ -2129,18 +2386,105 @@ class EditorViewModel : ViewModel() {
     }
 
     fun updateSelectedText(newState: TextState) {
+        val s = _state.value
+        val targetIds = if (s.multiSelectedIds.isNotEmpty()) {
+            s.multiSelectedIds
+        } else {
+            setOfNotNull(s.selectedClipId)
+        }
+        val selectedTextClips = s.clips.filter { it.id in targetIds && it.isTextClip }
+        if (selectedTextClips.isEmpty()) return
+
+        val baseState = selectedTextClips
+            .firstOrNull { it.id == s.selectedClipId }
+            ?.textState ?: selectedTextClips.first().textState ?: TextState()
+        val isMultiTextSelection = selectedTextClips.size > 1
         forEachSelectedClip { clip ->
-            if (clip.isTextClip) {
+            val currentText = clip.textState
+            if (!clip.isTextClip || currentText == null) {
+                clip
+            } else {
+                val updatedText = if (isMultiTextSelection) {
+                    currentText.applyChangedTextProperties(baseState, newState)
+                } else {
+                    newState
+                }
                 clip.copy(
-                    textState = newState,
-                    name = "📝 ${newState.content.take(18).ifBlank { "Text" }}"
+                    textState = updatedText,
+                    name = "📝 ${updatedText.content.take(18).ifBlank { "Text" }}"
                 )
-            } else clip
+            }
         }
     }
 
-    fun getSelectedTextState(): TextState =
-        _state.value.selectedClip?.textState ?: TextState()
+    fun getSelectedTextState(): TextState {
+        val s = _state.value
+        return s.selectedClip?.textState
+            ?: s.clips.firstOrNull {
+                it.id in s.multiSelectedIds && it.isTextClip
+            }?.textState
+            ?: TextState()
+    }
+
+    private fun TextState.applyChangedTextProperties(
+        base: TextState,
+        updated: TextState
+    ): TextState = copy(
+        fontFamily = if (updated.fontFamily != base.fontFamily) updated.fontFamily else fontFamily,
+        fontSize = if (updated.fontSize != base.fontSize) updated.fontSize else fontSize,
+        fontWeight = if (updated.fontWeight != base.fontWeight) updated.fontWeight else fontWeight,
+        fontStyle = if (updated.fontStyle != base.fontStyle) updated.fontStyle else fontStyle,
+        color = if (updated.color != base.color) updated.color else color,
+        strokeEnabled = if (updated.strokeEnabled != base.strokeEnabled) updated.strokeEnabled else strokeEnabled,
+        strokeWidth = if (updated.strokeWidth != base.strokeWidth) updated.strokeWidth else strokeWidth,
+        strokeColor = if (updated.strokeColor != base.strokeColor) updated.strokeColor else strokeColor,
+        glowEnabled = if (updated.glowEnabled != base.glowEnabled) updated.glowEnabled else glowEnabled,
+        glowColor = if (updated.glowColor != base.glowColor) updated.glowColor else glowColor,
+        glowRadius = if (updated.glowRadius != base.glowRadius) updated.glowRadius else glowRadius,
+        gradientEnabled = if (updated.gradientEnabled != base.gradientEnabled) updated.gradientEnabled else gradientEnabled,
+        gradientColor1 = if (updated.gradientColor1 != base.gradientColor1) updated.gradientColor1 else gradientColor1,
+        gradientColor2 = if (updated.gradientColor2 != base.gradientColor2) updated.gradientColor2 else gradientColor2,
+        gradientAngle = if (updated.gradientAngle != base.gradientAngle) updated.gradientAngle else gradientAngle,
+        gradientStartX = if (updated.gradientStartX != base.gradientStartX) updated.gradientStartX else gradientStartX,
+        gradientStartY = if (updated.gradientStartY != base.gradientStartY) updated.gradientStartY else gradientStartY,
+        gradientEndX = if (updated.gradientEndX != base.gradientEndX) updated.gradientEndX else gradientEndX,
+        gradientEndY = if (updated.gradientEndY != base.gradientEndY) updated.gradientEndY else gradientEndY,
+        shadowEnabled = if (updated.shadowEnabled != base.shadowEnabled) updated.shadowEnabled else shadowEnabled,
+        shadowColor = if (updated.shadowColor != base.shadowColor) updated.shadowColor else shadowColor,
+        shadowBlur = if (updated.shadowBlur != base.shadowBlur) updated.shadowBlur else shadowBlur,
+        shadowOffsetX = if (updated.shadowOffsetX != base.shadowOffsetX) updated.shadowOffsetX else shadowOffsetX,
+        shadowOffsetY = if (updated.shadowOffsetY != base.shadowOffsetY) updated.shadowOffsetY else shadowOffsetY,
+        alignment = if (updated.alignment != base.alignment) updated.alignment else alignment,
+        letterSpacing = if (updated.letterSpacing != base.letterSpacing) updated.letterSpacing else letterSpacing,
+        lineHeight = if (updated.lineHeight != base.lineHeight) updated.lineHeight else lineHeight,
+        tracking = if (updated.tracking != base.tracking) updated.tracking else tracking,
+        positionX = if (updated.positionX != base.positionX) updated.positionX else positionX,
+        positionY = if (updated.positionY != base.positionY) updated.positionY else positionY,
+        anchorX = if (updated.anchorX != base.anchorX) updated.anchorX else anchorX,
+        anchorY = if (updated.anchorY != base.anchorY) updated.anchorY else anchorY,
+        maxWidth = if (updated.maxWidth != base.maxWidth) updated.maxWidth else maxWidth,
+        scale = if (updated.scale != base.scale) updated.scale else scale,
+        rotation = if (updated.rotation != base.rotation) updated.rotation else rotation,
+        opacity = if (updated.opacity != base.opacity) updated.opacity else opacity,
+        animation = if (updated.animation != base.animation) updated.animation else animation,
+        animationDuration = if (updated.animationDuration != base.animationDuration) updated.animationDuration else animationDuration,
+        templateId = if (updated.templateId != base.templateId) updated.templateId else templateId,
+        backgroundEnabled = if (updated.backgroundEnabled != base.backgroundEnabled) updated.backgroundEnabled else backgroundEnabled,
+        backgroundType = if (updated.backgroundType != base.backgroundType) updated.backgroundType else backgroundType,
+        backgroundColor1 = if (updated.backgroundColor1 != base.backgroundColor1) updated.backgroundColor1 else backgroundColor1,
+        backgroundColor2 = if (updated.backgroundColor2 != base.backgroundColor2) updated.backgroundColor2 else backgroundColor2,
+        backgroundGradientEnabled = if (updated.backgroundGradientEnabled != base.backgroundGradientEnabled) updated.backgroundGradientEnabled else backgroundGradientEnabled,
+        backgroundGradientAngle = if (updated.backgroundGradientAngle != base.backgroundGradientAngle) updated.backgroundGradientAngle else backgroundGradientAngle,
+        backgroundOpacity = if (updated.backgroundOpacity != base.backgroundOpacity) updated.backgroundOpacity else backgroundOpacity,
+        backgroundPaddingX = if (updated.backgroundPaddingX != base.backgroundPaddingX) updated.backgroundPaddingX else backgroundPaddingX,
+        backgroundPaddingY = if (updated.backgroundPaddingY != base.backgroundPaddingY) updated.backgroundPaddingY else backgroundPaddingY,
+        backgroundCornerRadius = if (updated.backgroundCornerRadius != base.backgroundCornerRadius) updated.backgroundCornerRadius else backgroundCornerRadius,
+        backgroundBrushSeed = if (updated.backgroundBrushSeed != base.backgroundBrushSeed) updated.backgroundBrushSeed else backgroundBrushSeed,
+        captionPresetId = if (updated.captionPresetId != base.captionPresetId) updated.captionPresetId else captionPresetId,
+        captionHighlightColor = if (updated.captionHighlightColor != base.captionHighlightColor) updated.captionHighlightColor else captionHighlightColor,
+        captionPresetAnimation = if (updated.captionPresetAnimation != base.captionPresetAnimation) updated.captionPresetAnimation else captionPresetAnimation,
+        captionPresetAnimationDuration = if (updated.captionPresetAnimationDuration != base.captionPresetAnimationDuration) updated.captionPresetAnimationDuration else captionPresetAnimationDuration
+    )
 
     fun removeSelectedText() {
         val sel = _state.value.selectedClip ?: return

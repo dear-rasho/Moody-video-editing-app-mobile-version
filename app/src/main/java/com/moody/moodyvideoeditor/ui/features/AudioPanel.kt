@@ -60,7 +60,7 @@ fun AudioPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 300.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
@@ -78,7 +78,7 @@ fun AudioPanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 filtered.forEach { preset ->

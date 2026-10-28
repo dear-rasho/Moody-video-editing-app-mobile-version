@@ -77,7 +77,7 @@ fun BlendModePanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 320.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
@@ -93,7 +93,7 @@ fun BlendModePanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 LayerBlendMode.values().forEach { mode ->

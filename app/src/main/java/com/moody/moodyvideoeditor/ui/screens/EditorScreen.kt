@@ -785,14 +785,6 @@ fun EditorScreen(
                 },
                 onCreateNew = { viewModel.createTextClip() },
                 onRemove = { viewModel.removeSelectedText() },
-                onApplyTemplate = { templateId ->
-                    viewModel.applyTemplate(
-                        templateId = templateId,
-                        startMs = state.currentPosMs,
-                        canvasWidthPx = 720f
-                    )
-                    activePanel = null
-                },
                 onClose = {
                     activePanel = null
                     openTextEditor = false
@@ -1779,15 +1771,20 @@ fun EditorScreen(
             )
 
             "freeze" -> FreezePanel(
-                hasClipSelected = selected?.isVisualClip == true,
-                onFreeze = { dur -> viewModel.addFreezeFrame(dur) },
+                hasClipSelected = selected?.let {
+                    it.isVisualClip && it.type.startsWith("video/")
+                } == true,
+                onFreeze = { dur ->
+                    viewModel.addFreezeFrame(context, dur) { message ->
+                        android.widget.Toast.makeText(
+                            context,
+                            message,
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                },
                 onClose = { activePanel = null }
             )
-
-            "duplicate" -> {
-                viewModel.duplicateCurrentClip()
-                activePanel = null
-            }
 
             "delete" -> {
                 if (state.multiSelectedIds.isNotEmpty()) {
@@ -1850,7 +1847,7 @@ fun EditorScreen(
                 onDeleteModel = { modelFile ->
                     WhisperModelManager.deleteModel(context, modelFile)
                 },
-                onGenerateCaptions = { grouping, autoStyle, language, modelFile, wpl, wpline ->
+                onGenerateCaptions = { grouping, language, modelFile, wpl, wpline, presetId, highlightColor ->
                     val sel = selected
                     if (sel != null) {
                         captionJob?.cancel()
@@ -1858,8 +1855,6 @@ fun EditorScreen(
                             isGeneratingCaptions = true
                             captionStatus = ""
                             captionProgress = 0f
-
-                            CaptionGenerator.autoStyleEnabled = autoStyle
 
                             val res = CaptionGenerator.generate(
                                 context = context,
@@ -1871,7 +1866,9 @@ fun EditorScreen(
                                 wordsPerLine = wpline,
                                 viewModel = viewModel,
                                 onStatus = { captionStatus = it },
-                                onProgress = { captionProgress = it }
+                                onProgress = { captionProgress = it },
+                                captionPresetId = presetId,
+                                highlightColor = highlightColor
                             )
 
                             if (res.success) {
@@ -1904,7 +1901,7 @@ fun EditorScreen(
 
             "manual_captions" -> ManualCaptionsPanel(
                 statusMessage = captionStatus,
-                onAddManual = { input, grouping, autoStyle, wordsPerLayer, wordsPerLine ->
+                onAddManual = { input, grouping, wordsPerLayer, wordsPerLine, presetId, highlightColor ->
                     val videoDurationMs = viewModel.state.value.totalDurationMs
                     val parsed = ManualCaptionParser.parse(input, videoDurationMs)
                     if (parsed.isEmpty()) {
@@ -1921,12 +1918,13 @@ fun EditorScreen(
                         val res = CaptionGenerator.generateFromManual(
                             parsedCaptions = parsed,
                             grouping = grouping,
-                            autoStyle = autoStyle,
                             wordsPerLayer = wordsPerLayer,
                             wordsPerLine = wordsPerLine,
                             viewModel = viewModel,
                             offsetMs = 0L,
-                            onProgress = { captionProgress = it }
+                            onProgress = { captionProgress = it },
+                            captionPresetId = presetId,
+                            highlightColor = highlightColor
                         )
 
                         isGeneratingCaptions = false
@@ -2589,6 +2587,12 @@ fun EditorScreen(
                     }
                 },
                 onDuplicate = { viewModel.duplicateCurrentClip() },
+                onCopy = { viewModel.copySelectedClips() },
+                onCut = { viewModel.cutSelectedClips() },
+                onPaste = { viewModel.pasteClipsAtPlayhead() },
+                canCopy = state.selectedClipId != null ||
+                        state.multiSelectedIds.isNotEmpty(),
+                canPaste = state.clipboardAction == "paste",
                 hasVideo = state.clips.isNotEmpty(),
                 currentPosMs = state.currentPosMs,
                 totalDurationMs = state.totalDurationMs
@@ -2603,6 +2607,13 @@ fun EditorScreen(
                 canUndo = state.canUndo,
                 canRedo = state.canRedo,
                 hasKeyframeAtPlayhead = viewModel.hasKeyframeAtPlayhead(),
+                seekStepSeconds = settings.playheadSeekStepSeconds,
+                onSeekBy = { offsetMs ->
+                    val totalDuration = state.totalDurationMs.coerceAtLeast(0L)
+                    viewModel.setCurrentPos(
+                        (state.currentPosMs + offsetMs).coerceIn(0L, totalDuration)
+                    )
+                },
                 onSelectBackward = { viewModel.selectBackward() },
                 onSelectForward = { viewModel.selectForward() },
                 onSelectAll = { viewModel.selectAllClips() },
@@ -2614,9 +2625,13 @@ fun EditorScreen(
                         viewModel.unlinkClip(it.id)
                     }
                 },
-                isLinked = state.selectedClip?.linkGroupId != null,
-                canLink = (state.multiSelectedIds.size >= 2) ||
-                        (state.selectedClip != null && state.selectedClip?.linkGroupId == null),
+                isLinked = state.selectedClip?.let {
+                    it.linkGroupId != null || it.linkedId != null
+                } == true,
+                canLink = state.multiSelectedIds.size >= 2 &&
+                        state.selectedClip?.let {
+                            it.linkGroupId == null && it.linkedId == null
+                        } != false,
                 onSplit = { viewModel.splitCurrentClip() },
                 canSplit = state.selectedClip?.let { sel ->
                     state.currentPosMs > (sel.timelineStartMs + EditorClip.MIN_DURATION_MS) &&
@@ -2684,7 +2699,6 @@ fun EditorScreen(
                     state = state,
                     onClipTapped = { clip ->
                         viewModel.selectClip(clip)
-                        viewModel.clearMultiSelect()
 
                         when {
                             clip.isTextClip -> {

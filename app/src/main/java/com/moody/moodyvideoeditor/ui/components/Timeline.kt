@@ -1170,6 +1170,7 @@ private fun TrackContent(
 
         val enterMs = (SNAP_ENTER_PX / pxPerMs).toLong().coerceAtLeast(SNAP_MIN_GAP_MS)
         val releaseMs = (SNAP_RELEASE_PX / pxPerMs).toLong().coerceAtLeast(enterMs * 2)
+        val selectedClip = allClips.firstOrNull { it.id == selectedClipId }
 
         clips.forEach { clip ->
             ClipCard(
@@ -1180,8 +1181,19 @@ private fun TrackContent(
                 pxPerMs = pxPerMs,
                 stepPx = stepPx,
                 currentPosMs = currentPosMs,
-                isSelected = clip.id == selectedClipId,
-                isMulti = multiSelectedIds.contains(clip.id),
+                isSelected = clip.id == selectedClipId ||
+                        (multiSelectedIds.contains(clip.id) &&
+                                selectedClip?.linkedId != null &&
+                                clip.linkedId == selectedClip.linkedId) ||
+                        (multiSelectedIds.contains(clip.id) &&
+                                selectedClip?.linkGroupId != null &&
+                                clip.linkGroupId == selectedClip.linkGroupId),
+                isMulti = multiSelectedIds.contains(clip.id) &&
+                        clip.id != selectedClipId &&
+                        !(selectedClip?.linkedId != null &&
+                                clip.linkedId == selectedClip.linkedId) &&
+                        !(selectedClip?.linkGroupId != null &&
+                                clip.linkGroupId == selectedClip.linkGroupId),
                 isDragging = dragVisual.active && dragVisual.clipId == clip.id,
                 isAudio = isAudio,
                 trackAlpha = trackAlpha,

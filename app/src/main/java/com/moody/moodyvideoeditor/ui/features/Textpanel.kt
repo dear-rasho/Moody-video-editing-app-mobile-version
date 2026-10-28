@@ -58,6 +58,7 @@ import com.moody.moodyvideoeditor.ui.components.ColorPickerField
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.ui.components.FontPreviewRow
 import com.moody.moodyvideoeditor.utils.FontLibrary
+import com.moody.moodyvideoeditor.utils.CaptionPresetLibrary
 
 // ═══════════════════════════════════════════════════════════════
 //  MAIN TEXT PANEL
@@ -72,7 +73,6 @@ fun TextPanel(
     onDraftTextChanged: (String) -> Unit = {},
     onCreateNew: () -> Unit,
     onRemove: () -> Unit,
-    onApplyTemplate: (String) -> Unit = {},
     onClose: () -> Unit
 ) {
     var subView by remember(startInEdit) {
@@ -112,14 +112,6 @@ fun TextPanel(
                         onCreateNew()
                         onTextChanged(newState)
                     }
-                    subView = "options"
-                },
-                onBack = { subView = "options" }
-            )
-
-            "templates" -> TemplatesSub(
-                onPick = { templateId ->
-                    onApplyTemplate(templateId)
                     subView = "options"
                 },
                 onBack = { subView = "options" }
@@ -223,6 +215,55 @@ fun TextPanel(
                 onBack = { subView = "options" }
             )
 
+            "captionPresets" -> CaptionPresetPicker(
+                selectedPresetId = currentText.captionPresetId,
+                highlightColor = currentText.captionHighlightColor,
+                onPresetSelected = { presetId ->
+                    val styled = CaptionPresetLibrary.applyTo(
+                        currentText.content,
+                        presetId,
+                        currentText.captionHighlightColor
+                    )
+                    onTextChanged(
+                        currentText.copy(
+                            fontFamily = styled.fontFamily,
+                            fontSize = styled.fontSize,
+                            fontWeight = styled.fontWeight,
+                            color = styled.color,
+                            glowEnabled = styled.glowEnabled,
+                            glowColor = styled.glowColor,
+                            glowRadius = styled.glowRadius,
+                            strokeEnabled = styled.strokeEnabled,
+                            strokeWidth = styled.strokeWidth,
+                            strokeColor = styled.strokeColor,
+                            alignment = styled.alignment,
+                            positionY = styled.positionY,
+                            maxWidth = styled.maxWidth,
+                            lineHeight = styled.lineHeight,
+                            captionPresetId = presetId,
+                            captionPresetAnimation = styled.captionPresetAnimation,
+                            captionPresetAnimationDuration = styled.captionPresetAnimationDuration
+                        )
+                    )
+                },
+                onHighlightColorChanged = {
+                    onTextChanged(currentText.copy(captionHighlightColor = it))
+                },
+                onBack = { subView = "options" }
+            )
+
+            "textAnimations" -> TextAnimationsSub(
+                current = currentText.animation,
+                duration = currentText.animationDuration,
+                onAnimationSelected = {
+                    onTextChanged(currentText.copy(animation = it))
+                },
+                onDurationChanged = {
+                    onTextChanged(currentText.copy(animationDuration = it))
+                },
+                onBack = { subView = "options" }
+            )
+
             "alignment" -> AlignmentSub(
                 current = currentText.alignment,
                 onPick = { onTextChanged(currentText.copy(alignment = it)) },
@@ -237,6 +278,65 @@ fun TextPanel(
                 onChange = { onTextChanged(currentText.copy(opacity = it)) },
                 onBack = { subView = "options" }
             )
+        }
+    }
+}
+
+@Composable
+private fun TextAnimationsSub(
+    current: String,
+    duration: Float,
+    onAnimationSelected: (String) -> Unit,
+    onDurationChanged: (Float) -> Unit,
+    onBack: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 520.dp)
+            .verticalScrollWithScrollbar(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        BackHeader("🎞️ Text Animation", onBack)
+        SliderRow(
+            label = "Duration",
+            value = duration,
+            range = 0.1f..3f,
+            onChange = onDurationChanged
+        )
+        com.moody.moodyvideoeditor.utils.AnimationsEngine.CATEGORIES.forEach { category ->
+            Text(
+                category.label,
+                color = Color(0xFFA78BFA),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                category.animations.forEach { animation ->
+                    val selected = current == animation.key
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (selected) Color(0xFF7C3AED) else Color(0xFF181818)
+                            )
+                            .clickable { onAnimationSelected(animation.key) }
+                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            animation.label,
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -265,14 +365,15 @@ private fun OptionsShelf(
         Triple("background", "A", "BG"),
         Triple("alignment", "🔀", "Align"),
         Triple("opacity", "A", "Opacity"),
-        Triple("templates", "📄", "Templates"), // 🆕 End mein move kiya, icon change kiya
+        Triple("textAnimations", "🎞️", "Animation"),
+        Triple("captionPresets", "🎤", "Presets"),
         Triple("removeText", "🗑️", "Remove")
     )
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .horizontalScroll(scrollState), // 🆕 Passed state use karo
+            .horizontalScrollWithTwoFinger(scrollState), // 🆕 Passed state use karo
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         options.forEach { (key, icon, label) ->
@@ -429,7 +530,7 @@ private fun TextOptionIcon(key: String, defaultIcon: String) {
                 Text("A", color = Color.White.copy(alpha = 0.3f), fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
 
-            // ─── Default (Emojis for Add, Templates, Align, Remove) ───
+            // ─── Default icons ───
             else -> Text(defaultIcon, fontSize = 18.sp)
         }
     }
@@ -512,7 +613,7 @@ private fun FontsSub(current: String, onPick: (String) -> Unit, onBack: () -> Un
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScrollWithTwoFinger(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             FontLibrary.categories().forEach { key ->
@@ -546,8 +647,8 @@ private fun FontsSub(current: String, onPick: (String) -> Unit, onBack: () -> Un
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 220.dp)
-                .verticalScroll(rememberScrollState()),
+                .heightIn(max = 360.dp)
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             fontList.forEach { font ->
@@ -578,7 +679,7 @@ private fun StrokeSub(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState()),
+            .verticalScrollWithScrollbar(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         BackHeader("Stroke / Outline", onBack)
@@ -620,7 +721,7 @@ private fun GlowSub(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState()),
+            .verticalScrollWithScrollbar(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         BackHeader("Glow / Neon", onBack)
@@ -790,7 +891,7 @@ private fun GradientSub(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState()),
+            .verticalScrollWithScrollbar(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         BackHeader("Gradient Ramp", onBack)
@@ -862,46 +963,51 @@ private fun GradientRampControl(
     val latestStartY by rememberUpdatedState(startY)
     val latestEndX by rememberUpdatedState(endX)
     val latestEndY by rememberUpdatedState(endY)
-    Canvas(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(88.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF181818))
-            .pointerInput(Unit) {
-                fun updateGradientHandle(position: Offset) {
-                    var x = (position.x / size.width).coerceIn(0f, 1f)
-                    val y = (position.y / size.height).coerceIn(0f, 1f)
-                    val otherX = if (activeHandle == 0) latestEndX else latestStartX
-                    val otherY = if (activeHandle == 0) latestEndY else latestStartY
-                    if (kotlin.math.abs(x - otherX) < 0.01f && kotlin.math.abs(y - otherY) < 0.01f) {
-                        x = if (otherX <= 0.98f) otherX + 0.02f else otherX - 0.02f
-                    }
-                    if (activeHandle == 0) onStartChange(x, y) else onEndChange(x, y)
-                }
-
-                detectDragGestures(
-                    onDragStart = { position ->
-                        val start = Offset(latestStartX * size.width, latestStartY * size.height)
-                        val end = Offset(latestEndX * size.width, latestEndY * size.height)
-                        activeHandle = if ((position - start).getDistance() <= (position - end).getDistance()) 0 else 1
-                        updateGradientHandle(position)
-                    },
-                    onDrag = { change, _ ->
-                        change.consume()
-                        updateGradientHandle(change.position)
-                    }
-                )
-            }
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center
     ) {
-        val start = Offset(startX * size.width, startY * size.height)
-        val end = Offset(endX * size.width, endY * size.height)
-        drawRect(Brush.linearGradient(listOf(color1, color2), start = start, end = end))
-        drawLine(Color.White.copy(alpha = 0.75f), start, end, strokeWidth = 2.dp.toPx())
-        drawCircle(Color(0xFFFF4F9A), radius = 9.dp.toPx(), center = start)
-        drawCircle(Color.White, radius = 9.dp.toPx(), center = start, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
-        drawCircle(Color(0xFF54B6FF), radius = 9.dp.toPx(), center = end)
-        drawCircle(Color.White, radius = 9.dp.toPx(), center = end, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth(0.82f)
+                .height(88.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF181818))
+                .pointerInput(Unit) {
+                    fun updateGradientHandle(position: Offset) {
+                        var x = (position.x / size.width).coerceIn(0f, 1f)
+                        val y = (position.y / size.height).coerceIn(0f, 1f)
+                        val otherX = if (activeHandle == 0) latestEndX else latestStartX
+                        val otherY = if (activeHandle == 0) latestEndY else latestStartY
+                        if (kotlin.math.abs(x - otherX) < 0.01f && kotlin.math.abs(y - otherY) < 0.01f) {
+                            x = if (otherX <= 0.98f) otherX + 0.02f else otherX - 0.02f
+                        }
+                        if (activeHandle == 0) onStartChange(x, y) else onEndChange(x, y)
+                    }
+
+                    detectDragGestures(
+                        onDragStart = { position ->
+                            val start = Offset(latestStartX * size.width, latestStartY * size.height)
+                            val end = Offset(latestEndX * size.width, latestEndY * size.height)
+                            activeHandle = if ((position - start).getDistance() <= (position - end).getDistance()) 0 else 1
+                            updateGradientHandle(position)
+                        },
+                        onDrag = { change, _ ->
+                            change.consume()
+                            updateGradientHandle(change.position)
+                        }
+                    )
+                }
+        ) {
+            val start = Offset(startX * size.width, startY * size.height)
+            val end = Offset(endX * size.width, endY * size.height)
+            drawRect(Brush.linearGradient(listOf(color1, color2), start = start, end = end))
+            drawLine(Color.White.copy(alpha = 0.75f), start, end, strokeWidth = 2.dp.toPx())
+            drawCircle(Color(0xFFFF4F9A), radius = 9.dp.toPx(), center = start)
+            drawCircle(Color.White, radius = 9.dp.toPx(), center = start, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
+            drawCircle(Color(0xFF54B6FF), radius = 9.dp.toPx(), center = end)
+            drawCircle(Color.White, radius = 9.dp.toPx(), center = end, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
+        }
     }
 }
 
@@ -918,7 +1024,7 @@ private fun ShadowsSub(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState()),
+            .verticalScrollWithScrollbar(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         BackHeader("Shadow", onBack)
@@ -1001,7 +1107,7 @@ private fun BackgroundSub(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = 340.dp)
-            .verticalScroll(rememberScrollState()),
+            .verticalScrollWithScrollbar(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         BackHeader("🟦 Text Background", onBack)
@@ -1030,7 +1136,7 @@ private fun BackgroundSub(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScrollWithTwoFinger(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             listOf(
@@ -1165,7 +1271,7 @@ private fun BackgroundSub(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScrollWithTwoFinger(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             listOf(
@@ -1439,74 +1545,6 @@ private fun SliderRow(
                         }
                     }
             )
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  TEMPLATES SUB
-// ═══════════════════════════════════════════════════════════════
-
-@Composable
-private fun TemplatesSub(
-    onPick: (String) -> Unit,
-    onBack: () -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        BackHeader("🎭 Templates", onBack)
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 220.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            val templates = com.moody.moodyvideoeditor.utils.TypographyTemplates.ALL
-            templates.forEach { t ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color(0xFF181818))
-                        .pointerInput(t.templateId) {
-                            detectTapGestures { onPick(t.templateId) }
-                        }
-                        .padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF7C3AED).copy(alpha = 0.2f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(t.icon, fontSize = 18.sp)
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            t.label,
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            t.description,
-                            color = Color(0xFF888888),
-                            fontSize = 9.sp,
-                            maxLines = 1
-                        )
-                    }
-                    Text(
-                        "${t.nodes.size}",
-                        color = Color(0xFF7C3AED),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
         }
     }
 }

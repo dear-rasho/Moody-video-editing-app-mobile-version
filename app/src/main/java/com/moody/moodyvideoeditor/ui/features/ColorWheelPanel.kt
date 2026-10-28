@@ -70,13 +70,13 @@ fun ColorWheelPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 280.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 ColorWheelState.TONE_KEYS.forEachIndexed { index, key ->

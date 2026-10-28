@@ -108,7 +108,7 @@ fun ExportPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 320.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
 
@@ -185,7 +185,7 @@ fun ExportPanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 ExportSettings.RESOLUTIONS.forEach { preset ->
@@ -202,7 +202,7 @@ fun ExportPanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 ExportSettings.FPS_OPTIONS.forEach { fps ->
@@ -444,7 +444,7 @@ fun ExportPanel(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 200.dp)
-                            .verticalScroll(rememberScrollState())
+                            .verticalScrollWithScrollbar(rememberScrollState())
                     ) {
                         Text(
                             text = exportMessage,

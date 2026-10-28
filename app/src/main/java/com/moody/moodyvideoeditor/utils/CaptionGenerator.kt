@@ -3,16 +3,16 @@ package com.moody.moodyvideoeditor.utils
 import android.content.Context
 import android.util.Log
 import com.moody.moodyvideoeditor.data.EditorClip
-import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.viewmodel.EditorViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 object CaptionGenerator {
 
     private const val TAG = "CaptionGenerator"
-
-    var autoStyleEnabled: Boolean = true
 
     enum class GroupingMode(val key: String, val label: String, val icon: String) {
         WORDS("words", "Words", "🔤"),
@@ -37,7 +37,9 @@ object CaptionGenerator {
         wordsPerLine: Int = 1,
         viewModel: EditorViewModel,
         onStatus: (String) -> Unit,
-        onProgress: (Float) -> Unit
+        onProgress: (Float) -> Unit,
+        captionPresetId: String? = CaptionPresetLibrary.presets.first().id,
+        highlightColor: Long = 0xFF00D9FFL
     ): Result {
         try {
             // ─── Load model ───
@@ -60,7 +62,12 @@ object CaptionGenerator {
             // ─── Extract PCM ───
             onStatus("Extracting audio…")
             val pcm = withContext(Dispatchers.IO) {
-                WhisperAudioExtractor.extractPcm(context, clip.uri)
+                WhisperAudioExtractor.extractPcm(
+                    context = context,
+                    uri = clip.uri,
+                    sourceStartMs = clip.sourceStartMs,
+                    sourceDurationMs = clip.sourceDurationMs
+                )
             }
             if (pcm == null || pcm.isEmpty()) {
                 return Result(false, 0, "", emptyList(), "Audio extraction failed")
@@ -73,108 +80,104 @@ object CaptionGenerator {
 
             onProgress(0.30f)
 
-            // ─── Transcribe ───
-            onStatus("Transcribing… (${"%.1f".format(durationSec)}s, lang=$language)")
-            onProgress(0.35f)
+            val chunkSamples = TRANSCRIPTION_CHUNK_SECONDS * SAMPLE_RATE
+            val chunkRanges = buildPcmChunkRanges(pcm.size, chunkSamples)
+            val allTimelineSegments = mutableListOf<CaptionSegment>()
+            var detectedLanguage = "unknown"
+            var transcriptionLanguage = language
+            var totalAdded = 0
 
-            val result = withContext(Dispatchers.Default) {
-                WhisperEngine.transcribe(pcm, language)
-            }
-
-            onProgress(0.85f)
-
-            if (result.isEmpty) {
-                onProgress(1f)
-                return Result(
-                    false, 0, result.language, emptyList(),
-                    "No speech detected"
+            chunkRanges.forEachIndexed { index, range ->
+                currentCoroutineContext().ensureActive()
+                val chunkStartMs = range.first.toLong() * 1000L / SAMPLE_RATE
+                onStatus(
+                    "Transcribing ${index + 1}/${chunkRanges.size} " +
+                            "(${"%.1f".format(chunkStartMs / 1000f)}s / " +
+                            "${"%.1f".format(durationSec)}s) · $totalAdded layers added"
                 )
-            }
+                val chunkPcm = pcm.copyOfRange(range.first, range.last + 1)
+                val result = withContext(Dispatchers.Default) {
+                    WhisperEngine.transcribe(chunkPcm, transcriptionLanguage)
+                }
+                currentCoroutineContext().ensureActive()
+                if (result.language != "unknown") {
+                    detectedLanguage = result.language
+                    if (language.equals("auto", ignoreCase = true)) {
+                        transcriptionLanguage = result.language
+                    }
+                }
 
-            val effectiveLanguage = if (language.equals("auto", ignoreCase = true)) {
-                result.language
-            } else {
-                language
-            }
-            // ═══════════════════════════════════════════════════
-            //  TRANSLITERATE Urdu/Hindi → Roman
-            //  If user selected Urdu/Hindi, force Roman output
-            //  regardless of what script Whisper produced.
-            // ═══════════════════════════════════════════════════
-            val shouldTransliterate = effectiveLanguage == "ur" ||
+                val absoluteSegments = result.segments.map { segment ->
+                    segment.copy(
+                        startMs = segment.startMs + chunkStartMs,
+                        endMs = segment.endMs + chunkStartMs
+                    )
+                }
+                val effectiveLanguage = if (language.equals("auto", ignoreCase = true)) {
+                    result.language.takeUnless { it == "unknown" } ?: transcriptionLanguage
+                } else {
+                    language
+                }
+                val processedSegments = if (
+                    effectiveLanguage == "ur" ||
                     effectiveLanguage == "hi" ||
                     effectiveLanguage == "ar"
-
-            val processedSegments = if (shouldTransliterate) {
-                Log.e(TAG, "🔤 Transliterating $effectiveLanguage → Roman")
-                result.segments.map { seg ->
-                    val roman = Transliterator.toRoman(seg.text)
-                    if (roman != seg.text) {
-                        Log.e(TAG, "  \"${seg.text}\" → \"$roman\"")
+                ) {
+                    absoluteSegments.map { segment ->
+                        segment.copy(text = Transliterator.toRoman(segment.text))
                     }
-                    seg.copy(text = roman)
+                } else {
+                    absoluteSegments
                 }
-            } else {
-                result.segments
-            }
+                val timelineSegments = fitSegmentsToClipDuration(
+                    processedSegments,
+                    clip.durationMs,
+                    clip.speed
+                )
+                allTimelineSegments += timelineSegments
 
-            Log.e(
-                TAG,
-                "✅ Transcribed: ${result.segments.size} segments, " +
-                        "detected=${result.language}, using=$effectiveLanguage"
-            )
-
-            // ─── Create text clips ───
-            onStatus("Styling ${result.segments.size} captions…")
-            onProgress(0.92f)
-
-            var totalAdded = 0
-            processedSegments.forEach { seg ->
-            try {
-                    if (autoStyleEnabled) {
-                        val words = seg.text.split(Regex("\\s+"))
-                            .filter { it.isNotBlank() }
-                        if (words.isEmpty()) return@forEach
-
-                        val segStart = clip.timelineStartMs + seg.startMs
-                        val segEnd = clip.timelineStartMs + seg.endMs
-
-                        val clips = when (grouping) {
-                            GroupingMode.WORDS -> CaptionStyleEngine.buildWordsMode(
-                                words = words,
-                                segStartMs = segStart,
-                                segEndMs = segEnd,
-                                language = effectiveLanguage,
-                                wordsPerLayer = wordsPerLayer.coerceIn(1, 7)
-                            )
-                            GroupingMode.LINES -> CaptionStyleEngine.buildLinesMode(
-                                words = words,
-                                segStartMs = segStart,
-                                segEndMs = segEnd,
-                                language = effectiveLanguage,
-                                wordsPerLine = wordsPerLine.coerceIn(1, 5)
-                            )
-                        }
-
-                        clips.forEach { sc ->
+                timelineSegments.forEach { segment ->
+                    currentCoroutineContext().ensureActive()
+                    try {
+                        val presetId =
+                            captionPresetId ?: CaptionPresetLibrary.presets.first().id
+                        val chunks = buildPresetChunks(
+                            text = segment.text,
+                            startMs = clip.timelineStartMs + segment.startMs,
+                            endMs = clip.timelineStartMs + segment.endMs,
+                            grouping = grouping,
+                            wordsPerLayer = wordsPerLayer,
+                            wordsPerLine = wordsPerLine
+                        )
+                        chunks.forEach { (text, start, end) ->
                             viewModel.createTextClipAtTime(
-                                textState = sc.toTextState(),
-                                startMs = sc.startMs,
-                                endMs = sc.endMs
+                                textState = CaptionPresetLibrary.applyTo(
+                                    text,
+                                    presetId,
+                                    highlightColor
+                                ),
+                                startMs = start,
+                                endMs = end
                             )
                             totalAdded++
                         }
-                    } else {
-                        viewModel.createTextClipAtTime(
-                            textState = simpleCaption(seg.text),
-                            startMs = clip.timelineStartMs + seg.startMs,
-                            endMs = clip.timelineStartMs + seg.endMs
-                        )
-                        totalAdded++
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (t: Throwable) {
+                        Log.e(TAG, "Failed to add \"${segment.text}\"", t)
                     }
-                } catch (t: Throwable) {
-                    Log.e(TAG, "Failed to add \"${seg.text}\"", t)
                 }
+
+                val completedSamples = range.last + 1
+                onProgress(0.35f + 0.5f * completedSamples / pcm.size)
+            }
+
+            if (allTimelineSegments.isEmpty()) {
+                onProgress(1f)
+                return Result(
+                    false, 0, detectedLanguage, emptyList(),
+                    "No speech detected in the selected clip range"
+                )
             }
 
             onProgress(1f)
@@ -183,48 +186,91 @@ object CaptionGenerator {
             return Result(
                 success = true,
                 segmentsAdded = totalAdded,
-                detectedLanguage = result.language,
-                segments = processedSegments
+                detectedLanguage = detectedLanguage,
+                segments = allTimelineSegments.sortedBy { it.startMs }
             )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (t: Throwable) {
             Log.e(TAG, "💥 generate failed", t)
             return Result(false, 0, "", emptyList(), t.message ?: "Unknown error")
         }
     }
 
-    private fun simpleCaption(text: String) = TextState(
-        content = text,
-        fontSize = 40,
-        fontWeight = "bold",
-        color = 0xFFFFFFFF,
-        alignment = "center",
-        positionY = 82f,
-        // 🆕 TIGHT LAYOUT — box height = character height
-        lineHeight = 1.0f,           // ← default 1.2 → 1.0
-        letterSpacing = 0f,
-        maxWidth = 100f,             // ← full width (text wrap hoga but tight)
-        backgroundEnabled = true,
-        backgroundType = "rounded",
-        backgroundColor1 = 0xFF000000L,
-        backgroundPaddingX = 8f,     // ← pehle 16f
-        backgroundPaddingY = 2f,     // ← pehle 8f (YEH sabse important)
-        backgroundCornerRadius = 6f, // ← pehle 12f
-        animation = "fadeIn",
-        animationDuration = 0.3f
-    )
+    internal fun buildPcmChunkRanges(
+        sampleCount: Int,
+        chunkSamples: Int
+    ): List<IntRange> {
+        if (sampleCount <= 0 || chunkSamples <= 0) return emptyList()
+        val ranges = mutableListOf<IntRange>()
+        var start = 0
+        while (start < sampleCount) {
+            val endExclusive = minOf(start.toLong() + chunkSamples, sampleCount.toLong()).toInt()
+            ranges += start until endExclusive
+            start = endExclusive
+        }
+        return ranges
+    }
+
+    private const val SAMPLE_RATE = 16_000
+    private const val TRANSCRIPTION_CHUNK_SECONDS = 15
+
+    internal fun fitSegmentsToClipDuration(
+        segments: List<CaptionSegment>,
+        clipDurationMs: Long,
+        speed: Float
+    ): List<CaptionSegment> {
+        if (clipDurationMs <= 0L) return emptyList()
+        val playbackSpeed = speed.takeIf { it.isFinite() && it > 0f } ?: 1f
+        return segments.mapNotNull { segment ->
+            val startMs = (segment.startMs / playbackSpeed).toLong()
+                .coerceIn(0L, clipDurationMs)
+            val endMs = (segment.endMs / playbackSpeed).toLong()
+                .coerceIn(0L, clipDurationMs)
+            if (endMs <= startMs) null
+            else segment.copy(startMs = startMs, endMs = endMs)
+        }
+    }
+
+    internal fun buildPresetChunks(
+        text: String,
+        startMs: Long,
+        endMs: Long,
+        grouping: GroupingMode,
+        wordsPerLayer: Int,
+        wordsPerLine: Int
+    ): List<Triple<String, Long, Long>> {
+        val words = text.trim().split(Regex("\\s+")).filter(String::isNotBlank)
+        if (words.isEmpty()) return emptyList()
+        val chunkSize = when (grouping) {
+            GroupingMode.WORDS -> wordsPerLayer.coerceIn(1, 7)
+            GroupingMode.LINES -> wordsPerLine.coerceIn(1, 5)
+        }
+        val chunks = words.chunked(chunkSize)
+        val totalDuration = (endMs - startMs).coerceAtLeast(chunks.size.toLong())
+        val chunkDuration = totalDuration / chunks.size
+        return chunks.mapIndexed { index, chunk ->
+            val chunkStart = startMs + index * chunkDuration
+            val chunkEnd = if (index == chunks.lastIndex) endMs
+            else startMs + (index + 1) * chunkDuration
+            Triple(chunk.joinToString(" "), chunkStart, chunkEnd)
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════
-    //  MANUAL CAPTIONS — auto-detect fonts per caption
+    //  MANUAL CAPTIONS
     // ═══════════════════════════════════════════════════════════
 
     suspend fun generateFromManual(
         parsedCaptions: List<ManualCaptionParser.ParsedCaption>,
         grouping: GroupingMode,
-        autoStyle: Boolean,
         wordsPerLayer: Int = 2,
         wordsPerLine: Int = 1,
         viewModel: EditorViewModel,
         offsetMs: Long = 0L,
-        onProgress: (Float) -> Unit = {}
+        onProgress: (Float) -> Unit = {},
+        captionPresetId: String? = CaptionPresetLibrary.presets.first().id,
+        highlightColor: Long = 0xFF00D9FFL
     ): Result {
         if (parsedCaptions.isEmpty()) {
             return Result(false, 0, "", emptyList(), "No valid captions found")
@@ -236,8 +282,7 @@ object CaptionGenerator {
         parsedCaptions.forEachIndexed { idx, cap ->
             val segStart = offsetMs + cap.startMs
             val segEnd = offsetMs + cap.endMs
-            val words = cap.text.split(Regex("\\s+")).filter { it.isNotBlank() }
-            if (words.isEmpty()) return@forEachIndexed
+            if (cap.text.isBlank()) return@forEachIndexed
 
             allSegments.add(
                 CaptionSegment(
@@ -247,45 +292,27 @@ object CaptionGenerator {
                 )
             )
 
-            // Auto-detect language from this caption's text
-            val detectedLang = CaptionLanguage.detectLanguage(cap.text)
-            Log.e(TAG, "Manual caption \"${cap.text.take(30)}\" → lang=$detectedLang")
-
             try {
-                if (!autoStyle) {
+                val presetId = captionPresetId ?: CaptionPresetLibrary.presets.first().id
+                val chunks = buildPresetChunks(
+                    text = cap.text,
+                    startMs = segStart,
+                    endMs = segEnd,
+                    grouping = grouping,
+                    wordsPerLayer = wordsPerLayer,
+                    wordsPerLine = wordsPerLine
+                )
+                chunks.forEach { (text, start, end) ->
                     viewModel.createTextClipAtTime(
-                        textState = simpleCaption(cap.text),
-                        startMs = segStart,
-                        endMs = segEnd
+                        textState = CaptionPresetLibrary.applyTo(
+                            text,
+                            presetId,
+                            highlightColor
+                        ),
+                        startMs = start,
+                        endMs = end
                     )
                     totalAdded++
-                } else {
-                    // Use wordsPerLayer = 1 for manual (no layer count)
-                    val clips = when (grouping) {
-                        GroupingMode.WORDS -> CaptionStyleEngine.buildWordsMode(
-                            words = words,
-                            segStartMs = segStart,
-                            segEndMs = segEnd,
-                            language = detectedLang,
-                            wordsPerLayer = wordsPerLayer.coerceIn(1, 7)
-                        )
-                        GroupingMode.LINES -> CaptionStyleEngine.buildLinesMode(
-                            words = words,
-                            segStartMs = segStart,
-                            segEndMs = segEnd,
-                            language = detectedLang,
-                            wordsPerLine = wordsPerLine.coerceIn(1, 5)
-                        )
-                    }
-
-                    clips.forEach { sc ->
-                        viewModel.createTextClipAtTime(
-                            textState = sc.toTextState(),
-                            startMs = sc.startMs,
-                            endMs = sc.endMs
-                        )
-                        totalAdded++
-                    }
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "Manual caption failed: \"${cap.text}\"", t)

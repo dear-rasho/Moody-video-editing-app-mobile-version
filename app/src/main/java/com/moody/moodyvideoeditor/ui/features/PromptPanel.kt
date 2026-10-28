@@ -194,7 +194,7 @@ fun PromptPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 320.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
@@ -202,7 +202,7 @@ fun PromptPanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 CATEGORIES.forEachIndexed { idx, cat ->
@@ -235,7 +235,7 @@ fun PromptPanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 group.examples.forEach { ex ->
@@ -433,7 +433,7 @@ fun PromptPanel(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 180.dp)
-                            .verticalScroll(rememberScrollState())
+                            .verticalScrollWithScrollbar(rememberScrollState())
                     ) {
                         Text(
                             feedback,

@@ -8,6 +8,7 @@ import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -18,8 +19,13 @@ object WhisperAudioExtractor {
 
     suspend fun extractPcm(
         context: Context,
-        uri: Uri
+        uri: Uri,
+        sourceStartMs: Long = 0L,
+        sourceDurationMs: Long? = null
     ): FloatArray? = withContext(Dispatchers.IO) {
+        if (sourceStartMs < 0L || sourceDurationMs != null && sourceDurationMs <= 0L) {
+            return@withContext null
+        }
         val outFile = File(
             context.cacheDir,
             "whisper_${System.currentTimeMillis()}.pcm"
@@ -28,7 +34,13 @@ object WhisperAudioExtractor {
         try {
             val inputFile = copyToCache(context, uri) ?: return@withContext null
 
-            val cmd = "-y -i \"${inputFile.absolutePath}\" " +
+            val startSeconds = String.format(Locale.US, "%.3f", sourceStartMs / 1000.0)
+            val durationArgs = sourceDurationMs?.let {
+                "-t ${String.format(Locale.US, "%.3f", it / 1000.0)} "
+            } ?: ""
+            val cmd = "-y -ss $startSeconds -i \"${inputFile.absolutePath}\" " +
+                    durationArgs +
+                    "-vn " +
                     "-ar $TARGET_SAMPLE_RATE -ac 1 -f f32le " +
                     "-acodec pcm_f32le \"${outFile.absolutePath}\""
 

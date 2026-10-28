@@ -85,7 +85,7 @@ fun ColorMattePanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 380.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
 
@@ -141,7 +141,7 @@ fun ColorMattePanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 ModeChip(
@@ -182,7 +182,7 @@ fun ColorMattePanel(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
+                            .horizontalScrollWithTwoFinger(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         ColorMatteLibrary.SOLID_PRESETS.forEach { preset ->
@@ -220,7 +220,7 @@ fun ColorMattePanel(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
+                            .horizontalScrollWithTwoFinger(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         ColorMatteLibrary.RAMP_PRESETS.forEach { p ->

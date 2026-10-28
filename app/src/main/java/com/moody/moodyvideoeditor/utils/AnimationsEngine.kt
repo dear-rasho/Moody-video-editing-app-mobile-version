@@ -221,6 +221,31 @@ object AnimationsEngine {
         val blurRadiusPx: Float = 0f
     )
 
+    fun combineFrames(first: Frame, second: Frame): Frame = Frame(
+        alpha = (first.alpha * second.alpha).coerceIn(0f, 1f),
+        scaleX = first.scaleX * second.scaleX,
+        scaleY = first.scaleY * second.scaleY,
+        translateX = first.translateX + second.translateX,
+        translateY = first.translateY + second.translateY,
+        rotationZ = first.rotationZ + second.rotationZ,
+        rotationX = first.rotationX + second.rotationX,
+        rotationY = first.rotationY + second.rotationY,
+        blurRadiusPx = first.blurRadiusPx + second.blurRadiusPx
+    )
+
+    fun computeTextFrame(
+        textAnimation: String,
+        presetAnimation: String,
+        progress: Float,
+        elapsedSec: Float,
+        presetProgress: Float = progress
+    ): Frame {
+        val textFrame = computeFrame(textAnimation, progress, elapsedSec)
+        if (presetAnimation.equals("none", ignoreCase = true)) return textFrame
+        val presetFrame = computeFrame(presetAnimation, presetProgress, elapsedSec)
+        return combineFrames(textFrame, presetFrame)
+    }
+
     // Compute current animation frame.
     // progress: 0..1 (0 = animation start, 1 = animation complete)
     // elapsedSec: time since clip start (for looping animations like wave/pulse)

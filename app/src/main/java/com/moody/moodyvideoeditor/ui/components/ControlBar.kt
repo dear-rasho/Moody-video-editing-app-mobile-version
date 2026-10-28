@@ -45,6 +45,11 @@ fun ControlBar(
     onMagnet: () -> Unit = {},
     onDelete: () -> Unit = {},
     onDuplicate: () -> Unit = {},
+    onCopy: () -> Unit = {},
+    onCut: () -> Unit = {},
+    onPaste: () -> Unit = {},
+    canCopy: Boolean = false,
+    canPaste: Boolean = false,
     hasVideo: Boolean = true,
     currentPosMs: Long = 0L,
     totalDurationMs: Long = 0L
@@ -92,6 +97,13 @@ fun ControlBar(
             )
         }
 
+        if (canPaste) {
+            PillButton("Paste", onPaste, highlight = Color(0xFF22C55E))
+        } else {
+            PillButton("Copy", onCopy, enabled = hasVideo && canCopy)
+            PillButton("Cut", onCut, enabled = hasVideo && canCopy, highlight = Color(0xFFFFB84D))
+        }
+
         IconButton(
             onClick = onDelete,
             enabled = hasVideo,
@@ -121,16 +133,28 @@ fun ControlBar(
 }
 
 @Composable
-private fun PillButton(text: String, onClick: () -> Unit) {
+private fun PillButton(
+    text: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    highlight: Color = Color.White
+) {
     Box(
         modifier = Modifier
             .height(32.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF1A1A1A))
-            .pointerInput(text) { detectTapGestures { onClick() } }
+            .pointerInput(text, enabled) {
+                if (enabled) detectTapGestures { onClick() }
+            }
             .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(text, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Text(
+            text,
+            color = if (enabled) highlight else Color(0xFF555555),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }

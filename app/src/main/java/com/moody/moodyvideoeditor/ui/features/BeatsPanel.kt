@@ -72,7 +72,7 @@ fun BeatsPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 400.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
@@ -87,7 +87,7 @@ fun BeatsPanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 BeatsLibrary.FILTERS.forEach { (key, label) ->

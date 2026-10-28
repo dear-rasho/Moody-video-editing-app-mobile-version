@@ -219,7 +219,7 @@ fun EffectsPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 560.dp)                 // ← 420 → 560
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
@@ -235,7 +235,7 @@ fun EffectsPanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 CATEGORIES.forEachIndexed { idx, (_, label, _) ->
@@ -279,7 +279,7 @@ fun EffectsPanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 catPresets.forEach { preset ->
@@ -1101,7 +1101,7 @@ fun EffectsPanel(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
+                            .horizontalScrollWithTwoFinger(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         listOf(

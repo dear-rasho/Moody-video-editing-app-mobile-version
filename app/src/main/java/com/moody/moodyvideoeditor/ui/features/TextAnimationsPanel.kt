@@ -49,7 +49,7 @@ fun TextAnimationsPanel(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScrollWithTwoFinger(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             animations.forEach { anim ->

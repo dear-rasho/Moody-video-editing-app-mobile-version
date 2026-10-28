@@ -425,7 +425,7 @@ fun ExportDialog(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
+                                .horizontalScrollWithTwoFinger(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -470,7 +470,7 @@ fun ExportDialog(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
+                                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 ExportSettings.RESOLUTIONS.forEach { preset ->
@@ -491,7 +491,7 @@ fun ExportDialog(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
+                                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 ExportSettings.FPS_OPTIONS.forEach { f ->
@@ -598,7 +598,7 @@ fun ExportDialog(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
+                                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Chip(
@@ -662,7 +662,7 @@ fun ExportDialog(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
+                                        .horizontalScrollWithTwoFinger(rememberScrollState()),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Chip(
@@ -706,7 +706,7 @@ fun ExportDialog(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
+                                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 ExportSettings.RESOLUTIONS.forEach { preset ->
@@ -722,7 +722,7 @@ fun ExportDialog(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
+                                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 ExportSettings.FPS_OPTIONS.forEach { f ->

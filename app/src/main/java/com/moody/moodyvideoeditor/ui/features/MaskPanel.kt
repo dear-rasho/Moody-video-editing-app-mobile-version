@@ -77,7 +77,7 @@ fun MaskPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 380.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
@@ -94,7 +94,7 @@ fun MaskPanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 MaskLibrary.PRESETS.forEach { preset ->

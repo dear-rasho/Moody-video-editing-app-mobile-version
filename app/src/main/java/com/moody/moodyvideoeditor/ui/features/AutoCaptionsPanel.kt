@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +41,7 @@ import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.CaptionGenerator
 import com.moody.moodyvideoeditor.utils.CaptionLanguage
 import com.moody.moodyvideoeditor.utils.CaptionSegment
+import com.moody.moodyvideoeditor.utils.CaptionPresetLibrary
 import com.moody.moodyvideoeditor.utils.WhisperModelManager
 import kotlinx.coroutines.delay
 
@@ -56,11 +58,12 @@ fun AutoCaptionsPanel(
     onDeleteModel: (String) -> Unit,
     onGenerateCaptions: (
         grouping: CaptionGenerator.GroupingMode,
-        autoStyle: Boolean,
         language: String,
         modelFile: String,
         wordsPerLayer: Int,
-        wordsPerLine: Int
+        wordsPerLine: Int,
+        captionPresetId: String?,
+        highlightColor: Long
     ) -> Unit,
     onCancel: () -> Unit,
     onClearCaptions: () -> Unit = {},
@@ -71,7 +74,6 @@ fun AutoCaptionsPanel(
     var selectedGrouping by remember {
         mutableStateOf(CaptionGenerator.GroupingMode.WORDS)
     }
-    var autoStyle by remember { mutableStateOf(CaptionGenerator.autoStyleEnabled) }
     var selectedLanguage by remember { mutableStateOf(CaptionLanguage.AUTO) }
     var selectedModel by remember { mutableStateOf(WhisperModelManager.MODEL_BASE) }
 
@@ -79,6 +81,11 @@ fun AutoCaptionsPanel(
     var wordsPerLayer by remember { mutableIntStateOf(2) }
     // ✅ Default 1 line (user can change 1-5)
     var wordsPerLine by remember { mutableIntStateOf(1) }
+    var selectedPresetId by remember {
+        mutableStateOf(CaptionPresetLibrary.presets.first().id)
+    }
+    var highlightColor by remember { mutableStateOf(0xFF00D9FFL) }
+    var showCaptionPresets by remember { mutableStateOf(false) }
 
     var copiedAll by remember { mutableStateOf(false) }
     var copiedItemIdx by remember { mutableStateOf(-1) }
@@ -121,7 +128,7 @@ fun AutoCaptionsPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 640.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
 
@@ -266,7 +273,7 @@ fun AutoCaptionsPanel(
                         .heightIn(max = 200.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color(0xFF0F0F0F))
-                        .verticalScroll(rememberScrollState())
+                        .verticalScrollWithScrollbar(rememberScrollState())
                         .padding(6.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
@@ -376,7 +383,7 @@ fun AutoCaptionsPanel(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                        .horizontalScrollWithTwoFinger(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     CaptionLanguage.QUICK_PICK.forEach { lang ->
@@ -553,7 +560,6 @@ fun AutoCaptionsPanel(
                     }
                 }
 
-                // ─── AI Auto-Style toggle ───
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -563,17 +569,15 @@ fun AutoCaptionsPanel(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("🤖", fontSize = 18.sp)
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "AI Auto-Style",
+                            "Caption Preset",
                             color = Color.White,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            if (autoStyle) "Random fonts, glows, animations"
-                            else "Simple plain captions",
+                            "Choose a saved style and animation",
                             color = Color(0xFF888888),
                             fontSize = 9.sp
                         )
@@ -582,26 +586,28 @@ fun AutoCaptionsPanel(
                         modifier = Modifier
                             .height(28.dp)
                             .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (autoStyle) Color(0xFF7C3AED)
-                                else Color(0xFF181818)
-                            )
-                            .pointerInput(autoStyle) {
-                                detectTapGestures {
-                                    autoStyle = !autoStyle
-                                    CaptionGenerator.autoStyleEnabled = autoStyle
-                                }
-                            }
-                            .padding(horizontal = 14.dp),
+                            .background(if (showCaptionPresets) Color(0xFF7C3AED) else Color(0xFF181818))
+                            .clickable { showCaptionPresets = !showCaptionPresets }
+                            .padding(horizontal = 10.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            if (autoStyle) "ON" else "OFF",
+                            CaptionPresetLibrary.find(selectedPresetId)?.name ?: "Presets",
                             color = Color.White,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
                         )
                     }
+                }
+                if (showCaptionPresets) {
+                    CaptionPresetPicker(
+                        selectedPresetId = selectedPresetId,
+                        highlightColor = highlightColor,
+                        onPresetSelected = { selectedPresetId = it },
+                        onHighlightColorChanged = { highlightColor = it },
+                        onBack = { showCaptionPresets = false }
+                    )
                 }
 
                 // ─── Style: Words / Lines ───
@@ -755,18 +761,19 @@ fun AutoCaptionsPanel(
                         )
                         .pointerInput(
                             currentModelReady, selectedGrouping,
-                            autoStyle, selectedLanguage, selectedModel,
+                            selectedLanguage, selectedModel,
                             wordsPerLayer
                         ) {
                             detectTapGestures {
                                 if (currentModelReady) {
                                     onGenerateCaptions(
                                         selectedGrouping,
-                                        autoStyle,
                                         selectedLanguage.code,
                                         selectedModel,
                                         wordsPerLayer,
-                                        wordsPerLine
+                                        wordsPerLine,
+                                        selectedPresetId,
+                                        highlightColor
                                     )
                                 }
                             }

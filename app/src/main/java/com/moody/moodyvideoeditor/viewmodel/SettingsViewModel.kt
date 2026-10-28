@@ -58,6 +58,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun setWatermarkPosition(v: String) = updateDraft { copy(watermarkPosition = v) }
 
     fun setStepFrames(v: Int) = updateDraft { copy(stepFrames = v) }
+    fun setPlayheadSeekStepSeconds(v: Int) =
+        updateDraft { copy(playheadSeekStepSeconds = v.coerceIn(1, 60)) }
     fun setAdjustStep(v: Int) = updateDraft { copy(adjustStep = v) }
     fun setDefaultFps(v: Int) = updateDraft { copy(defaultFps = v) }
     fun setTimeCodeFormat(v: String) = updateDraft { copy(timeCodeFormat = v) }

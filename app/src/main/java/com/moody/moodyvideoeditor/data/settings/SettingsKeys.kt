@@ -19,6 +19,7 @@ object SettingsKeys {
 
     // ─── Tab 2: Edit ───
     val STEP_FRAMES = intPreferencesKey("step_frames")
+    val PLAYHEAD_SEEK_STEP_SECONDS = intPreferencesKey("playhead_seek_step_seconds")
     val ADJUST_STEP = intPreferencesKey("adjust_step")
     val DEFAULT_FPS = intPreferencesKey("default_fps")
     val TIME_CODE_FORMAT = stringPreferencesKey("time_code_format")
@@ -51,6 +52,7 @@ object SettingsDefaults {
     const val WATERMARK_POSITION = "top_left"
 
     const val STEP_FRAMES = 10
+    const val PLAYHEAD_SEEK_STEP_SECONDS = 3
     const val ADJUST_STEP = 10
     const val DEFAULT_FPS = 30
     const val TIME_CODE_FORMAT = "HH:MM:SS+frame"

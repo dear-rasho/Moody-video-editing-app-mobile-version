@@ -105,7 +105,6 @@ fun VisualizerPanel(
                 )
                 subView = "main"
             },
-            onApplyTemplate = {},
             onClose = { subView = "main" }
         )
         return
@@ -140,7 +139,7 @@ fun VisualizerPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 600.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
@@ -648,7 +647,7 @@ private fun PresetPicker(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScrollWithTwoFinger(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             VisualizerPreset.CATEGORIES.forEach { (key, label) ->
@@ -687,7 +686,7 @@ private fun PresetPicker(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScrollWithTwoFinger(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             categoryPresets.forEach { preset ->

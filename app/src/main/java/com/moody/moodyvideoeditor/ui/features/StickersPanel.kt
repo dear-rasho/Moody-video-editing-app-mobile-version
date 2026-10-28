@@ -130,7 +130,7 @@ private fun EmojiView(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState()),
+            .verticalScrollWithScrollbar(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
@@ -144,7 +144,7 @@ private fun EmojiView(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScrollWithTwoFinger(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             StickerLibrary.CATEGORIES.forEach { cat ->
@@ -189,7 +189,7 @@ private fun EmojiView(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScrollWithTwoFinger(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             category.emojis.forEach { emoji ->
@@ -267,7 +267,7 @@ private fun AnimationSubView(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = 280.dp)
-            .verticalScroll(rememberScrollState()),
+            .verticalScrollWithScrollbar(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         // Header with back
@@ -295,7 +295,7 @@ private fun AnimationSubView(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScrollWithTwoFinger(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             categories.forEach { cat ->
@@ -327,7 +327,7 @@ private fun AnimationSubView(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 140.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             cat.animations.chunked(3).forEach { row ->

@@ -935,6 +935,10 @@ object ProjectRepository {
         put("opacity", t.opacity.toDouble())
         put("animation", t.animation)
         put("animationDuration", t.animationDuration.toDouble())
+        t.captionPresetId?.let { put("captionPresetId", it) }
+        put("captionHighlightColor", t.captionHighlightColor)
+        put("captionPresetAnimation", t.captionPresetAnimation)
+        put("captionPresetAnimationDuration", t.captionPresetAnimationDuration.toDouble())
         t.templateId?.let { put("templateId", it) }
 
         // 🆕 BACKGROUND
@@ -1008,6 +1012,12 @@ object ProjectRepository {
             opacity = o.optDouble("opacity", 100.0).toFloat(),
             animation = o.optString("animation", "none"),
             animationDuration = o.optDouble("animationDuration", 0.6).toFloat(),
+            captionPresetId = if (o.isNull("captionPresetId")) null
+            else o.optString("captionPresetId", null),
+            captionHighlightColor = o.optLong("captionHighlightColor", 0xFF00D9FFL),
+            captionPresetAnimation = o.optString("captionPresetAnimation", "none"),
+            captionPresetAnimationDuration =
+                o.optDouble("captionPresetAnimationDuration", 0.45).toFloat(),
             templateId = if (o.isNull("templateId")) null
             else o.optString("templateId", null),
 

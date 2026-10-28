@@ -17,6 +17,7 @@ data class AppSettings(
 
     // ─── Tab 2: Edit ───
     val stepFrames: Int = SettingsDefaults.STEP_FRAMES,
+    val playheadSeekStepSeconds: Int = SettingsDefaults.PLAYHEAD_SEEK_STEP_SECONDS,
     val adjustStep: Int = SettingsDefaults.ADJUST_STEP,
     val defaultFps: Int = SettingsDefaults.DEFAULT_FPS,
     val timeCodeFormat: String = SettingsDefaults.TIME_CODE_FORMAT,

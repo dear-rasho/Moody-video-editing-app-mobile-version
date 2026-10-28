@@ -205,6 +205,7 @@ data class EditorState(
 
     // Live preview effect (temporary, not committed)
     val previewEffectState: EffectState? = null,
+    val clipboardAction: String? = null,
     // 🆕 Live preview for Color Matte (temporary, not committed)
     val previewMatte: PreviewMatteState? = null,
 

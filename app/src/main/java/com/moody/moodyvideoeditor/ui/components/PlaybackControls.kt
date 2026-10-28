@@ -45,6 +45,8 @@ fun PlaybackControls(
     canUndo: Boolean,
     canRedo: Boolean,
     hasKeyframeAtPlayhead: Boolean = false,
+    seekStepSeconds: Int = 3,
+    onSeekBy: (Long) -> Unit = {},
     // Tools
     onSelectBackward: () -> Unit = {},
     onSelectForward: () -> Unit = {},
@@ -80,16 +82,77 @@ fun PlaybackControls(
             .padding(horizontal = 2.dp, vertical = 1.dp),
         verticalArrangement = Arrangement.spacedBy(1.dp)
     ) {
-        // ─── ROW 1 — Play + Undo/Redo + Keyframe + Tools ───
+        // ─── ROW 1 — Centered playback and seek controls ───
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(32.dp) // Height thodi barhai taake buttons fit aayen
+                .height(34.dp)
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End
+            ) {
+                IconButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Filled.Undo, "Undo",
+                        tint = if (canUndo) Color.White else Color(0xFF444444),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                SmallBtn(
+                    text = "-${seekStepSeconds}s",
+                    enabled = hasVideo
+                ) { onSeekBy(-seekStepSeconds.coerceAtLeast(1) * 1000L) }
+            }
+
+            IconButton(onClick = onPlayPause, enabled = hasVideo, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    "Play",
+                    tint = if (hasVideo) Color(0xFF7C3AED) else Color(0xFF444444),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Start
+            ) {
+                SmallBtn(
+                    text = "+${seekStepSeconds}s",
+                    enabled = hasVideo
+                ) { onSeekBy(seekStepSeconds.coerceAtLeast(1) * 1000L) }
+                IconButton(onClick = onRedo, enabled = canRedo, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Filled.Redo, "Redo",
+                        tint = if (canRedo) Color.White else Color(0xFF444444),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        // ─── ROW 2 — Selection and editing tools ───
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(28.dp)
                 .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp) // 🆕 Gap barha diya
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            // Select tools (with Text)
+            SmallBtn("⏪ Back") { onSelectBackward() }
+            SmallBtn("⏩ Fwd") { onSelectForward() }
+            SmallBtn("☑ All") { onSelectAll() }
+            SmallBtn("▤ Track") { onSelectAllTrack() }
+            SmallBtn("☐ None") { onDeselectAll() }
+
             // Keyframe
             IconButton(onClick = onKeyframe, enabled = hasVideo, modifier = Modifier.size(28.dp)) {
                 Text(
@@ -103,41 +166,6 @@ fun PlaybackControls(
                     fontWeight = FontWeight.Bold
                 )
             }
-
-            // Play/Pause
-            IconButton(onClick = onPlayPause, enabled = hasVideo, modifier = Modifier.size(30.dp)) {
-                Icon(
-                    if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    "Play",
-                    tint = if (hasVideo) Color(0xFF7C3AED) else Color(0xFF444444),
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-
-            // Undo
-            IconButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.size(28.dp)) {
-                Icon(
-                    Icons.Filled.Undo, "Undo",
-                    tint = if (canUndo) Color.White else Color(0xFF444444),
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-
-            // Redo
-            IconButton(onClick = onRedo, enabled = canRedo, modifier = Modifier.size(28.dp)) {
-                Icon(
-                    Icons.Filled.Redo, "Redo",
-                    tint = if (canRedo) Color.White else Color(0xFF444444),
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-
-            // Select tools (with Text)
-            SmallBtn("⏪ Back") { onSelectBackward() }
-            SmallBtn("⏩ Fwd") { onSelectForward() }
-            SmallBtn("☑ All") { onSelectAll() }
-            SmallBtn("▤ Track") { onSelectAllTrack() }
-            SmallBtn("☐ None") { onDeselectAll() }
 
             // Split
             SmallBtn(

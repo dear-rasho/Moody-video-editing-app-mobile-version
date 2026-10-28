@@ -82,7 +82,7 @@ fun ColorRemoverPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 480.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
 
@@ -235,7 +235,7 @@ fun ColorRemoverPanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 ChromaKeyPresets.QUICK_PRESETS.forEach { (label, color) ->
@@ -302,7 +302,7 @@ fun ColorRemoverPanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 ChromaKeyPresets.SETTINGS_PRESETS.forEach { preset ->

@@ -82,7 +82,7 @@ fun CropPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 340.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(

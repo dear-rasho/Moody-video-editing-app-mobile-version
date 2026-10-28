@@ -81,6 +81,10 @@ data class TextState(
     // Animation
     val animation: String = "none",
     val animationDuration: Float = 0.6f,
+    val captionPresetId: String? = null,
+    val captionHighlightColor: Long = 0xFF00D9FF,
+    val captionPresetAnimation: String = "none",
+    val captionPresetAnimationDuration: Float = 0.45f,
 
     // Template
     val templateId: String? = null,        // which template this came from

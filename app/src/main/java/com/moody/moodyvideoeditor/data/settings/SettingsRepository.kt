@@ -54,6 +54,9 @@ class SettingsRepository(private val context: Context) {
                 // Tab 2
                 stepFrames = prefs[SettingsKeys.STEP_FRAMES]
                     ?: SettingsDefaults.STEP_FRAMES,
+                playheadSeekStepSeconds = prefs[SettingsKeys.PLAYHEAD_SEEK_STEP_SECONDS]
+                    ?.coerceIn(1, 60)
+                    ?: SettingsDefaults.PLAYHEAD_SEEK_STEP_SECONDS,
                 adjustStep = prefs[SettingsKeys.ADJUST_STEP]
                     ?: SettingsDefaults.ADJUST_STEP,
                 defaultFps = prefs[SettingsKeys.DEFAULT_FPS]
@@ -107,6 +110,8 @@ class SettingsRepository(private val context: Context) {
 
             // Tab 2
             prefs[SettingsKeys.STEP_FRAMES] = settings.stepFrames
+            prefs[SettingsKeys.PLAYHEAD_SEEK_STEP_SECONDS] =
+                settings.playheadSeekStepSeconds.coerceIn(1, 60)
             prefs[SettingsKeys.ADJUST_STEP] = settings.adjustStep
             prefs[SettingsKeys.DEFAULT_FPS] = settings.defaultFps
             prefs[SettingsKeys.TIME_CODE_FORMAT] = settings.timeCodeFormat

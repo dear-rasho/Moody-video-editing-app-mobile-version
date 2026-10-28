@@ -86,7 +86,7 @@ fun SpotlightPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 380.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
@@ -110,7 +110,7 @@ fun SpotlightPanel(
 
             Text("Presets", color = Color(0xFF888888), fontSize = 10.sp, fontWeight = FontWeight.Bold)
             Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                modifier = Modifier.horizontalScrollWithTwoFinger(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 SpotlightPresets.all.forEach { preset ->

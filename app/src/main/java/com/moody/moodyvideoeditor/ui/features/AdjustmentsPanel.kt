@@ -54,7 +54,7 @@ fun AdjustmentsPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 220.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             GroupLabel("Light")

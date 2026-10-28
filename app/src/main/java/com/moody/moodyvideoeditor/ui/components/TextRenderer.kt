@@ -36,7 +36,12 @@ fun TextOverlay(
     val elapsed = ((currentPosMs - clipStartMs) / 1000f).coerceAtLeast(0f)
     val animDur = text.animationDuration.coerceAtLeast(0.1f)
     val progress = (elapsed / animDur).coerceIn(0f, 1f)
-    val frame = AnimationsEngine.computeFrame(text.animation, progress, elapsed)
+    val frame = AnimationsEngine.computeTextFrame(
+        text.animation,
+        text.captionPresetAnimation,
+        progress,
+        elapsed
+    )
 
     val family = FontLibrary.familyFor(text.fontFamily)
     val solidColor = Color(text.color)

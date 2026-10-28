@@ -68,7 +68,6 @@ val FEATURES = listOf(
 
     Feature("freeze", "Freeze", "❄️"),
     Feature("ratio", "Ratio", "🖼️"),
-    Feature("duplicate", "Dup", "📋"),
     Feature("delete", "Delete", "🗑"),
     Feature("save_template", "Save Tpl", "💾"),
     Feature("replace_media", "Replace", "🔄"),

@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.CaptionGenerator
+import com.moody.moodyvideoeditor.utils.CaptionPresetLibrary
 import kotlinx.coroutines.delay
 
 @Composable
@@ -45,9 +46,10 @@ fun ManualCaptionsPanel(
     onAddManual: (
         input: String,
         grouping: CaptionGenerator.GroupingMode,
-        autoStyle: Boolean,
         wordsPerLayer: Int,
-        wordsPerLine: Int
+        wordsPerLine: Int,
+        captionPresetId: String?,
+        highlightColor: Long
     ) -> Unit,
     onClearCaptions: () -> Unit,
     onClose: () -> Unit
@@ -56,9 +58,13 @@ fun ManualCaptionsPanel(
     var selectedGrouping by remember {
         mutableStateOf(CaptionGenerator.GroupingMode.WORDS)
     }
-    var autoStyle by remember { mutableStateOf(true) }
     var wordsPerLayer by remember { mutableIntStateOf(2) }
     var wordsPerLine by remember { mutableIntStateOf(1) }
+    var selectedPresetId by remember {
+        mutableStateOf(CaptionPresetLibrary.presets.first().id)
+    }
+    var highlightColor by remember { mutableStateOf(0xFF00D9FFL) }
+    var showCaptionPresets by remember { mutableStateOf(false) }
     var localStatus by remember { mutableStateOf("") }
 
     LaunchedEffect(statusMessage) {
@@ -78,7 +84,7 @@ fun ManualCaptionsPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 660.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollWithScrollbar(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
 
@@ -188,9 +194,6 @@ fun ManualCaptionsPanel(
                 }
             }
 
-            // ═══════════════════════════════════════════════════════
-            //  AI AUTO-STYLE TOGGLE
-            // ═══════════════════════════════════════════════════════
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -200,16 +203,14 @@ fun ManualCaptionsPanel(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("🤖", fontSize = 18.sp)
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "AI Auto-Style",
+                        "Caption Preset",
                         color = Color.White, fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        if (autoStyle) "Random fonts, glows, animations"
-                        else "Simple plain captions",
+                        "Choose a saved style and animation",
                         color = Color(0xFF888888), fontSize = 9.sp
                     )
                 }
@@ -217,22 +218,28 @@ fun ManualCaptionsPanel(
                     modifier = Modifier
                         .height(28.dp)
                         .clip(RoundedCornerShape(6.dp))
-                        .background(
-                            if (autoStyle) Color(0xFF7C3AED) else Color(0xFF181818)
-                        )
-                        .clickable {
-                            autoStyle = !autoStyle
-                            CaptionGenerator.autoStyleEnabled = autoStyle
-                        }
-                        .padding(horizontal = 14.dp),
+                        .background(if (showCaptionPresets) Color(0xFF7C3AED) else Color(0xFF181818))
+                        .clickable { showCaptionPresets = !showCaptionPresets }
+                        .padding(horizontal = 10.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        if (autoStyle) "ON" else "OFF",
-                        color = Color.White, fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
+                        CaptionPresetLibrary.find(selectedPresetId)?.name ?: "Presets",
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                 }
+            }
+            if (showCaptionPresets) {
+                CaptionPresetPicker(
+                    selectedPresetId = selectedPresetId,
+                    highlightColor = highlightColor,
+                    onPresetSelected = { selectedPresetId = it },
+                    onHighlightColorChanged = { highlightColor = it },
+                    onBack = { showCaptionPresets = false }
+                )
             }
 
             // ═══════════════════════════════════════════════════════
@@ -383,9 +390,10 @@ fun ManualCaptionsPanel(
                         onAddManual(
                             manualText,
                             selectedGrouping,
-                            autoStyle,
                             wordsPerLayer,
-                            wordsPerLine
+                            wordsPerLine,
+                            selectedPresetId,
+                            highlightColor
                         )
                         manualText = ""
                     },
