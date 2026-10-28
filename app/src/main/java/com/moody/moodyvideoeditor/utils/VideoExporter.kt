@@ -681,7 +681,9 @@ class VideoExporter(
         filterParts.add("[$lastLabel]format=yuv420p[outv]")
 
         val finalOutv =
-            WatermarkHelper.addWatermarkToFilter(context, filterParts, "outv", targetW, targetH)
+            WatermarkHelper.addWatermarkToFilter(
+                context, args, filterParts, "outv", targetW, targetH, fps
+            )
 
         if (audioLocalFiles.isEmpty()) {
             filterParts.add("[1:a]anull[outa]")

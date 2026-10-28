@@ -349,7 +349,6 @@ fun PreviewCanvas(
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit = { _, _, _, _, _ -> },
     onTextPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onTextTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
-    onTextGradientPointChanged: (String, Boolean, Float, Float) -> Unit = { _, _, _, _ -> },
     onStickerPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onStickerTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onLayerPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
@@ -1697,7 +1696,6 @@ fun PreviewCanvas(
                                             r
                                         )
                                     },
-                                    onGradientPointChanged = onTextGradientPointChanged,
                                     onDeleteLayer = { onDeleteLayer(clip.id) },
                                 )
                             }
@@ -3319,7 +3317,6 @@ private fun InteractiveTextOverlay(
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit,
     onPositionChanged: (Float, Float) -> Unit,
     onTransformChanged: (Float, Float) -> Unit,
-    onGradientPointChanged: (String, Boolean, Float, Float) -> Unit,
     onDeleteLayer: () -> Unit,
 ) {
     if (textState.content.isBlank()) return
@@ -3439,8 +3436,8 @@ private fun InteractiveTextOverlay(
             softWrap = true
         )
     }
-    val textWidthDp = with(density) { tightMeasure.size.width.toDp().value };
-    val textHeightDp = with(density) { tightMeasure.size.height.toDp().value };
+    val textWidthDp = with(density) { finalMeasure.size.width.toDp().value };
+    val textHeightDp = with(density) { finalMeasure.size.height.toDp().value };
     val textWidthConstraintDp = with(density) { tightMeasure.size.width.toDp() }
     val solidColor = Color(textState.color)
     val gradient: Brush? = if (textState.gradientEnabled) {
@@ -3648,55 +3645,6 @@ private fun InteractiveTextOverlay(
                                     paint
                                 )
                                 }
-                                if (isSelected && !isMulti && textState.gradientEnabled) {
-                                BoxWithConstraints(
-                                    modifier = Modifier.matchParentSize(),
-                                    contentAlignment = Alignment.TopStart
-                                ) {
-                                    val startX = gradientPaddingX + textState.gradientStartX.coerceIn(0f, 1f) * textWidthDp
-                                    val startY = gradientPaddingY + textState.gradientStartY.coerceIn(0f, 1f) * textHeightDp
-                                    val endX = gradientPaddingX + textState.gradientEndX.coerceIn(0f, 1f) * textWidthDp
-                                    val endY = gradientPaddingY + textState.gradientEndY.coerceIn(0f, 1f) * textHeightDp
-                                    Canvas(Modifier.matchParentSize()) {
-                                        drawLine(
-                                            Color.White.copy(alpha = 0.9f),
-                                            Offset(startX.dp.toPx(), startY.dp.toPx()),
-                                            Offset(endX.dp.toPx(), endY.dp.toPx()),
-                                            strokeWidth = 2.dp.toPx()
-                                        )
-                                    }
-                                    GradientPointHandle(
-                                        label = "A",
-                                        color = Color(textState.gradientColor1),
-                                        x = startX,
-                                        y = startY,
-                                        textWidth = textWidthDp,
-                                        textHeight = textHeightDp,
-                                        paddingX = gradientPaddingX,
-                                        paddingY = gradientPaddingY,
-                                        onDragStart = onGroupGestureStart,
-                                        onDragEnd = onGroupGestureEnd,
-                                        onPositionChanged = { x, y ->
-                                            onGradientPointChanged(clip.id, true, x, y)
-                                        }
-                                    )
-                                    GradientPointHandle(
-                                        label = "B",
-                                        color = Color(textState.gradientColor2),
-                                        x = endX,
-                                        y = endY,
-                                        textWidth = textWidthDp,
-                                        textHeight = textHeightDp,
-                                        paddingX = gradientPaddingX,
-                                        paddingY = gradientPaddingY,
-                                        onDragStart = onGroupGestureStart,
-                                        onDragEnd = onGroupGestureEnd,
-                                        onPositionChanged = { x, y ->
-                                            onGradientPointChanged(clip.id, false, x, y)
-                                        }
-                                    )
-                                }
-                                }
                             }
                         }
                     }
@@ -3780,52 +3728,6 @@ private fun InteractiveTextOverlay(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun BoxScope.GradientPointHandle(
-    label: String,
-    color: Color,
-    x: Float,
-    y: Float,
-    textWidth: Float,
-    textHeight: Float,
-    paddingX: Float,
-    paddingY: Float,
-    onDragStart: () -> Unit,
-    onDragEnd: () -> Unit,
-    onPositionChanged: (Float, Float) -> Unit
-) {
-    val density = LocalDensity.current
-    val latestX by rememberUpdatedState(x)
-    val latestY by rememberUpdatedState(y)
-    val latestOnPositionChanged by rememberUpdatedState(onPositionChanged)
-    val latestOnDragEnd by rememberUpdatedState(onDragEnd)
-    Box(
-        modifier = Modifier
-            .offset(x = (x - 14f).dp, y = (y - 14f).dp)
-            .size(28.dp)
-            .clip(CircleShape)
-            .background(color)
-            .border(2.dp, Color.White, CircleShape)
-            .pointerInput(label, textWidth, textHeight, paddingX, paddingY) {
-                detectDragGestures(
-                    onDragStart = { onDragStart() },
-                    onDragEnd = { latestOnDragEnd() },
-                    onDragCancel = { latestOnDragEnd() }
-                ) { change, dragAmount ->
-                    change.consume()
-                    val deltaX = with(density) { dragAmount.x.toDp().value }
-                    val deltaY = with(density) { dragAmount.y.toDp().value }
-                    val nextX = (latestX + deltaX / textWidth.coerceAtLeast(1f)).coerceIn(0f, 1f)
-                    val nextY = (latestY + deltaY / textHeight.coerceAtLeast(1f)).coerceIn(0f, 1f)
-                    latestOnPositionChanged(nextX, nextY)
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Text(label, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }
 

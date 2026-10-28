@@ -70,15 +70,15 @@ object ImageAdjustmentProcessor {
     // ═══════════════════════════════════════════════════════════
 
     private fun applyColorChannels(pixels: IntArray, adj: AdjustmentData) {
-        val reds = adj.reds / 100f
-        val oranges = adj.oranges / 100f
-        val yellows = adj.yellows / 100f
-        val greens = adj.greens / 100f
-        val cyans = adj.cyans / 100f
-        val blues = adj.blues / 100f
-        val purples = adj.purples / 100f
-        val magentas = adj.magentas / 100f
-        val skinTones = adj.skinTones / 100f
+        val reds = (adj.reds / 100f).coerceIn(-5f, 5f)
+        val oranges = (adj.oranges / 100f).coerceIn(-5f, 5f)
+        val yellows = (adj.yellows / 100f).coerceIn(-5f, 5f)
+        val greens = (adj.greens / 100f).coerceIn(-5f, 5f)
+        val cyans = (adj.cyans / 100f).coerceIn(-5f, 5f)
+        val blues = (adj.blues / 100f).coerceIn(-5f, 5f)
+        val purples = (adj.purples / 100f).coerceIn(-5f, 5f)
+        val magentas = (adj.magentas / 100f).coerceIn(-5f, 5f)
+        val skinTones = (adj.skinTones / 100f).coerceIn(-5f, 5f)
 
         val hsv = FloatArray(3)
 

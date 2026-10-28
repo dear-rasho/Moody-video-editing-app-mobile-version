@@ -201,20 +201,24 @@ object KeyframeStore {
         if (keyframes.isEmpty()) return ffmpegNumber(baseValue)
         if (keyframes.size == 1) return ffmpegNumber(keyframes.first().value)
 
-        // Formula: if(t < end, interp, prev) == prev + (interp - prev) * lt(t, end)
-        var expression = ffmpegNumber(keyframes.last().value)
-        for (index in keyframes.lastIndex downTo 1) {
-            val start = keyframes[index - 1]
-            val end = keyframes[index]
+        val terms = mutableListOf<String>()
+        val first = keyframes.first()
+        val last = keyframes.last()
+        terms.add("(${ffmpegNumber(first.value)}*lt($timeExpression,${ffmpegNumber(first.time)}))")
+
+        for (index in 0 until keyframes.lastIndex) {
+            val start = keyframes[index]
+            val end = keyframes[index + 1]
             val duration = (end.time - start.time).coerceAtLeast(0.000001f)
             val progress = "(($timeExpression-${ffmpegNumber(start.time)})/${ffmpegNumber(duration)})"
             val easedProgress = ffmpegEaseExpression(progress, start.ease)
             val interpolated = "(${ffmpegNumber(start.value)}+(${ffmpegNumber(end.value)}-${ffmpegNumber(start.value)})*($easedProgress))"
-            expression = "($expression+($interpolated-$expression)*lt($timeExpression,${ffmpegNumber(end.time)}))"
+            val activeInterval =
+                "(1-lt($timeExpression,${ffmpegNumber(start.time)}))*lt($timeExpression,${ffmpegNumber(end.time)})"
+            terms.add("($interpolated*$activeInterval)")
         }
-        val firstValue = ffmpegNumber(keyframes.first().value)
-        expression = "($expression+($firstValue-$expression)*lt($timeExpression,${ffmpegNumber(keyframes.first().time)}))"
-        return expression
+        terms.add("(${ffmpegNumber(last.value)}*(1-lt($timeExpression,${ffmpegNumber(last.time)})))")
+        return terms.joinToString("+", prefix = "(", postfix = ")")
     }
 
     fun escapeFfmpegExpression(expression: String): String {
@@ -251,8 +255,8 @@ object KeyframeStore {
         return when (ease) {
             "easeIn", "quadIn" -> "pow($p,2)"
             "easeOut", "quadOut" -> "(1-pow(1-$p,2))"
-            "easeInOut", "quadInOut" -> "(1-pow(-2*$p+2,2)/2)+(2*pow($p,2)-(1-pow(-2*$p+2,2)/2))*lt($p,0.5))"
-                .let { "(2*pow($p,2)*lt($p,0.5)+(1-pow(-2*$p+2,2)/2)*(1-lt($p,0.5)))" }
+            "easeInOut", "quadInOut" ->
+                "(2*pow($p,2)*lt($p,0.5)+(1-pow(-2*$p+2,2)/2)*(1-lt($p,0.5)))"
             "cubicIn" -> "pow($p,3)"
             "cubicOut" -> "(1-pow(1-$p,3))"
             "cubicInOut" -> "(4*pow($p,3)*lt($p,0.5)+(1-pow(-2*$p+2,3)/2)*(1-lt($p,0.5)))"

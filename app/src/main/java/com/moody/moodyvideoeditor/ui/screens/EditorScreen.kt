@@ -97,6 +97,7 @@ import com.moody.moodyvideoeditor.ui.features.MaskPanel
 import com.moody.moodyvideoeditor.ui.features.OverlaysPanel
 import com.moody.moodyvideoeditor.ui.features.PromptPanel
 import com.moody.moodyvideoeditor.ui.features.SpeedPanel
+import com.moody.moodyvideoeditor.ui.features.SoundFxPanel
 import com.moody.moodyvideoeditor.ui.features.SpotlightPanel
 import com.moody.moodyvideoeditor.ui.features.StickersPanel
 import com.moody.moodyvideoeditor.ui.features.TextPanel
@@ -516,7 +517,7 @@ fun EditorScreen(
             } else {
                 viewModel.setCurrentPos(next)
             }
-            delay(33)
+            delay(40)
         }
     }
 
@@ -1325,26 +1326,10 @@ fun EditorScreen(
                 onClose = { activePanel = null }
             )
 
-            "soundfx" -> {
-                AudioPanel(
-                    onPreviewFx = { fx, intensity ->
-                        AudioPreviewEngine.apply(
-                            exoPlayer, audioExoPlayer, fx, intensity
-                        )
-                    },
-                    onClearPreview = {
-                        AudioPreviewEngine.release()
-                        try {
-                            exoPlayer.playbackParameters =
-                                androidx.media3.common.PlaybackParameters(1f, 1f)
-                            audioExoPlayer.playbackParameters =
-                                androidx.media3.common.PlaybackParameters(1f, 1f)
-                        } catch (_: Throwable) {
-                        }
-                    },
-                    onApplyAudioFx = { fx, intensity ->
-                        viewModel.createAudioFxLayer(fx, intensity)
-                    },
+            "soundfx" -> selected?.takeIf { it.isSoundFxClip }?.let { soundFxClip ->
+                SoundFxPanel(
+                    current = soundFxClip.soundFx,
+                    onSelected = { viewModel.setClipSoundFx(soundFxClip.id, it) },
                     onClose = { activePanel = null }
                 )
             }
@@ -2535,9 +2520,6 @@ fun EditorScreen(
                     onTextTransformChanged = { clipId: String, s: Float, r: Float ->
                         viewModel.updateSelectedTransformBulk(clipId, s, r)
                     },
-                    onTextGradientPointChanged = { clipId, isStartPoint, x, y ->
-                        viewModel.updateTextGradientPoint(clipId, isStartPoint, x, y)
-                    },
                     onStickerPositionChanged = { clipId: String, x: Float, y: Float ->
                         viewModel.updateSelectedPositionBulk(clipId, x, y)
                     },
@@ -2732,7 +2714,7 @@ fun EditorScreen(
                                 activePanel = "visualizer"
                             }
                             clip.isAudioEffectClip -> {
-                                activePanel = "audiofx"
+                                activePanel = if (clip.isSoundFxClip) "soundfx" else "audiofx"
                             }
                             else -> {
                                 activePanel = null // Pichla koi panel (jaise replace) stuck na rahe

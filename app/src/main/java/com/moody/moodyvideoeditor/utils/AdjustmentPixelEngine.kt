@@ -180,10 +180,11 @@ object AdjustmentPixelEngine {
             }
         }
 
-        val skinTones = amount(adjustment.skinTones, 0.069f, 0.055f)
+        val skinTones = (adjustment.skinTones / 100f).coerceIn(-5f, 5f)
         if (skinTones != 0f) {
-            r = (r + skinTones * weight(0.069f, 0.055f) * 30f).coerceIn(0f, 255f)
-            g = (g + skinTones * weight(0.069f, 0.055f) * 15f).coerceIn(0f, 255f)
+            val skinWeight = weight(0.069f, 0.055f)
+            r = (r + skinTones * skinWeight * 30f).coerceIn(0f, 255f)
+            g = (g + skinTones * skinWeight * 15f).coerceIn(0f, 255f)
         }
 
         return Triple(

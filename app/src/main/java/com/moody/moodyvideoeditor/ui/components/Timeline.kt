@@ -46,7 +46,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -1451,8 +1453,10 @@ private fun ClipCard(
 
                     var totalMove = 0f
                     val trimHandleHitWidthPx = with(density) { 16.dp.toPx() }
-                    if (down.position.x <= trimHandleHitWidthPx ||
-                        down.position.x >= size.width - trimHandleHitWidthPx
+                    val hasDistinctTrimHandles = size.width > trimHandleHitWidthPx * 2
+                    if (hasDistinctTrimHandles &&
+                        (down.position.x <= trimHandleHitWidthPx ||
+                                down.position.x >= size.width - trimHandleHitWidthPx)
                     ) {
                         return@awaitEachGesture
                     }
@@ -2156,53 +2160,56 @@ private fun AudioWaveformBackground(
         }
     }
 
+    val waveformBars = remember(waveform, sourceStartMs, sourceEndMs, sourceTotalMs) {
+        val samples = waveform ?: return@remember FloatArray(0)
+        if (samples.isEmpty()) return@remember FloatArray(0)
+
+        val totalMs = if (sourceTotalMs != Long.MAX_VALUE && sourceTotalMs > 0L) {
+            sourceTotalMs
+        } else {
+            sourceEndMs.coerceAtLeast(1L)
+        }
+        val startIdx = ((sourceStartMs.toDouble() / totalMs) * samples.size)
+            .toInt().coerceIn(0, samples.lastIndex)
+        val endIdx = ((sourceEndMs.toDouble() / totalMs) * samples.size)
+            .toInt().coerceIn(startIdx + 1, samples.size)
+        val sampleCount = endIdx - startIdx
+        val bucketCount = sampleCount.coerceAtMost(2_048)
+
+        FloatArray(bucketCount) { bucket ->
+            val bucketStart = startIdx + bucket * sampleCount / bucketCount
+            val bucketEnd = startIdx + (bucket + 1) * sampleCount / bucketCount
+            var peak = 0f
+            for (index in bucketStart until bucketEnd) {
+                peak = maxOf(peak, samples[index])
+            }
+            peak
+        }
+    }
+
     Canvas(modifier = modifier) {
-        val wf = waveform ?: return@Canvas
-        if (wf.isEmpty()) return@Canvas
+        if (waveformBars.isEmpty()) return@Canvas
 
         val w = size.width
         val h = size.height
         val midY = h / 2f
         val maxAmp = h * 0.42f
 
-        val totalMs = if (sourceTotalMs != Long.MAX_VALUE && sourceTotalMs > 0L)
-            sourceTotalMs
-        else (sourceEndMs).coerceAtLeast(1L)
-
-        val startFrac = (sourceStartMs.toFloat() / totalMs.toFloat())
-            .coerceIn(0f, 1f)
-        val endFrac = (sourceEndMs.toFloat() / totalMs.toFloat())
-            .coerceIn(0f, 1f)
-
-        val startIdx = (startFrac * wf.size).toInt().coerceIn(0, wf.size - 1)
-        val endIdx = (endFrac * wf.size).toInt().coerceIn(startIdx + 1, wf.size)
-
-        val samplesToDraw = (endIdx - startIdx).coerceAtLeast(1)
-        val pxPerSample = w / samplesToDraw.toFloat()
-
-        var x = 0f
-        for (i in startIdx until endIdx) {
-            val amp = wf[i].coerceIn(0f, 1f)
+        val pxPerSample = w / waveformBars.size.toFloat()
+        val waveformPath = Path()
+        waveformBars.forEachIndexed { index, sample ->
+            val amp = sample.coerceIn(0f, 1f)
             val barH = amp * maxAmp
-
-            drawLine(
-                color = Color(0xFFFFFFFF).copy(alpha = 0.55f),
-                start = Offset(x, midY - barH),
-                end = Offset(x, midY),
-                strokeWidth = pxPerSample.coerceIn(1f, 2f),
-                cap = StrokeCap.Butt
-            )
-            drawLine(
-                color = Color(0xFFFFFFFF).copy(alpha = 0.55f),
-                start = Offset(x, midY),
-                end = Offset(x, midY + barH),
-                strokeWidth = pxPerSample.coerceIn(1f, 2f),
-                cap = StrokeCap.Butt
-            )
-
-            x += pxPerSample
+            val x = (index + 0.5f) * pxPerSample
+            waveformPath.moveTo(x, midY - barH)
+            waveformPath.lineTo(x, midY + barH)
         }
 
+        drawPath(
+            path = waveformPath,
+            color = Color(0xFFFFFFFF).copy(alpha = 0.55f),
+            style = Stroke(width = pxPerSample.coerceIn(1f, 2f), cap = StrokeCap.Butt)
+        )
         drawLine(
             color = Color.White.copy(alpha = 0.3f),
             start = Offset(0f, midY),

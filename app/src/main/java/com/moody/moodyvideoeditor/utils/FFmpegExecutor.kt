@@ -783,7 +783,9 @@ class FFmpegExecutor(
             }
             filterParts.add("[$lastLabel]format=yuv420p[outv]")
 
-            val finalOutv = WatermarkHelper.addWatermarkToFilter(context, filterParts, "outv", targetW, targetH)
+            val finalOutv = WatermarkHelper.addWatermarkToFilter(
+                context, args, filterParts, "outv", targetW, targetH, fps
+            )
             args.add("-filter_complex"); args.add(filterParts.joinToString(";"))
             args.add("-map"); args.add("[$finalOutv]"); args.add("-frames:v"); args.add(totalFrames.toString())
             args.add("-r"); args.add(fps.toString()); args.add("-threads"); args.add("0"); args.add(
@@ -1078,13 +1080,17 @@ class FFmpegExecutor(
     }
 
     private fun enforceOutputDimensions(
+        args: MutableList<String>,
         filterParts: MutableList<String>,
         inputLabel: String,
         targetW: Int,
-        targetH: Int
+        targetH: Int,
+        fps: Int
     ): String {
         filterParts.add("[$inputLabel]scale=$targetW:$targetH:flags=lanczos,setsar=1[exportv]")
-        return WatermarkHelper.addWatermarkToFilter(context, filterParts, "exportv", targetW, targetH)
+        return WatermarkHelper.addWatermarkToFilter(
+            context, args, filterParts, "exportv", targetW, targetH, fps
+        )
     }
 
     /**
@@ -1919,7 +1925,7 @@ class FFmpegExecutor(
             audioLabels.add("[silentAudio]")
             filterParts.add("${audioLabels.joinToString("")}amix=inputs=${audioLabels.size}:duration=longest:dropout_transition=0[mixedAudio]")
 
-            val finalVideo = enforceOutputDimensions(filterParts, "outv", targetW, targetH)
+            val finalVideo = enforceOutputDimensions(args, filterParts, "outv", targetW, targetH, fps)
             args.addAll(
                 listOf(
                     "-filter_complex_threads",
@@ -2036,7 +2042,9 @@ class FFmpegExecutor(
 
             filterParts.add("[0:v]${baseVf.joinToString(",")}[base]")
             val outVLabel = buildOverlayChain(filterParts, sequences, seqStartIdx, "base")
-            val finalVideoLabel = enforceOutputDimensions(filterParts, outVLabel, targetW, targetH)
+            val finalVideoLabel = enforceOutputDimensions(
+                args, filterParts, outVLabel, targetW, targetH, fps
+            )
 
             val af = mutableListOf<String>()
             if (clip.speed != 1.0f && !img) af.add("atempo=${clip.speed.coerceIn(0.5f, 2.0f)}")
@@ -2169,7 +2177,9 @@ class FFmpegExecutor(
 
             filterParts.add("[0:v]${baseVf.joinToString(",")}[base]")
             val outVLabel = buildOverlayChain(filterParts, sequences, seqStartIdx, "base")
-            val finalVideoLabel = enforceOutputDimensions(filterParts, outVLabel, targetW, targetH)
+            val finalVideoLabel = enforceOutputDimensions(
+                args, filterParts, outVLabel, targetW, targetH, fps
+            )
 
             val af = mutableListOf<String>()
             if (clip.speed != 1.0f && !img) af.add("atempo=${clip.speed.coerceIn(0.5f, 2.0f)}")
@@ -2439,7 +2449,9 @@ class FFmpegExecutor(
             ) finalAudioLabel = "fxa"
 
             val outVLabel = buildOverlayChain(filterParts, sequences, seqStartIdx, currentLabel)
-            val finalVideoLabel = enforceOutputDimensions(filterParts, outVLabel, targetW, targetH)
+            val finalVideoLabel = enforceOutputDimensions(
+                args, filterParts, outVLabel, targetW, targetH, fps
+            )
             val totalDurSec = (totalDurationMs / 1000.0).coerceAtLeast(0.1)
 
             args.addAll(
@@ -2625,7 +2637,9 @@ class FFmpegExecutor(
             val finalAudioLabel = if (fxApplied) "fxa" else afterMixLabel
 
             val outVLabel = buildOverlayChain(filterParts, sequences, seqStartIdx, "concatv")
-            val finalVideoLabel = enforceOutputDimensions(filterParts, outVLabel, targetW, targetH)
+            val finalVideoLabel = enforceOutputDimensions(
+                args, filterParts, outVLabel, targetW, targetH, fps
+            )
             val totalDurSec = (totalDurationMs / 1000.0).coerceAtLeast(0.1)
 
             args.addAll(

@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -128,6 +129,9 @@ private fun AdjustmentRow(
     maxSlider: Float = 200f,
     onChange: (Float) -> Unit
 ) {
+    var sliderValue by remember(value, maxSlider) {
+        mutableFloatStateOf(value.coerceIn(-maxSlider, maxSlider))
+    }
     var textValue by remember {
         mutableStateOf(formatValue(value))
     }
@@ -152,8 +156,9 @@ private fun AdjustmentRow(
         )
 
         Slider(
-            value = value.coerceIn(-maxSlider, maxSlider),
+            value = sliderValue,
             onValueChange = {
+                sliderValue = it
                 onChange(it)
                 textValue = formatValue(it)
             },

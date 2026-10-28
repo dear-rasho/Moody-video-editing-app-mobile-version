@@ -35,23 +35,25 @@ object WatermarkHelper {
 
     fun addWatermarkToFilter(
         context: Context,
+        args: MutableList<String>,
         filterParts: MutableList<String>,
         finalVideoLabel: String,
         targetW: Int,
-        targetH: Int
+        targetH: Int,
+        fps: Int
     ): String {
         val wmPath = getWatermarkPath(context)
         if (wmPath == null) return finalVideoLabel
-
-        var escapedPath = wmPath.replace("\\", "/")
-        escapedPath = escapedPath.replace(":", "\\:")
-        escapedPath = escapedPath.replace("'", "\\'")
 
         // Keep the watermark proportional across portrait and landscape exports.
         val wmWidth = (Math.min(targetW, targetH) * 0.18f).toInt().coerceAtLeast(80)
 
         try {
-            filterParts.add("movie='$escapedPath',format=rgba,scale=$wmWidth:-1[wm]")
+            val watermarkInputIndex = args.count { it == "-i" }
+            args.addAll(listOf("-loop", "1", "-framerate", fps.toString(), "-i", wmPath))
+            filterParts.add(
+                "[$watermarkInputIndex:v]format=rgba,scale=$wmWidth:-1[wm]"
+            )
 
             val (x, y) = when (SettingsConsumer.watermarkPosition) {
                 "top_right" -> "W-w-10" to "10"
