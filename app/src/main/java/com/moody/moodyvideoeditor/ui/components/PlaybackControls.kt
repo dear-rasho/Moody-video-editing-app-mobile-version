@@ -113,8 +113,8 @@ fun PlaybackControls(
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold
             )
-            SmallBtn("＋A") { onAddAudioLayer() }
             SmallBtn("＋V") { onAddVisualLayer() }
+            SmallBtn("＋A") { onAddAudioLayer() }
         }
     }
 }

@@ -1127,19 +1127,12 @@ class FFmpegExecutor(
 
         val userScale = clip.scale.coerceIn(0.1f, 5f)
         val hasScaleTrack = clip.keyframes["scale"].orEmpty().isNotEmpty()
-        val hasCropTrack = listOf("cropL", "cropR", "cropT", "cropB")
-            .any { clip.keyframes[it].orEmpty().isNotEmpty() }
         val offsetXpx = (clip.offsetX * targetW).toInt()
         val offsetYpx = (clip.offsetY * targetH).toInt()
         val hasOffset = offsetXpx != 0 || offsetYpx != 0
         val fillColor = if (transparentPadding) "black@0" else "black"
-        val preserveScaleOverscan =
-            transparentPadding &&
-                    positionByOverlay &&
-                    hasScaleTrack &&
-                    !hasCropTrack &&
-                    !CropHelper.isCropped(clip) &&
-                    !clip.mask.isActive
+        val preserveOverscan =
+            transparentPadding && positionByOverlay && preservesLayerOverscan(clip)
 
         // ═══════════════════════════════════════════════════════════
         //  STEP 1: Fit source into canvas (letterbox) — WITHOUT user scale
@@ -1151,7 +1144,7 @@ class FFmpegExecutor(
             filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
             val scaleExpr = KeyframeStore.ffmpegExpression(clip.keyframes, "scale", clip.scale * 100f)
             filters.add("scale=w='iw*($scaleExpr/100)':h='ih*($scaleExpr/100)':eval=frame")
-            if (!preserveScaleOverscan) {
+            if (!preserveOverscan) {
                 val cropX = "max(0\\,min(iw-$targetW\\,(iw-$targetW)/2-$offsetXpx))"
                 val cropY = "max(0\\,min(ih-$targetH\\,(ih-$targetH)/2-$offsetYpx))"
                 filters.add(
@@ -1173,12 +1166,12 @@ class FFmpegExecutor(
                 filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=$fillColor")
                 val scaleFmt = String.format(Locale.US, "%.4f", userScale)
                 filters.add("scale=iw*$scaleFmt:ih*$scaleFmt")
-                // Shift crop window: offset moves clip, so crop must move same direction
-                // Formula: crop_x = (iw - targetW)/2 + offsetXpx  → clip shifts right, crop window shifts right too
-                // But since scaled size > target, we need CENTER + offset
-                val cropX = "max(0\\,min(iw-$targetW\\,(iw-$targetW)/2-$offsetXpx))"
-                val cropY = "max(0\\,min(ih-$targetH\\,(ih-$targetH)/2-$offsetYpx))"
-                filters.add("crop=$targetW:$targetH:$cropX:$cropY")
+                if (!preserveOverscan) {
+                    // Shift crop window with the clip's static position.
+                    val cropX = "max(0\\,min(iw-$targetW\\,(iw-$targetW)/2-$offsetXpx))"
+                    val cropY = "max(0\\,min(ih-$targetH\\,(ih-$targetH)/2-$offsetYpx))"
+                    filters.add("crop=$targetW:$targetH:$cropX:$cropY")
+                }
             } else {
                 // ═══════════════════════════════════════════════════
                 //  ZOOM-OUT: Fit, scale down, pad to canvas (no crop)
@@ -1220,7 +1213,7 @@ class FFmpegExecutor(
             val rotationExpr = KeyframeStore.ffmpegExpression(clip.keyframes, "rotation", clip.rotation)
             val angleExpr = "(($rotationExpr)*PI/180)"
             val outputSize =
-                if (preserveScaleOverscan) "ow='rotw($angleExpr)':oh='roth($angleExpr)'"
+                if (preserveOverscan) "ow='rotw($angleExpr)':oh='roth($angleExpr)'"
                 else "ow=$targetW:oh=$targetH"
             filters.add("rotate=angle='$angleExpr':c=$fillColor:$outputSize")
         } else if (kotlin.math.abs(clip.rotation) > 0.1f) {
@@ -1230,7 +1223,7 @@ class FFmpegExecutor(
                 Math.toRadians(clip.rotation.toDouble())
             )
             val outputSize =
-                if (preserveScaleOverscan) "ow='rotw($angle)':oh='roth($angle)'"
+                if (preserveOverscan) "ow='rotw($angle)':oh='roth($angle)'"
                 else "ow=$targetW:oh=$targetH"
             filters.add("rotate=$angle:c=$fillColor:$outputSize")
         }
@@ -1239,6 +1232,19 @@ class FFmpegExecutor(
         filters.add("setsar=1")
         return filters
     }
+
+    private fun preservesLayerOverscan(clip: EditorClip): Boolean {
+        val hasAnimatedScale = clip.keyframes["scale"].orEmpty().isNotEmpty()
+        val hasAnimatedCrop = listOf("cropL", "cropR", "cropT", "cropB")
+            .any { clip.keyframes[it].orEmpty().isNotEmpty() }
+        val hasOversizedStaticScale = clip.scale.coerceIn(0.1f, 5f) > 1.0f
+
+        return (hasAnimatedScale || hasOversizedStaticScale) &&
+                !hasAnimatedCrop &&
+                !CropHelper.isCropped(clip) &&
+                !clip.mask.isActive
+    }
+
     private fun buildAudioOnlyMix(
         filterParts: MutableList<String>,
         audioLocalFiles: List<File>,
@@ -1775,12 +1781,7 @@ class FFmpegExecutor(
                             val hasXKf = clip.keyframes["x"].orEmpty().isNotEmpty()
                             val hasYKf = clip.keyframes["y"].orEmpty().isNotEmpty()
 
-                            val preserveScaleOverscan =
-                                clip.keyframes["scale"].orEmpty().isNotEmpty() &&
-                                        listOf("cropL", "cropR", "cropT", "cropB")
-                                            .none { clip.keyframes[it].orEmpty().isNotEmpty() } &&
-                                        !CropHelper.isCropped(clip) &&
-                                        !clip.mask.isActive
+                            val preserveScaleOverscan = preservesLayerOverscan(clip)
 
                             if (preserveScaleOverscan) {
                                 val baseX = 50f + clip.offsetX * 100f

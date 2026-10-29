@@ -2,6 +2,8 @@ package com.moody.moodyvideoeditor.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -64,12 +66,41 @@ fun ControlBar(
             .background(Color(0xFF0A0A0A))
     ) {
         Row(
-            modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.CenterStart)
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             PillButton("＋Media", onMediaClick, horizontalPadding = 6.dp)
             PillButton(currentRatio, onRatioClick, horizontalPadding = 6.dp)
+            IconButton(onClick = onPlayPause, enabled = hasVideo, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    "Play or pause",
+                    tint = if (hasVideo) Color(0xFF7C3AED) else Color(0xFF444444)
+                )
+            }
+            PillButton(
+                "-${seekStepSeconds}s",
+                onClick = { onSeekBy(-seekStepSeconds.coerceAtLeast(1) * 1000L) },
+                enabled = hasVideo,
+                horizontalPadding = 4.dp
+            )
+            PillButton(
+                "+${seekStepSeconds}s",
+                onClick = { onSeekBy(seekStepSeconds.coerceAtLeast(1) * 1000L) },
+                enabled = hasVideo,
+                horizontalPadding = 4.dp
+            )
+            IconButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Filled.Undo, "Undo", tint = if (canUndo) Color.White else Color(0xFF444444))
+            }
+            IconButton(onClick = onRedo, enabled = canRedo, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Filled.Redo, "Redo", tint = if (canRedo) Color.White else Color(0xFF444444))
+            }
             IconButton(onClick = onMagnet, enabled = hasVideo, modifier = Modifier.size(26.dp)) {
                 Text("🧲", fontSize = 14.sp)
             }
@@ -81,44 +112,6 @@ fun ControlBar(
                     modifier = Modifier.size(16.dp)
                 )
             }
-        }
-        Row(
-            modifier = Modifier.align(Alignment.Center),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            IconButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.size(28.dp)) {
-                Icon(Icons.Filled.Undo, "Undo", tint = if (canUndo) Color.White else Color(0xFF444444))
-            }
-            PillButton(
-                "-${seekStepSeconds}s",
-                onClick = { onSeekBy(-seekStepSeconds.coerceAtLeast(1) * 1000L) },
-                enabled = hasVideo,
-                horizontalPadding = 4.dp
-            )
-            IconButton(onClick = onPlayPause, enabled = hasVideo, modifier = Modifier.size(32.dp)) {
-                Icon(
-                    if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    "Play or pause",
-                    tint = if (hasVideo) Color(0xFF7C3AED) else Color(0xFF444444)
-                )
-            }
-            PillButton(
-                "+${seekStepSeconds}s",
-                onClick = { onSeekBy(seekStepSeconds.coerceAtLeast(1) * 1000L) },
-                enabled = hasVideo,
-                horizontalPadding = 4.dp
-            )
-            IconButton(onClick = onRedo, enabled = canRedo, modifier = Modifier.size(28.dp)) {
-                Icon(Icons.Filled.Redo, "Redo", tint = if (canRedo) Color.White else Color(0xFF444444))
-            }
-        }
-
-        Row(
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(0.dp)
-        ) {
             Text(
                 "${VideoUtils.formatDuration(currentPosMs)}/${VideoUtils.formatDuration(totalDurationMs)}",
                 color = Color(0xFF888888),

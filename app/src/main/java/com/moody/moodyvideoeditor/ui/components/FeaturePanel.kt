@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -35,7 +36,8 @@ fun FeaturePanel(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 90.dp, max = 560.dp)
+            .heightIn(min = 90.dp)
+            .fillMaxHeight()
             .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
             .background(Color(0xFF0A0A0A))
             .padding(6.dp),

@@ -66,6 +66,12 @@ import kotlin.math.cos
 
 import kotlin.math.sin
 
+data class TimedTextClip(
+    val textState: TextState,
+    val startMs: Long,
+    val endMs: Long
+)
+
 class EditorViewModel : ViewModel() {
 
     private val _state = MutableStateFlow(EditorState())
@@ -2278,25 +2284,56 @@ class EditorViewModel : ViewModel() {
     }
 
     fun createTextClipAtTime(textState: TextState, startMs: Long, endMs: Long) {
-        val s = _state.value
-        val durMs = (endMs - startMs).coerceAtLeast(50L)
-        val trackIdx = findOrCreateVisualTrack(0, startMs, durMs)
-        val clip = EditorClip(
-            id = UUID.randomUUID().toString(), uri = Uri.EMPTY,
-            name = "📝 ${textState.content.take(18).ifBlank { "Text" }}",
-            type = "text/plain",
-            sourceStartMs = 0L, sourceEndMs = durMs,
-            timelineStartMs = startMs, trackIndex = trackIdx,
-            isAudio = false, sourceTotalMs = Long.MAX_VALUE,
-            textState = textState
-        )
+        createTextClipsAtTimes(listOf(TimedTextClip(textState, startMs, endMs)))
+    }
+
+    fun createTextClipsAtTimes(textClips: List<TimedTextClip>) {
+        if (textClips.isEmpty()) return
+
+        val state = _state.value
+        val clips = state.clips.toMutableList()
+        var visualLayerCount = state.visualLayerCount
+        var lastClip: EditorClip? = null
+
+        textClips.forEach { request ->
+            val durationMs = (request.endMs - request.startMs).coerceAtLeast(50L)
+            var trackIndex = 0
+            while (clips.any { clip ->
+                    !clip.isAudio && clip.trackIndex == trackIndex &&
+                            clip.timelineStartMs < request.startMs + durationMs &&
+                            request.startMs < clip.timelineEndMs
+                }
+            ) {
+                trackIndex++
+            }
+
+            val clip = EditorClip(
+                id = UUID.randomUUID().toString(),
+                uri = Uri.EMPTY,
+                name = "📝 ${request.textState.content.take(18).ifBlank { "Text" }}",
+                type = "text/plain",
+                sourceStartMs = 0L,
+                sourceEndMs = durationMs,
+                timelineStartMs = request.startMs,
+                trackIndex = trackIndex,
+                isAudio = false,
+                sourceTotalMs = Long.MAX_VALUE,
+                textState = request.textState
+            )
+            clips.add(clip)
+            visualLayerCount = maxOf(visualLayerCount, trackIndex + 1)
+            lastClip = clip
+        }
+
+        val selectedClip = lastClip ?: return
         pushHistory()
-        val list = s.clips.toMutableList()
-        list.add(clip)
         _state.update {
             it.copy(
-                clips = list, selectedClipId = clip.id,
-                selectedTrackIndex = trackIdx, selectedIsAudio = false
+                clips = clips,
+                visualLayerCount = visualLayerCount,
+                selectedClipId = selectedClip.id,
+                selectedTrackIndex = selectedClip.trackIndex,
+                selectedIsAudio = false
             )
         }
         updateHistoryFlags()

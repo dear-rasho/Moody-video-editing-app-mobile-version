@@ -2377,8 +2377,8 @@ fun EditorScreen(
     val screenHeightDp = configuration.screenHeightDp
     val previewHeight = when {
         screenHeightDp < 640 -> 150.dp
-        screenHeightDp < 800 -> 180.dp
-        else -> 210.dp
+        screenHeightDp < 800 -> 212.dp
+        else -> 242.dp
     }
     val timelineHeight = when {
         screenHeightDp < 640 -> 170.dp
@@ -2804,7 +2804,7 @@ fun EditorScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .heightIn(min = 90.dp, max = 560.dp)
+                    .heightIn(min = 90.dp)
             ) {
                 EditorPanelHost()
             }

@@ -184,9 +184,9 @@ Java_com_moody_moodyvideoeditor_utils_WhisperEngine_nativeTranscribe(
         }
         // Other languages don't need bias
     }
-    // ─── Threading — 2 threads for stability ───
+    // ─── Cap CPU parallelism to avoid oversubscribing mobile devices ───
     int cores = (int)sysconf(_SC_NPROCESSORS_ONLN);
-    int useThreads = (cores >= 4) ? 2 : 1;
+    int useThreads = (cores >= 4) ? 4 : (cores >= 2 ? 2 : 1);
     params.n_threads = useThreads;
 
     // ─── Standard settings ───
@@ -197,7 +197,7 @@ Java_com_moody_moodyvideoeditor_utils_WhisperEngine_nativeTranscribe(
     params.translate = false;
     params.no_context = false;
     params.single_segment = false;
-    params.token_timestamps = true;
+    params.token_timestamps = false;
     params.suppress_blank = true;
     params.greedy.best_of = 1;
 

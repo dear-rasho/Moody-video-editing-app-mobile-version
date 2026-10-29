@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.viewmodel.EditorViewModel
+import com.moody.moodyvideoeditor.viewmodel.TimedTextClip
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -127,6 +128,7 @@ object CaptionGenerator {
                 )
                 withContext(Dispatchers.Main) {
                     allTimelineSegments += timelineSegments
+                    val textClips = mutableListOf<TimedTextClip>()
                     timelineSegments.forEach { segment ->
                         currentCoroutineContext().ensureActive()
                         try {
@@ -141,16 +143,13 @@ object CaptionGenerator {
                                 wordsPerLine = wordsPerLine
                             )
                             chunks.forEach { (text, start, end) ->
-                                viewModel.createTextClipAtTime(
+                                textClips += TimedTextClip(
                                     textState = CaptionPresetLibrary.applyTo(
-                                        text,
-                                        presetId,
-                                        highlightColor
+                                        text, presetId, highlightColor
                                     ),
                                     startMs = start,
                                     endMs = end
                                 )
-                                totalAdded++
                             }
                         } catch (cancelled: CancellationException) {
                             throw cancelled
@@ -158,6 +157,8 @@ object CaptionGenerator {
                             Log.e(TAG, "Failed to add \"${segment.text}\"", t)
                         }
                     }
+                    viewModel.createTextClipsAtTimes(textClips)
+                    totalAdded += textClips.size
                     onProgress(
                         0.30f + 0.55f * (index + 1).toFloat() / chunkCount.coerceAtLeast(1)
                     )
@@ -204,7 +205,7 @@ object CaptionGenerator {
         }
     }
 
-    private const val TRANSCRIPTION_CHUNK_SECONDS = 15
+    private const val TRANSCRIPTION_CHUNK_SECONDS = 30
 
     internal fun fitSegmentsToClipDuration(
         segments: List<CaptionSegment>,
@@ -269,6 +270,7 @@ object CaptionGenerator {
 
         var totalAdded = 0
         val allSegments = mutableListOf<CaptionSegment>()
+        val textClips = mutableListOf<TimedTextClip>()
 
         parsedCaptions.forEachIndexed { idx, cap ->
             val segStart = offsetMs + cap.startMs
@@ -294,16 +296,13 @@ object CaptionGenerator {
                     wordsPerLine = wordsPerLine
                 )
                 chunks.forEach { (text, start, end) ->
-                    viewModel.createTextClipAtTime(
+                    textClips += TimedTextClip(
                         textState = CaptionPresetLibrary.applyTo(
-                            text,
-                            presetId,
-                            highlightColor
+                            text, presetId, highlightColor
                         ),
                         startMs = start,
                         endMs = end
                     )
-                    totalAdded++
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "Manual caption failed: \"${cap.text}\"", t)
@@ -312,6 +311,8 @@ object CaptionGenerator {
             onProgress((idx + 1).toFloat() / parsedCaptions.size)
         }
 
+        viewModel.createTextClipsAtTimes(textClips)
+        totalAdded = textClips.size
         Log.e(TAG, "✅ Manual: $totalAdded clips from ${parsedCaptions.size} captions")
 
         return Result(

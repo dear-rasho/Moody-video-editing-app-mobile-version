@@ -43,17 +43,17 @@ class CaptionGeneratorTest {
     @Test
     fun audioDurationIsSplitIntoOrderedBoundedChunksForIncrementalTranscription() {
         assertEquals(
-            listOf(0L to 15_000L, 15_000L to 15_000L, 30_000L to 4_000L),
+            listOf(0L to 30_000L, 30_000L to 4_000L),
             WhisperAudioExtractor.buildChunkRanges(
                 durationMs = 34_000L,
-                chunkDurationMs = 15_000L
+                chunkDurationMs = 30_000L
             )
         )
     }
 
     @Test
     fun invalidAudioChunkDurationsProduceNoRanges() {
-        assertEquals(emptyList<Pair<Long, Long>>(), WhisperAudioExtractor.buildChunkRanges(0, 15_000))
+        assertEquals(emptyList<Pair<Long, Long>>(), WhisperAudioExtractor.buildChunkRanges(0, 30_000))
         assertEquals(emptyList<Pair<Long, Long>>(), WhisperAudioExtractor.buildChunkRanges(10_000, 0))
     }
 }
