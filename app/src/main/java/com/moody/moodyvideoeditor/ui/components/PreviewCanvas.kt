@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.media.MediaMetadataRetriever
+import android.net.Uri
 import android.os.Build
 import androidx.compose.ui.graphics.asAndroidBitmap
 
@@ -51,6 +52,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -112,6 +114,7 @@ import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.data.SpotlightState
+import com.moody.moodyvideoeditor.ui.components.FourColorMatteGradient
 import com.moody.moodyvideoeditor.ui.features.SpotlightOverlay
 import com.moody.moodyvideoeditor.utils.SpotlightAnimation
 import com.moody.moodyvideoeditor.utils.BlurEngine
@@ -134,6 +137,7 @@ import com.moody.moodyvideoeditor.utils.TransitionRenderer
 import com.moody.moodyvideoeditor.utils.applyTransparentCrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -329,7 +333,6 @@ fun PreviewCanvas(
     multiSelectedIds: Set<String> = emptySet(),
     previewFilters: FilterState? = null,
     previewEffectState: EffectState? = null,
-    previewMatte: com.moody.moodyvideoeditor.data.PreviewMatteState? = null,
     isMaskPenMode: Boolean = false,
     isMaskHandMode: Boolean = false,
     onMaskGestureStart: () -> Unit = {},
@@ -359,20 +362,7 @@ fun PreviewCanvas(
 ) {
     val context = LocalContext.current
 
-    val previewMatteClip: EditorClip? = previewMatte?.let { pm ->
-        EditorClip(
-            id = "__preview_matte__", uri = android.net.Uri.EMPTY, name = "Preview Matte",
-            type = "matte/plain", sourceStartMs = 0L, sourceEndMs = 3_600_000L,
-            timelineStartMs = -1_000_000L, trackIndex = 9999, isAudio = false,
-            sourceTotalMs = Long.MAX_VALUE, matteStyle = pm.style,
-            filters = FilterState(opacity = pm.opacity)
-        )
-    }
-
-    val displayClips: List<EditorClip> =
-        if (previewMatteClip != null) clips + previewMatteClip else clips
-
-    val activeClips = displayClips.filter {
+    val activeClips = clips.filter {
         !it.isAudio && !it.isAdjustmentClip && !it.isEffectClip &&
                 !it.isFilterLayerClip && !it.isOverlayClip &&
                 currentPosMs >= it.timelineStartMs && currentPosMs < it.timelineEndMs &&
@@ -783,8 +773,12 @@ fun PreviewCanvas(
                 .clipToBounds()
                 .background(Color.Black)
         ) {
-            activeClips.forEach { clip ->
-                when {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+            ) {
+                activeClips.forEach { clip ->
+                    when {
                     clip.isVisualClip && !clip.type.startsWith("image/") -> {
                         if (clip.id != topVideoClip?.id) return@forEach
                         val videoLocalSec =
@@ -1914,6 +1908,7 @@ fun PreviewCanvas(
 
                 }
             }
+            }
 
             if (allOverlays.isNotEmpty()) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
@@ -2445,7 +2440,7 @@ private fun ColorMatteRenderer(
 ) {
     when (style.mode) {
         ColorMatteMode.SOLID -> {
-            Box(modifier = modifier.background(Color(style.solidColor)))
+            Box(modifier = modifier.background(Color(style.solidColor.toInt())))
         }
 
         ColorMatteMode.RAMP -> {
@@ -2464,8 +2459,8 @@ private fun ColorMatteRenderer(
                         .background(
                             Brush.linearGradient(
                                 colors = listOf(
-                                    Color(style.rampColor1),
-                                    Color(style.rampColor2)
+                                    Color(style.rampColor1.toInt()),
+                                    Color(style.rampColor2.toInt())
                                 ),
                                 start = Offset(cx - dx * halfDiag, cy - dy * halfDiag),
                                 end = Offset(cx + dx * halfDiag, cy + dy * halfDiag)
@@ -2476,48 +2471,7 @@ private fun ColorMatteRenderer(
         }
 
         ColorMatteMode.FOUR_COLOR -> {
-            BoxWithConstraints(modifier = modifier) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val W = size.width;
-                    val H = size.height
-                    val tlR = ((style.topLeft shr 16) and 0xFF) / 255f;
-                    val tlG = ((style.topLeft shr 8) and 0xFF) / 255f;
-                    val tlB = (style.topLeft and 0xFF) / 255f
-                    val trR = ((style.topRight shr 16) and 0xFF) / 255f;
-                    val trG = ((style.topRight shr 8) and 0xFF) / 255f;
-                    val trB = (style.topRight and 0xFF) / 255f
-                    val blR = ((style.bottomLeft shr 16) and 0xFF) / 255f;
-                    val blG = ((style.bottomLeft shr 8) and 0xFF) / 255f;
-                    val blB = (style.bottomLeft and 0xFF) / 255f
-                    val brR = ((style.bottomRight shr 16) and 0xFF) / 255f;
-                    val brG = ((style.bottomRight shr 8) and 0xFF) / 255f;
-                    val brB = (style.bottomRight and 0xFF) / 255f
-                    val stepX = (W / 128f).coerceAtLeast(1f);
-                    val stepY = (H / 128f).coerceAtLeast(1f)
-                    var y = 0f
-                    while (y < H) {
-                        var x = 0f
-                        while (x < W) {
-                            val fx = (x / W).coerceIn(0f, 1f);
-                            val fy = (y / H).coerceIn(0f, 1f)
-                            val wTL = (1f - fx) * (1f - fy);
-                            val wTR = fx * (1f - fy);
-                            val wBL = (1f - fx) * fy;
-                            val wBR = fx * fy
-                            val r = (tlR * wTL + trR * wTR + blR * wBL + brR * wBR).coerceIn(0f, 1f)
-                            val g = (tlG * wTL + trG * wTR + blG * wBL + brG * wBR).coerceIn(0f, 1f)
-                            val b = (tlB * wTL + trB * wTR + blB * wBL + brB * wBR).coerceIn(0f, 1f)
-                            drawRect(
-                                color = Color(r, g, b, 1f),
-                                topLeft = Offset(x, y),
-                                size = Size(stepX, stepY)
-                            )
-                            x += stepX
-                        }
-                        y += stepY
-                    }
-                }
-            }
+            FourColorMatteGradient(style, modifier)
         }
     }
 }
@@ -3334,6 +3288,98 @@ private fun InteractiveTextOverlay(
 ) {
     if (textState.content.isBlank()) return
     val localTimeSec = ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
+    val textureScale = KeyframeStore.sample(
+        clip.keyframes, "textTexture.scale", localTimeSec, textState.textureScale
+    ).coerceIn(10f, 400f)
+    val textureOffsetX = KeyframeStore.sample(
+        clip.keyframes, "textTexture.x", localTimeSec, textState.textureOffsetX
+    ).coerceIn(-100f, 100f)
+    val textureOffsetY = KeyframeStore.sample(
+        clip.keyframes, "textTexture.y", localTimeSec, textState.textureOffsetY
+    ).coerceIn(-100f, 100f)
+    val context = LocalContext.current
+    val textureUri = remember(textState.textureUri) {
+        textState.textureUri?.let(Uri::parse)
+    }
+    val textureIsVideo = remember(textureUri) {
+        textureUri?.let { context.contentResolver.getType(it)?.startsWith("video/") } == true
+    }
+    val textureFrameBucket = if (textureIsVideo) (localTimeSec * 4f).toInt() else 0
+    val latestTextureFrameBucket by rememberUpdatedState(textureFrameBucket)
+    var textureBitmap by remember(textureUri) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(textureUri) {
+        if (textureUri == null) {
+            textureBitmap = null
+            return@LaunchedEffect
+        }
+        val retriever = try {
+            if (textureIsVideo) {
+                withContext(Dispatchers.IO) {
+                    MediaMetadataRetriever().apply {
+                        try {
+                            setDataSource(context, textureUri)
+                        } catch (error: Exception) {
+                            release()
+                            throw error
+                        }
+                    }
+                }
+            } else null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Log.e("TRACK_MATTE", "Could not open selected video texture", error)
+            textureBitmap = null
+            return@LaunchedEffect
+        }
+        try {
+            snapshotFlow { latestTextureFrameBucket }.collectLatest { frameBucket ->
+                try {
+                    val decoded = withContext(Dispatchers.IO) {
+                        if (retriever != null) {
+                            retriever.getFrameAtTime(
+                                frameBucket * 250_000L,
+                                MediaMetadataRetriever.OPTION_CLOSEST
+                            )
+                        } else {
+                            context.contentResolver.openInputStream(textureUri)?.use {
+                                android.graphics.BitmapFactory.decodeStream(it)
+                            }
+                        }
+                    }
+                    val fitted = decoded?.let { bitmap ->
+                        val maxDimension = maxOf(bitmap.width, bitmap.height)
+                        if (maxDimension <= 2048) bitmap else {
+                            val ratio = 2048f / maxDimension
+                            Bitmap.createScaledBitmap(
+                                bitmap,
+                                (bitmap.width * ratio).toInt().coerceAtLeast(1),
+                                (bitmap.height * ratio).toInt().coerceAtLeast(1),
+                                true
+                            ).also { if (it !== bitmap) bitmap.recycle() }
+                        }
+                    }
+                    val previous = textureBitmap
+                    textureBitmap = fitted
+                    if (previous != null && previous !== fitted && !previous.isRecycled) {
+                        previous.recycle()
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    Log.e("TRACK_MATTE", "Could not decode selected text texture", error)
+                    textureBitmap = null
+                }
+            }
+        } finally {
+            retriever?.release()
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            textureBitmap?.let { if (!it.isRecycled) it.recycle() }
+        }
+    }
     val sampled = TransformApplier.resolveLive(clip, localTimeSec)
     val clampedX = sampled.x.coerceIn(-50f, 150f);
     val clampedY = sampled.y.coerceIn(-50f, 150f)
@@ -3501,6 +3547,49 @@ private fun InteractiveTextOverlay(
     val outerHeightDp = selectionHeightDp
     val gradientPaddingX = (outerWidthDp - textWidthDp).coerceAtLeast(0f) / 2f
     val gradientPaddingY = (outerHeightDp - textHeightDp).coerceAtLeast(0f) / 2f
+    val textureModifier = if (textureBitmap != null) {
+        Modifier
+            .graphicsLayer {
+                compositingStrategy = CompositingStrategy.Offscreen
+            }
+            .drawWithContent {
+                drawContent()
+                val bitmap = textureBitmap ?: return@drawWithContent
+                val fitScale = maxOf(
+                    size.width / bitmap.width,
+                    size.height / bitmap.height
+                ) * textureScale / 100f
+                drawIntoCanvas { composeCanvas ->
+                    val shader = android.graphics.BitmapShader(
+                        bitmap,
+                        android.graphics.Shader.TileMode.CLAMP,
+                        android.graphics.Shader.TileMode.CLAMP
+                    )
+                    val shaderMatrix = android.graphics.Matrix().apply {
+                        setScale(fitScale, fitScale)
+                        postTranslate(
+                            -bitmap.width * fitScale / 2f +
+                                    textureOffsetX / 100f * size.width,
+                            -bitmap.height * fitScale / 2f +
+                                    textureOffsetY / 100f * size.height
+                        )
+                    }
+                    shader.setLocalMatrix(shaderMatrix)
+                    val texturePaint = Paint(
+                        Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG
+                    ).apply {
+                        isDither = true
+                        this.shader = shader
+                        xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+                    }
+                    composeCanvas.nativeCanvas.drawRect(
+                        0f, 0f, size.width, size.height, texturePaint
+                    )
+                    texturePaint.shader = null
+                    texturePaint.xfermode = null
+                }
+            }
+    } else Modifier
     val scaleFactor = sampled.scale / 100f;
     val handleW = (outerWidthDp * scaleFactor).dp;
     val handleH = (outerHeightDp * scaleFactor).dp
@@ -3735,7 +3824,11 @@ private fun InteractiveTextOverlay(
                 val annotatedDisplay = annotatedBuilder.toAnnotatedString()
                 Text(
                     text = annotatedDisplay,
-                    color = if (gradient != null) Color.Unspecified else solidColor,
+                    color = when {
+                        textureBitmap != null -> Color.White
+                        gradient != null -> Color.Unspecified
+                        else -> solidColor
+                    },
                     fontSize = finalFontSizeSp,
                     fontWeight = weight,
                     fontStyle = fontSty,
@@ -3744,9 +3837,11 @@ private fun InteractiveTextOverlay(
                     softWrap = true,
                     maxLines = Int.MAX_VALUE,
                     overflow = TextOverflow.Visible,
-                    modifier = Modifier.width(textWidthConstraintDp),
+                    modifier = Modifier
+                        .width(textWidthConstraintDp)
+                        .then(textureModifier),
                     style = androidx.compose.ui.text.TextStyle(
-                        brush = gradient,
+                        brush = if (textureBitmap != null) null else gradient,
                         shadow = shadowStyle,
                         letterSpacing = finalLetterSpacingSp,
                         lineHeight = finalLineHeightSp

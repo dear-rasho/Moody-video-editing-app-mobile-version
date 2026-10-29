@@ -88,7 +88,7 @@ fun ColorPickerField(
                 modifier = Modifier
                     .size(38.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color(colorLong))
+                    .background(Color(colorLong.toInt()))
             )
             OutlinedTextField(
                 value = hexText,

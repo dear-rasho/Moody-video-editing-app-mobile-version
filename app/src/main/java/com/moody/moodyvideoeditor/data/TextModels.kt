@@ -102,6 +102,12 @@ data class TextState(
     val backgroundCornerRadius: Float = 12f,
     val backgroundBrushSeed: Int = 42,
 
+    // Image/video content rendered inside the text glyphs.
+    val textureUri: String? = null,
+    val textureScale: Float = 100f,
+    val textureOffsetX: Float = 0f,
+    val textureOffsetY: Float = 0f,
+
     // Segments (mixed typography)
     val segments: List<TextSegment> = emptyList()
 ) {

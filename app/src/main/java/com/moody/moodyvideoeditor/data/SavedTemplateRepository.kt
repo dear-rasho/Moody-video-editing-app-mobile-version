@@ -401,7 +401,7 @@ object SavedTemplateRepository {
     private fun effectStateFromJson(o: JSONObject) = EffectState(
         kind = o.optString("kind", EffectState.KIND_EFFECT),
         presetKey = o.optString("presetKey", ""),
-        masterIntensity = o.optDouble("masterIntensity", 100.0).toFloat()
+        masterIntensity = o.optDouble("masterIntensity", 100.0).toFloat(),
     )
 
     private fun textStateToJson(t: TextState) = JSONObject().apply {
@@ -421,6 +421,10 @@ object SavedTemplateRepository {
         put("backgroundPaddingX", t.backgroundPaddingX.toDouble())
         put("backgroundPaddingY", t.backgroundPaddingY.toDouble())
         put("backgroundCornerRadius", t.backgroundCornerRadius.toDouble())
+        t.textureUri?.let { put("textureUri", it) }
+        put("textureScale", t.textureScale.toDouble())
+        put("textureOffsetX", t.textureOffsetX.toDouble())
+        put("textureOffsetY", t.textureOffsetY.toDouble())
     }
 
     private fun textStateFromJson(o: JSONObject) = TextState(
@@ -449,7 +453,11 @@ object SavedTemplateRepository {
         backgroundOpacity = o.optDouble("backgroundOpacity", 100.0).toFloat(),
         backgroundPaddingX = o.optDouble("backgroundPaddingX", 14.0).toFloat(),
         backgroundPaddingY = o.optDouble("backgroundPaddingY", 8.0).toFloat(),
-        backgroundCornerRadius = o.optDouble("backgroundCornerRadius", 12.0).toFloat()
+        backgroundCornerRadius = o.optDouble("backgroundCornerRadius", 12.0).toFloat(),
+        textureUri = if (o.isNull("textureUri")) null else o.optString("textureUri"),
+        textureScale = o.optDouble("textureScale", 100.0).toFloat(),
+        textureOffsetX = o.optDouble("textureOffsetX", 0.0).toFloat(),
+        textureOffsetY = o.optDouble("textureOffsetY", 0.0).toFloat()
     )
 
     private fun stickerStateToJson(s: StickerState) = JSONObject().apply {

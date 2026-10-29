@@ -140,7 +140,6 @@ data class LightLeakState(
 
 object EffectLibrary {
 
-
     //  MOTION EFFECTS — mirrors effect.js motion presets
 
     val MOTION_EFFECTS: List<EffectPreset> = listOf(

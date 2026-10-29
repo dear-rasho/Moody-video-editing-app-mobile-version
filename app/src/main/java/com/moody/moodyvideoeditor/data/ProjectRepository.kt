@@ -862,7 +862,7 @@ object ProjectRepository {
                     floorHeight = dc.optDouble("floorHeight", 0.25).toFloat(),
                     opacity = dc.optDouble("opacity", 1.0).toFloat()
                 )
-            }
+            },
         )
     }
 
@@ -953,6 +953,10 @@ object ProjectRepository {
         put("backgroundPaddingY", t.backgroundPaddingY.toDouble())
         put("backgroundCornerRadius", t.backgroundCornerRadius.toDouble())
         put("backgroundBrushSeed", t.backgroundBrushSeed)
+        t.textureUri?.let { put("textureUri", it) }
+        put("textureScale", t.textureScale.toDouble())
+        put("textureOffsetX", t.textureOffsetX.toDouble())
+        put("textureOffsetY", t.textureOffsetY.toDouble())
 
         val segArr = JSONArray()
         t.segments.forEach { segArr.put(textSegmentToJson(it)) }
@@ -1033,6 +1037,11 @@ object ProjectRepository {
             backgroundPaddingY = o.optDouble("backgroundPaddingY", 8.0).toFloat(),
             backgroundCornerRadius = o.optDouble("backgroundCornerRadius", 12.0).toFloat(),
             backgroundBrushSeed = o.optInt("backgroundBrushSeed", 42),
+
+            textureUri = if (o.isNull("textureUri")) null else o.optString("textureUri"),
+            textureScale = o.optDouble("textureScale", 100.0).toFloat(),
+            textureOffsetX = o.optDouble("textureOffsetX", 0.0).toFloat(),
+            textureOffsetY = o.optDouble("textureOffsetY", 0.0).toFloat(),
 
             segments = segments
         )

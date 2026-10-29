@@ -157,13 +157,6 @@ data class AdjustmentData(
     val isDefault: Boolean get() = this == AdjustmentData()
 }
 
-// 🆕 Live preview of Color Matte (before applying as layer)
-data class PreviewMatteState(
-    val style: ColorMatteStyle,
-    val opacity: Float,
-    val durationMs: Long
-)
-
 data class EditorState(
     val clips: List<EditorClip> = emptyList(),
     val currentIndex: Int = 0,
@@ -206,9 +199,6 @@ data class EditorState(
     // Live preview effect (temporary, not committed)
     val previewEffectState: EffectState? = null,
     val clipboardAction: String? = null,
-    // 🆕 Live preview for Color Matte (temporary, not committed)
-    val previewMatte: PreviewMatteState? = null,
-
     // 🆕 FIXED TIMELINE LENGTH
     // 0 = auto (set on first import)
     // > 0 = locked length (does not auto-shrink/stretch)

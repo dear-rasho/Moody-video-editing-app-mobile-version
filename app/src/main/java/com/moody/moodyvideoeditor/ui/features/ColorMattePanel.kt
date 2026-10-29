@@ -1,5 +1,4 @@
 package com.moody.moodyvideoeditor.ui.features
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -9,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -44,6 +44,7 @@ import com.moody.moodyvideoeditor.data.ColorMatteMode
 import com.moody.moodyvideoeditor.data.ColorMatteStyle
 import com.moody.moodyvideoeditor.ui.components.ColorPickerField
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
+import com.moody.moodyvideoeditor.ui.components.FourColorMatteGradient
 
 @Composable
 fun ColorMattePanel(
@@ -51,7 +52,6 @@ fun ColorMattePanel(
     initialStyle: ColorMatteStyle = ColorMatteStyle(),
     initialOpacity: Float = ColorMatteDefaults.DEFAULT_OPACITY,
     initialDurationMs: Long = ColorMatteDefaults.DEFAULT_DURATION_MS,
-    onPreview: (style: ColorMatteStyle, opacity: Float, durationMs: Long) -> Unit = { _, _, _ -> },
     onApply: (style: ColorMatteStyle, opacity: Float, durationMs: Long) -> Unit,
     onUpdate: (style: ColorMatteStyle, opacity: Float, durationMs: Long) -> Unit = { _, _, _ -> },
     onDelete: () -> Unit = {},
@@ -64,22 +64,12 @@ fun ColorMattePanel(
     var durationMs by remember(editLayerId) { mutableLongStateOf(initialDurationMs) }
 
     fun notifyChange() {
-        // 🆕 Always fire preview (works for both create + edit mode)
-        onPreview(style, opacity, durationMs)
         if (isEditMode) onUpdate(style, opacity, durationMs)
-    }
-
-    // 🆕 Fire initial preview when panel opens
-    LaunchedEffect(Unit) {
-        onPreview(style, opacity, durationMs)
     }
 
     FeaturePanel(
         title = if (isEditMode) "🎨 Edit Color Matte" else "🎨 Color Matte",
-        onClose = {
-            onPreview(style, opacity, durationMs)  // harmless — caller will clear
-            onClose()
-        }
+        onClose = onClose
     ) {
         Column(
             modifier = Modifier
@@ -100,8 +90,8 @@ fun ColorMattePanel(
 
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
+                    .size(120.dp)
+                    .align(Alignment.CenterHorizontally)
                     .clip(RoundedCornerShape(10.dp))
                     .background(Color(0xFF0F0F0F))
                     .border(1.dp, Color(0xFF2A2A2A), RoundedCornerShape(10.dp))
@@ -109,17 +99,21 @@ fun ColorMattePanel(
             ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
+                        .fillMaxSize()
                         .clip(RoundedCornerShape(8.dp))
-                        .background(styleToBrush(style).let {
-                            it
-                        })
                 ) {
+                    if (style.mode == ColorMatteMode.FOUR_COLOR) {
+                        FourColorMatteGradient(style, Modifier.fillMaxSize())
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(styleToBrush(style))
+                        )
+                    }
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
+                            .fillMaxSize()
                             .background(
                                 Color.Black.copy(
                                     alpha = 1f - (opacity / 100f).coerceIn(0f, 1f)
@@ -557,7 +551,7 @@ private fun SwatchBox(
             modifier = Modifier
                 .size(if (active) 40.dp else 36.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(Color(color))
+                .background(Color(color.toInt()))
                 .border(
                     if (active) 2.dp else 1.dp,
                     if (active) Color.White else Color(0xFF2A2A2A),
@@ -578,7 +572,7 @@ private fun SwatchBox(
 
 private fun styleToBrush(style: ColorMatteStyle): Brush = when (style.mode) {
     ColorMatteMode.SOLID -> Brush.linearGradient(
-        listOf(Color(style.solidColor), Color(style.solidColor))
+        listOf(Color(style.solidColor.toInt()), Color(style.solidColor.toInt()))
     )
 
     ColorMatteMode.RAMP -> {
@@ -586,7 +580,10 @@ private fun styleToBrush(style: ColorMatteStyle): Brush = when (style.mode) {
         val dx = kotlin.math.cos(rad).toFloat()
         val dy = kotlin.math.sin(rad).toFloat()
         Brush.linearGradient(
-            colors = listOf(Color(style.rampColor1), Color(style.rampColor2)),
+            colors = listOf(
+                Color(style.rampColor1.toInt()),
+                Color(style.rampColor2.toInt())
+            ),
             start = Offset(-dx * 200f, -dy * 200f),
             end = Offset(dx * 200f, dy * 200f)
         )
@@ -596,10 +593,10 @@ private fun styleToBrush(style: ColorMatteStyle): Brush = when (style.mode) {
         // Approximation for the panel preview only.
         // Real 4-color blend happens in PreviewCanvas + FFmpeg.
         colors = listOf(
-            Color(style.topLeft),
-            Color(style.topRight),
-            Color(style.bottomRight),
-            Color(style.bottomLeft)
+            Color(style.topLeft.toInt()),
+            Color(style.topRight.toInt()),
+            Color(style.bottomRight.toInt()),
+            Color(style.bottomLeft.toInt())
         )
     )
 }

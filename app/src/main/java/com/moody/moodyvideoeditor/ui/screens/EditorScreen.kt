@@ -82,6 +82,7 @@ import com.moody.moodyvideoeditor.ui.features.BeatsPanel
 import com.moody.moodyvideoeditor.ui.features.BlendModePanel
 
 import com.moody.moodyvideoeditor.ui.features.ColorMattePanel
+import com.moody.moodyvideoeditor.ui.features.TrackMattePanel
 import com.moody.moodyvideoeditor.ui.features.ColorRemoverPanel
 import com.moody.moodyvideoeditor.ui.features.ColorWheelPanel
 import com.moody.moodyvideoeditor.ui.features.CropPanel
@@ -132,7 +133,8 @@ private data class MediaInfo(
     val name: String,
     val durationMs: Long,
     val mimeType: String,
-    val finalUri: Uri
+    val finalUri: Uri,
+    val hasAudioTrack: Boolean
 )
 
 @Composable
@@ -335,12 +337,47 @@ fun EditorScreen(
         }
     }
 
-    LaunchedEffect(state.volume, state.isMuted, activeClipTrackMuted, anyActiveAudioMuted) {
+    val activeVideoClip = remember(state.clips, state.currentPosMs, state.hiddenVisualTracks) {
+        state.clips
+            .filter {
+                it.isVisualClip &&
+                        !it.type.startsWith("image/") &&
+                        state.currentPosMs >= it.timelineStartMs &&
+                        state.currentPosMs < it.timelineEndMs &&
+                        !state.hiddenVisualTracks.contains(it.trackIndex)
+            }
+            .maxByOrNull { it.trackIndex }
+    }
+    val activeVideoHasSeparateAudio = remember(
+        activeVideoClip?.linkedId,
+        state.clips,
+        state.currentPosMs
+    ) {
+        val linkedId = activeVideoClip?.linkedId
+        linkedId != null && state.clips.any { clip ->
+            clip.isAudio &&
+                    !clip.isAudioEffectClip &&
+                    clip.linkedId == linkedId &&
+                    state.currentPosMs >= clip.timelineStartMs &&
+                    state.currentPosMs < clip.timelineEndMs
+        }
+    }
+
+    LaunchedEffect(
+        state.volume,
+        state.isMuted,
+        activeClipTrackMuted,
+        anyActiveAudioMuted,
+        activeVideoClip?.id,
+        activeVideoClip?.volume,
+        activeVideoHasSeparateAudio
+    ) {
         exoPlayer.volume = when {
             state.isMuted -> 0f
             activeClipTrackMuted -> 0f
             anyActiveAudioMuted -> 0f
-            else -> state.volume
+            activeVideoHasSeparateAudio -> 0f
+            else -> activeVideoClip?.volume ?: state.volume
         }
     }
 
@@ -581,6 +618,34 @@ fun EditorScreen(
         pendingVizImageUri = cacheUri.toString()
     }
 
+    val textTexturePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val mimeType = context.contentResolver.getType(uri)
+        if (mimeType?.startsWith("image/") != true &&
+            mimeType?.startsWith("video/") != true
+        ) {
+            Log.e("TEXT_TEXTURE", "Unsupported texture media type: $mimeType")
+            return@rememberLauncherForActivityResult
+        }
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (e: Exception) {
+            Log.e("TEXT_TEXTURE", "Could not retain texture access: ${e.message}", e)
+            return@rememberLauncherForActivityResult
+        }
+        val selectedText = viewModel.state.value.selectedClip
+            ?.takeIf { it.isTextClip } ?: return@rememberLauncherForActivityResult
+        val text = selectedText.textState ?: return@rememberLauncherForActivityResult
+        viewModel.updateClipTextTexture(
+            selectedText.id,
+            text.copy(textureUri = uri.toString())
+        )
+    }
+
     // ═══════════════════════════════════════════════════════════
     //  MULTI-IMPORT PROCESSING
     // ═══════════════════════════════════════════════════════════
@@ -628,7 +693,12 @@ fun EditorScreen(
                         } catch (_: Exception) {
                         }
 
-                        MediaInfo(name, dur, mime, finalUri)
+                        val hasAudioTrack = when {
+                            isImage -> false
+                            mime.startsWith("audio/") -> true
+                            else -> VideoUtils.hasAudioTrack(context, finalUri)
+                        }
+                        MediaInfo(name, dur, mime, finalUri, hasAudioTrack)
                     } catch (e: Exception) {
                         Log.e("IMPORT", "Failed to import uri: $uri", e)
                         null
@@ -641,7 +711,8 @@ fun EditorScreen(
                     uri = info.finalUri,
                     name = info.name,
                     durationMs = info.durationMs,
-                    mediaType = info.mimeType
+                    mediaType = info.mimeType,
+                    hasAudioTrack = info.hasAudioTrack
                 )
             }
         } catch (e: Exception) {
@@ -722,6 +793,9 @@ fun EditorScreen(
                 onFeatureSelected = { key ->
                     if (key == "filters") filterEditLayerId = null
                     if (key == "effects") effectEditLayerId = null
+                    if (key == "matte") {
+                        matteEditLayerId = selected?.takeIf { it.isColorMatteClip }?.id
+                    }
                     if (key == "wheel") viewModel.prepareColorWheelLayer()
                     if (key == "spotlight") {
                         val spotlightClip = selected?.takeIf { it.isSpotlightClip }
@@ -791,6 +865,23 @@ fun EditorScreen(
                     openTextEditor = false
                 }
             )
+            "track_matte" -> {
+                val selectedText = selected?.takeIf { it.isTextClip }
+                TrackMattePanel(
+                    textState = selectedText?.textState,
+                    onPickTexture = {
+                        if (selectedText != null) {
+                            textTexturePicker.launch(arrayOf("image/*", "video/*"))
+                        }
+                    },
+                    onTextStateChange = { textState ->
+                        selectedText?.let {
+                            viewModel.updateClipTextTexture(it.id, textState)
+                        }
+                    },
+                    onClose = { activePanel = null }
+                )
+            }
             "animations" -> AnimationsPanel(
                 currentAnimation = viewModel.getSelectedAnimation(),
                 currentDuration = viewModel.getSelectedAnimationDuration(),
@@ -805,10 +896,8 @@ fun EditorScreen(
 
             "matte" -> {
                 val editLayer = matteEditLayerId?.let { id ->
-                    state.clips.firstOrNull {
-                        it.id == id && it.isColorMatteClip
-                    }
-                }
+                    state.clips.firstOrNull { it.id == id && it.isColorMatteClip }
+                } ?: selected?.takeIf { it.isColorMatteClip }
                 ColorMattePanel(
                     editLayerId = editLayer?.id,
                     initialStyle = editLayer?.matteStyle
@@ -817,11 +906,7 @@ fun EditorScreen(
                         ?: com.moody.moodyvideoeditor.data.ColorMatteDefaults.DEFAULT_OPACITY,
                     initialDurationMs = editLayer?.durationMs
                         ?: com.moody.moodyvideoeditor.data.ColorMatteDefaults.DEFAULT_DURATION_MS,
-                    onPreview = { style, opacity, dur ->
-                        viewModel.setPreviewMatte(style, opacity, dur)
-                    },
                     onApply = { style, opacity, durationMs ->
-                        viewModel.clearPreviewMatte()
                         viewModel.createColorMatte(
                             color = style.solidColor,
                             opacity = opacity,
@@ -838,13 +923,11 @@ fun EditorScreen(
                         }
                     },
                     onDelete = {
-                        viewModel.clearPreviewMatte()
                         editLayer?.let { viewModel.removeColorMatte(it.id) }
                         matteEditLayerId = null
                         activePanel = null
                     },
                     onClose = {
-                        viewModel.clearPreviewMatte()
                         matteEditLayerId = null
                         activePanel = null
                     }
@@ -2362,6 +2445,11 @@ fun EditorScreen(
             else -> FeatureShelf(
                 onFeatureSelected = {
                     if (it == "wheel") viewModel.prepareColorWheelLayer()
+                    if (it == "matte") {
+                        matteEditLayerId = state.selectedClip?.takeIf {
+                            it.isColorMatteClip
+                        }?.id
+                    }
                     activePanel = it
                 },
                 scrollState = featureScrollState
@@ -2479,7 +2567,6 @@ fun EditorScreen(
                     aspectMode = state.aspectMode,
                     clips = state.clips,
                     currentPosMs = state.currentPosMs,
-                    previewMatte = state.previewMatte,
                     isPlaying = isPlaybackActive,
                     hiddenVisualTracks = state.hiddenVisualTracks,
                     aspectRatioKey = state.aspectRatio,

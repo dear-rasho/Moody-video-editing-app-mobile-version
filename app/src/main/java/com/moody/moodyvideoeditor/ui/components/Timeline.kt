@@ -1654,6 +1654,7 @@ private fun ClipCard(
                 sourceStartMs = clip.sourceStartMs,
                 sourceEndMs = clip.sourceEndMs,
                 sourceTotalMs = clip.sourceTotalMs,
+                volume = clip.volume,
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(RoundedCornerShape(6.dp))
@@ -2161,6 +2162,7 @@ private fun AudioWaveformBackground(
     sourceStartMs: Long,
     sourceEndMs: Long,
     sourceTotalMs: Long,
+    volume: Float,
     modifier: Modifier = Modifier
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -2172,7 +2174,7 @@ private fun AudioWaveformBackground(
         }
     }
 
-    val waveformBars = remember(waveform, sourceStartMs, sourceEndMs, sourceTotalMs) {
+    val waveformBars = remember(waveform, sourceStartMs, sourceEndMs, sourceTotalMs, volume) {
         val samples = waveform ?: return@remember FloatArray(0)
         if (samples.isEmpty()) return@remember FloatArray(0)
 
@@ -2195,7 +2197,7 @@ private fun AudioWaveformBackground(
             for (index in bucketStart until bucketEnd) {
                 peak = maxOf(peak, samples[index])
             }
-            peak
+            peak * volume.coerceIn(0f, 1f)
         }
     }
 

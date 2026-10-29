@@ -25,7 +25,6 @@ import com.moody.moodyvideoeditor.data.MaskPoint
 import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.OverlayState
-import com.moody.moodyvideoeditor.data.PreviewMatteState
 import com.moody.moodyvideoeditor.data.RatioState
 import com.moody.moodyvideoeditor.data.StickerState
 import com.moody.moodyvideoeditor.data.SpotlightState
@@ -598,7 +597,8 @@ class EditorViewModel : ViewModel() {
         uri: Uri,
         name: String,
         durationMs: Long,
-        mediaType: String = "video/mp4"
+        mediaType: String = "video/mp4",
+        hasAudioTrack: Boolean = mediaType.startsWith("audio/")
     ) {
         val s = _state.value
 
@@ -694,7 +694,7 @@ class EditorViewModel : ViewModel() {
             linkedId = if (isImage) null else linkId
         )
 
-        val audioClip = if (isImage) null else videoClip.copy(
+        val audioClip = if (isImage || !hasAudioTrack) null else videoClip.copy(
             id = UUID.randomUUID().toString(),
             name = "$name (audio)", type = "audio/mpeg",
             trackIndex = audioPlacement.trackIndex,
@@ -795,22 +795,6 @@ class EditorViewModel : ViewModel() {
 
     fun clearPreviewEffect() {
         _state.update { it.copy(previewEffectState = null) }
-    }
-
-    fun setPreviewMatte(style: ColorMatteStyle, opacity: Float, durationMs: Long) {
-        _state.update {
-            it.copy(
-                previewMatte = PreviewMatteState(
-                    style = style,
-                    opacity = opacity.coerceIn(0f, 100f),
-                    durationMs = durationMs.coerceAtLeast(100L)
-                )
-            )
-        }
-    }
-
-    fun clearPreviewMatte() {
-        _state.update { it.copy(previewMatte = null) }
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -2408,6 +2392,37 @@ class EditorViewModel : ViewModel() {
         }
     }
 
+    fun updateClipTextTexture(clipId: String, newState: TextState) {
+        val state = _state.value
+        val clip = state.clips.firstOrNull { it.id == clipId } ?: return
+        if (!clip.isTextClip) return
+
+        val oldState = clip.textState ?: return
+        val localTimeSec = KeyframeStore.clipLocalTimeSeconds(
+            state.currentPosMs, clip.timelineStartMs, clip.durationMs
+        )
+        var keyframes = clip.keyframes
+        if (oldState.textureScale != newState.textureScale) {
+            keyframes = KeyframeStore.autoKeyframeIfActive(
+                keyframes, "textTexture.scale", localTimeSec, newState.textureScale
+            )
+        }
+        if (oldState.textureOffsetX != newState.textureOffsetX) {
+            keyframes = KeyframeStore.autoKeyframeIfActive(
+                keyframes, "textTexture.x", localTimeSec, newState.textureOffsetX
+            )
+        }
+        if (oldState.textureOffsetY != newState.textureOffsetY) {
+            keyframes = KeyframeStore.autoKeyframeIfActive(
+                keyframes, "textTexture.y", localTimeSec, newState.textureOffsetY
+            )
+        }
+        updateClipDirect(clipId) { current ->
+            if (current.isTextClip) current.copy(textState = newState, keyframes = keyframes)
+            else current
+        }
+    }
+
     fun updateTextGradientPoint(
         clipId: String,
         isStartPoint: Boolean,
@@ -3588,6 +3603,32 @@ class EditorViewModel : ViewModel() {
                     currentTimeSec
                 )
                 SpotlightAnimation.value(sampled, prop)
+            } else if (sel.isTextClip && sel.textState?.textureUri != null) {
+                val textState = sel.textState!!
+                when (prop) {
+                    "textTexture.scale" -> KeyframeStore.sample(
+                        sel.keyframes, prop, currentTimeSec, textState.textureScale
+                    )
+                    "textTexture.x" -> KeyframeStore.sample(
+                        sel.keyframes, prop, currentTimeSec, textState.textureOffsetX
+                    )
+                    "textTexture.y" -> KeyframeStore.sample(
+                        sel.keyframes, prop, currentTimeSec, textState.textureOffsetY
+                    )
+                    else -> when (prop) {
+                        "x" -> live.x
+                        "y" -> live.y
+                        "scale" -> live.scale
+                        "rotation" -> live.rotation
+                        "anchorX" -> live.anchorX
+                        "anchorY" -> live.anchorY
+                        "cropL" -> live.cropL
+                        "cropR" -> live.cropR
+                        "cropT" -> live.cropT
+                        "cropB" -> live.cropB
+                        else -> 0f
+                    }
+                }
             } else when (prop) {
                 "x" -> live.x
                 "y" -> live.y
@@ -3645,6 +3686,9 @@ class EditorViewModel : ViewModel() {
             updateHistoryFlags()
             return
         }
+        val textureProperties = if (sel.isTextClip && sel.textState?.textureUri != null) {
+            listOf("textTexture.scale", "textTexture.x", "textTexture.y")
+        } else emptyList()
         val hasAny = KeyframeStore.hasAnyKeyframeAt(sel.keyframes, currentTimeSec)
 
         val updated = if (hasAny) {
@@ -3666,6 +3710,17 @@ class EditorViewModel : ViewModel() {
             kf = KeyframeStore.setKeyframe(kf, "cropR", currentTimeSec, base.cropR)
             kf = KeyframeStore.setKeyframe(kf, "cropT", currentTimeSec, base.cropT)
             kf = KeyframeStore.setKeyframe(kf, "cropB", currentTimeSec, base.cropB)
+            sel.textState?.takeIf { textureProperties.isNotEmpty() }?.let { text ->
+                kf = KeyframeStore.setKeyframe(
+                    kf, "textTexture.scale", currentTimeSec, text.textureScale
+                )
+                kf = KeyframeStore.setKeyframe(
+                    kf, "textTexture.x", currentTimeSec, text.textureOffsetX
+                )
+                kf = KeyframeStore.setKeyframe(
+                    kf, "textTexture.y", currentTimeSec, text.textureOffsetY
+                )
+            }
             sel.copy(keyframes = kf)
         }
         if (updated != sel) pushHistory()
@@ -4393,7 +4448,9 @@ class EditorViewModel : ViewModel() {
         val presetKey = clip.effectKeys.firstOrNull() ?: return
         val preset = EffectLibrary.findByKey(presetKey) ?: return
         val scaled = buildScaledEffectState(preset, intensity)
-        updateClipDirect(layerId) { it.copy(effectState = scaled) }
+        updateClipDirect(layerId) {
+            it.copy(effectState = scaled)
+        }
     }
 
     fun updateClipEffectLightning(clipId: String, config: com.moody.moodyvideoeditor.data.LightningConfig) {

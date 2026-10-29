@@ -41,7 +41,8 @@ data class Feature(val key: String, val label: String, val icon: String)
 
 val FEATURES = listOf(
     Feature("spotlight", "Spotlight", "🔦"),
-    Feature("matte", "Matte", "🎨"),
+    Feature("matte", "Matte", ""),
+    Feature("track_matte", "Track Matte", "🖼️"),
     Feature("chromakey", "Chroma", "🟩"),
     Feature("trim", "Trim", "✂️"),
     Feature("speed", "Speed", "⏩"),
@@ -119,7 +120,27 @@ private fun FeatureItem(feature: Feature, onClick: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        if (feature.key == "mask") {
+        if (feature.key == "matte") {
+            Canvas(modifier = Modifier.size(22.dp)) {
+                val gap = 1.5.dp.toPx()
+                val half = (size.width - gap) / 2f
+                val cornerRadius = CornerRadius(3.dp.toPx())
+                val quadrants = listOf(
+                    Triple(Color(0xFFFF3B30), Offset.Zero, Size(half, half)),
+                    Triple(Color(0xFF34C759), Offset(half + gap, 0f), Size(half, half)),
+                    Triple(Color(0xFF007AFF), Offset(0f, half + gap), Size(half, half)),
+                    Triple(Color(0xFFFFCC00), Offset(half + gap, half + gap), Size(half, half))
+                )
+                quadrants.forEach { (color, topLeft, quadrantSize) ->
+                    drawRoundRect(
+                        color = color,
+                        topLeft = topLeft,
+                        size = quadrantSize,
+                        cornerRadius = cornerRadius
+                    )
+                }
+            }
+        } else if (feature.key == "mask") {
             Canvas(modifier = Modifier.size(22.dp)) {
                 val stroke = Stroke(width = 1.8.dp.toPx())
                 drawRoundRect(

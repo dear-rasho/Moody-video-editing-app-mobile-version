@@ -3,14 +3,18 @@ package com.moody.moodyvideoeditor.utils
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapShader
 import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.media.MediaMetadataRetriever
+import android.net.Uri
 import android.util.Log
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
@@ -163,11 +167,22 @@ object TextBitmapRenderer {
                 ).minOrNull() ?: 0
 
         val imageBitmaps = mutableMapOf<String, Bitmap>()
+        val textTextureBitmaps = mutableMapOf<String, Bitmap>()
 
         try {
             sortedImageClips.forEach { clip ->
                 imageBitmaps[clip.id] = withContext(Dispatchers.IO) {
                     decodeImage(context, clip, W, H)
+                }
+            }
+            sortedTextClips.forEach { clip ->
+                val texture = clip.textState?.textureUri ?: return@forEach
+                val uri = Uri.parse(texture)
+                val mimeType = context.contentResolver.getType(uri)
+                if (mimeType?.startsWith("video/") != true) {
+                    textTextureBitmaps[clip.id] = withContext(Dispatchers.IO) {
+                        decodeTextureImage(context, uri, W, H)
+                    }
                 }
             }
 
@@ -218,10 +233,12 @@ object TextBitmapRenderer {
                                 totalFrames = totalFrames,
                                 fps = fps,
                                 W = W, H = H,
+                                context = context,
                                 layerClips = sortedTextClips,
                                 imageClips = sortedImageClips,
                                 overlayClips = sortedOverlayClips,
                                 imageBitmaps = imageBitmaps,
+                                textTextureBitmaps = textTextureBitmaps,
                                 emptyBytes = emptyBytes,
                                 renderTrackIndex = renderTrackIndex,
                                 shouldCancel = shouldCancel,
@@ -245,6 +262,9 @@ object TextBitmapRenderer {
             imageBitmaps.values.distinct().forEach { bitmap ->
                 if (!bitmap.isRecycled) bitmap.recycle()
             }
+            textTextureBitmaps.values.distinct().forEach { bitmap ->
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
         }
     }
 
@@ -255,10 +275,12 @@ object TextBitmapRenderer {
         totalFrames: Int,
         fps: Int,
         W: Int, H: Int,
+        context: Context,
         layerClips: List<EditorClip>,
         imageClips: List<EditorClip>,
         overlayClips: List<EditorClip>,
         imageBitmaps: Map<String, Bitmap>,
+        textTextureBitmaps: Map<String, Bitmap>,
         emptyBytes: ByteArray,
         renderTrackIndex: Int,
         shouldCancel: () -> Boolean,
@@ -288,8 +310,18 @@ object TextBitmapRenderer {
         var previousVisibleKey: Set<String> = emptySet()
 
         val ext = if (imageFormat == "jpeg") "jpg" else "png"
+        val videoTextureRetrievers = mutableMapOf<String, MediaMetadataRetriever>()
 
         try {
+            layerClips.forEach { clip ->
+                val texture = clip.textState?.textureUri ?: return@forEach
+                val uri = Uri.parse(texture)
+                if (context.contentResolver.getType(uri)?.startsWith("video/") == true) {
+                    videoTextureRetrievers[clip.id] = MediaMetadataRetriever().apply {
+                        setDataSource(context, uri)
+                    }
+                }
+            }
             for (i in 0 until chunkFrames) {
                 currentCoroutineContext().ensureActive()
                 if (shouldCancel()) {
@@ -342,8 +374,33 @@ object TextBitmapRenderer {
                             if (timelineMs >= clip.timelineStartMs && timelineMs < clip.timelineEndMs) {
                                 val localSec = (timelineMs - clip.timelineStartMs) / 1000f
                                 if (clip.isTextClip) {
-                                    MaskEngine.drawMaskedLayer(canvas, clip.mask, localSec, W.toFloat(), H.toFloat()) {
-                                        drawTextClipAtTime(canvas, clip, localSec, W, H)
+                                    val textureBitmap = clip.textState?.textureUri?.let {
+                                        val retriever = videoTextureRetrievers[clip.id]
+                                        if (retriever != null) {
+                                            retriever.getFrameAtTime(
+                                                (localSec * 1_000_000L).toLong(),
+                                                MediaMetadataRetriever.OPTION_CLOSEST
+                                            ) ?: throw java.io.IOException(
+                                                "Could not decode video text texture frame: $it"
+                                            )
+                                        } else {
+                                            textTextureBitmaps[clip.id]
+                                                ?: throw java.io.IOException(
+                                                    "Could not load text texture: $it"
+                                                )
+                                        }
+                                    }
+                                    try {
+                                        MaskEngine.drawMaskedLayer(canvas, clip.mask, localSec, W.toFloat(), H.toFloat()) {
+                                            drawTextClipAtTime(
+                                                canvas, clip, localSec, W, H, textureBitmap
+                                            )
+                                        }
+                                    } finally {
+                                        if (textureBitmap != null &&
+                                            textureBitmap !== textTextureBitmaps[clip.id] &&
+                                            !textureBitmap.isRecycled
+                                        ) textureBitmap.recycle()
                                     }
                                 } else if (clip.isStickerClip) {
                                     MaskEngine.drawMaskedLayer(canvas, clip.mask, localSec, W.toFloat(), H.toFloat()) {
@@ -381,6 +438,7 @@ object TextBitmapRenderer {
         } finally {
             bmp.recycle()
             overlayBuffer?.bitmap?.recycle()
+            videoTextureRetrievers.values.forEach { it.release() }
         }
 
         val pattern = File(workingDirectory, "combined_${chunkIdx}_f%05d.$ext").absolutePath
@@ -438,6 +496,7 @@ object TextBitmapRenderer {
                         if (CaptionPresetLibrary.hasMovingHighlight(st.captionPresetId)) {
                             anyAnimated = true
                         }
+                        if (st.textureUri != null) anyAnimated = true
                     }
                     if (clip.keyframes.isNotEmpty()) anyAnimated = true
                 }
@@ -495,6 +554,35 @@ object TextBitmapRenderer {
         return context.contentResolver.openInputStream(clip.uri)?.use {
             BitmapFactory.decodeStream(it, null, options)
         } ?: throw java.io.IOException("Could not decode image: ${clip.name}")
+    }
+
+    private fun decodeTextureImage(
+        context: Context,
+        uri: Uri,
+        targetW: Int,
+        targetH: Int
+    ): Bitmap {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, bounds)
+        } ?: throw java.io.IOException("Could not read text texture: $uri")
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            throw java.io.IOException("Invalid text texture dimensions: $uri")
+        }
+        val maxDimension = maxOf(targetW, targetH).coerceAtLeast(1)
+        var sampleSize = 1
+        while (bounds.outWidth / sampleSize > maxDimension * 2 ||
+            bounds.outHeight / sampleSize > maxDimension * 2
+        ) {
+            sampleSize *= 2
+        }
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        return context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, options)
+        } ?: throw java.io.IOException("Could not decode text texture: $uri")
     }
 
     private fun drawImageClip(canvas: Canvas, clip: EditorClip, bitmap: Bitmap, localTimeSec: Float, W: Int, H: Int) {
@@ -585,8 +673,26 @@ object TextBitmapRenderer {
         androidCanvas.drawBitmap(buffer.bitmap, 0f, 0f, null)
     }
 
-    private fun drawTextClipAtTime(canvas: Canvas, clip: EditorClip, localTimeSec: Float, W: Int, H: Int) {
-        val st = clip.textState ?: return
+    private fun drawTextClipAtTime(
+        canvas: Canvas,
+        clip: EditorClip,
+        localTimeSec: Float,
+        W: Int,
+        H: Int,
+        textureBitmap: Bitmap?
+    ) {
+        val baseState = clip.textState ?: return
+        val st = baseState.copy(
+            textureScale = KeyframeStore.sample(
+                clip.keyframes, "textTexture.scale", localTimeSec, baseState.textureScale
+            ),
+            textureOffsetX = KeyframeStore.sample(
+                clip.keyframes, "textTexture.x", localTimeSec, baseState.textureOffsetX
+            ),
+            textureOffsetY = KeyframeStore.sample(
+                clip.keyframes, "textTexture.y", localTimeSec, baseState.textureOffsetY
+            )
+        )
         if (st.content.isBlank()) return
         val animSec = if (st.animation.equals("none", true)) 0f else st.animationDuration.coerceAtLeast(0.1f)
         val progress = if (animSec <= 0f) 1f else (localTimeSec / animSec).coerceIn(0f, 1f)
@@ -613,7 +719,8 @@ object TextBitmapRenderer {
             H,
             sampled,
             (localTimeSec * 1000f).toLong(),
-            clip.durationMs
+            clip.durationMs,
+            textureBitmap
         )
     }
 
@@ -757,7 +864,8 @@ object TextBitmapRenderer {
         W: Int, H: Int,
         sampled: TransformValues,
         localTimeMs: Long,
-        clipDurationMs: Long
+        clipDurationMs: Long,
+        textureBitmap: Bitmap?
     ) {
         try {
             val content = if (!st.animation.equals("none", ignoreCase = true)) {
@@ -946,7 +1054,27 @@ object TextBitmapRenderer {
                 }
             }
 
-            if (st.gradientEnabled) {
+            if (textureBitmap != null && st.textureUri != null) {
+                val shader = BitmapShader(
+                    textureBitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP
+                )
+                val fitScale = maxOf(
+                    maxLineWidth / textureBitmap.width,
+                    (lineHeightPx * lines.size) / textureBitmap.height
+                ) * (st.textureScale / 100f).coerceIn(0.1f, 4f)
+                val shaderMatrix = Matrix().apply {
+                    setScale(fitScale, fitScale)
+                    postTranslate(
+                        -textureBitmap.width * fitScale / 2f +
+                                st.textureOffsetX / 100f * maxLineWidth,
+                        -textureBitmap.height * fitScale / 2f +
+                                st.textureOffsetY / 100f * lineHeightPx * lines.size
+                    )
+                }
+                shader.setLocalMatrix(shaderMatrix)
+                fillPaint.shader = shader
+                fillPaint.color = Color.WHITE
+            } else if (st.gradientEnabled) {
                 val gradientWidth = lines.maxOfOrNull { basePaint.measureText(it) }
                     ?.coerceAtLeast(1f) ?: 1f
                 val gradientHeight = (lineHeightPx * lines.size).coerceAtLeast(1f)
@@ -961,7 +1089,8 @@ object TextBitmapRenderer {
                 fillPaint.color = st.color.toInt()
             }
 
-            val captionRanges = CaptionPresetLibrary.colorRanges(
+            val captionRanges = if (textureBitmap != null && st.textureUri != null) emptyList()
+            else CaptionPresetLibrary.colorRanges(
                 text = content,
                 presetId = st.captionPresetId,
                 highlightColor = st.captionHighlightColor,

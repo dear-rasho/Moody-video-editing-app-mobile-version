@@ -1,10 +1,31 @@
 package com.moody.moodyvideoeditor.utils
 
 import android.content.Context
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
 
 object VideoUtils {
+    private const val TAG = "VideoUtils"
+
+    fun hasAudioTrack(context: Context, uri: Uri): Boolean {
+        val extractor = MediaExtractor()
+        return try {
+            extractor.setDataSource(context, uri, null)
+            (0 until extractor.trackCount).any { index ->
+                extractor.getTrackFormat(index)
+                    .getString(MediaFormat.KEY_MIME)
+                    ?.startsWith("audio/") == true
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not inspect audio tracks for $uri", e)
+            false
+        } finally {
+            extractor.release()
+        }
+    }
 
     fun getFileName(context: Context, uri: Uri): String {
         var name = "video.mp4"

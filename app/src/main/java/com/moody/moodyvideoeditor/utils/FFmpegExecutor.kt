@@ -90,10 +90,10 @@ class FFmpegExecutor(
 
             com.moody.moodyvideoeditor.data.ColorMatteMode.FOUR_COLOR -> {
                 val tiny = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
-                tiny.setPixel(0, 0, style.topLeft.toInt())
-                tiny.setPixel(1, 0, style.topRight.toInt())
-                tiny.setPixel(0, 1, style.bottomLeft.toInt())
-                tiny.setPixel(1, 1, style.bottomRight.toInt())
+                tiny.setPixel(0, 0, style.topLeft.toInt() or 0xFF000000.toInt())
+                tiny.setPixel(1, 0, style.topRight.toInt() or 0xFF000000.toInt())
+                tiny.setPixel(0, 1, style.bottomLeft.toInt() or 0xFF000000.toInt())
+                tiny.setPixel(1, 1, style.bottomRight.toInt() or 0xFF000000.toInt())
 
                 val paint = android.graphics.Paint().apply {
                     isFilterBitmap = true
