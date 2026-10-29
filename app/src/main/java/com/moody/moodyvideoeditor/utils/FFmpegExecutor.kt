@@ -1125,14 +1125,28 @@ class FFmpegExecutor(
         val filters = mutableListOf<String>()
         if (transparentPadding) filters.add("format=rgba")
 
-        val userScale = clip.scale.coerceIn(0.1f, 5f)
-        val hasScaleTrack = clip.keyframes["scale"].orEmpty().isNotEmpty()
+        val scaleTrack = clip.keyframes["scale"].orEmpty()
+        val hasAnimatedScale = scaleTrack
+            .map { it.value }
+            .distinctBy { (it * 1000f).toInt() }
+            .size > 1
+        val userScale = if (scaleTrack.isNotEmpty() && !hasAnimatedScale) {
+            (scaleTrack.first().value / 100f).coerceIn(0.1f, 5f)
+        } else {
+            clip.scale.coerceIn(0.1f, 5f)
+        }
+        val hasScaleTrack = hasAnimatedScale
         val offsetXpx = (clip.offsetX * targetW).toInt()
         val offsetYpx = (clip.offsetY * targetH).toInt()
         val hasOffset = offsetXpx != 0 || offsetYpx != 0
         val fillColor = if (transparentPadding) "black@0" else "black"
         val preserveOverscan =
             transparentPadding && positionByOverlay && preservesLayerOverscan(clip)
+        val overscanSize = if (preserveOverscan) {
+            overscanCanvasSize(clip, targetW, targetH)
+        } else {
+            targetW to targetH
+        }
 
         // ═══════════════════════════════════════════════════════════
         //  STEP 1: Fit source into canvas (letterbox) — WITHOUT user scale
@@ -1144,7 +1158,12 @@ class FFmpegExecutor(
             filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
             val scaleExpr = KeyframeStore.ffmpegExpression(clip.keyframes, "scale", clip.scale * 100f)
             filters.add("scale=w='iw*($scaleExpr/100)':h='ih*($scaleExpr/100)':eval=frame")
-            if (!preserveOverscan) {
+            if (preserveOverscan) {
+                filters.add(
+                    "pad=${overscanSize.first}:${overscanSize.second}:" +
+                            "x='(ow-iw)/2':y='(oh-ih)/2':color=$fillColor:eval=frame"
+                )
+            } else {
                 val cropX = "max(0\\,min(iw-$targetW\\,(iw-$targetW)/2-$offsetXpx))"
                 val cropY = "max(0\\,min(ih-$targetH\\,(ih-$targetH)/2-$offsetYpx))"
                 filters.add(
@@ -1166,7 +1185,12 @@ class FFmpegExecutor(
                 filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=$fillColor")
                 val scaleFmt = String.format(Locale.US, "%.4f", userScale)
                 filters.add("scale=iw*$scaleFmt:ih*$scaleFmt")
-                if (!preserveOverscan) {
+                if (preserveOverscan) {
+                    filters.add(
+                        "pad=${overscanSize.first}:${overscanSize.second}:" +
+                                "x='(ow-iw)/2':y='(oh-ih)/2':color=$fillColor"
+                    )
+                } else {
                     // Shift crop window with the clip's static position.
                     val cropX = "max(0\\,min(iw-$targetW\\,(iw-$targetW)/2-$offsetXpx))"
                     val cropY = "max(0\\,min(ih-$targetH\\,(ih-$targetH)/2-$offsetYpx))"
@@ -1212,9 +1236,12 @@ class FFmpegExecutor(
         if (hasRotationTrack) {
             val rotationExpr = KeyframeStore.ffmpegExpression(clip.keyframes, "rotation", clip.rotation)
             val angleExpr = "(($rotationExpr)*PI/180)"
-            val outputSize =
-                if (preserveOverscan) "ow='rotw($angleExpr)':oh='roth($angleExpr)'"
-                else "ow=$targetW:oh=$targetH"
+            val outputSize = if (preserveOverscan) {
+                val rotationCanvas = rotationCanvasSize(overscanSize.first, overscanSize.second)
+                "ow=$rotationCanvas:oh=$rotationCanvas"
+            } else {
+                "ow=$targetW:oh=$targetH"
+            }
             filters.add("rotate=angle='$angleExpr':c=$fillColor:$outputSize")
         } else if (kotlin.math.abs(clip.rotation) > 0.1f) {
             val angle = String.format(
@@ -1222,9 +1249,12 @@ class FFmpegExecutor(
                 "%.4f",
                 Math.toRadians(clip.rotation.toDouble())
             )
-            val outputSize =
-                if (preserveOverscan) "ow='rotw($angle)':oh='roth($angle)'"
-                else "ow=$targetW:oh=$targetH"
+            val outputSize = if (preserveOverscan) {
+                val rotationCanvas = rotationCanvasSize(overscanSize.first, overscanSize.second)
+                "ow=$rotationCanvas:oh=$rotationCanvas"
+            } else {
+                "ow=$targetW:oh=$targetH"
+            }
             filters.add("rotate=$angle:c=$fillColor:$outputSize")
         }
 
@@ -1234,15 +1264,41 @@ class FFmpegExecutor(
     }
 
     private fun preservesLayerOverscan(clip: EditorClip): Boolean {
-        val hasAnimatedScale = clip.keyframes["scale"].orEmpty().isNotEmpty()
-        val hasAnimatedCrop = listOf("cropL", "cropR", "cropT", "cropB")
-            .any { clip.keyframes[it].orEmpty().isNotEmpty() }
-        val hasOversizedStaticScale = clip.scale.coerceIn(0.1f, 5f) > 1.0f
+        val maxKeyframedScale = clip.keyframes["scale"].orEmpty()
+            .maxOfOrNull { it.value / 100f } ?: clip.scale
+        val hasOversizedScale = maxOf(clip.scale, maxKeyframedScale) > 1f
+        val hasVisibleCrop = listOf("cropL", "cropR", "cropT", "cropB")
+            .any { property ->
+                clip.keyframes[property].orEmpty().any { kotlin.math.abs(it.value) > 0.0001f }
+            }
 
-        return (hasAnimatedScale || hasOversizedStaticScale) &&
-                !hasAnimatedCrop &&
+        return hasOversizedScale &&
+                !hasVisibleCrop &&
                 !CropHelper.isCropped(clip) &&
                 !clip.mask.isActive
+    }
+
+    private fun overscanCanvasSize(
+        clip: EditorClip,
+        targetW: Int,
+        targetH: Int
+    ): Pair<Int, Int> {
+        val maxKeyframedScale = clip.keyframes["scale"].orEmpty()
+            .maxOfOrNull { it.value / 100f } ?: clip.scale
+        val scale = maxOf(clip.scale, maxKeyframedScale).coerceIn(1f, 5f)
+
+        fun evenDimension(value: Float): Int {
+            val roundedUp = kotlin.math.ceil(value).toInt().coerceAtLeast(2)
+            return if (roundedUp % 2 == 0) roundedUp else roundedUp + 1
+        }
+
+        return evenDimension(targetW * scale) to evenDimension(targetH * scale)
+    }
+
+    private fun rotationCanvasSize(width: Int, height: Int): Int {
+        val diagonal = kotlin.math.ceil(kotlin.math.hypot(width.toDouble(), height.toDouble()))
+            .toInt()
+        return if (diagonal % 2 == 0) diagonal else diagonal + 1
     }
 
     private fun buildAudioOnlyMix(
