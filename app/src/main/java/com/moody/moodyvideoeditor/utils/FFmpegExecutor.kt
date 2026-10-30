@@ -2548,9 +2548,8 @@ class FFmpegExecutor(
                     )
                 )
                 if (clip.speed != 1.0f && !isImage(clip)) vf.add("setpts=${1.0f / clip.speed}*PTS")
-                vf.addAll(buildPerClipFilterChain(clip, allClips, fps)); vf.addAll(
-                buildVisualTransformFilters(clip, targetW, targetH)
-            )
+                vf.addAll(buildPerClipFilterChain(clip, allClips, fps))
+                vf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
                 vf.addAll(
                     listOf(
                         "fps=$fps",
@@ -2790,9 +2789,8 @@ class FFmpegExecutor(
                     )
                 )
                 if (clip.speed != 1.0f && !isImage(clip)) vf.add("setpts=${1.0f / clip.speed}*PTS")
-                vf.addAll(buildPerClipFilterChain(clip, allClips, fps)); vf.addAll(
-                buildVisualTransformFilters(clip, targetW, targetH)
-            )
+                vf.addAll(buildPerClipFilterChain(clip, allClips, fps))
+                vf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
                 vf.addAll(listOf("fps=$fps", "format=yuv420p"))
                 filterParts.add("[$idx:v]${vf.joinToString(",")}[v$idx]")
 
@@ -2949,19 +2947,6 @@ class FFmpegExecutor(
                             )
                         )
                     }
-                    effClip.effectState?.edgeGlow?.let {
-                        if (it.intensity > 1f) {
-                            filters.addAll(
-                                buildEdgeGlowFilters(
-                                    it,
-                                    fps,
-                                    clip.timelineStartMs / 1000.0,
-                                    start,
-                                    end
-                                )
-                            )
-                        }
-                    }
                 }
             }
 
@@ -3035,126 +3020,6 @@ class FFmpegExecutor(
             }
         }
         return filters
-    }
-
-    private fun buildEdgeGlowFilters(
-        glow: com.moody.moodyvideoeditor.data.EdgeGlowConfig,
-        fps: Int,
-        clipTimelineStartSec: Double,
-        effectStartSec: Double,
-        effectEndSec: Double
-    ): List<String> {
-        val safeFps = fps.coerceAtLeast(1)
-        val clipStart = String.format(Locale.US, "%.6f", clipTimelineStartSec)
-        val time = "(N/$safeFps+$clipStart)*${glow.speed.coerceIn(0.2f, 4f)}"
-        val baseR = ((glow.color shr 16) and 0xFF).toInt()
-        val baseG = ((glow.color shr 8) and 0xFF).toInt()
-        val baseB = (glow.color and 0xFF).toInt()
-        val baseAlpha = ((glow.color shr 24) and 0xFF).toInt() / 255.0
-        var radiusMultiplier = "1"
-        var intensityMultiplier = "1"
-        var offsetX = "0"
-        var offsetY = "0"
-        var red = baseR.toString()
-        var green = baseG.toString()
-        var blue = baseB.toString()
-        val wave = "(sin($time*8)*0.5+0.5)"
-
-        when (glow.animation) {
-            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.STATIC -> Unit
-            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.PULSE -> {
-                val pulse = "(sin($time*3)*0.5+0.5)"
-                radiusMultiplier = "(0.85+0.35*$pulse)"
-                intensityMultiplier = "(0.8+0.4*$pulse)"
-            }
-            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.BREATHE -> {
-                val pulse = "(sin($time*1.5)*0.5+0.5)"
-                radiusMultiplier = "(0.7+0.7*$pulse)"
-                intensityMultiplier = "((0.75+0.25*$pulse)*(0.6+0.6*$pulse))"
-            }
-            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.FLICKER -> {
-                radiusMultiplier = "(0.9+0.3*$wave)"
-                intensityMultiplier = "(0.35+0.65*$wave)"
-            }
-            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.STROBE -> {
-                intensityMultiplier = "lt(mod(floor($time*6),2),1)"
-            }
-            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.RAINBOW -> {
-                val hue = "mod($time*90,360)/60"
-                red = "(clip(2-abs($hue),0,1)+clip(2-abs($hue-6),0,1))*255"
-                green = "clip(2-abs($hue-2),0,1)*255"
-                blue = "clip(2-abs($hue-4),0,1)*255"
-            }
-            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.WAVE -> {
-                offsetX = "sin($time*4)*6"
-                offsetY = "cos($time*3.6)*6"
-            }
-            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.SPARK -> {
-                val spike = "max(0,($wave-0.75)*4)"
-                radiusMultiplier = "(1+0.6*$spike)"
-                intensityMultiplier = "(1+$spike)"
-            }
-            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.FIRE -> {
-                val flame = wave
-                red = "255"
-                green = "(102+102*$flame)"
-                blue = "0"
-                radiusMultiplier = "(0.9+0.5*$flame)"
-                intensityMultiplier = "(0.85+0.35*$flame)"
-            }
-            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.ELECTRIC -> {
-                val pulse = "(sin($time*20)*0.5+0.5)"
-                radiusMultiplier = "(0.9+0.6*$pulse)"
-                intensityMultiplier = "(0.7+0.8*$pulse)"
-                offsetX = "sin($time*40)*3"
-                offsetY = "sin($time*38)*3"
-            }
-            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.NEON -> {
-                radiusMultiplier = "(sin($time*1.2)*0.1+1)"
-            }
-            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.AURORA -> {
-                val mix = "(sin($time*0.5)*0.5+0.5)"
-                val secondR = ((glow.color2 shr 16) and 0xFF).toInt()
-                val secondG = ((glow.color2 shr 8) and 0xFF).toInt()
-                val secondB = (glow.color2 and 0xFF).toInt()
-                red = "($baseR+($secondR-$baseR)*$mix)"
-                green = "($baseG+($secondG-$baseG)*$mix)"
-                blue = "($baseB+($secondB-$baseB)*$mix)"
-                val pulse = "(sin($time*1.5)*0.15+1)"
-                radiusMultiplier = pulse
-                intensityMultiplier = "(0.9+0.2*$pulse)"
-            }
-            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.GHOST -> {
-                val pulse = "(sin($time*1.2)*0.5+0.5)"
-                radiusMultiplier = "(0.9+0.4*$pulse)"
-                intensityMultiplier = "((0.35+0.45*$pulse)*(0.5+0.5*$pulse))"
-            }
-            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.GLITCH -> {
-                val on = "gt(sin($time*10),0)"
-                red = "($baseR*$on+0*(1-$on))"
-                green = "($baseG*$on+229*(1-$on))"
-                blue = "($baseB*$on+255*(1-$on))"
-                intensityMultiplier = "($on+0.6*(1-$on))"
-                offsetX = "sin($time*30)*5"
-            }
-        }
-
-        val distance = "min(min(X-$offsetX,W-1-X+$offsetX),min(Y-$offsetY,H-1-Y+$offsetY))"
-        val radius = "(${glow.radius.coerceIn(2f, 80f)}*$radiusMultiplier)"
-        val effectStart =
-            String.format(Locale.US, "%.4f", effectStartSec)
-        val effectEnd =
-            String.format(Locale.US, "%.4f", effectEndSec)
-        val activeAtTime = "between(N/$safeFps,$effectStart,$effectEnd)"
-        val opacity =
-            "clip((${glow.intensity.coerceIn(0f, 100f) / 100f}*$baseAlpha*$intensityMultiplier)*(1-$distance/$radius)*$activeAtTime,0,1)"
-        fun channel(source: String, color: String) =
-            "clip($source*(1-($opacity))+($color)*($opacity),0,255)"
-        return listOf(
-            "fps=$safeFps",
-            "format=rgba",
-            "geq=r='${channel("r(X,Y)", red)}':g='${channel("g(X,Y)", green)}':b='${channel("b(X,Y)", blue)}':a='a(X,Y)'"
-        )
     }
 
     private fun applyAudioEffectLayers(

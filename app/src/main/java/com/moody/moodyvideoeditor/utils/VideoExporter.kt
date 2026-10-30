@@ -163,12 +163,19 @@ class VideoExporter(
         )
         val vizClips =
             clips.filter { it.isVisualizerClip && it.timelineEndMs > rangeStart && it.timelineStartMs < rangeEnd }
+        val edgeGlowClips = clips.filter {
+            it.isEffectClip &&
+                    it.effectState?.edgeGlow != null &&
+                    it.timelineEndMs > rangeStart &&
+                    it.timelineStartMs < rangeEnd
+        }
 
         val exportDurationMs = rangeEnd - rangeStart
         val hasBaseVideo = trimmedVisualClips.isNotEmpty() || trimmedMatteClips.isNotEmpty()
         val hasSynthetic =
             trimmedTextClips.isNotEmpty() || overlayImageClips.isNotEmpty() ||
-                    vizClips.isNotEmpty() || spotlightClips.isNotEmpty()
+                    vizClips.isNotEmpty() || spotlightClips.isNotEmpty() ||
+                    edgeGlowClips.isNotEmpty()
 
         when {
             hasBaseVideo -> {
@@ -185,7 +192,7 @@ class VideoExporter(
                         H = targetH,
                         fps = fps,
                         totalDurationMs = exportDurationMs,
-                        onProgress = { p -> onProgress(p * 0.20f) },
+                        onProgress = { p -> onProgress(p * 0.15f) },
                         shouldCancel = { isCancelled },
                         imageFormat = imageFormat,
                         jpegQuality = jpegQuality
@@ -209,7 +216,7 @@ class VideoExporter(
                             H = targetH,
                             fps = fps,
                             totalDurationMs = exportDurationMs,
-                            onProgress = { p -> onProgress(0.20f + p * 0.20f) },
+                            onProgress = { p -> onProgress(0.15f + p * 0.15f) },
                             shouldCancel = { isCancelled },
                             imageFormat = imageFormat,
                             jpegQuality = jpegQuality
@@ -233,7 +240,7 @@ class VideoExporter(
                             height = targetH,
                             fps = fps,
                             totalDurationMs = exportDurationMs,
-                            onProgress = { p -> onProgress(0.40f + p * 0.10f) },
+                            onProgress = { p -> onProgress(0.30f + p * 0.08f) },
                             shouldCancel = { isCancelled }
                         )
                     } catch (e: Exception) {
@@ -246,8 +253,38 @@ class VideoExporter(
                     }
                 } else emptyList()
 
+                val edgeGlowSequences = if (edgeGlowClips.isNotEmpty()) {
+                    try {
+                        EdgeGlowBitmapRenderer.render(
+                            context = context,
+                            clips = edgeGlowClips,
+                            width = targetW,
+                            height = targetH,
+                            fps = fps,
+                            rangeStartMs = rangeStart,
+                            rangeEndMs = rangeEnd,
+                            onProgress = { p -> onProgress(0.38f + p * 0.02f) },
+                            shouldCancel = { isCancelled }
+                        )
+                    } catch (e: Exception) {
+                        cleanupSequences(textSequences + vizSequences + spotlightSequences)
+                        if (e is CancellationException) {
+                            if (isCancelled) {
+                                onCancelled(); return
+                            }
+                            throw e
+                        }
+                        if (isCancelled) {
+                            onCancelled(); return
+                        }
+                        Log.e("EXPORT", "Edge glow rendering failed", e)
+                        onError("Edge glow render failed: ${e.message}"); return
+                    }
+                } else emptyList()
+
                 val allSequences =
-                    (textSequences + vizSequences + spotlightSequences).sortedBy { it.trackIndex }
+                    (textSequences + vizSequences + spotlightSequences + edgeGlowSequences)
+                        .sortedBy { it.trackIndex }
                 onProgress(0.40f)
 
                 ffmpeg = FFmpegExecutor(
@@ -297,6 +334,7 @@ class VideoExporter(
                         overlayClips = trimmedOverlayClips,
                         vizClips = vizClips,
                         spotlightClips = spotlightClips,
+                        edgeGlowClips = edgeGlowClips,
                         matteClips = trimmedMatteClips,
                         audioOnlyClips = audioOnlyClips,
                         rangeStart = rangeStart,
@@ -507,6 +545,7 @@ class VideoExporter(
         overlayClips: List<EditorClip>,
         vizClips: List<EditorClip>,
         spotlightClips: List<EditorClip> = emptyList(),
+        edgeGlowClips: List<EditorClip> = emptyList(),
         matteClips: List<EditorClip> = emptyList(),
         audioOnlyClips: List<EditorClip>,
         rangeStart: Long,
@@ -534,7 +573,7 @@ class VideoExporter(
                     H = targetH,
                     fps = fps,
                     totalDurationMs = durationMs,
-                    onProgress = { p -> onProgress(p * 0.25f) },
+                    onProgress = { p -> onProgress(p * 0.20f) },
                     shouldCancel = { isCancelled },
                     imageFormat = imageFormat,
                     jpegQuality = jpegQuality
@@ -562,7 +601,7 @@ class VideoExporter(
                         H = targetH,
                         fps = fps,
                         totalDurationMs = durationMs,
-                        onProgress = { p -> onProgress(0.25f + p * 0.25f) },
+                        onProgress = { p -> onProgress(0.20f + p * 0.18f) },
                         shouldCancel = { isCancelled },
                         imageFormat = imageFormat,
                         jpegQuality = jpegQuality
@@ -586,7 +625,7 @@ class VideoExporter(
                     height = targetH,
                     fps = fps,
                     totalDurationMs = durationMs,
-                    onProgress = { p -> onProgress(0.50f + p * 0.10f) },
+                    onProgress = { p -> onProgress(0.38f + p * 0.08f) },
                     shouldCancel = { isCancelled }
                 )
             } catch (e: Exception) {
@@ -599,8 +638,38 @@ class VideoExporter(
             }
         } else emptyList()
 
+        val edgeGlowSequences = if (edgeGlowClips.isNotEmpty()) {
+            try {
+                EdgeGlowBitmapRenderer.render(
+                    context = context,
+                    clips = edgeGlowClips,
+                    width = targetW,
+                    height = targetH,
+                    fps = fps,
+                    rangeStartMs = rangeStart,
+                    rangeEndMs = rangeEnd,
+                    onProgress = { p -> onProgress(0.46f + p * 0.04f) },
+                    shouldCancel = { isCancelled }
+                )
+            } catch (e: Exception) {
+                cleanupSequences(vizSequences + textSequences + spotlightSequences)
+                if (e is CancellationException) {
+                    if (isCancelled) {
+                        onCancelled(); return
+                    }
+                    throw e
+                }
+                if (isCancelled) {
+                    onCancelled(); return
+                }
+                Log.e("EXPORT", "Edge glow rendering failed", e)
+                onError("Edge glow render failed: ${e.message}"); return
+            }
+        } else emptyList()
+
         val allSequences =
-            (vizSequences + textSequences + spotlightSequences).sortedBy { it.trackIndex }
+            (vizSequences + textSequences + spotlightSequences + edgeGlowSequences)
+                .sortedBy { it.trackIndex }
         onProgress(0.50f)
 
         val audioToMix = mutableListOf<EditorClip>()

@@ -11,7 +11,7 @@ import android.util.Log
 //    (0:08) caption 3 text
 //    Each (MM:SS) is the START of a caption.
 //    Next (MM:SS) is the END of the previous caption.
-//    Last caption uses the video end time.
+//    Each marker starts a caption; the final caption defaults to 3 seconds.
 //
 //  Format 2 — Line by line:
 //    0;6 hello world
@@ -35,42 +35,183 @@ object ManualCaptionParser {
     //  PUBLIC API
     // ═══════════════════════════════════════════════════════════
 
+    @Suppress("UNUSED_PARAMETER")
     fun parse(
         input: String,
         videoDurationMs: Long = 0L
     ): List<ParsedCaption> {
         if (input.isBlank()) return emptyList()
 
-        // Detect (MM:SS) format
-        val hasParenTimestamps = Regex("""\(\s*\d+:\d+\s*\)""").containsMatchIn(input)
-
-        val result = if (hasParenTimestamps) {
-            Log.e(TAG, "Using parenthesis format")
-            parseParenthesisFormat(input, videoDurationMs)
+        val result = if (hasExtendedTimestampSyntax(input)) {
+            Log.e(TAG, "Using extended timestamp format")
+            parseExtendedFormats(input)
         } else {
-            Log.e(TAG, "Using line-by-line format")
-            parseLineByLine(input)
+            // Detect the existing (MM:SS) format before trying line-by-line ranges.
+            val hasParenTimestamps = Regex("""\(\s*\d+:\d+\s*\)""").containsMatchIn(input)
+
+            if (hasParenTimestamps) {
+                Log.e(TAG, "Using parenthesis format")
+                parseParenthesisFormat(input)
+            } else {
+                Log.e(TAG, "Using line-by-line format")
+                parseLineByLine(input)
+            }
         }
 
-        Log.e(TAG, "Parsed ${result.size} captions")
-        result.forEach { cap ->
+        val cleanedResult = result.mapNotNull { caption ->
+            val cleanedText = cleanCaptionText(caption.text)
+            if (cleanedText.isBlank()) null else caption.copy(text = cleanedText)
+        }
+
+        Log.e(TAG, "Parsed ${cleanedResult.size} captions")
+        cleanedResult.forEach { cap ->
             Log.e(
                 TAG,
                 "  ${cap.startMs}ms → ${cap.endMs}ms: \"${cap.text.take(40)}\""
             )
         }
 
-        return result
+        return cleanedResult
     }
+
+    private data class CaptionCue(
+        val startMs: Long,
+        val endMs: Long?,
+        val text: String
+    )
+
+    private val TIME_PATTERN =
+        """\d{1,3}(?:\s*[:.-]\s*\d{1,2}){1,2}(?:\s*,\s*\d{1,3})?"""
+    private val RANGE_HEADER_REGEX = Regex(
+        """^\s*(?:\d+\s+)?[\[(]?\s*($TIME_PATTERN)\s*[\])]?\s*(-->|->|→|–|—|\bto\b|;|-)\s*[\[(]?\s*($TIME_PATTERN)\s*[\])]?(?:\s+(.*))?\s*$""",
+        RegexOption.IGNORE_CASE
+    )
+    private val SINGLE_HEADER_REGEX = Regex(
+        """^\s*[\[(]?\s*($TIME_PATTERN)\s*[\])]?(.*)$"""
+    )
+    private val STANDALONE_TIMESTAMP_REGEX = Regex(
+        """^\s*[\[(]?\s*$TIME_PATTERN\s*[\])]?\s*$"""
+    )
+    private val NOISE_TAG_REGEX = Regex(
+        """(?i)\[(?:music|applause|laughter|laughing|laughs?|sighs?|inaudible|unintelligible|noise|sound effects?)\]|\((?:music|applause|laughter|laughing|laughs?|sighs?|inaudible|unintelligible|noise|sound effects?)\)"""
+    )
+
+    private fun hasExtendedTimestampSyntax(input: String): Boolean {
+        if (input.contains("-->")) return true
+
+        return input.lineSequence().any { line ->
+            val trimmed = line.trim()
+            STANDALONE_TIMESTAMP_REGEX.matches(trimmed) ||
+                    Regex(
+                        """^\s*[\[(]?\s*\d{1,3}(?:\s*[.:,-]\s*\d{1,3}){1,3}"""
+                    ).containsMatchIn(line) ||
+                    Regex("""^\s*\[\s*\d+\s*:\s*\d""").containsMatchIn(line) ||
+                    Regex("""^\s*\(\s*\d+\s*:\s+\d""").containsMatchIn(line) ||
+                    Regex("""^\s*[\[(]\s*\d+\s*:\s*\d+\s*:\s*\d+""")
+                        .containsMatchIn(line) ||
+                    Regex("""[\[(]\s*\d+\s*[-.]\s*\d+""").containsMatchIn(line) ||
+                    Regex("""^\d{1,3}(?::\d{1,2}){1,2}\s*[-–—]\s*\D.+$""")
+                        .matches(trimmed)
+        }
+    }
+
+    private fun parseExtendedFormats(input: String): List<ParsedCaption> {
+        val cues = mutableListOf<CaptionCue>()
+        input.lineSequence().forEach { rawLine ->
+            val line = rawLine.trim()
+            if (line.isBlank() || line.matches(Regex("""\d+"""))) return@forEach
+
+            val rangeMatch = RANGE_HEADER_REGEX.matchEntire(line)
+            if (rangeMatch != null) {
+                val start = parseExtendedTime(rangeMatch.groupValues[1])
+                    ?: return@forEach
+                val end = parseExtendedTime(rangeMatch.groupValues[3])
+                    ?: return@forEach
+                val inlineText = rangeMatch.groupValues.getOrNull(4).orEmpty().trim()
+                cues += CaptionCue(start, end, inlineText)
+                return@forEach
+            }
+
+            val singleMatch = SINGLE_HEADER_REGEX.matchEntire(line)
+            if (singleMatch != null) {
+                val start = parseExtendedTime(singleMatch.groupValues[1])
+                if (start != null) {
+                    var trailingText = singleMatch.groupValues[2].trim()
+                    trailingText = trailingText
+                        .replace(Regex("""^[\])}]+"""), "")
+                        .trim()
+                    trailingText = trailingText
+                        .replace(Regex("""^(?:[-–—]\s*)"""), "")
+                        .trim()
+                    cues += CaptionCue(start, null, trailingText)
+                    return@forEach
+                }
+            }
+
+            if (cues.isNotEmpty()) {
+                val previous = cues.last()
+                cues[cues.lastIndex] = previous.copy(
+                    text = listOf(previous.text, line).filter { it.isNotBlank() }.joinToString(" ")
+                )
+            }
+        }
+
+        return cues.mapIndexedNotNull { index, cue ->
+            val nextStart = cues.getOrNull(index + 1)?.startMs
+            val end = cue.endMs ?: nextStart ?: cue.startMs + 3000L
+            if (end <= cue.startMs || cue.text.isBlank()) {
+                null
+            } else {
+                ParsedCaption(cue.startMs, end, cue.text)
+            }
+        }
+    }
+
+    private fun parseExtendedTime(value: String): Long? {
+        val normalized = value.trim().replace(Regex("""\s+"""), "")
+        val pieces = normalized.split(Regex("""[:,.-]"""))
+        if (pieces.any { it.isEmpty() }) return null
+
+        return try {
+            when (pieces.size) {
+                2 -> {
+                    val minutes = pieces[0].toLongOrNull() ?: return null
+                    val seconds = pieces[1].toLongOrNull() ?: return null
+                    if (seconds !in 0..59) return null
+                    (minutes * 60L + seconds) * 1000L
+                }
+                3 -> {
+                    val hours = pieces[0].toLongOrNull() ?: return null
+                    val minutes = pieces[1].toLongOrNull() ?: return null
+                    val seconds = pieces[2].toLongOrNull() ?: return null
+                    if (minutes !in 0..59 || seconds !in 0..59) return null
+                    (hours * 3600L + minutes * 60L + seconds) * 1000L
+                }
+                4 -> {
+                    val hours = pieces[0].toLongOrNull() ?: return null
+                    val minutes = pieces[1].toLongOrNull() ?: return null
+                    val seconds = pieces[2].toLongOrNull() ?: return null
+                    val millis = pieces[3].toLongOrNull() ?: return null
+                    if (minutes !in 0..59 || seconds !in 0..59 || millis !in 0..999) return null
+                    (hours * 3600L + minutes * 60L + seconds) * 1000L + millis
+                }
+                else -> null
+            }
+        } catch (_: ArithmeticException) {
+            null
+        }
+    }
+
+    private fun cleanCaptionText(text: String): String =
+        text.replace(NOISE_TAG_REGEX, "")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
 
     // ═══════════════════════════════════════════════════════════
     //  FORMAT 1 — (MM:SS) TEXT (MM:SS) TEXT ...
     // ═══════════════════════════════════════════════════════════
 
-    private fun parseParenthesisFormat(
-        input: String,
-        videoDurationMs: Long
-    ): List<ParsedCaption> {
+    private fun parseParenthesisFormat(input: String): List<ParsedCaption> {
         val markerRegex = Regex("""\(\s*(\d+)\s*:\s*(\d+)\s*\)""")
         val matches = markerRegex.findAll(input).toList()
 
@@ -85,9 +226,7 @@ object ManualCaptionParser {
             )
             val text = input.substring(only.range.last + 1).trim()
             if (text.isBlank()) return emptyList()
-            val endMs = if (videoDurationMs > startMs) videoDurationMs
-            else startMs + 3000L
-            return listOf(ParsedCaption(startMs, endMs, text))
+            return listOf(ParsedCaption(startMs, startMs + 3000L, text))
         }
 
         val result = mutableListOf<ParsedCaption>()
@@ -131,12 +270,7 @@ object ManualCaptionParser {
             .replace(Regex("\\s+"), " ")
 
         if (lastText.isNotBlank()) {
-            val lastEndMs = if (videoDurationMs > lastStartMs + 500L) {
-                videoDurationMs
-            } else {
-                lastStartMs + 3000L
-            }
-            result.add(ParsedCaption(lastStartMs, lastEndMs, lastText))
+            result.add(ParsedCaption(lastStartMs, lastStartMs + 3000L, lastText))
         }
 
         return result
