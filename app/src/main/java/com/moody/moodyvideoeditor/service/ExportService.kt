@@ -232,6 +232,7 @@ class ExportService : Service() {
                 stopSelfSafe()
             },
             onError = { err ->
+                Log.e(TAG, "Export failed: $err")
                 ExportStateHolder.fail(err)
                 ExportClipsHolder.clear()
                 stopSelfSafe()

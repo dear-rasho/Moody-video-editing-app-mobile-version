@@ -92,6 +92,7 @@ import com.moody.moodyvideoeditor.ui.features.ExportOverlay
 import com.moody.moodyvideoeditor.ui.features.FiltersPanel
 import com.moody.moodyvideoeditor.ui.features.FreezePanel
 import com.moody.moodyvideoeditor.ui.features.KeyframeEasingPanel
+import com.moody.moodyvideoeditor.ui.features.LayerShadowPanel
 import com.moody.moodyvideoeditor.ui.features.ManualCaptionsPanel
 import com.moody.moodyvideoeditor.ui.features.MaskPanel
 
@@ -210,6 +211,7 @@ fun EditorScreen(
         mutableStateOf<String?>(if (startInCodeMode) "code" else null)
     }
     var openTextEditor by remember { mutableStateOf(false) }
+    var lastLayerTap by remember { mutableStateOf<Pair<String, Long>?>(null) }
 
     val featureScrollState = androidx.compose.foundation.rememberScrollState()
 
@@ -217,6 +219,46 @@ fun EditorScreen(
     var effectEditLayerId by remember { mutableStateOf<String?>(null) }
     var matteEditLayerId by remember { mutableStateOf<String?>(null) }
     var spotlightEditLayerId by remember { mutableStateOf<String?>(null) }
+
+    fun openLayerPanel(clip: EditorClip) {
+        viewModel.selectClip(clip)
+        openTextEditor = false
+        when {
+            clip.isTextClip -> activePanel = "text"
+            clip.isStickerClip -> activePanel = "stickers"
+            clip.isFilterLayerClip -> {
+                filterEditLayerId = clip.id
+                activePanel = "filters"
+            }
+            clip.isColorMatteClip -> {
+                matteEditLayerId = clip.id
+                activePanel = "matte"
+            }
+            clip.isSpotlightClip -> {
+                spotlightEditLayerId = clip.id
+                activePanel = "spotlight"
+            }
+            clip.isEffectClip -> {
+                effectEditLayerId = clip.id
+                activePanel = "effects"
+            }
+            clip.isVisualizerClip -> activePanel = "visualizer"
+            clip.isAudioEffectClip -> {
+                activePanel = if (clip.isSoundFxClip) "soundfx" else "audiofx"
+            }
+            else -> activePanel = null
+        }
+    }
+
+    fun handleLayerTap(clip: EditorClip) {
+        val now = android.os.SystemClock.uptimeMillis()
+        val previousTap = lastLayerTap
+        val isDoubleTap = previousTap?.first == clip.id &&
+                now - previousTap.second <= 350L
+        lastLayerTap = if (isDoubleTap) null else clip.id to now
+        viewModel.selectClip(clip)
+        if (isDoubleTap) openLayerPanel(clip)
+    }
 
     var isMaskPenMode by remember { mutableStateOf(false) }
     var isMaskHandMode by remember { mutableStateOf(false) }
@@ -622,28 +664,77 @@ fun EditorScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
+        val selectedText = viewModel.state.value.selectedClip
+            ?.takeIf { it.isTextClip } ?: return@rememberLauncherForActivityResult
+        val text = selectedText.textState ?: return@rememberLauncherForActivityResult
         val mimeType = context.contentResolver.getType(uri)
+            ?: when (uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase()) {
+                "jpg", "jpeg" -> "image/jpeg"
+                "png" -> "image/png"
+                "webp" -> "image/webp"
+                "gif" -> "image/gif"
+                "mp4" -> "video/mp4"
+                "mov" -> "video/quicktime"
+                "mkv" -> "video/x-matroska"
+                else -> null
+            }
         if (mimeType?.startsWith("image/") != true &&
             mimeType?.startsWith("video/") != true
         ) {
             Log.e("TEXT_TEXTURE", "Unsupported texture media type: $mimeType")
+            android.widget.Toast.makeText(
+                context, "Choose an image or video file.", android.widget.Toast.LENGTH_LONG
+            ).show()
             return@rememberLauncherForActivityResult
         }
-        try {
-            context.contentResolver.takePersistableUriPermission(
-                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
-        } catch (e: Exception) {
-            Log.e("TEXT_TEXTURE", "Could not retain texture access: ${e.message}", e)
-            return@rememberLauncherForActivityResult
+        coroutineScope.launch {
+            try {
+                val storedTexture = withContext(Dispatchers.IO) {
+                    val textureDirectory = java.io.File(context.filesDir, "text_textures")
+                    if (!textureDirectory.exists() && !textureDirectory.mkdirs()) {
+                        throw java.io.IOException("Could not create texture storage")
+                    }
+                    val extension = mimeType.substringAfter('/', "bin")
+                        .substringBefore('+')
+                        .replace("jpeg", "jpg")
+                        .replace(Regex("[^A-Za-z0-9]"), "")
+                        .ifBlank { "bin" }
+                    val file = java.io.File(
+                        textureDirectory,
+                        "${java.util.UUID.randomUUID()}.$extension"
+                    )
+                    try {
+                        val input = context.contentResolver.openInputStream(uri)
+                            ?: throw java.io.IOException("Selected texture cannot be opened")
+                        input.use { source ->
+                            file.outputStream().use { destination ->
+                                source.copyTo(destination)
+                            }
+                        }
+                        file
+                    } catch (error: Exception) {
+                        file.delete()
+                        throw error
+                    }
+                }
+                viewModel.updateClipTextTexture(
+                    selectedText.id,
+                    text.copy(
+                        textureUri = Uri.fromFile(storedTexture).toString(),
+                        textureMimeType = mimeType
+                    )
+                )
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e("TEXT_TEXTURE", "Could not store selected texture", error)
+                android.widget.Toast.makeText(
+                    context,
+                    "Texture import failed: ${error.message ?: "unknown error"}",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
         }
-        val selectedText = viewModel.state.value.selectedClip
-            ?.takeIf { it.isTextClip } ?: return@rememberLauncherForActivityResult
-        val text = selectedText.textState ?: return@rememberLauncherForActivityResult
-        viewModel.updateClipTextTexture(
-            selectedText.id,
-            text.copy(textureUri = uri.toString())
-        )
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -865,6 +956,24 @@ fun EditorScreen(
                     openTextEditor = false
                 }
             )
+            "layer_shadow" -> {
+                val target = selected?.takeIf {
+                    !it.isAudio && (it.isVisualClip || it.isTextClip ||
+                            it.isColorMatteClip || it.isStickerClip || it.isOverlayClip ||
+                            it.isVisualizerClip || it.isSpotlightClip ||
+                            (it.isEffectClip && it.effectState?.overlay != null))
+                }
+                LayerShadowPanel(
+                    layerId = target?.id,
+                    layerName = target?.name,
+                    initialState = target?.layerShadow
+                        ?: com.moody.moodyvideoeditor.data.LayerShadowState(),
+                    onUpdate = { shadow ->
+                        target?.let { viewModel.updateLayerShadow(it.id, shadow) }
+                    },
+                    onClose = { activePanel = null }
+                )
+            }
             "track_matte" -> {
                 val selectedText = selected?.takeIf { it.isTextClip }
                 TrackMattePanel(
@@ -879,6 +988,22 @@ fun EditorScreen(
                             viewModel.updateClipTextTexture(it.id, textState)
                         }
                     },
+                    onToggleKeyframe = viewModel::toggleKeyframeAtPlayhead,
+                    hasKeyframeAtPlayhead = { property ->
+                        viewModel.hasKeyframeForPropertyAtPlayhead(property)
+                    },
+                    keyframeMap = selectedText?.keyframes ?: emptyMap(),
+                    clipDurationSec = (selectedText?.durationMs ?: 3000L) / 1000f,
+                    onUpdateKeyframe = { property, oldTime, newTime, newValue ->
+                        viewModel.updateKeyframeInGraph(
+                            property, oldTime, newTime, newValue
+                        )
+                    },
+                    onDeleteKeyframe = { property, time ->
+                        viewModel.deleteKeyframeFromGraph(property, time)
+                    },
+                    onKeyframeEditStart = { viewModel.beginKeyframeGraphEdit() },
+                    onKeyframeEditEnd = { viewModel.commitKeyframeGraphEdit() },
                     onClose = { activePanel = null }
                 )
             }
@@ -2591,8 +2716,14 @@ fun EditorScreen(
                     onMaskStateChanged = { viewModel.updateMask(it) },
                     onClosePath = { viewModel.setMaskClosed(true) },
                     onClipSelected = { clipId ->
-                        val clip = state.clips.firstOrNull { it.id == clipId }
-                        if (clip != null) viewModel.selectClip(clip)
+                        state.clips.firstOrNull { it.id == clipId }?.let(::handleLayerTap)
+                    },
+                    onEditText = { clipId ->
+                        state.clips.firstOrNull { it.id == clipId }?.let { clip ->
+                            viewModel.selectClip(clip)
+                            openTextEditor = true
+                            activePanel = "text"
+                        }
                     },
                     onDeleteLayer = { clipId ->
                         state.clips.firstOrNull { it.id == clipId }?.let { clip ->
@@ -2791,42 +2922,7 @@ fun EditorScreen(
                 Timeline(
                     state = state,
                     onClipTapped = { clip ->
-                        viewModel.selectClip(clip)
-
-                        when {
-                            clip.isTextClip -> {
-                                activePanel = "text"
-                                openTextEditor = false
-                            }
-                            clip.isStickerClip -> {
-                                activePanel = "stickers"
-                            }
-                            clip.isFilterLayerClip -> {
-                                filterEditLayerId = clip.id
-                                activePanel = "filters"
-                            }
-                            clip.isColorMatteClip -> {
-                                matteEditLayerId = clip.id
-                                activePanel = "matte"
-                            }
-                            clip.isSpotlightClip -> {
-                                spotlightEditLayerId = clip.id
-                                activePanel = "spotlight"
-                            }
-                            clip.isEffectClip -> {
-                                effectEditLayerId = clip.id
-                                activePanel = "effects"
-                            }
-                            clip.isVisualizerClip -> {
-                                activePanel = "visualizer"
-                            }
-                            clip.isAudioEffectClip -> {
-                                activePanel = if (clip.isSoundFxClip) "soundfx" else "audiofx"
-                            }
-                            else -> {
-                                activePanel = null // Pichla koi panel (jaise replace) stuck na rahe
-                            }
-                        }
+                        handleLayerTap(clip)
                     },
                     onTrackTapped = { ti, aud -> viewModel.selectTrack(ti, aud) },
                     onTrimLeft = { ns -> viewModel.trimClipLeft(ns) },

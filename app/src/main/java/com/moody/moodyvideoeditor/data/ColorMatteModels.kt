@@ -31,7 +31,7 @@ data class ColorMatteStyle(
 object ColorMatteDefaults {
     const val DEFAULT_COLOR: Long = 0xFF000000
     const val DEFAULT_OPACITY: Float = 100f
-    const val DEFAULT_DURATION_MS: Long = 5000L
+    const val DEFAULT_DURATION_MS: Long = 3000L
     const val MIN_DURATION_MS: Long = 500L
     const val MAX_DURATION_MS: Long = 300_000L
 }

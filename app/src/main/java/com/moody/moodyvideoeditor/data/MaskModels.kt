@@ -199,8 +199,8 @@ data class MaskState(
         "feather" -> copy(feather = v.coerceIn(0f, 300f))
         "opacity" -> copy(opacity = v)
         "radius" -> copy(radius = v)
-        "width" -> copy(width = v)
-        "height" -> copy(height = v)
+        "width" -> copy(width = v.coerceIn(0.01f, 2f))
+        "height" -> copy(height = v.coerceIn(0.01f, 2f))
         "cornerRadius" -> copy(cornerRadius = v.coerceAtLeast(0f))
         "linearPosition" -> copy(linearPosition = v)
         "scale" -> copy(scale = v)
@@ -294,7 +294,7 @@ object MaskAnimatableProps {
         "feather" -> 0f..300f
         "opacity" -> 0f..1000f
         "radius" -> 0.01f..20f
-        "width", "height" -> 0.01f..20f
+        "width", "height" -> 0.01f..2f
         "cornerRadius" -> 0f..5f
         "linearPosition" -> 0f..10f
         "scale" -> 0.3f..25f

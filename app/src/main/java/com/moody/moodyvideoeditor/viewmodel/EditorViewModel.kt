@@ -19,6 +19,7 @@ import com.moody.moodyvideoeditor.data.EffectLibrary
 import com.moody.moodyvideoeditor.data.EffectState
 import com.moody.moodyvideoeditor.data.FilterState
 import com.moody.moodyvideoeditor.data.Keyframe
+import com.moody.moodyvideoeditor.data.LayerShadowState
 import com.moody.moodyvideoeditor.data.MaskAnimatableProps
 import com.moody.moodyvideoeditor.data.MaskLibrary
 import com.moody.moodyvideoeditor.data.MaskPoint
@@ -70,6 +71,8 @@ data class TimedTextClip(
     val startMs: Long,
     val endMs: Long
 )
+
+private const val DEFAULT_APPLIED_LAYER_DURATION_MS = 3000L
 
 class EditorViewModel : ViewModel() {
 
@@ -2369,6 +2372,7 @@ class EditorViewModel : ViewModel() {
                 )
             )
         }
+
     }
 
     fun removeSpotlight(layerId: String) {
@@ -2379,6 +2383,12 @@ class EditorViewModel : ViewModel() {
         list.removeAll { it.id == layerId }
         _state.update { it.copy(clips = list, selectedClipId = null) }
         updateHistoryFlags()
+    }
+
+    fun updateLayerShadow(layerId: String, shadow: LayerShadowState) {
+        updateClipDirect(layerId) { clip ->
+            if (clip.isAudio) clip else clip.copy(layerShadow = shadow)
+        }
     }
 
     fun updateClipTextState(clipId: String, newState: TextState) {
@@ -2415,6 +2425,11 @@ class EditorViewModel : ViewModel() {
         if (oldState.textureOffsetY != newState.textureOffsetY) {
             keyframes = KeyframeStore.autoKeyframeIfActive(
                 keyframes, "textTexture.y", localTimeSec, newState.textureOffsetY
+            )
+        }
+        if (oldState.textureRotation != newState.textureRotation) {
+            keyframes = KeyframeStore.autoKeyframeIfActive(
+                keyframes, "textTexture.rotation", localTimeSec, newState.textureRotation
             )
         }
         updateClipDirect(clipId) { current ->
@@ -3073,17 +3088,9 @@ class EditorViewModel : ViewModel() {
 
     fun applyOverlay(newOverlay: OverlayState) {
         val s = _state.value
-        val baseClip = s.selectedClip
         val overlayStartMs = s.currentPosMs.coerceAtLeast(0L)
-        val overlayDurationMs = baseClip
-            ?.takeIf {
-                it.isVisualClip &&
-                        overlayStartMs >= it.timelineStartMs &&
-                        overlayStartMs < it.timelineEndMs
-            }
-            ?.let { it.timelineEndMs - overlayStartMs }
-            ?.coerceAtLeast(EditorClip.MIN_DURATION_MS)
-            ?: 3000L
+        val overlayDurationMs = DEFAULT_APPLIED_LAYER_DURATION_MS
+        val baseClip = s.selectedClip
         val topVisualTrack = s.clips
             .filter {
                 it.isVisualClip &&
@@ -3146,14 +3153,12 @@ class EditorViewModel : ViewModel() {
         }
     }
 
-    fun createFilterLayer(filters: FilterState, durationMs: Long = 0L) {
+    fun createFilterLayer(
+        filters: FilterState,
+        durationMs: Long = DEFAULT_APPLIED_LAYER_DURATION_MS
+    ) {
         val s = _state.value
-        val selectedDur = s.selectedClip?.durationMs ?: 0L
-        val effectiveDur = when {
-            durationMs > 0L -> durationMs
-            selectedDur > 0L -> selectedDur
-            else -> 3000L
-        }.coerceAtLeast(500L)
+        val effectiveDur = durationMs.coerceAtLeast(EditorClip.MIN_DURATION_MS)
 
         val topTrack = (s.clips
             .filter {
@@ -3615,6 +3620,9 @@ class EditorViewModel : ViewModel() {
                     "textTexture.y" -> KeyframeStore.sample(
                         sel.keyframes, prop, currentTimeSec, textState.textureOffsetY
                     )
+                    "textTexture.rotation" -> KeyframeStore.sample(
+                        sel.keyframes, prop, currentTimeSec, textState.textureRotation
+                    )
                     else -> when (prop) {
                         "x" -> live.x
                         "y" -> live.y
@@ -3687,7 +3695,10 @@ class EditorViewModel : ViewModel() {
             return
         }
         val textureProperties = if (sel.isTextClip && sel.textState?.textureUri != null) {
-            listOf("textTexture.scale", "textTexture.x", "textTexture.y")
+            listOf(
+                "textTexture.scale", "textTexture.x", "textTexture.y",
+                "textTexture.rotation"
+            )
         } else emptyList()
         val hasAny = KeyframeStore.hasAnyKeyframeAt(sel.keyframes, currentTimeSec)
 
@@ -3720,6 +3731,9 @@ class EditorViewModel : ViewModel() {
                 kf = KeyframeStore.setKeyframe(
                     kf, "textTexture.y", currentTimeSec, text.textureOffsetY
                 )
+                kf = KeyframeStore.setKeyframe(
+                    kf, "textTexture.rotation", currentTimeSec, text.textureRotation
+                )
             }
             sel.copy(keyframes = kf)
         }
@@ -3734,6 +3748,14 @@ class EditorViewModel : ViewModel() {
             _state.value.currentPosMs, sel.timelineStartMs, sel.durationMs
         )
         return KeyframeStore.hasAnyKeyframeAt(sel.keyframes, currentTimeSec)
+    }
+
+    fun hasKeyframeForPropertyAtPlayhead(prop: String): Boolean {
+        val sel = _state.value.selectedClip ?: return false
+        val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
+            _state.value.currentPosMs, sel.timelineStartMs, sel.durationMs
+        )
+        return KeyframeStore.hasKeyframeAt(sel.keyframes, prop, currentTimeSec)
     }
 
     fun setEaseAtPlayhead(ease: String) {
@@ -4373,8 +4395,8 @@ class EditorViewModel : ViewModel() {
         val preset = EffectLibrary.findByKey(presetKey) ?: return
         val s = _state.value
         val baseClip = s.selectedClip
-        val startMs = baseClip?.timelineStartMs ?: s.currentPosMs
-        val durMs = baseClip?.durationMs ?: 3000L
+        val startMs = s.currentPosMs.coerceAtLeast(0L)
+        val durMs = DEFAULT_APPLIED_LAYER_DURATION_MS
         val baseTrack = baseClip?.trackIndex ?: 0
 
         val effectState = EffectState(
@@ -4399,8 +4421,8 @@ class EditorViewModel : ViewModel() {
         val preset = EffectLibrary.findByKey(presetKey) ?: return
         val s = _state.value
         val baseClip = s.selectedClip
-        val startMs = baseClip?.timelineStartMs ?: s.currentPosMs
-        val durMs = baseClip?.durationMs ?: 3000L
+        val startMs = s.currentPosMs.coerceAtLeast(0L)
+        val durMs = DEFAULT_APPLIED_LAYER_DURATION_MS
         val baseTrack = baseClip?.trackIndex ?: 0
         val scaled = buildScaledEffectState(preset, intensity)
 
@@ -4423,8 +4445,8 @@ class EditorViewModel : ViewModel() {
         val preset = EffectLibrary.findByKey(presetKey) ?: return
         val s = _state.value
         val baseClip = s.selectedClip
-        val startMs = baseClip?.timelineStartMs ?: s.currentPosMs
-        val durMs = baseClip?.durationMs ?: 3000L
+        val startMs = s.currentPosMs.coerceAtLeast(0L)
+        val durMs = DEFAULT_APPLIED_LAYER_DURATION_MS
         val baseTrack = baseClip?.trackIndex ?: 0
         val scaled = buildScaledEffectState(preset, intensity)
             .copy(overlay = overlayConfig)

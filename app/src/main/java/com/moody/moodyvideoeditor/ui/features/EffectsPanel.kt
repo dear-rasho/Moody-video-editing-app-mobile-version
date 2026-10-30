@@ -80,6 +80,7 @@ import com.moody.moodyvideoeditor.utils.BlurConfig
 import com.moody.moodyvideoeditor.utils.EffectsEngine
 import com.moody.moodyvideoeditor.utils.LightLeakEngine
 import com.moody.moodyvideoeditor.utils.OverlayEngine
+import com.moody.moodyvideoeditor.utils.drawEdgeGlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -1765,19 +1766,8 @@ private fun EffectThumbChip(
                 }
 
                 if (edgeGlowFrame != null && preset.edgeGlow != null) {
-                    val r = (preset.edgeGlow.radius * edgeGlowFrame.radiusMul / 3f)
-                        .coerceIn(1f, 12f)
-                    val a = (edgeGlowFrame.intensityMul *
-                            (preset.edgeGlow.intensity / 100f) *
-                            edgeGlowFrame.alpha).coerceIn(0f, 1f)
                     Canvas(modifier = Modifier.matchParentSize()) {
-                        val cx = size.width / 2f + edgeGlowFrame.offsetX
-                        val cy = size.height / 2f + edgeGlowFrame.offsetY
-                        drawCircle(
-                            color = edgeGlowFrame.color.copy(alpha = a * 0.7f),
-                            radius = r,
-                            center = Offset(cx, cy)
-                        )
+                        drawEdgeGlow(preset.edgeGlow, clockSec, radiusScale = 1f / 3f)
                     }
                 }
 

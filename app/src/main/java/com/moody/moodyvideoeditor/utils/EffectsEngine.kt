@@ -4,6 +4,7 @@ import android.graphics.ColorMatrix
 import androidx.compose.ui.graphics.Color
 import com.moody.moodyvideoeditor.data.ColorFilterValues
 import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.data.LayerShadowState
 import com.moody.moodyvideoeditor.data.MotionConfig
 import com.moody.moodyvideoeditor.data.OverlayConfig
 import com.moody.moodyvideoeditor.data.OverlayState
@@ -19,7 +20,11 @@ import kotlin.math.sin
 // - Multi-effect stacking
 object EffectsEngine {
 
-    data class ActiveOverlay(val state: OverlayState, val localTimeSec: Float)
+    data class ActiveOverlay(
+        val state: OverlayState,
+        val localTimeSec: Float,
+        val layerShadow: LayerShadowState = LayerShadowState()
+    )
 
     //  MOTION FRAME — mirrors effectRenderer.js computeMotion()
 
@@ -303,7 +308,8 @@ object EffectsEngine {
                             glowRadius = cfg.glowRadius,
                             glowColor = cfg.glowColor
                             ),
-                            localTimeSec = (timeMs - clip.timelineStartMs) / 1000f
+                            localTimeSec = (timeMs - clip.timelineStartMs) / 1000f,
+                            layerShadow = clip.layerShadow
                         )
                     )
                 }
@@ -321,7 +327,8 @@ object EffectsEngine {
                     result.add(
                         ActiveOverlay(
                             state = it,
-                            localTimeSec = (timeMs - clip.timelineStartMs) / 1000f
+                            localTimeSec = (timeMs - clip.timelineStartMs) / 1000f,
+                            layerShadow = clip.layerShadow
                         )
                     )
                 }

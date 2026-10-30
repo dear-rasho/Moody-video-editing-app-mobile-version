@@ -41,6 +41,12 @@ private data class LayeredRenderItem(
     val inputIndex: Int = -1
 )
 
+private data class LayerShadowFilterOutputs(
+    val combinedLayer: String,
+    val shadowOnly: String,
+    val padding: Int
+)
+
 class FFmpegExecutor(
     private val context: Context,
     private val onProgress: (Float) -> Unit,
@@ -296,7 +302,8 @@ class FFmpegExecutor(
                     clips.map { it.trackIndex }
                         .distinct().size > 1 || maskSequences.isNotEmpty() || matteClips.isNotEmpty() ||
                     allExtraSequences.isNotEmpty() || adjustmentClips.isNotEmpty() ||
-                    clips.any { TransformApplier.hasAnimatedTransform(it) }
+                    clips.any { TransformApplier.hasAnimatedTransform(it) } ||
+                    clips.any { it.layerShadow.enabled }
 
             if (needsLayered) {
                 exportLayeredTracks(
@@ -751,7 +758,7 @@ class FFmpegExecutor(
             } else if (baseVisualClips.size == 1) {
                 val clip = baseVisualClips[0]
                 if (clip.speed != 1.0f && !isImage(clip)) baseVf.add("setpts=${1.0f / clip.speed}*PTS")
-                baseVf.addAll(buildPerClipFilterChain(clip, allClips))
+                baseVf.addAll(buildPerClipFilterChain(clip, allClips, fps))
                 baseVf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
             } else {
                 baseVisualClips.forEachIndexed { idx, clip ->
@@ -1123,7 +1130,8 @@ class FFmpegExecutor(
         positionByOverlay: Boolean = false
     ): List<String> {
         val filters = mutableListOf<String>()
-        if (transparentPadding) filters.add("format=rgba")
+        val keepTransparentPadding = transparentPadding
+        if (keepTransparentPadding) filters.add("format=rgba")
 
         val scaleTrack = clip.keyframes["scale"].orEmpty()
         val hasAnimatedScale = scaleTrack
@@ -1139,9 +1147,9 @@ class FFmpegExecutor(
         val offsetXpx = (clip.offsetX * targetW).toInt()
         val offsetYpx = (clip.offsetY * targetH).toInt()
         val hasOffset = offsetXpx != 0 || offsetYpx != 0
-        val fillColor = if (transparentPadding) "black@0" else "black"
+        val fillColor = if (keepTransparentPadding) "black@0" else "black"
         val preserveOverscan =
-            transparentPadding && positionByOverlay && preservesLayerOverscan(clip)
+            keepTransparentPadding && positionByOverlay && preservesLayerOverscan(clip)
         val overscanSize = if (preserveOverscan) {
             overscanCanvasSize(clip, targetW, targetH)
         } else {
@@ -1258,7 +1266,7 @@ class FFmpegExecutor(
             filters.add("rotate=$angle:c=$fillColor:$outputSize")
         }
 
-        if (transparentPadding) filters.add("format=rgba")
+        if (keepTransparentPadding) filters.add("format=rgba")
         filters.add("setsar=1")
         return filters
     }
@@ -1299,6 +1307,58 @@ class FFmpegExecutor(
         val diagonal = kotlin.math.ceil(kotlin.math.hypot(width.toDouble(), height.toDouble()))
             .toInt()
         return if (diagonal % 2 == 0) diagonal else diagonal + 1
+    }
+
+    private fun addLayerShadowFilters(
+        filterParts: MutableList<String>,
+        sourceLabel: String,
+        state: com.moody.moodyvideoeditor.data.LayerShadowState,
+        targetW: Int,
+        clipIdx: Int
+    ): LayerShadowFilterOutputs {
+        val padding = LayerShadowRenderer.ffmpegPadding(state, targetW)
+        val (offsetX, offsetY) = LayerShadowRenderer.ffmpegOffset(state, targetW)
+        val blur = LayerShadowRenderer.ffmpegBlur(state, targetW)
+        fun shiftedCoordinate(axis: String, offset: Float): String {
+            val magnitude = LayerShadowRenderer.ffmpegNumber(kotlin.math.abs(offset))
+            return if (offset >= 0f) "$axis-$magnitude" else "$axis+$magnitude"
+        }
+        val sampleX = shiftedCoordinate("X", offsetX)
+        val sampleY = shiftedCoordinate("Y", offsetY)
+        val blurValue = LayerShadowRenderer.ffmpegNumber(blur)
+        val color = state.color.toInt()
+        val opacity = String.format(Locale.US, "%.6f", Color.alpha(color) / 255f)
+        val prefix = "layer_shadow_$clipIdx"
+        val alphaInput = "${prefix}_alpha_input"
+        val originalInput = "${prefix}_original_input"
+        val blurredAlpha = "${prefix}_blurred"
+        val shadow = "${prefix}_only"
+        val original = "${prefix}_original"
+        val combined = "${prefix}_combined"
+
+        filterParts.add("[$sourceLabel]split=2[$alphaInput][$originalInput]")
+        val alphaFilters = mutableListOf(
+            "format=rgba",
+            "pad=iw+${2 * padding}:ih+${2 * padding}:$padding:$padding:color=black@0",
+            "alphaextract"
+        )
+        if (blur > 0.01f) {
+            alphaFilters.add("gblur=sigma=$blurValue:steps=2")
+        }
+        alphaFilters.add("geq=lum='lum($sampleX,$sampleY)'")
+        filterParts.add("[$alphaInput]${alphaFilters.joinToString(",")}[$blurredAlpha]")
+
+        filterParts.add(
+            "[$blurredAlpha]format=rgba," +
+                    "geq=r='${Color.red(color)}':g='${Color.green(color)}':" +
+                    "b='${Color.blue(color)}':a='r(X,Y)*$opacity'[$shadow]"
+        )
+        filterParts.add(
+            "[$originalInput]format=rgba," +
+                    "pad=iw+${2 * padding}:ih+${2 * padding}:$padding:$padding:color=black@0[$original]"
+        )
+        filterParts.add("[$shadow][$original]overlay=0:0:shortest=1:format=auto[$combined]")
+        return LayerShadowFilterOutputs(combined, shadow, padding)
     }
 
     private fun buildAudioOnlyMix(
@@ -1799,7 +1859,7 @@ class FFmpegExecutor(
 
                         val filters = mutableListOf("setpts=PTS-STARTPTS")
                         if (!isImage(clip) && clip.speed != 1.0f) filters.add("setpts=${1.0f / clip.speed}*PTS")
-                        filters.addAll(buildPerClipFilterChain(clip, allClips))
+                        filters.addAll(buildPerClipFilterChain(clip, allClips, fps))
                         filters.addAll(
                             buildVisualTransformFilters(
                                 clip,
@@ -1830,6 +1890,19 @@ class FFmpegExecutor(
                             filterParts.add("[$layerLabel]format=rgba[crop_layer_rgba${item.clipIdx}]")
                             filterParts.add("[crop_layer_rgba${item.clipIdx}][crop_pts${item.clipIdx}]alphamerge[crop_ready${item.clipIdx}]")
                             layerLabel = "crop_ready${item.clipIdx}"
+                        }
+
+                        val unshadowedLayerLabel = layerLabel
+                        val shadowOutputs = if (clip.layerShadow.enabled) {
+                            addLayerShadowFilters(
+                                filterParts,
+                                layerLabel,
+                                clip.layerShadow,
+                                targetW,
+                                item.clipIdx
+                            ).also { layerLabel = it.combinedLayer }
+                        } else {
+                            null
                         }
 
                         val outLabel = "canvas_c${item.clipIdx}"
@@ -1864,32 +1937,43 @@ class FFmpegExecutor(
                                 val y = "((main_h-overlay_h)/2+(($yPosition-50)*$targetH/100))"
                                 filterParts.add("[$canvasLabel][$layerLabel]overlay=x='$x':y='$y':eval=frame:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
                             } else if (!hasXKf && !hasYKf) {
-                                // Static position — crop already handled offset
-                                filterParts.add("[$canvasLabel][$layerLabel]overlay=0:0:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
+                                val padding = shadowOutputs?.padding ?: 0
+                                filterParts.add("[$canvasLabel][$layerLabel]overlay=${-padding}:${-padding}:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
                             } else {
-                                // Animated position — overlay must shift
+                                val padding = shadowOutputs?.padding ?: 0
                                 val baseX = 50f + clip.offsetX * 100f
                                 val baseY = 50f + clip.offsetY * 100f
                                 val localTimeExpression = "(t-${String.format(Locale.US, "%.6f", startSec)})"
 
-                                val x = "((${KeyframeStore.ffmpegExpression(clip.keyframes, "x", baseX, localTimeExpression)}-50)*$targetW/100)"
-                                val y = "((${KeyframeStore.ffmpegExpression(clip.keyframes, "y", baseY, localTimeExpression)}-50)*$targetH/100)"
+                                val x = "((${KeyframeStore.ffmpegExpression(clip.keyframes, "x", baseX, localTimeExpression)}-50)*$targetW/100-$padding)"
+                                val y = "((${KeyframeStore.ffmpegExpression(clip.keyframes, "y", baseY, localTimeExpression)}-50)*$targetH/100-$padding)"
 
                                 filterParts.add("[$canvasLabel][$layerLabel]overlay=x='$x':y='$y':eval=frame:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
                             }
                         }
                         else {
+                            var blendBaseLabel = canvasLabel
+                            shadowOutputs?.let { shadow ->
+                                val shadowCanvas = "canvas_shadow_${item.clipIdx}"
+                                filterParts.add(
+                                    "[$blendBaseLabel][${shadow.shadowOnly}]overlay=" +
+                                            "x='-${shadow.padding}':y='-${shadow.padding}':" +
+                                            "eof_action=pass:repeatlast=0:" +
+                                            "enable='between(t,$startExpr,$endExpr)'[$shadowCanvas]"
+                                )
+                                blendBaseLabel = shadowCanvas
+                            }
                             val ffMode = ffmpegBlendName(blendKey);
                             val blendAlpha = String.format(
                                 Locale.US,
                                 "%.3f",
                                 (clip.blendOpacity / 100f).coerceIn(0f, 1f)
                             )
-                            filterParts.add("[$canvasLabel]format=rgba[blend_base_${item.clipIdx}]"); filterParts.add(
-                                "[$layerLabel]format=rgba[blend_layer_rgba_${item.clipIdx}]"
+                            filterParts.add("[$blendBaseLabel]format=rgba[blend_base_${item.clipIdx}]"); filterParts.add(
+                                "[$unshadowedLayerLabel]format=rgba[blend_layer_rgba_${item.clipIdx}]"
                             )
                             filterParts.add("[blend_base_${item.clipIdx}][blend_layer_rgba_${item.clipIdx}]blend=all_mode=$ffMode:all_opacity=$blendAlpha:shortest=0[blend_out_${item.clipIdx}]")
-                            filterParts.add("[blend_base_${item.clipIdx}][blend_out_${item.clipIdx}]overlay=0:0:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
+                            filterParts.add("[$blendBaseLabel][blend_out_${item.clipIdx}]overlay=0:0:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
                         }
                         canvasLabel = outLabel
                     }
@@ -2104,7 +2188,7 @@ class FFmpegExecutor(
             val filterParts = mutableListOf<String>()
             val baseVf = mutableListOf<String>()
             if (clip.speed != 1.0f && !img) baseVf.add("setpts=${1.0f / clip.speed}*PTS")
-            baseVf.addAll(buildPerClipFilterChain(clip, allClips))
+            baseVf.addAll(buildPerClipFilterChain(clip, allClips, fps))
             baseVf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
             if (extraPadSec > 0.05) baseVf.add(
                 "tpad=stop_mode=add:stop_duration=${
@@ -2239,7 +2323,7 @@ class FFmpegExecutor(
             val filterParts = mutableListOf<String>()
             val baseVf = mutableListOf<String>()
             if (clip.speed != 1.0f && !img) baseVf.add("setpts=${1.0f / clip.speed}*PTS")
-            baseVf.addAll(buildPerClipFilterChain(clip, allClips))
+            baseVf.addAll(buildPerClipFilterChain(clip, allClips, fps))
             baseVf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
             if (extraPadSec > 0.05) baseVf.add(
                 "tpad=stop_mode=add:stop_duration=${
@@ -2464,7 +2548,7 @@ class FFmpegExecutor(
                     )
                 )
                 if (clip.speed != 1.0f && !isImage(clip)) vf.add("setpts=${1.0f / clip.speed}*PTS")
-                vf.addAll(buildPerClipFilterChain(clip, allClips)); vf.addAll(
+                vf.addAll(buildPerClipFilterChain(clip, allClips, fps)); vf.addAll(
                 buildVisualTransformFilters(clip, targetW, targetH)
             )
                 vf.addAll(
@@ -2706,7 +2790,7 @@ class FFmpegExecutor(
                     )
                 )
                 if (clip.speed != 1.0f && !isImage(clip)) vf.add("setpts=${1.0f / clip.speed}*PTS")
-                vf.addAll(buildPerClipFilterChain(clip, allClips)); vf.addAll(
+                vf.addAll(buildPerClipFilterChain(clip, allClips, fps)); vf.addAll(
                 buildVisualTransformFilters(clip, targetW, targetH)
             )
                 vf.addAll(listOf("fps=$fps", "format=yuv420p"))
@@ -2791,7 +2875,8 @@ class FFmpegExecutor(
 
     private fun buildPerClipFilterChain(
         clip: EditorClip,
-        allClips: List<EditorClip>
+        allClips: List<EditorClip>,
+        fps: Int
     ): List<String> {
         val filters = mutableListOf<String>()
 
@@ -2818,7 +2903,9 @@ class FFmpegExecutor(
                     effect.effectState?.filters?.let(EffectsEngine::hasColorEffect) == true ||
                             effect.effectState?.animatedColor != null
                 }
-        if (hasColorFilterLut) filters.add("format=rgb24")
+        if (hasColorFilterLut) {
+            filters.add(if (clip.layerShadow.enabled) "format=rgba" else "format=rgb24")
+        }
         if (EffectsEngine.hasColorEffect(ownFilter)) {
             filters.add(colorFilterValuesToFfmpeg(ownFilter))
         }
@@ -2863,9 +2950,17 @@ class FFmpegExecutor(
                         )
                     }
                     effClip.effectState?.edgeGlow?.let {
-                        if (it.intensity > 1f) add(
-                            buildEdgeGlowDrawboxFilter(it)
-                        )
+                        if (it.intensity > 1f) {
+                            filters.addAll(
+                                buildEdgeGlowFilters(
+                                    it,
+                                    fps,
+                                    clip.timelineStartMs / 1000.0,
+                                    start,
+                                    end
+                                )
+                            )
+                        }
                     }
                 }
             }
@@ -2915,8 +3010,8 @@ class FFmpegExecutor(
             }
 
             filters.add("scale=in_range=pc:out_range=tv")
-            filters.add("format=yuv420p")
-        } else if (hasColorFilterLut) {
+            filters.add(if (clip.layerShadow.enabled) "format=rgba" else "format=yuv420p")
+        } else if (hasColorFilterLut && !clip.layerShadow.enabled) {
             filters.add("format=yuv420p")
         }
 
@@ -2939,33 +3034,127 @@ class FFmpegExecutor(
                 filters.add(ckFilter)
             }
         }
-
         return filters
     }
 
-    private fun buildEdgeGlowDrawboxFilter(glow: com.moody.moodyvideoeditor.data.EdgeGlowConfig): String {
-        return try {
-            val colorLong = glow.color
-            val r = ((colorLong shr 16) and 0xFF).toInt()
-            val g = ((colorLong shr 8) and 0xFF).toInt()
-            val b = (colorLong and 0xFF).toInt()
-            val colorSpec = "${String.format(Locale.US, "0x%02X%02X%02X", r, g, b)}@${
-                String.format(
-                    Locale.US,
-                    "%.3f",
-                    (glow.intensity / 100f).coerceIn(0f, 1f)
-                )
-            }"
-            val t = glow.radius.coerceIn(2f, 80f).toInt()
-            listOf(
-                "drawbox=x=0:y=0:w=iw:h=$t:color=$colorSpec:t=fill",
-                "drawbox=x=0:y=ih-$t:w=iw:h=$t:color=$colorSpec:t=fill",
-                "drawbox=x=0:y=0:w=$t:h=ih:color=$colorSpec:t=fill",
-                "drawbox=x=iw-$t:y=0:w=$t:h=ih:color=$colorSpec:t=fill"
-            ).joinToString(",")
-        } catch (_: Throwable) {
-            ""
+    private fun buildEdgeGlowFilters(
+        glow: com.moody.moodyvideoeditor.data.EdgeGlowConfig,
+        fps: Int,
+        clipTimelineStartSec: Double,
+        effectStartSec: Double,
+        effectEndSec: Double
+    ): List<String> {
+        val safeFps = fps.coerceAtLeast(1)
+        val clipStart = String.format(Locale.US, "%.6f", clipTimelineStartSec)
+        val time = "(N/$safeFps+$clipStart)*${glow.speed.coerceIn(0.2f, 4f)}"
+        val baseR = ((glow.color shr 16) and 0xFF).toInt()
+        val baseG = ((glow.color shr 8) and 0xFF).toInt()
+        val baseB = (glow.color and 0xFF).toInt()
+        val baseAlpha = ((glow.color shr 24) and 0xFF).toInt() / 255.0
+        var radiusMultiplier = "1"
+        var intensityMultiplier = "1"
+        var offsetX = "0"
+        var offsetY = "0"
+        var red = baseR.toString()
+        var green = baseG.toString()
+        var blue = baseB.toString()
+        val wave = "(sin($time*8)*0.5+0.5)"
+
+        when (glow.animation) {
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.STATIC -> Unit
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.PULSE -> {
+                val pulse = "(sin($time*3)*0.5+0.5)"
+                radiusMultiplier = "(0.85+0.35*$pulse)"
+                intensityMultiplier = "(0.8+0.4*$pulse)"
+            }
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.BREATHE -> {
+                val pulse = "(sin($time*1.5)*0.5+0.5)"
+                radiusMultiplier = "(0.7+0.7*$pulse)"
+                intensityMultiplier = "((0.75+0.25*$pulse)*(0.6+0.6*$pulse))"
+            }
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.FLICKER -> {
+                radiusMultiplier = "(0.9+0.3*$wave)"
+                intensityMultiplier = "(0.35+0.65*$wave)"
+            }
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.STROBE -> {
+                intensityMultiplier = "lt(mod(floor($time*6),2),1)"
+            }
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.RAINBOW -> {
+                val hue = "mod($time*90,360)/60"
+                red = "(clip(2-abs($hue),0,1)+clip(2-abs($hue-6),0,1))*255"
+                green = "clip(2-abs($hue-2),0,1)*255"
+                blue = "clip(2-abs($hue-4),0,1)*255"
+            }
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.WAVE -> {
+                offsetX = "sin($time*4)*6"
+                offsetY = "cos($time*3.6)*6"
+            }
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.SPARK -> {
+                val spike = "max(0,($wave-0.75)*4)"
+                radiusMultiplier = "(1+0.6*$spike)"
+                intensityMultiplier = "(1+$spike)"
+            }
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.FIRE -> {
+                val flame = wave
+                red = "255"
+                green = "(102+102*$flame)"
+                blue = "0"
+                radiusMultiplier = "(0.9+0.5*$flame)"
+                intensityMultiplier = "(0.85+0.35*$flame)"
+            }
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.ELECTRIC -> {
+                val pulse = "(sin($time*20)*0.5+0.5)"
+                radiusMultiplier = "(0.9+0.6*$pulse)"
+                intensityMultiplier = "(0.7+0.8*$pulse)"
+                offsetX = "sin($time*40)*3"
+                offsetY = "sin($time*38)*3"
+            }
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.NEON -> {
+                radiusMultiplier = "(sin($time*1.2)*0.1+1)"
+            }
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.AURORA -> {
+                val mix = "(sin($time*0.5)*0.5+0.5)"
+                val secondR = ((glow.color2 shr 16) and 0xFF).toInt()
+                val secondG = ((glow.color2 shr 8) and 0xFF).toInt()
+                val secondB = (glow.color2 and 0xFF).toInt()
+                red = "($baseR+($secondR-$baseR)*$mix)"
+                green = "($baseG+($secondG-$baseG)*$mix)"
+                blue = "($baseB+($secondB-$baseB)*$mix)"
+                val pulse = "(sin($time*1.5)*0.15+1)"
+                radiusMultiplier = pulse
+                intensityMultiplier = "(0.9+0.2*$pulse)"
+            }
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.GHOST -> {
+                val pulse = "(sin($time*1.2)*0.5+0.5)"
+                radiusMultiplier = "(0.9+0.4*$pulse)"
+                intensityMultiplier = "((0.35+0.45*$pulse)*(0.5+0.5*$pulse))"
+            }
+            com.moody.moodyvideoeditor.data.EdgeGlowAnimation.GLITCH -> {
+                val on = "gt(sin($time*10),0)"
+                red = "($baseR*$on+0*(1-$on))"
+                green = "($baseG*$on+229*(1-$on))"
+                blue = "($baseB*$on+255*(1-$on))"
+                intensityMultiplier = "($on+0.6*(1-$on))"
+                offsetX = "sin($time*30)*5"
+            }
         }
+
+        val distance = "min(min(X-$offsetX,W-1-X+$offsetX),min(Y-$offsetY,H-1-Y+$offsetY))"
+        val radius = "(${glow.radius.coerceIn(2f, 80f)}*$radiusMultiplier)"
+        val effectStart =
+            String.format(Locale.US, "%.4f", effectStartSec)
+        val effectEnd =
+            String.format(Locale.US, "%.4f", effectEndSec)
+        val activeAtTime = "between(N/$safeFps,$effectStart,$effectEnd)"
+        val opacity =
+            "clip((${glow.intensity.coerceIn(0f, 100f) / 100f}*$baseAlpha*$intensityMultiplier)*(1-$distance/$radius)*$activeAtTime,0,1)"
+        fun channel(source: String, color: String) =
+            "clip($source*(1-($opacity))+($color)*($opacity),0,255)"
+        return listOf(
+            "fps=$safeFps",
+            "format=rgba",
+            "geq=r='${channel("r(X,Y)", red)}':g='${channel("g(X,Y)", green)}':b='${channel("b(X,Y)", blue)}':a='a(X,Y)'"
+        )
     }
 
     private fun applyAudioEffectLayers(

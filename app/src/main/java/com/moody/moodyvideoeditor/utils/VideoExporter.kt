@@ -194,6 +194,7 @@ class VideoExporter(
                     if (isCancelled) {
                         onCancelled(); return
                     }
+                    Log.e("EXPORT", "Text overlay rendering failed", e)
                     onError("Text render failed: ${e.message}"); return
                 }
 
@@ -218,6 +219,7 @@ class VideoExporter(
                         if (isCancelled) {
                             onCancelled(); return
                         }
+                        Log.e("EXPORT", "Visualizer rendering failed", e)
                         onError("Visualizer render failed: ${e.message}"); return
                     }
                 } else emptyList()
@@ -239,6 +241,7 @@ class VideoExporter(
                         if (isCancelled) {
                             onCancelled(); return
                         }
+                        Log.e("EXPORT", "Spotlight rendering failed", e)
                         onError("Spotlight render failed: ${e.message}"); return
                     }
                 } else emptyList()
@@ -540,6 +543,7 @@ class VideoExporter(
                 if (isCancelled) {
                     onCancelled(); return
                 }
+                Log.e("EXPORT", "Visualizer rendering failed", e)
                 onError("Visualizer render failed: ${e.message}"); return
             }
         } else emptyList()
@@ -568,6 +572,7 @@ class VideoExporter(
                     if (isCancelled) {
                         onCancelled(); return
                     }
+                    Log.e("EXPORT", "Text overlay rendering failed", e)
                     onError("Text render failed: ${e.message}"); return
                 }
             } else emptyList()
@@ -589,6 +594,7 @@ class VideoExporter(
                 if (isCancelled) {
                     onCancelled(); return
                 }
+                Log.e("EXPORT", "Spotlight rendering failed", e)
                 onError("Spotlight render failed: ${e.message}"); return
             }
         } else emptyList()
@@ -616,7 +622,10 @@ class VideoExporter(
         } catch (e: CancellationException) {
             cleanupSequences(allSequences); throw e
         } catch (e: Exception) {
-            cleanupSequences(allSequences); onError("Could not prepare audio: ${e.message}"); return
+            cleanupSequences(allSequences)
+            Log.e("EXPORT", "Could not prepare audio", e)
+            onError("Could not prepare audio: ${e.message}")
+            return
         }
 
         val outputFile = createOutputFile(fileName, "mp4")
@@ -741,9 +750,10 @@ class VideoExporter(
                     } else if (ReturnCode.isSuccess(s.returnCode)) {
                         completeExport(outputFile, customFolderUri, allSequences)
                     } else {
-                        val logs = s.allLogsAsString ?: "Unknown error"; cleanupSequences(
-                            allSequences
-                        ); onError("Export failed:\n${logs.takeLast(1500)}")
+                        val logs = s.allLogsAsString ?: "Unknown error"
+                        Log.e("EXPORT", "FFmpeg failed: ${logs.takeLast(5000)}")
+                        cleanupSequences(allSequences)
+                        onError("Export failed:\n${logs.takeLast(1500)}")
                     }
                 },
                 { _ -> },
@@ -763,7 +773,9 @@ class VideoExporter(
             )
             sessionId = session.sessionId
         } catch (e: Exception) {
-            cleanupSequences(allSequences); onError("FFmpeg error: ${e.message}")
+            cleanupSequences(allSequences)
+            Log.e("EXPORT", "FFmpeg export failed", e)
+            onError("FFmpeg error: ${e.message}")
         }
     }
 

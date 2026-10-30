@@ -214,6 +214,7 @@ object SavedTemplateRepository {
         c.ratio?.let { put("ratio", ratioToJson(it)) }
         put("mask", maskToJson(c.mask))
         put("matteStyle", matteStyleToJson(c.matteStyle))
+        put("layerShadow", layerShadowToJson(c.layerShadow))
         c.visualizer?.let { put("visualizer", visualizerToJson(it)) }
         c.spotlight?.let { put("spotlight", it.toJson()) }
 
@@ -277,6 +278,7 @@ object SavedTemplateRepository {
             ratio = o.optJSONObject("ratio")?.let { ratioFromJson(it) },
             mask = maskFromJson(o.optJSONObject("mask")),
             matteStyle = matteStyleFromJson(o.optJSONObject("matteStyle")),
+            layerShadow = layerShadowFromJson(o.optJSONObject("layerShadow")),
             visualizer = o.optJSONObject("visualizer")?.let { visualizerFromJson(it) },
             spotlight = o.optJSONObject("spotlight")?.let { SpotlightState.fromJson(it) },
             keyframes = keyframesFromJson(o.optJSONObject("keyframes"))
@@ -284,6 +286,36 @@ object SavedTemplateRepository {
     }
 
     // ─── Sub-serializers ───
+
+    private fun layerShadowToJson(state: LayerShadowState) = JSONObject().apply {
+        put("enabled", state.enabled)
+        put("color", state.color)
+        put("blur", state.blur.toDouble())
+        put("distance", state.distance.toDouble())
+        put("angle", state.angle.toDouble())
+    }
+
+    private fun layerShadowFromJson(o: JSONObject?): LayerShadowState {
+        val enabled = o?.optBoolean("enabled", false) ?: false
+        val color = o?.optLong("color", 0xFF000000) ?: 0xFF000000
+        val blur = o?.optDouble("blur", 8.0)?.toFloat() ?: 8f
+        if (o?.has("distance") == true || o?.has("angle") == true) {
+            return LayerShadowState(
+                enabled = enabled,
+                color = color,
+                blur = blur,
+                distance = o.optDouble("distance", 2.8).toFloat(),
+                angle = o.optDouble("angle", 45.0).toFloat()
+            )
+        }
+        return LayerShadowState.fromLegacyOffsets(
+            enabled = enabled,
+            color = color,
+            blur = blur,
+            offsetX = o?.optDouble("offsetX", 2.0)?.toFloat() ?: 2f,
+            offsetY = o?.optDouble("offsetY", 2.0)?.toFloat() ?: 2f
+        )
+    }
 
     private fun adjustmentsToJson(a: AdjustmentData) = JSONObject().apply {
         put("brightness", a.brightness.toDouble()); put("contrast", a.contrast.toDouble())
@@ -422,9 +454,11 @@ object SavedTemplateRepository {
         put("backgroundPaddingY", t.backgroundPaddingY.toDouble())
         put("backgroundCornerRadius", t.backgroundCornerRadius.toDouble())
         t.textureUri?.let { put("textureUri", it) }
+        t.textureMimeType?.let { put("textureMimeType", it) }
         put("textureScale", t.textureScale.toDouble())
         put("textureOffsetX", t.textureOffsetX.toDouble())
         put("textureOffsetY", t.textureOffsetY.toDouble())
+        put("textureRotation", t.textureRotation.toDouble())
     }
 
     private fun textStateFromJson(o: JSONObject) = TextState(
@@ -455,9 +489,11 @@ object SavedTemplateRepository {
         backgroundPaddingY = o.optDouble("backgroundPaddingY", 8.0).toFloat(),
         backgroundCornerRadius = o.optDouble("backgroundCornerRadius", 12.0).toFloat(),
         textureUri = if (o.isNull("textureUri")) null else o.optString("textureUri"),
+        textureMimeType = if (o.isNull("textureMimeType")) null else o.optString("textureMimeType"),
         textureScale = o.optDouble("textureScale", 100.0).toFloat(),
         textureOffsetX = o.optDouble("textureOffsetX", 0.0).toFloat(),
-        textureOffsetY = o.optDouble("textureOffsetY", 0.0).toFloat()
+        textureOffsetY = o.optDouble("textureOffsetY", 0.0).toFloat(),
+        textureRotation = o.optDouble("textureRotation", 0.0).toFloat()
     )
 
     private fun stickerStateToJson(s: StickerState) = JSONObject().apply {

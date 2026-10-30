@@ -33,6 +33,7 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import androidx.compose.ui.geometry.Size as ComposeSize
@@ -178,7 +179,8 @@ object TextBitmapRenderer {
             sortedTextClips.forEach { clip ->
                 val texture = clip.textState?.textureUri ?: return@forEach
                 val uri = Uri.parse(texture)
-                val mimeType = context.contentResolver.getType(uri)
+                val mimeType = clip.textState.textureMimeType
+                    ?: context.contentResolver.getType(uri)
                 if (mimeType?.startsWith("video/") != true) {
                     textTextureBitmaps[clip.id] = withContext(Dispatchers.IO) {
                         decodeTextureImage(context, uri, W, H)
@@ -316,9 +318,15 @@ object TextBitmapRenderer {
             layerClips.forEach { clip ->
                 val texture = clip.textState?.textureUri ?: return@forEach
                 val uri = Uri.parse(texture)
-                if (context.contentResolver.getType(uri)?.startsWith("video/") == true) {
+                val mimeType = clip.textState.textureMimeType
+                    ?: context.contentResolver.getType(uri)
+                if (mimeType?.startsWith("video/") == true) {
                     videoTextureRetrievers[clip.id] = MediaMetadataRetriever().apply {
-                        setDataSource(context, uri)
+                        if (uri.scheme == "file") {
+                            setDataSource(uri.path ?: throw java.io.IOException("Invalid video texture path"))
+                        } else {
+                            setDataSource(context, uri)
+                        }
                     }
                 }
             }
@@ -361,9 +369,15 @@ object TextBitmapRenderer {
                                 val localSec = (timelineMs - clip.timelineStartMs) / 1000f
                                 val ov = extractOverlay(clip)
                                 if (ov != null && ov.isActive) {
-                                    overlayBuffer?.let {
-                                        MaskEngine.drawMaskedLayer(canvas, clip.mask, localSec, W.toFloat(), H.toFloat()) {
-                                            drawOverlayOnCanvas(canvas, it, localSec, ov, W, H)
+                                    overlayBuffer?.let { buffer ->
+                                        LayerShadowRenderer.applyToBitmap(
+                                            canvas, clip.layerShadow, W, H
+                                        ) { layerCanvas ->
+                                            MaskEngine.drawMaskedLayer(
+                                                layerCanvas, clip.mask, localSec, W.toFloat(), H.toFloat()
+                                            ) {
+                                                drawOverlayOnCanvas(layerCanvas, buffer, localSec, ov, W, H)
+                                            }
                                         }
                                     }
                                 }
@@ -377,10 +391,12 @@ object TextBitmapRenderer {
                                     val textureBitmap = clip.textState?.textureUri?.let {
                                         val retriever = videoTextureRetrievers[clip.id]
                                         if (retriever != null) {
-                                            retriever.getFrameAtTime(
-                                                (localSec * 1_000_000L).toLong(),
-                                                MediaMetadataRetriever.OPTION_CLOSEST
-                                            ) ?: throw java.io.IOException(
+                                            synchronized(retriever) {
+                                                retriever.getFrameAtTime(
+                                                    (localSec * 1_000_000L).toLong(),
+                                                    MediaMetadataRetriever.OPTION_CLOSEST
+                                                )
+                                            } ?: throw java.io.IOException(
                                                 "Could not decode video text texture frame: $it"
                                             )
                                         } else {
@@ -391,10 +407,16 @@ object TextBitmapRenderer {
                                         }
                                     }
                                     try {
-                                        MaskEngine.drawMaskedLayer(canvas, clip.mask, localSec, W.toFloat(), H.toFloat()) {
-                                            drawTextClipAtTime(
-                                                canvas, clip, localSec, W, H, textureBitmap
-                                            )
+                                        LayerShadowRenderer.applyToBitmap(
+                                            canvas, clip.layerShadow, W, H
+                                        ) { layerCanvas ->
+                                            MaskEngine.drawMaskedLayer(
+                                                layerCanvas, clip.mask, localSec, W.toFloat(), H.toFloat()
+                                            ) {
+                                                drawTextClipAtTime(
+                                                    layerCanvas, clip, localSec, W, H, textureBitmap
+                                                )
+                                            }
                                         }
                                     } finally {
                                         if (textureBitmap != null &&
@@ -403,8 +425,14 @@ object TextBitmapRenderer {
                                         ) textureBitmap.recycle()
                                     }
                                 } else if (clip.isStickerClip) {
-                                    MaskEngine.drawMaskedLayer(canvas, clip.mask, localSec, W.toFloat(), H.toFloat()) {
-                                        drawStickerClipAtTime(canvas, clip, localSec, W, H)
+                                    LayerShadowRenderer.applyToBitmap(
+                                        canvas, clip.layerShadow, W, H
+                                    ) { layerCanvas ->
+                                        MaskEngine.drawMaskedLayer(
+                                            layerCanvas, clip.mask, localSec, W.toFloat(), H.toFloat()
+                                        ) {
+                                            drawStickerClipAtTime(layerCanvas, clip, localSec, W, H)
+                                        }
                                     }
                                 }
                             }
@@ -414,8 +442,14 @@ object TextBitmapRenderer {
                             if (timelineMs >= clip.timelineStartMs && timelineMs < clip.timelineEndMs) {
                                 val localSec = (timelineMs - clip.timelineStartMs) / 1000f
                                 imageBitmaps[clip.id]?.let { image ->
-                                    MaskEngine.drawMaskedLayer(canvas, clip.mask, localSec, W.toFloat(), H.toFloat()) {
-                                        drawImageClip(canvas, clip, image, localSec, W, H)
+                                    LayerShadowRenderer.applyToBitmap(
+                                        canvas, clip.layerShadow, W, H
+                                    ) { layerCanvas ->
+                                        MaskEngine.drawMaskedLayer(
+                                            layerCanvas, clip.mask, localSec, W.toFloat(), H.toFloat()
+                                        ) {
+                                            drawImageClip(layerCanvas, clip, image, localSec, W, H)
+                                        }
                                     }
                                 }
                             }
@@ -535,9 +569,11 @@ object TextBitmapRenderer {
 
     private fun decodeImage(context: Context, clip: EditorClip, targetW: Int, targetH: Int): Bitmap {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(clip.uri)?.use {
+        val boundsStream = context.contentResolver.openInputStream(clip.uri)
+            ?: throw java.io.IOException("Could not read image: ${clip.name}")
+        boundsStream.use {
             BitmapFactory.decodeStream(it, null, bounds)
-        } ?: throw java.io.IOException("Could not read image: ${clip.name}")
+        }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             throw java.io.IOException("Invalid image dimensions: ${clip.name}")
         }
@@ -563,9 +599,11 @@ object TextBitmapRenderer {
         targetH: Int
     ): Bitmap {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use {
+        val boundsStream = openTextureInputStream(context, uri)
+            ?: throw java.io.IOException("Could not read text texture: $uri")
+        boundsStream.use {
             BitmapFactory.decodeStream(it, null, bounds)
-        } ?: throw java.io.IOException("Could not read text texture: $uri")
+        }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             throw java.io.IOException("Invalid text texture dimensions: $uri")
         }
@@ -580,10 +618,17 @@ object TextBitmapRenderer {
             inSampleSize = sampleSize
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        return context.contentResolver.openInputStream(uri)?.use {
+        return openTextureInputStream(context, uri)?.use {
             BitmapFactory.decodeStream(it, null, options)
         } ?: throw java.io.IOException("Could not decode text texture: $uri")
     }
+
+    private fun openTextureInputStream(context: Context, uri: Uri): InputStream? =
+        if (uri.scheme == "file") {
+            uri.path?.let { File(it).inputStream() }
+        } else {
+            context.contentResolver.openInputStream(uri)
+        }
 
     private fun drawImageClip(canvas: Canvas, clip: EditorClip, bitmap: Bitmap, localTimeSec: Float, W: Int, H: Int) {
         val transform = TransformApplier.resolveLive(clip, localTimeSec)
@@ -691,6 +736,9 @@ object TextBitmapRenderer {
             ),
             textureOffsetY = KeyframeStore.sample(
                 clip.keyframes, "textTexture.y", localTimeSec, baseState.textureOffsetY
+            ),
+            textureRotation = KeyframeStore.sample(
+                clip.keyframes, "textTexture.rotation", localTimeSec, baseState.textureRotation
             )
         )
         if (st.content.isBlank()) return
@@ -1064,6 +1112,7 @@ object TextBitmapRenderer {
                 ) * (st.textureScale / 100f).coerceIn(0.1f, 4f)
                 val shaderMatrix = Matrix().apply {
                     setScale(fitScale, fitScale)
+                    postRotate(st.textureRotation)
                     postTranslate(
                         -textureBitmap.width * fitScale / 2f +
                                 st.textureOffsetX / 100f * maxLineWidth,

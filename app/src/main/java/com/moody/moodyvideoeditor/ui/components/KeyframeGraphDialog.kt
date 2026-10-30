@@ -106,6 +106,8 @@ fun KeyframeGraphDialog(
 
     var dragProp by remember { mutableStateOf<String?>(null) }
     var dragOriginalTime by remember { mutableStateOf(0f) }
+    var selectedGraphKeyframe by remember { mutableStateOf<Pair<String, Float>?>(null) }
+    val activeSelection = selectedGraphKeyframe ?: selectedKeyframe
 
     val hScroll = rememberScrollState()
 
@@ -141,6 +143,27 @@ fun KeyframeGraphDialog(
                         }  •  swipe to scroll",
                         color = Color(0xFF888888), fontSize = 10.sp
                     )
+                }
+                if (!readOnly && activeSelection != null) {
+                    Box(
+                        modifier = Modifier
+                            .padding(end = 8.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF4A2024))
+                            .pointerInput(activeSelection) {
+                                detectTapGestures {
+                                    onDeleteKeyframe(
+                                        activeSelection.first,
+                                        activeSelection.second
+                                    )
+                                    selectedGraphKeyframe = null
+                                }
+                            }
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Delete ◆", color = Color(0xFFFF7777), fontSize = 11.sp)
+                    }
                 }
                 Box(
                     modifier = Modifier
@@ -253,7 +276,10 @@ fun KeyframeGraphDialog(
                                                 }
                                             }
                                         }
-                                        best?.let { onSelectKeyframe(it.first, it.second) }
+                                        best?.let {
+                                            selectedGraphKeyframe = it
+                                            onSelectKeyframe(it.first, it.second)
+                                        }
                                     }
                                 }
                                 .pointerInput(activeProps, propRanges, clipDurationSec) {
@@ -321,6 +347,7 @@ fun KeyframeGraphDialog(
                                                 newTime,
                                                 newValue
                                             )
+                                            selectedGraphKeyframe = prop to newTime
                                             dragOriginalTime = newTime
                                         },
                                         onDragEnd = {
@@ -400,8 +427,8 @@ fun KeyframeGraphDialog(
                                     val y = padT + plotH * (1f - (kf.value - range.first) / span)
                                     val isActive = dragProp == prop &&
                                             abs(kf.time - dragOriginalTime) < 0.05f
-                                    val isSelected = selectedKeyframe?.first == prop &&
-                                            abs(selectedKeyframe.second - kf.time) < 0.05f
+                                    val isSelected = activeSelection?.first == prop &&
+                                            abs(activeSelection.second - kf.time) < 0.05f
                                     val isEaseSelected = selectAllKeyframes || isSelected
 
                                     if (isEaseSelected) {

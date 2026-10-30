@@ -259,6 +259,7 @@ object ProjectRepository {
 
         put("mask", maskToJson(c.mask))
         put("matteStyle", matteStyleToJson(c.matteStyle))
+        put("layerShadow", layerShadowToJson(c.layerShadow))
         put("chromaKey", chromaKeyToJson(c.chromaKey))
 
         val visualizer = c.visualizer
@@ -333,6 +334,7 @@ object ProjectRepository {
             ratio = o.optJSONObject("ratio")?.let { ratioFromJson(it) },
             mask = maskFromJson(o.optJSONObject("mask")),
             matteStyle = matteStyleFromJson(o.optJSONObject("matteStyle")),
+            layerShadow = layerShadowFromJson(o.optJSONObject("layerShadow")),
             chromaKey = chromaKeyFromJson(o.optJSONObject("chromaKey")),
             visualizer = o.optJSONObject("visualizer")?.let { visualizerFromJson(it) },
             spotlight = o.optJSONObject("spotlight")?.let { SpotlightState.fromJson(it) },
@@ -355,11 +357,41 @@ object ProjectRepository {
                     put("ease", kf.ease)
                 })
             }
+
             o.put(prop, arr)
         }
         return o
     }
 
+    private fun layerShadowToJson(state: LayerShadowState) = JSONObject().apply {
+        put("enabled", state.enabled)
+        put("color", state.color)
+        put("blur", state.blur.toDouble())
+        put("distance", state.distance.toDouble())
+        put("angle", state.angle.toDouble())
+    }
+
+    private fun layerShadowFromJson(o: JSONObject?): LayerShadowState {
+        val enabled = o?.optBoolean("enabled", false) ?: false
+        val color = o?.optLong("color", 0xFF000000) ?: 0xFF000000
+        val blur = o?.optDouble("blur", 8.0)?.toFloat() ?: 8f
+        if (o?.has("distance") == true || o?.has("angle") == true) {
+            return LayerShadowState(
+                enabled = enabled,
+                color = color,
+                blur = blur,
+                distance = o.optDouble("distance", 2.8).toFloat(),
+                angle = o.optDouble("angle", 45.0).toFloat()
+            )
+        }
+        return LayerShadowState.fromLegacyOffsets(
+            enabled = enabled,
+            color = color,
+            blur = blur,
+            offsetX = o?.optDouble("offsetX", 2.0)?.toFloat() ?: 2f,
+            offsetY = o?.optDouble("offsetY", 2.0)?.toFloat() ?: 2f
+        )
+    }
 
     //  ADJUSTMENTS
 
@@ -954,9 +986,11 @@ object ProjectRepository {
         put("backgroundCornerRadius", t.backgroundCornerRadius.toDouble())
         put("backgroundBrushSeed", t.backgroundBrushSeed)
         t.textureUri?.let { put("textureUri", it) }
+        t.textureMimeType?.let { put("textureMimeType", it) }
         put("textureScale", t.textureScale.toDouble())
         put("textureOffsetX", t.textureOffsetX.toDouble())
         put("textureOffsetY", t.textureOffsetY.toDouble())
+        put("textureRotation", t.textureRotation.toDouble())
 
         val segArr = JSONArray()
         t.segments.forEach { segArr.put(textSegmentToJson(it)) }
@@ -1039,9 +1073,11 @@ object ProjectRepository {
             backgroundBrushSeed = o.optInt("backgroundBrushSeed", 42),
 
             textureUri = if (o.isNull("textureUri")) null else o.optString("textureUri"),
+            textureMimeType = if (o.isNull("textureMimeType")) null else o.optString("textureMimeType"),
             textureScale = o.optDouble("textureScale", 100.0).toFloat(),
             textureOffsetX = o.optDouble("textureOffsetX", 0.0).toFloat(),
             textureOffsetY = o.optDouble("textureOffsetY", 0.0).toFloat(),
+            textureRotation = o.optDouble("textureRotation", 0.0).toFloat(),
 
             segments = segments
         )

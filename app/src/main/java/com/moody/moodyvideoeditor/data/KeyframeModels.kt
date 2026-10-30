@@ -31,7 +31,7 @@ object KeyframeLibrary {
         "spotlight.radius", "spotlight.softness",
         "spotlight.colorR", "spotlight.colorG", "spotlight.colorB",
         "spotlight.targetColorR", "spotlight.targetColorG", "spotlight.targetColorB",
-        "textTexture.scale", "textTexture.x", "textTexture.y"
+        "textTexture.scale", "textTexture.x", "textTexture.y", "textTexture.rotation"
     )
 
     // 25 easing functions — mirrors keyframeStore.js easeFn()

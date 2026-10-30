@@ -42,6 +42,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -123,9 +126,11 @@ import com.moody.moodyvideoeditor.utils.ColorMatrixBuilder
 import com.moody.moodyvideoeditor.utils.ColorWheelEngine
 import com.moody.moodyvideoeditor.utils.ColorWheelPreviewFilter
 import com.moody.moodyvideoeditor.utils.EffectsEngine
+import com.moody.moodyvideoeditor.utils.drawEdgeGlow
 import com.moody.moodyvideoeditor.utils.FontLibrary
 import com.moody.moodyvideoeditor.utils.ImageAdjustmentProcessor
 import com.moody.moodyvideoeditor.utils.KeyframeStore
+import com.moody.moodyvideoeditor.utils.LayerShadowRenderer
 import com.moody.moodyvideoeditor.utils.MaskEngine
 import com.moody.moodyvideoeditor.utils.OverlayEngine
 import com.moody.moodyvideoeditor.utils.RatioHelper
@@ -346,6 +351,7 @@ fun PreviewCanvas(
     onMaskStateChanged: (MaskState) -> Unit = {},
     onClosePath: () -> Unit = {},
     onClipSelected: (String) -> Unit = {},
+    onEditText: (String) -> Unit = {},
     onDeleteLayer: (String) -> Unit = {},
     onGroupGestureStart: () -> Unit = {},
     onGroupGestureEnd: () -> Unit = {},
@@ -859,6 +865,7 @@ fun PreviewCanvas(
                                     previewEffectState == null &&
                                     previewFilters == null &&
                                     videoBlurDp <= 0.5f &&
+                                    !clip.layerShadow.enabled &&
                                     !clip.chromaKey.isActive &&
                                     !maskAtClipTime(clip, currentPosMs).isActive &&
                                     opacityAlpha >= 1f &&
@@ -886,7 +893,6 @@ fun PreviewCanvas(
                                             } else {
                                                 CompositingStrategy.Offscreen
                                             }
-
                                         blendMode = blendKeyToCompose(clip.blendMode)
 
                                         val w = size.width;
@@ -924,7 +930,14 @@ fun PreviewCanvas(
                                         )
                                         alpha =
                                             opacityAlpha * transT.alpha * blendOpacityFactor(clip)
-                                        this.clip = true
+                                        if (Build.VERSION.SDK_INT >= 31) {
+                                            renderEffect = LayerShadowRenderer.create(
+                                                clip.layerShadow,
+                                                w / 720f,
+                                                videoWheelNative
+                                            )?.asComposeRenderEffect()
+                                        }
+                                        this.clip = !clip.layerShadow.enabled
                                     }
                             ) {
                                 Box(
@@ -1066,10 +1079,8 @@ fun PreviewCanvas(
                                                             sv.setLayerType(View.LAYER_TYPE_NONE, null)
                                                         }
 
-                                                        sv.isOpaque = videoWheelNative == null
-                                                        if (Build.VERSION.SDK_INT >= 31) {
-                                                            sv.setRenderEffect(videoWheelNative)
-                                                        }
+                                                        sv.isOpaque =
+                                                            videoWheelNative == null
                                                     }
                                                 },
                                                 modifier = Modifier.fillMaxSize()
@@ -1192,7 +1203,6 @@ fun PreviewCanvas(
                                     .graphicsLayer {
                                         compositingStrategy = CompositingStrategy.Offscreen
                                         blendMode = blendKeyToCompose(clip.blendMode)
-
                                         val w = size.width;
                                         val h = size.height
                                         val posTx = (imgTransform.x - 50f) / 100f * w
@@ -1227,7 +1237,13 @@ fun PreviewCanvas(
                                         )
                                         alpha =
                                             opacityAlpha * transT.alpha * blendOpacityFactor(clip)
-                                        this.clip = true
+                                        if (Build.VERSION.SDK_INT >= 31) {
+                                            renderEffect = LayerShadowRenderer.create(
+                                                clip.layerShadow,
+                                                w / 720f
+                                            )?.asComposeRenderEffect()
+                                        }
+                                        this.clip = !clip.layerShadow.enabled
                                     }
                                     .then(
                                         if (isMulti) Modifier.border(
@@ -1364,10 +1380,6 @@ fun PreviewCanvas(
                                     )
                                 }
 
-                                val imageWheelRenderEffect = remember(imageWheelNative) {
-                                    imageWheelNative?.asComposeRenderEffect()
-                                }
-
                                 Box(
                                     modifier = Modifier
                                         .align(Alignment.Center)
@@ -1392,11 +1404,9 @@ fun PreviewCanvas(
                                             contentDescription = null,
                                             contentScale = ContentScale.Fit,
                                             colorFilter = imgColorFilter,
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .graphicsLayer {
-                                                    renderEffect = imageWheelRenderEffect
-                                                }
+                                            modifier = Modifier.fillMaxSize().graphicsLayer {
+                                                renderEffect = imageWheelNative?.asComposeRenderEffect()
+                                            }
                                         )
                                     } else {
                                         val imageRequest = remember(clip.uri) {
@@ -1410,11 +1420,9 @@ fun PreviewCanvas(
                                             contentDescription = null,
                                             contentScale = ContentScale.Fit,
                                             colorFilter = imgColorFilter,
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .graphicsLayer {
-                                                    renderEffect = imageWheelRenderEffect
-                                                }
+                                            modifier = Modifier.fillMaxSize().graphicsLayer {
+                                                renderEffect = imageWheelNative?.asComposeRenderEffect()
+                                            }
                                         )
                                     }
                                 }
@@ -1465,13 +1473,23 @@ fun PreviewCanvas(
                             clip.keyframes,
                             localTimeSec
                         )
-                        SpotlightOverlay(
-                            spotlight = spotlight,
-                            isSelected = clip.id == selectedClipId,
-                            onGestureStart = onGroupGestureStart,
-                            onGestureEnd = onGroupGestureEnd,
-                            onChange = { onSpotlightChanged(clip.id, it) }
-                        )
+                        Box(
+                            modifier = Modifier.fillMaxSize().graphicsLayer {
+                                if (Build.VERSION.SDK_INT >= 31) {
+                                    renderEffect = LayerShadowRenderer.create(
+                                        clip.layerShadow, size.width / 720f
+                                    )?.asComposeRenderEffect()
+                                }
+                            }
+                        ) {
+                            SpotlightOverlay(
+                                spotlight = spotlight,
+                                isSelected = clip.id == selectedClipId,
+                                onGestureStart = onGroupGestureStart,
+                                onGestureEnd = onGroupGestureEnd,
+                                onChange = { onSpotlightChanged(clip.id, it) }
+                            )
+                        }
                     }
 
                     clip.isColorMatteClip -> {
@@ -1494,11 +1512,17 @@ fun PreviewCanvas(
                                         blendMode = blendKeyToCompose(clip.blendMode)
 
                                         // 🟩 CHROMA KEY YAHAN APPLY KARO
-                                        if (clip.chromaKey.isActive && Build.VERSION.SDK_INT >= 33) {
-                                            val eff = ChromaKeyEngine.createRenderEffect(clip.chromaKey)
-                                            if (eff != null) {
-                                                renderEffect = eff.asComposeRenderEffect()
-                                            }
+                                        if (Build.VERSION.SDK_INT >= 31) {
+                                            val chroma = if (clip.chromaKey.isActive &&
+                                                Build.VERSION.SDK_INT >= 33
+                                            ) {
+                                                ChromaKeyEngine.createRenderEffect(clip.chromaKey)
+                                            } else null
+                                            renderEffect = LayerShadowRenderer.create(
+                                                clip.layerShadow,
+                                                size.width / 720f,
+                                                chroma
+                                            )?.asComposeRenderEffect()
                                         }
 
                                         val w = size.width;
@@ -1662,9 +1686,14 @@ fun PreviewCanvas(
                                     .fillMaxSize()
                                     .graphicsLayer {
                                         compositingStrategy =
-                                            CompositingStrategy.Offscreen; blendMode =
-                                        blendKeyToCompose(clip.blendMode); alpha =
-                                        blendOpacityFactor(clip)
+                                            CompositingStrategy.Offscreen
+                                        blendMode = blendKeyToCompose(clip.blendMode)
+                                        alpha = blendOpacityFactor(clip)
+                                        if (Build.VERSION.SDK_INT >= 31) {
+                                            renderEffect = LayerShadowRenderer.create(
+                                                clip.layerShadow, size.width / 720f
+                                            )?.asComposeRenderEffect()
+                                        }
                                     }) {
                                 InteractiveTextOverlay(
                                     clip = clip,
@@ -1675,6 +1704,7 @@ fun PreviewCanvas(
                                     isSelected = clip.id == selectedClipId,
                                     isMulti = clip.id in multiSelectedIds,
                                     onSelect = { onClipSelected(clip.id) },
+                                    onEditText = { onEditText(clip.id) },
                                     onGroupGestureStart = onGroupGestureStart,
                                     onGroupGestureEnd = onGroupGestureEnd,
                                     onGroupGesture = onGroupGesture,
@@ -1709,6 +1739,11 @@ fun PreviewCanvas(
                                             CompositingStrategy.Offscreen; blendMode =
                                         blendKeyToCompose(clip.blendMode); alpha =
                                         blendOpacityFactor(clip)
+                                        if (Build.VERSION.SDK_INT >= 31) {
+                                            renderEffect = LayerShadowRenderer.create(
+                                                clip.layerShadow, size.width / 720f
+                                            )?.asComposeRenderEffect()
+                                        }
                                     }) {
                                 InteractiveStickerOverlay(
                                     clip = clip,
@@ -1761,7 +1796,12 @@ fun PreviewCanvas(
                                             compositingStrategy =
                                                 CompositingStrategy.Offscreen; blendMode =
                                             blendKeyToCompose(clip.blendMode)
-                                        }) {
+                                                if (Build.VERSION.SDK_INT >= 31) {
+                                                    renderEffect = LayerShadowRenderer.create(
+                                                        clip.layerShadow, size.width / 720f
+                                                    )?.asComposeRenderEffect()
+                                                }
+                                            }) {
                                     VisualizerOverlay(
                                         state = vs,
                                         visualizerClip = clip,
@@ -1911,24 +1951,39 @@ fun PreviewCanvas(
             }
 
             if (allOverlays.isNotEmpty()) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    allOverlays.forEach { activeOverlay ->
+                allOverlays.forEach { activeOverlay ->
+                    Canvas(
+                        modifier = Modifier.fillMaxSize().graphicsLayer {
+                            if (Build.VERSION.SDK_INT >= 31) {
+                                renderEffect = LayerShadowRenderer.create(
+                                    activeOverlay.layerShadow, size.width / 720f
+                                )?.asComposeRenderEffect()
+                            }
+                        }
+                    ) {
                         OverlayEngine.draw(
                             this,
                             activeOverlay.localTimeSec,
                             activeOverlay.state
                         )
                     }
-                    previewOverlay?.let { OverlayEngine.draw(this, timeSec, it) }
                 }
-            } else if (previewOverlay != null) {
+            }
+            if (previewOverlay != null) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     OverlayEngine.draw(this, timeSec, previewOverlay)
                 }
             }
 
             val activeEdgeGlows =
-                clips.filter { c -> c.isEffectClip && c.trackIndex > videoTrackIdx && currentPosMs >= c.timelineStartMs && currentPosMs < c.timelineEndMs && c.effectState?.edgeGlow != null }
+                clips.filter { c ->
+                    c.isEffectClip &&
+                            c.trackIndex > videoTrackIdx &&
+                            c.trackIndex !in hiddenVisualTracks &&
+                            currentPosMs >= c.timelineStartMs &&
+                            currentPosMs < c.timelineEndMs &&
+                            c.effectState?.edgeGlow != null
+                }
                     .sortedBy { it.trackIndex }.mapNotNull { it.effectState?.edgeGlow }
             val previewEdgeGlow = previewEffectState?.edgeGlow
             val allEdgeGlows =
@@ -1938,55 +1993,7 @@ fun PreviewCanvas(
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     allEdgeGlows.forEach { glow ->
                         try {
-                            val frame = EffectsEngine.computeEdgeGlow(glow, timeSec)
-                            val intensity = (glow.intensity / 100f) * frame.intensityMul
-                            val alpha = (intensity * frame.alpha).coerceIn(0f, 1f)
-                            if (alpha < 0.02f) return@forEach
-                            val baseColor = frame.color
-                            val thickness = (glow.radius * frame.radiusMul).coerceIn(
-                                4f,
-                                minOf(size.width, size.height) * 0.45f
-                            )
-                            val ox = frame.offsetX;
-                            val oy = frame.offsetY
-                            drawRect(
-                                brush = Brush.verticalGradient(
-                                    colors = listOf(
-                                        baseColor.copy(
-                                            alpha = alpha
-                                        ), Color.Transparent
-                                    ), startY = 0f, endY = thickness
-                                ), topLeft = Offset(ox, oy), size = Size(size.width, thickness)
-                            )
-                            drawRect(
-                                brush = Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color.Transparent,
-                                        baseColor.copy(alpha = alpha)
-                                    ), startY = size.height - thickness, endY = size.height
-                                ),
-                                topLeft = Offset(ox, size.height - thickness + oy),
-                                size = Size(size.width, thickness)
-                            )
-                            drawRect(
-                                brush = Brush.horizontalGradient(
-                                    colors = listOf(
-                                        baseColor.copy(
-                                            alpha = alpha
-                                        ), Color.Transparent
-                                    ), startX = 0f, endX = thickness
-                                ), topLeft = Offset(ox, oy), size = Size(thickness, size.height)
-                            )
-                            drawRect(
-                                brush = Brush.horizontalGradient(
-                                    colors = listOf(
-                                        Color.Transparent,
-                                        baseColor.copy(alpha = alpha)
-                                    ), startX = size.width - thickness, endX = size.width
-                                ),
-                                topLeft = Offset(size.width - thickness + ox, oy),
-                                size = Size(thickness, size.height)
-                            )
+                            drawEdgeGlow(glow, timeSec)
                         } catch (_: Throwable) {
                         }
                     }
@@ -3127,7 +3134,7 @@ private fun transformMaskWithOneFinger(
                     radius = (kotlin.math.hypot(
                         local.x - pivotX,
                         local.y - pivotY
-                    ) / minDimension).coerceIn(0.01f, 20f)
+                    ) / minDimension).coerceIn(0.01f, 2f)
                 )
 
                 MaskType.RECTANGLE -> initial.copy(
@@ -3135,7 +3142,7 @@ private fun transformMaskWithOneFinger(
                         0.01f,
                         20f
                     ),
-                    height = (kotlin.math.abs(local.y - pivotY) * 2f / height).coerceIn(0.01f, 20f)
+                    height = (kotlin.math.abs(local.y - pivotY) * 2f / height).coerceIn(0.01f, 2f)
                 )
 
                 MaskType.HEART -> initial.copy(
@@ -3196,8 +3203,8 @@ private fun transformMaskWithTwoFingers(
         positionX = positionX,
         positionY = positionY,
         radius = (initial.radius * scaleFactor).coerceIn(0.01f, 20f),
-        width = (initial.width * scaleFactor).coerceIn(0.01f, 20f),
-        height = (initial.height * scaleFactor).coerceIn(0.01f, 20f),
+        width = (initial.width * scaleFactor).coerceIn(0.01f, 2f),
+        height = (initial.height * scaleFactor).coerceIn(0.01f, 2f),
         scale = (initial.scale * scaleFactor).coerceIn(0.05f, 25f),
         rotation = initial.rotation + angleDelta,
         customPoints = rotatedPoints
@@ -3279,6 +3286,7 @@ private fun InteractiveTextOverlay(
     isSelected: Boolean,
     isMulti: Boolean = false,
     onSelect: () -> Unit,
+    onEditText: () -> Unit,
     onGroupGestureStart: () -> Unit,
     onGroupGestureEnd: () -> Unit,
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit,
@@ -3297,12 +3305,16 @@ private fun InteractiveTextOverlay(
     val textureOffsetY = KeyframeStore.sample(
         clip.keyframes, "textTexture.y", localTimeSec, textState.textureOffsetY
     ).coerceIn(-100f, 100f)
+    val textureRotation = KeyframeStore.sample(
+        clip.keyframes, "textTexture.rotation", localTimeSec, textState.textureRotation
+    ).coerceIn(-180f, 180f)
     val context = LocalContext.current
     val textureUri = remember(textState.textureUri) {
         textState.textureUri?.let(Uri::parse)
     }
-    val textureIsVideo = remember(textureUri) {
-        textureUri?.let { context.contentResolver.getType(it)?.startsWith("video/") } == true
+    val textureIsVideo = remember(textureUri, textState.textureMimeType) {
+        textState.textureMimeType?.startsWith("video/") == true ||
+                textureUri?.let { context.contentResolver.getType(it)?.startsWith("video/") } == true
     }
     val textureFrameBucket = if (textureIsVideo) (localTimeSec * 4f).toInt() else 0
     val latestTextureFrameBucket by rememberUpdatedState(textureFrameBucket)
@@ -3317,7 +3329,14 @@ private fun InteractiveTextOverlay(
                 withContext(Dispatchers.IO) {
                     MediaMetadataRetriever().apply {
                         try {
-                            setDataSource(context, textureUri)
+                            if (textureUri.scheme == "file") {
+                                setDataSource(
+                                    textureUri.path
+                                        ?: throw java.io.IOException("Invalid video texture path")
+                                )
+                            } else {
+                                setDataSource(context, textureUri)
+                            }
                         } catch (error: Exception) {
                             release()
                             throw error
@@ -3342,7 +3361,12 @@ private fun InteractiveTextOverlay(
                                 MediaMetadataRetriever.OPTION_CLOSEST
                             )
                         } else {
-                            context.contentResolver.openInputStream(textureUri)?.use {
+                            val input = if (textureUri.scheme == "file") {
+                                textureUri.path?.let { java.io.File(it).inputStream() }
+                            } else {
+                                context.contentResolver.openInputStream(textureUri)
+                            }
+                            input?.use {
                                 android.graphics.BitmapFactory.decodeStream(it)
                             }
                         }
@@ -3482,32 +3506,24 @@ private fun InteractiveTextOverlay(
             softWrap = true
         )
     }
-    val tightMeasure = remember(
-        displayContent,
-        finalFontSizeSp,
-        finalLetterSpacingSp,
-        family,
-        weight,
-        fontSty
-    ) {
-        measurer.measure(
-            text = displayContent,
-            style = androidx.compose.ui.text.TextStyle(
-                fontSize = finalFontSizeSp,
-                letterSpacing = finalLetterSpacingSp,
-                fontFamily = family,
-                fontWeight = weight,
-                fontStyle = fontSty
-            ),
-            constraints = androidx.compose.ui.unit.Constraints(
-                maxWidth = (canvasWpx * (textState.maxWidth / 100f)).toInt().coerceAtLeast(50)
-            ),
-            softWrap = true
-        )
-    }
     val textWidthDp = with(density) { finalMeasure.size.width.toDp().value };
-    val textHeightDp = with(density) { finalMeasure.size.height.toDp().value };
-    val textWidthConstraintDp = with(density) { tightMeasure.size.width.toDp() }
+    val glyphBounds = remember(finalMeasure, displayContent) {
+        var top = Float.POSITIVE_INFINITY
+        var bottom = Float.NEGATIVE_INFINITY
+        displayContent.forEachIndexed { index, char ->
+            if (!char.isWhitespace()) {
+                val bounds = finalMeasure.getBoundingBox(index)
+                top = minOf(top, bounds.top)
+                bottom = maxOf(bottom, bounds.bottom)
+            }
+        }
+        if (top.isFinite() && bottom.isFinite()) top to bottom else null
+    }
+    val textHeightDp = with(density) {
+        ((glyphBounds?.second ?: finalMeasure.size.height.toFloat()) -
+                (glyphBounds?.first ?: 0f)).coerceAtLeast(1f).toDp().value
+    }
+    val textWidthConstraintDp = textWidthDp.dp
     val solidColor = Color(textState.color)
     val gradient: Brush? = if (textState.gradientEnabled) {
         Brush.linearGradient(
@@ -3541,8 +3557,8 @@ private fun InteractiveTextOverlay(
     val blurDp = with(density) { frame.blurRadiusPx.toDp() }.coerceAtLeast(0.dp).coerceAtMost(20.dp)
     val bgPadX = if (textState.backgroundEnabled) textState.backgroundPaddingX else 2f;
     val bgPadY = if (textState.backgroundEnabled) textState.backgroundPaddingY else 2f
-    val selectionWidthDp = (textWidthDp + bgPadX).coerceAtLeast(20f);
-    val selectionHeightDp = (textHeightDp + bgPadY).coerceAtLeast(20f)
+    val selectionWidthDp = (textWidthDp + bgPadX * 2f).coerceAtLeast(8f)
+    val selectionHeightDp = (textHeightDp + bgPadY * 2f).coerceAtLeast(8f)
     val outerWidthDp = selectionWidthDp;
     val outerHeightDp = selectionHeightDp
     val gradientPaddingX = (outerWidthDp - textWidthDp).coerceAtLeast(0f) / 2f
@@ -3567,6 +3583,7 @@ private fun InteractiveTextOverlay(
                     )
                     val shaderMatrix = android.graphics.Matrix().apply {
                         setScale(fitScale, fitScale)
+                        postRotate(textureRotation)
                         postTranslate(
                             -bitmap.width * fitScale / 2f +
                                     textureOffsetX / 100f * size.width,
@@ -3591,8 +3608,8 @@ private fun InteractiveTextOverlay(
             }
     } else Modifier
     val scaleFactor = sampled.scale / 100f;
-    val handleW = (outerWidthDp * scaleFactor).dp;
-    val handleH = (outerHeightDp * scaleFactor).dp
+    val handleW = (outerWidthDp * scaleFactor).coerceAtLeast(1f).dp
+    val handleH = (outerHeightDp * scaleFactor).coerceAtLeast(1f).dp
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Box(
@@ -3641,7 +3658,6 @@ private fun InteractiveTextOverlay(
                         var lastAngle = 0f;
                         var hasMultiGesture = false;
                         var hasMoved = false
-                        if (!isSelected && !isMulti) onSelect()
                         var continueGesture = true
                         while (continueGesture) {
                             val event = awaitPointerEvent();
@@ -3880,6 +3896,32 @@ private fun InteractiveTextOverlay(
                     )
                 }
             }
+            if (isSelected && !isMulti) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 7.dp, y = (-7).dp)
+                        .size(LAYER_CONTROL_HANDLE_SIZE)
+                        .clickable(onClick = onEditText),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF171A22))
+                            .border(1.dp, Color(0xFF60EFFF), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Edit,
+                            contentDescription = "Edit text",
+                            tint = Color.White,
+                            modifier = Modifier.size(6.dp)
+                        )
+                    }
+                }
+            }
         }
         if (isSelected) {
             Box(modifier = Modifier
@@ -3889,8 +3931,8 @@ private fun InteractiveTextOverlay(
                     posTx + frame.translateX; translationY = posTy + frame.translateY; rotationZ =
                     sampled.rotation + frame.rotationZ
                 }
-                .width(handleW.coerceAtLeast(20.dp))
-                .height(handleH.coerceAtLeast(20.dp))) {
+                .width(handleW.coerceAtLeast(8.dp))
+                .height(handleH.coerceAtLeast(8.dp))) {
                 LayerTransformHandles(
                     clipId = clip.id,
                     scale = sampled.scale,
@@ -3999,7 +4041,6 @@ private fun InteractiveStickerOverlay(
                         var lastAngle = 0f;
                         var hasMultiGesture = false;
                         var hasMoved = false
-                        if (!isSelected && !isMulti) onSelect()
                         var continueGesture = true
                         while (continueGesture) {
                             val event = awaitPointerEvent();
@@ -4108,7 +4149,7 @@ private fun BoxScope.LayerTransformHandles(
         val density = LocalDensity.current;
         val boundsWidthPx = with(density) { maxWidth.toPx() };
         val boundsHeightPx = with(density) { maxHeight.toPx() };
-        val handleSizePx = with(density) { 14.dp.toPx() }
+        val handleSizePx = with(density) { LAYER_CONTROL_HANDLE_SIZE.toPx() }
         TransformHandle(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -4169,6 +4210,8 @@ private fun BoxScope.LayerTransformHandles(
     }
 }
 
+private val LAYER_CONTROL_HANDLE_SIZE = 14.dp
+
 private enum class TransformHandleCorner { Delete, Rotate, Scale }
 
 @Composable
@@ -4200,7 +4243,7 @@ private fun TransformHandle(
 
     Box(
         modifier = modifier
-            .size(14.dp)
+            .size(LAYER_CONTROL_HANDLE_SIZE)
             .clip(CircleShape)
             .background(
                 when (corner) {

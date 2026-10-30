@@ -86,6 +86,14 @@ object SpotlightBitmapRenderer {
                         ) {
                             drawSpotlight(spotlight)
                         }
+                        LayerShadowRenderer.applyToBitmap(
+                            android.graphics.Canvas(bitmap),
+                            clip.layerShadow,
+                            width,
+                            height
+                        ) { shadowCanvas ->
+                            shadowCanvas.drawBitmap(bitmap, 0f, 0f, null)
+                        }
                         val imageFile = if (hasAnimation) {
                             File(directory, "frame_%05d.png".format(frame + 1))
                         } else pattern

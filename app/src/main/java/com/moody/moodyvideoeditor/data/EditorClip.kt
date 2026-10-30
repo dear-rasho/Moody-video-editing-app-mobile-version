@@ -58,6 +58,7 @@ data class EditorClip(
 
     // Color Matte — full style (solid / ramp / 4-color)
     val matteStyle: ColorMatteStyle = ColorMatteStyle(),
+    val layerShadow: LayerShadowState = LayerShadowState(),
 
     val visualizer: VisualizerState? = null,
     val spotlight: SpotlightState? = null,

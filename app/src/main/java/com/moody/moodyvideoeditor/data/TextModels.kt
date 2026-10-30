@@ -104,9 +104,11 @@ data class TextState(
 
     // Image/video content rendered inside the text glyphs.
     val textureUri: String? = null,
+    val textureMimeType: String? = null,
     val textureScale: Float = 100f,
     val textureOffsetX: Float = 0f,
     val textureOffsetY: Float = 0f,
+    val textureRotation: Float = 0f,
 
     // Segments (mixed typography)
     val segments: List<TextSegment> = emptyList()
