@@ -36,7 +36,11 @@ import com.moody.moodyvideoeditor.data.ProjectMeta
 fun RecentProjects(
     projects: List<ProjectMeta>,
     onOpen: (String) -> Unit,
-    onDelete: (String) -> Unit
+    onDelete: (String) -> Unit,
+    selectionMode: Boolean = false,
+    selectedIds: Set<String> = emptySet(),
+    onToggleSelection: (String) -> Unit = {},
+    onStartSelection: (String) -> Unit = {}
 ) {
     if (projects.isEmpty()) {
         Box(
@@ -78,8 +82,13 @@ fun RecentProjects(
         projects.forEach { project ->
             ProjectCard(
                 project = project,
-                onClick = { onOpen(project.id) },
-                onDelete = { onDelete(project.id) }
+                onClick = {
+                    if (selectionMode) onToggleSelection(project.id) else onOpen(project.id)
+                },
+                onDelete = { onDelete(project.id) },
+                isSelected = project.id in selectedIds,
+                selectionMode = selectionMode,
+                onLongClick = { onStartSelection(project.id) }
             )
         }
         // Right padding spacer
@@ -91,15 +100,21 @@ fun RecentProjects(
 fun ProjectCard(
     project: ProjectMeta,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    isSelected: Boolean = false,
+    selectionMode: Boolean = false,
+    onLongClick: () -> Unit = {}
 ) {
     Box(
         modifier = Modifier
             .width(150.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(Color(0xFF181818))
-            .pointerInput(project.id) {
-                detectTapGestures { onClick() }
+            .pointerInput(project.id, selectionMode, isSelected) {
+                detectTapGestures(
+                    onTap = { onClick() },
+                    onLongPress = { onLongClick() }
+                )
             }
     ) {
         Column {
@@ -159,25 +174,45 @@ fun ProjectCard(
 
         //  🆕 DELETE BUTTON — top-right of card
 
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(6.dp)
-                .size(24.dp)
-                .clip(CircleShape)
-                .background(Color(0xFF2A1414))
-                .pointerInput(project.id) {
-                    detectTapGestures { onDelete() }
-                }
-                .zIndex(10f),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                "✕",
-                color = Color(0xFFFF6B6B),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
+        if (selectionMode) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(if (isSelected) Color(0xFF7C3AED) else Color(0xFF2A2A2A))
+                    .zIndex(10f),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (isSelected) "✓" else "",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF2A1414))
+                    .pointerInput(project.id) {
+                        detectTapGestures { onDelete() }
+                    }
+                    .zIndex(10f),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "✕",
+                    color = Color(0xFFFF6B6B),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }

@@ -29,31 +29,6 @@ You will output ONLY the editor commands. No explanations, no markdown, no extra
 - If unsure, make a reasonable creative choice
 - Timestamped blocks can be MIXED with trailing linear commands (transitions, ratio, filters)
 """.trimIndent()
-    val STICKERS = """
-## 😀 STICKERS
-Syntax: sticker EMOJI [properties]
-
-Properties:
-  position X Y              0..100 %
-  scale N                   10..500 (default 100)
-  rotation DEG              -180 to +180
-  opacity 0..100
-  animation NAME            see TEXT_MASTER section C
-  duration SEC              animation duration 0.2..5
-
-Timed placement:
-  [00:01 - 00:05] sticker 🔥 position 85 18 scale 90 animation popIn duration 0.6
-
-Management:
-  deletesticker             delete selected sticker
-  duplicate sticker         duplicate selected sticker
-
-Examples:
-  sticker 🔥
-  sticker ⚡ position 15 22 animation popIn duration 0.6
-  sticker ✨ position 88 80 scale 120 animation bounceIn
-""".trimIndent()
-
     // ═══════════════════════════════════════════════════════════
     //  2. TEXT — MASTER BLOCK (everything about text)
     // ═══════════════════════════════════════════════════════════
@@ -672,12 +647,11 @@ Format: [MM:SS - MM:SS] commands
 Rules:
   - One block per line
   - Do NOT mix timed blocks with linear commands
-  - Timed blocks create text/sticker layers with start/end times
+  - Timed blocks create text layers with start/end times
 
 Example:
   [00:00 - 00:04] text "OPENING" size 72 color white animation fadeIn
   [00:01 - 00:04] text "Subtitle" size 40 color cyan animation fadeUp
-  [00:02 - 00:05] sticker 🔥 position 85 18 animation popIn duration 0.6
 
   L1 transitions, C1 fade, C2 slide left
   ratio 9:16, moody, hdr
@@ -693,7 +667,6 @@ Example:
 ### Neon TikTok Title
   [00:00 - 00:05] text "TURN UP" font "Bangers" size 96 color white align center position 50 50 animation popScale glow #ff0066 50 stroke 4 #ff0066
   contrast 20, saturation 40, vibrance 60
-  [00:00 - 00:05] sticker 🔥 position 15 22 scale 90 animation popIn duration 0.6
 
 ### Retro Gradient
   [00:00 - 00:05] text "MOODY" font "Lobster" size 140 color white align center animation popIn gradient #ff0066 #ffcc00 45 glow cyan 50 stroke 6 black
@@ -713,8 +686,6 @@ Example:
             "Setup, output rules, general instructions", HEADER),
         PromptChunk("text_master", "📝", "TEXT — Complete Guide",
             "Create + Edit + Animate + Fonts (one master block)", TEXT_MASTER),
-        PromptChunk("stickers", "😀", "Stickers",
-            "Emoji stickers with properties", STICKERS),
         PromptChunk("adjustments", "🎚️", "Adjustments",
             "24 sliders for color grading", ADJUSTMENTS),
         PromptChunk("filters", "🔍", "Filters",

@@ -64,6 +64,12 @@ fun DashboardScreen(
     }
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
     var pendingDeleteTemplateId by remember { mutableStateOf<String?>(null) }
+    var selectingProjects by remember { mutableStateOf(false) }
+    var selectedProjectIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var selectingTemplates by remember { mutableStateOf(false) }
+    var selectedTemplateIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var confirmDeleteProjects by remember { mutableStateOf(false) }
+    var confirmDeleteTemplates by remember { mutableStateOf(false) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(context, lifecycleOwner) {
@@ -71,6 +77,9 @@ fun DashboardScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 projects = ProjectRepository.listProjects(context)
                 savedTemplates = SavedTemplateRepository.listTemplates(context)
+                selectedProjectIds = selectedProjectIds intersect projects.map { it.id }.toSet()
+                selectedTemplateIds =
+                    selectedTemplateIds intersect savedTemplates.map { it.id }.toSet()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -167,19 +176,75 @@ fun DashboardScreen(
         }
 
         // RECENT PROJECTS
-        SectionTitle("Recent Projects")
+        SelectionSectionHeader(
+            title = "Recent Projects",
+            selectionMode = selectingProjects,
+            selectedCount = selectedProjectIds.size,
+            itemCount = projects.size,
+            onEnterSelection = {
+                selectingProjects = true
+                selectedProjectIds = emptySet()
+            },
+            onSelectAll = { selectedProjectIds = projects.map { it.id }.toSet() },
+            onDelete = { confirmDeleteProjects = true },
+            onCancel = {
+                selectingProjects = false
+                selectedProjectIds = emptySet()
+            }
+        )
         RecentProjects(
             projects = projects,
             onOpen = { projectId -> onOpenProject(projectId) },
-            onDelete = { projectId -> pendingDeleteId = projectId }
+            onDelete = { projectId -> pendingDeleteId = projectId },
+            selectionMode = selectingProjects,
+            selectedIds = selectedProjectIds,
+            onToggleSelection = { projectId ->
+                selectedProjectIds = if (projectId in selectedProjectIds) {
+                    selectedProjectIds - projectId
+                } else {
+                    selectedProjectIds + projectId
+                }
+            },
+            onStartSelection = { projectId ->
+                selectingProjects = true
+                selectedProjectIds = selectedProjectIds + projectId
+            }
         )
 
         // 🆕 MY TEMPLATES
-        SectionTitle("My Templates")
+        SelectionSectionHeader(
+            title = "My Templates",
+            selectionMode = selectingTemplates,
+            selectedCount = selectedTemplateIds.size,
+            itemCount = savedTemplates.size,
+            onEnterSelection = {
+                selectingTemplates = true
+                selectedTemplateIds = emptySet()
+            },
+            onSelectAll = { selectedTemplateIds = savedTemplates.map { it.id }.toSet() },
+            onDelete = { confirmDeleteTemplates = true },
+            onCancel = {
+                selectingTemplates = false
+                selectedTemplateIds = emptySet()
+            }
+        )
         SavedTemplatesShelf(
             templates = savedTemplates,
             onOpen = { templateId -> onOpenFromSavedTemplate(templateId) },
-            onDelete = { templateId -> pendingDeleteTemplateId = templateId }
+            onDelete = { templateId -> pendingDeleteTemplateId = templateId },
+            selectionMode = selectingTemplates,
+            selectedIds = selectedTemplateIds,
+            onToggleSelection = { templateId ->
+                selectedTemplateIds = if (templateId in selectedTemplateIds) {
+                    selectedTemplateIds - templateId
+                } else {
+                    selectedTemplateIds + templateId
+                }
+            },
+            onStartSelection = { templateId ->
+                selectingTemplates = true
+                selectedTemplateIds = selectedTemplateIds + templateId
+            }
         )
 
 
@@ -312,6 +377,148 @@ fun DashboardScreen(
             containerColor = Color(0xFF1A1A1A),
             shape = RoundedCornerShape(16.dp)
         )
+    }
+
+    if (confirmDeleteProjects) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmDeleteProjects = false },
+            title = {
+                Text(
+                    "Delete ${selectedProjectIds.size} projects?",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    "These projects and their thumbnails will be permanently deleted.",
+                    color = Color(0xFFAAAAAA),
+                    fontSize = 12.sp
+                )
+            },
+            confirmButton = {
+                DialogAction("Delete", Color(0xFFFF6B6B)) {
+                    ProjectRepository.deleteProjects(context, selectedProjectIds)
+                    projects = ProjectRepository.listProjects(context)
+                    selectedProjectIds = emptySet()
+                    selectingProjects = false
+                    confirmDeleteProjects = false
+                }
+            },
+            dismissButton = {
+                DialogAction("Cancel", Color.White) { confirmDeleteProjects = false }
+            },
+            containerColor = Color(0xFF1A1A1A),
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    if (confirmDeleteTemplates) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmDeleteTemplates = false },
+            title = {
+                Text(
+                    "Delete ${selectedTemplateIds.size} templates?",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    "These saved templates will be permanently deleted.",
+                    color = Color(0xFFAAAAAA),
+                    fontSize = 12.sp
+                )
+            },
+            confirmButton = {
+                DialogAction("Delete", Color(0xFFFF6B6B)) {
+                    SavedTemplateRepository.deleteMany(context, selectedTemplateIds)
+                    savedTemplates = SavedTemplateRepository.listTemplates(context)
+                    selectedTemplateIds = emptySet()
+                    selectingTemplates = false
+                    confirmDeleteTemplates = false
+                }
+            },
+            dismissButton = {
+                DialogAction("Cancel", Color.White) { confirmDeleteTemplates = false }
+            },
+            containerColor = Color(0xFF1A1A1A),
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+}
+
+@Composable
+private fun SelectionSectionHeader(
+    title: String,
+    selectionMode: Boolean,
+    selectedCount: Int,
+    itemCount: Int,
+    onEnterSelection: () -> Unit,
+    onSelectAll: () -> Unit,
+    onDelete: () -> Unit,
+    onCancel: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            title,
+            color = Color.White,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (!selectionMode && itemCount > 0) {
+                HeaderAction("Select", Color(0xFF60EFFF), onEnterSelection)
+            } else if (selectionMode) {
+                Text(
+                    "$selectedCount selected",
+                    color = Color(0xFFAAAAAA),
+                    fontSize = 10.sp,
+                    modifier = Modifier.align(Alignment.CenterVertically)
+                )
+                HeaderAction("All", Color(0xFF60EFFF), onSelectAll)
+                if (selectedCount > 0) {
+                    HeaderAction("Delete", Color(0xFFFF6B6B), onDelete)
+                }
+                HeaderAction("Cancel", Color.White, onCancel)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeaderAction(label: String, color: Color, onClick: () -> Unit) {
+    Text(
+        label,
+        color = color,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0xFF222222))
+            .pointerInput(label) { detectTapGestures { onClick() } }
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    )
+}
+
+@Composable
+private fun DialogAction(label: String, color: Color, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .height(36.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (label == "Delete") color.copy(alpha = 0.2f) else Color(0xFF181818))
+            .pointerInput(label) { detectTapGestures { onClick() } }
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
 

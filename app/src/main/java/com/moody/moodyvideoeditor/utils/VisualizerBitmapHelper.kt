@@ -23,6 +23,7 @@ object VisualizerBitmapHelper {
         W: Int,
         H: Int,
         imageBitmap: Bitmap?,
+        backgroundImageBitmap: Bitmap? = null,
         instanceKey: String = "export"
     ) {
         val overlayBmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
@@ -33,6 +34,11 @@ object VisualizerBitmapHelper {
         VisualizerEngine.setCenterImage(
             state.imageUri,
             imageBitmap?.asImageBitmap(),
+            instanceKey
+        )
+        VisualizerEngine.setBackgroundImage(
+            state.backgroundImageUri,
+            backgroundImageBitmap?.asImageBitmap(),
             instanceKey
         )
 

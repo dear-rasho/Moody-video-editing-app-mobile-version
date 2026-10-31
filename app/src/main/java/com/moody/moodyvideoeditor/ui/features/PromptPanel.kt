@@ -157,12 +157,6 @@ private val CATEGORIES = listOf(
         )
     ),
     Cat(
-        "Sticker", "😀", listOf(
-            "sticker 😀", "sticker 🔥", "sticker ⭐",
-            "sticker ❤️", "sticker 🎬"
-        )
-    ),
-    Cat(
         "Audio", "🔊", listOf(
             "audio echo", "audio reverb", "audio robot",
             "audio underwater", "audio studio"

@@ -82,8 +82,38 @@ fun VisualizerOverlay(
         }
     }
 
+    LaunchedEffect(
+        visualizerClip.id,
+        state.backgroundImageUri,
+        state.showBackgroundImage
+    ) {
+        val uri = state.backgroundImageUri
+        if (uri.isNullOrBlank() || !state.showBackgroundImage) {
+            VisualizerEngine.clearBackgroundImage(visualizerClip.id)
+            return@LaunchedEffect
+        }
+
+        try {
+            val bitmap = withContext(Dispatchers.IO) {
+                loadImageBitmap(context, uri)
+            }
+            if (bitmap != null) {
+                VisualizerEngine.setBackgroundImage(uri, bitmap, visualizerClip.id)
+            } else {
+                Log.e(TAG, "Background image load returned null: $uri")
+                VisualizerEngine.clearBackgroundImage(visualizerClip.id)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Background image load failed: ${e.message}", e)
+            VisualizerEngine.clearBackgroundImage(visualizerClip.id)
+        }
+    }
+
     androidx.compose.runtime.DisposableEffect(visualizerClip.id) {
-        onDispose { VisualizerEngine.clearCenterImage(visualizerClip.id) }
+        onDispose {
+            VisualizerEngine.clearCenterImage(visualizerClip.id)
+            VisualizerEngine.clearBackgroundImage(visualizerClip.id)
+        }
     }
 
 

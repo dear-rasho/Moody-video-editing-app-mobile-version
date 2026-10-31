@@ -33,10 +33,28 @@ class AudioEngineTest {
     @Test
     fun noiseReductionPresetHasSoftwareExportFilter() {
         assertTrue(AudioEngine.AUDIO_FX.any { it.key == "noise_reduction" })
-        assertTrue(
-            AudioEngine.buildAudioFilter("noise_reduction", 100f)
-                .startsWith("afftdn=nr=")
-        )
+        val filter = AudioEngine.buildAudioFilter("noise_reduction", 100f)
+        assertTrue(filter.startsWith("highpass=f=70,afftdn=nr="))
+        assertTrue(filter.contains(":tn=1:"))
         assertEquals("", AudioEngine.buildAudioFilter("none", 100f))
+    }
+
+    @Test
+    fun everyAudioPresetHasAFilter() {
+        AudioEngine.AUDIO_FX.filter { it.key != "none" }.forEach { preset ->
+            assertTrue(
+                "${preset.key} should map to an FFmpeg audio filter",
+                AudioEngine.buildAudioFilter(preset.key, 100f).isNotBlank()
+            )
+        }
+    }
+
+    @Test
+    fun everySoundPresetBuildsAnOfflineAudioSource() {
+        AudioEngine.SOUND_FX.filter { it.key != "none" }.forEach { preset ->
+            val source = AudioEngine.buildSoundFxSource(preset.key, 100f, 3.0)
+            assertTrue("${preset.key} should create a source", source?.startsWith("aevalsrc=") == true)
+            assertEquals("", AudioEngine.buildAudioFilter(preset.key, 100f))
+        }
     }
 }

@@ -53,17 +53,6 @@ object TransformApplier {
                 cropT = clip.cropT, cropB = clip.cropB
             )
         }
-        // Sticker clip
-        if (clip.isStickerClip && clip.stickerState != null) {
-            val ss = clip.stickerState
-            return TransformValues(
-                x = ss.x, y = ss.y,
-                scale = ss.scale, rotation = ss.rotation,
-                anchorX = 50f, anchorY = 50f,
-                cropL = clip.cropL, cropR = clip.cropR,
-                cropT = clip.cropT, cropB = clip.cropB
-            )
-        }
         // Normal visual clip — offsetX/offsetY are normalized delta (-1..1)
         return TransformValues(
             x = 50f + clip.offsetX * 100f,

@@ -66,9 +66,9 @@ fun VolumePanel(
                     fontWeight = FontWeight.Bold, modifier = Modifier.width(30.dp)
                 )
                 Slider(
-                    value = if (isMuted) 0f else volume,
+                    value = (if (isMuted) 0f else volume).coerceIn(0f, 3f),
                     onValueChange = { onVolumeChanged(it) },
-                    valueRange = 0f..1f,
+                    valueRange = 0f..3f,
                     modifier = Modifier.weight(1f),
                     colors = SliderDefaults.colors(
                         thumbColor = Color(0xFF7C3AED),
@@ -77,7 +77,7 @@ fun VolumePanel(
                     )
                 )
                 Text(
-                    "${((if (isMuted) 0f else volume) * 100).toInt()}%",
+                    "${((if (isMuted) 0f else volume).coerceIn(0f, 3f) * 100).toInt()}%",
                     color = Color.White, fontSize = 11.sp,
                     fontWeight = FontWeight.Bold, modifier = Modifier.width(44.dp)
                 )

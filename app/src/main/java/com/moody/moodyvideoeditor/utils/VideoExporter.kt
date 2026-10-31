@@ -147,7 +147,7 @@ class VideoExporter(
                 .isNotBlank() && it.uri != Uri.EMPTY
         }, rangeStart, rangeEnd)
         val trimmedTextClips = trimClipsToRange(
-            clips.filter { it.isTextClip || it.isStickerClip },
+            clips.filter { it.isTextClip },
             rangeStart,
             rangeEnd
         )
@@ -779,6 +779,10 @@ class VideoExporter(
                 if (delayMs > 0) chain.add("adelay=$delayMs|$delayMs")
                 if (speed != 1.0f) chain.add("atempo=${speed.coerceIn(0.5f, 2.0f)}")
                 if (clip.volume != 1.0f) chain.add("volume=${clip.volume}")
+                if (clip.audioFx != "none") {
+                    val filter = AudioEngine.buildAudioFilter(clip.audioFx, clip.audioFxIntensity)
+                    if (filter.isNotBlank()) chain.add(filter)
+                }
                 chain.add("aresample=44100")
                 val label = "audio$idx"
                 filterParts.add("[$inputIdx:a]${chain.joinToString(",")}[$label]")
@@ -786,6 +790,13 @@ class VideoExporter(
             }
             filterParts.add("${audioLabels.joinToString("")}amix=inputs=${audioLabels.size}:duration=longest[outa]")
         }
+        val finalAudioLabel = AudioEngine.appendTimelineAudioEffects(
+            filterParts,
+            allClips,
+            rangeStart,
+            "outa",
+            "finala"
+        )
 
         // 🚀 FIX: FFmpeg ko force karo ki wo saare inputs ko sahi se handle kare
         args.add("-filter_complex")
@@ -793,7 +804,7 @@ class VideoExporter(
         args.add("-map"); args.add("[$finalOutv]")
 
         // Audio map karte waqt ? ka use karo taaki agar audio na ho to error na aaye
-        args.add("-map"); args.add("[outa]?")
+        args.add("-map"); args.add("[$finalAudioLabel]?")
 
         args.addAll(listOf(
             "-c:v", "libx264",

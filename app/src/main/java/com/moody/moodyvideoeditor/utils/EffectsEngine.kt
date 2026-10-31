@@ -23,7 +23,8 @@ object EffectsEngine {
     data class ActiveOverlay(
         val state: OverlayState,
         val localTimeSec: Float,
-        val layerShadow: LayerShadowState = LayerShadowState()
+        val layerShadow: LayerShadowState = LayerShadowState(),
+        val layerOpacity: Float = 1f
     )
 
     //  MOTION FRAME — mirrors effectRenderer.js computeMotion()
@@ -271,6 +272,21 @@ object EffectsEngine {
     fun opacityAlpha(f: ColorFilterValues?): Float =
         ((f?.opacity ?: 100f) / 100f).coerceIn(0f, 1f)
 
+    fun scaleColorFilter(filter: ColorFilterValues, amount: Float): ColorFilterValues {
+        val factor = amount.coerceIn(0f, 1f)
+        return filter.copy(
+            brightness = 100f + (filter.brightness - 100f) * factor,
+            contrast = 100f + (filter.contrast - 100f) * factor,
+            saturation = 100f + (filter.saturation - 100f) * factor,
+            hue = filter.hue * factor,
+            grayscale = filter.grayscale * factor,
+            sepia = filter.sepia * factor,
+            invert = filter.invert * factor,
+            blur = filter.blur * factor,
+            opacity = 100f + (filter.opacity - 100f) * factor
+        )
+    }
+
     fun blurRadiusDp(f: ColorFilterValues?): Float = f?.blur ?: 0f
 
 
@@ -309,7 +325,12 @@ object EffectsEngine {
                             glowColor = cfg.glowColor
                             ),
                             localTimeSec = (timeMs - clip.timelineStartMs) / 1000f,
-                            layerShadow = clip.layerShadow
+                            layerShadow = clip.layerShadow,
+                            layerOpacity = KeyframeStore.layerOpacityAt(
+                                clip.keyframes,
+                                clip.layerOpacity,
+                                (timeMs - clip.timelineStartMs) / 1000f
+                            ) / 100f
                         )
                     )
                 }
@@ -328,7 +349,12 @@ object EffectsEngine {
                         ActiveOverlay(
                             state = it,
                             localTimeSec = (timeMs - clip.timelineStartMs) / 1000f,
-                            layerShadow = clip.layerShadow
+                            layerShadow = clip.layerShadow,
+                            layerOpacity = KeyframeStore.layerOpacityAt(
+                                clip.keyframes,
+                                clip.layerOpacity,
+                                (timeMs - clip.timelineStartMs) / 1000f
+                            ) / 100f
                         )
                     )
                 }

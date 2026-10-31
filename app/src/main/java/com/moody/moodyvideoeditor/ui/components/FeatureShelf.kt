@@ -49,6 +49,7 @@ val FEATURES = listOf(
     Feature("speed", "Speed", "⏩"),
     Feature("text", "Text", "📝"),
     Feature("blend", "Blend", "◐"),
+    Feature("opacity", "Opacity", "◑"),
     Feature("captions", "Auto Cap", "🎙️"),
     Feature("manual_captions", "Manual Cap", "✍️"),
     Feature("animations", "Animate", "🎞️"),
@@ -57,7 +58,6 @@ val FEATURES = listOf(
     Feature("effects", "Effects", "✨"),
     Feature("adjustments", "Adjust", "🎚️"),
     Feature("wheel", "Wheels", "🎨"), // Icon text replaced by Canvas draw
-    Feature("stickers", "Stickers", "😀"),
     Feature("overlays", "Overlays", "🎬"),
     Feature("transitions", "Transitions", "⇄"),
     Feature("mask", "Mask", "▣"),

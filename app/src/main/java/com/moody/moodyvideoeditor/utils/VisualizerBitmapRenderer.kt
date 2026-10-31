@@ -68,46 +68,15 @@ object VisualizerBitmapRenderer {
         val renderTrackIndex = visualizerClips.minOfOrNull { it.trackIndex } ?: 0
 
         val vizBitmaps = mutableMapOf<String, Bitmap?>()
+        val vizBackgroundBitmaps = mutableMapOf<String, Bitmap?>()
         try {
             sortedViz.forEach { c ->
-                val uri = c.visualizer?.imageUri
-                if (!uri.isNullOrBlank()) {
-                    try {
-                        val parsed = android.net.Uri.parse(uri)
-                        val bmp = withContext(Dispatchers.IO) {
-                            val bounds = BitmapFactory.Options().apply {
-                                inJustDecodeBounds = true
-                            }
-                            context.contentResolver.openInputStream(parsed)?.use {
-                                BitmapFactory.decodeStream(it, null, bounds)
-                            }
-                            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-                                null
-                            } else {
-                                val maxSize = maxOf(W, H) * 2
-                                var sampleSize = 1
-                                while (
-                                    bounds.outWidth / sampleSize > maxSize ||
-                                    bounds.outHeight / sampleSize > maxSize
-                                ) {
-                                    sampleSize *= 2
-                                }
-                                val options = BitmapFactory.Options().apply {
-                                    inSampleSize = sampleSize
-                                }
-                                context.contentResolver.openInputStream(parsed)?.use {
-                                    BitmapFactory.decodeStream(it, null, options)
-                                }
-                            }
-                        }
-                        vizBitmaps[c.id] = bmp
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Could not load visualizer image for ${c.id}", e)
-                        vizBitmaps[c.id] = null
-                    }
-                }
+                val state = c.visualizer ?: return@forEach
+                vizBitmaps[c.id] =
+                    loadVisualizerImage(context, state.imageUri, W, H, c.id, "center")
+                vizBackgroundBitmaps[c.id] = loadVisualizerImage(
+                    context, state.backgroundImageUri, W, H, c.id, "background"
+                )
             }
 
             val emptyPngBytes = ByteArrayOutputStream().use { baos ->
@@ -160,6 +129,7 @@ object VisualizerBitmapRenderer {
                                 rangeStart = rangeStart,
                                 sortedViz = sortedViz,
                                 vizBitmaps = vizBitmaps,
+                                vizBackgroundBitmaps = vizBackgroundBitmaps,
                                 audioById = audioById,
                                 emptyPngBytes = emptyPngBytes,
                                 renderTrackIndex = renderTrackIndex,
@@ -185,8 +155,12 @@ object VisualizerBitmapRenderer {
         } finally {
             sortedViz.forEach { clip ->
                 VisualizerEngine.clearCenterImage("export_${clip.id}")
+                VisualizerEngine.clearBackgroundImage("export_${clip.id}")
             }
-            vizBitmaps.values.filterNotNull().distinct().forEach { bitmap ->
+            (vizBitmaps.values + vizBackgroundBitmaps.values)
+                .filterNotNull()
+                .distinct()
+                .forEach { bitmap ->
                 if (!bitmap.isRecycled) bitmap.recycle()
             }
         }
@@ -203,6 +177,7 @@ object VisualizerBitmapRenderer {
         rangeStart: Long,
         sortedViz: List<EditorClip>,
         vizBitmaps: Map<String, Bitmap?>,
+        vizBackgroundBitmaps: Map<String, Bitmap?>,
         audioById: Map<String, EditorClip>,
         emptyPngBytes: ByteArray,
         renderTrackIndex: Int,
@@ -282,15 +257,32 @@ object VisualizerBitmapRenderer {
                                     viewWidth = W.toFloat(),
                                     viewHeight = H.toFloat()
                                 ) {
-                                    VisualizerBitmapHelper.drawVisualizerFrame(
-                                        canvas = layerCanvas,
-                                        state = state,
-                                        relativeMs = relativeMs,
-                                        elapsedSec = elapsedSec,
-                                        W = W, H = H,
-                                        imageBitmap = imageBmp,
-                                        instanceKey = "export_${vc.id}"
+                                    val opacity = KeyframeStore.layerOpacityAt(
+                                        vc.keyframes,
+                                        vc.layerOpacity,
+                                        timelineOffset / 1000f
                                     )
+                                    val opacityLayer = layerCanvas.saveLayerAlpha(
+                                        0f,
+                                        0f,
+                                        W.toFloat(),
+                                        H.toFloat(),
+                                        (opacity / 100f * 255f).toInt().coerceIn(0, 255)
+                                    )
+                                    try {
+                                        VisualizerBitmapHelper.drawVisualizerFrame(
+                                            canvas = layerCanvas,
+                                            state = state,
+                                            relativeMs = relativeMs,
+                                            elapsedSec = elapsedSec,
+                                            W = W, H = H,
+                                            imageBitmap = imageBmp,
+                                            backgroundImageBitmap = vizBackgroundBitmaps[vc.id],
+                                            instanceKey = "export_${vc.id}"
+                                        )
+                                    } finally {
+                                        layerCanvas.restoreToCount(opacityLayer)
+                                    }
                                 }
                             }
                         }
@@ -341,5 +333,48 @@ object VisualizerBitmapRenderer {
             workingDirectory = workingDirectory,
             imageFormat = imageFormat
         )
+    }
+
+    private suspend fun loadVisualizerImage(
+        context: Context,
+        imageUri: String?,
+        width: Int,
+        height: Int,
+        clipId: String,
+        imageType: String
+    ): Bitmap? {
+        if (imageUri.isNullOrBlank()) return null
+        return try {
+            val parsed = android.net.Uri.parse(imageUri)
+            withContext(Dispatchers.IO) {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                context.contentResolver.openInputStream(parsed)?.use {
+                    BitmapFactory.decodeStream(it, null, bounds)
+                }
+                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                    null
+                } else {
+                    val maxSize = maxOf(width, height) * 2
+                    var sampleSize = 1
+                    while (
+                        bounds.outWidth / sampleSize > maxSize ||
+                        bounds.outHeight / sampleSize > maxSize
+                    ) {
+                        sampleSize *= 2
+                    }
+                    val options = BitmapFactory.Options().apply {
+                        inSampleSize = sampleSize
+                    }
+                    context.contentResolver.openInputStream(parsed)?.use {
+                        BitmapFactory.decodeStream(it, null, options)
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not load visualizer $imageType image for $clipId", e)
+            null
+        }
     }
 }

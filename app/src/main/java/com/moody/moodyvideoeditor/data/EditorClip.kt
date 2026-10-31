@@ -36,6 +36,7 @@ data class EditorClip(
 
     // 🎨 Blend opacity/mix amount: 0..100 (0 = no blend, 100 = full blend)
     val blendOpacity: Float = 100f,
+    val layerOpacity: Float = 100f,
     // 🆕 PER-CLIP AUDIO EFFECTS
     val audioFx: String = "none",
     val audioFxIntensity: Float = 100f,
@@ -48,7 +49,6 @@ data class EditorClip(
     val effectKeys: List<String> = emptyList(),
     val effectState: EffectState? = null,
     val textState: TextState? = null,
-    val stickerState: StickerState? = null,
 
     val freeze: FreezeState? = null,
     val transition: TransitionState? = null,
@@ -75,7 +75,6 @@ data class EditorClip(
                 (type.startsWith("video/") || type.startsWith("image/"))
 
     val isTextClip: Boolean get() = type == "text/plain"
-    val isStickerClip: Boolean get() = type == "sticker/plain"
     val isEffectClip: Boolean get() = type == "effect/plain"
     val isAdjustmentClip: Boolean get() = type == "adjustment/plain"
     val isOverlayClip: Boolean get() = type == "overlay/plain"
@@ -96,7 +95,6 @@ data class EditorClip(
             isColorMatteClip -> 70
             isSpotlightClip -> 65
             isTextClip -> 60
-            isStickerClip -> 55
             isVisualizerClip -> 50
             isOverlayClip -> 45
             isEffectClip -> 40
@@ -119,7 +117,6 @@ data class EditorClip(
     // ═══════════════════════════════════════════════════════════
     val isReplaceable: Boolean
         get() = isTextClip ||
-                isStickerClip ||
                 type.startsWith("image/") ||
                 type.startsWith("video/") ||
                 type.startsWith("audio/")

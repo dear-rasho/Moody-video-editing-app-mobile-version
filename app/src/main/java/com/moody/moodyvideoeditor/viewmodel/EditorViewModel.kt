@@ -19,6 +19,7 @@ import com.moody.moodyvideoeditor.data.EffectLibrary
 import com.moody.moodyvideoeditor.data.EffectState
 import com.moody.moodyvideoeditor.data.FilterState
 import com.moody.moodyvideoeditor.data.Keyframe
+import com.moody.moodyvideoeditor.data.KeyframeLibrary
 import com.moody.moodyvideoeditor.data.LayerShadowState
 import com.moody.moodyvideoeditor.data.MaskAnimatableProps
 import com.moody.moodyvideoeditor.data.MaskLibrary
@@ -27,7 +28,6 @@ import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.data.RatioState
-import com.moody.moodyvideoeditor.data.StickerState
 import com.moody.moodyvideoeditor.data.SpotlightState
 import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.data.TransitionLibrary
@@ -43,6 +43,7 @@ import com.moody.moodyvideoeditor.utils.DuplicateEngine
 import com.moody.moodyvideoeditor.utils.FreezeEngine
 import com.moody.moodyvideoeditor.utils.HistoryManager
 import com.moody.moodyvideoeditor.utils.KeyframeStore
+import com.moody.moodyvideoeditor.utils.TypographyAnimationPresetLibrary
 import com.moody.moodyvideoeditor.utils.MaskEngine
 import com.moody.moodyvideoeditor.utils.SettingsConsumer
 import com.moody.moodyvideoeditor.utils.SpotlightAnimation
@@ -204,7 +205,7 @@ class EditorViewModel : ViewModel() {
             .loadProject(context, projectId) ?: return false
 
         val fixedClips = loaded.clips.map { clip ->
-            if (clip.isTextClip || clip.isStickerClip ||
+            if (clip.isTextClip ||
                 clip.type.startsWith("image/")
             ) {
                 clip.copy(sourceTotalMs = Long.MAX_VALUE)
@@ -241,7 +242,7 @@ class EditorViewModel : ViewModel() {
             .load(context, templateId) ?: return false
 
         val fixedClips = loaded.clips.map { clip ->
-            if (clip.isTextClip || clip.isStickerClip ||
+            if (clip.isTextClip ||
                 clip.isEffectClip || clip.isAdjustmentClip ||
                 clip.isOverlayClip ||
                 clip.isColorMatteClip || clip.isFilterLayerClip ||
@@ -1201,25 +1202,19 @@ class EditorViewModel : ViewModel() {
         return newIdx
     }
 
-    fun closeGapsAfterSelectedClip() {
-        val sel = _state.value.selectedClip ?: return
+    fun closeGapsOnSelectedTrack() {
         val s = _state.value
-        val list = if (sel.isAudio) s.timelineAudioList() else s.timelineVisualList()
-        val track = list.getOrNull(sel.trackIndex) ?: return
-        val updated = TimelineTools.closeGapsAfterClip(track, sel.id)
+        val selectedClip = s.selectedClip
+        val trackIndex = selectedClip?.trackIndex ?: s.selectedTrackIndex
+        val isAudio = selectedClip?.isAudio ?: s.selectedIsAudio
+        val list = if (isAudio) s.timelineAudioList() else s.timelineVisualList()
+        val track = list.getOrNull(trackIndex) ?: return
+        val updated = TimelineTools.closeGapsOnTrack(track)
         val sameTrackChanged = updated.associate { it.id to it.timelineStartMs }
             .filter { (id, startMs) ->
                 track.firstOrNull { it.id == id }?.timelineStartMs != startMs
             }
-        val changedStarts = if (sameTrackChanged.isNotEmpty() || sel.isAudio) {
-            sameTrackChanged
-        } else {
-            TimelineTools.closeGapToNextClipAcrossVisualTracks(s.clips, sel)
-                .associate { it.id to it.timelineStartMs }
-                .filter { (id, startMs) ->
-                    s.clips.firstOrNull { it.id == id }?.timelineStartMs != startMs
-                }
-        }
+        val changedStarts = sameTrackChanged
         if (changedStarts.isEmpty()) return
 
         pushHistory()
@@ -1395,8 +1390,6 @@ class EditorViewModel : ViewModel() {
     private fun getClipPos(clip: EditorClip): Pair<Float, Float> = when {
         clip.isTextClip && clip.textState != null ->
             clip.textState.positionX to clip.textState.positionY
-        clip.isStickerClip && clip.stickerState != null ->
-            clip.stickerState.x to clip.stickerState.y
         clip.isVisualizerClip && clip.visualizer != null ->
             (clip.visualizer.positionX * 100f) to (clip.visualizer.positionY * 100f)
         else ->
@@ -1405,7 +1398,6 @@ class EditorViewModel : ViewModel() {
 
     private fun getClipScale(clip: EditorClip): Float = when {
         clip.isTextClip && clip.textState != null -> clip.textState.scale
-        clip.isStickerClip && clip.stickerState != null -> clip.stickerState.scale
         clip.isVisualizerClip && clip.visualizer != null ->
             clip.visualizer.size / 0.32f * 100f
         else -> clip.scale * 100f
@@ -1413,7 +1405,6 @@ class EditorViewModel : ViewModel() {
 
     private fun getClipRotation(clip: EditorClip): Float = when {
         clip.isTextClip && clip.textState != null -> clip.textState.rotation
-        clip.isStickerClip && clip.stickerState != null -> clip.stickerState.rotation
         clip.isVisualizerClip && clip.visualizer != null -> clip.visualizer.rotation
         else -> clip.rotation
     }
@@ -1421,8 +1412,6 @@ class EditorViewModel : ViewModel() {
     private fun setClipPos(clip: EditorClip, x: Float, y: Float): EditorClip = when {
         clip.isTextClip && clip.textState != null ->
             clip.copy(textState = clip.textState.copy(positionX = x, positionY = y))
-        clip.isStickerClip && clip.stickerState != null ->
-            clip.copy(stickerState = clip.stickerState.copy(x = x, y = y))
         clip.isVisualizerClip && clip.visualizer != null ->
             clip.copy(
                 visualizer = clip.visualizer.copy(
@@ -1436,8 +1425,6 @@ class EditorViewModel : ViewModel() {
     private fun setClipScale(clip: EditorClip, scale: Float): EditorClip = when {
         clip.isTextClip && clip.textState != null ->
             clip.copy(textState = clip.textState.copy(scale = scale))
-        clip.isStickerClip && clip.stickerState != null ->
-            clip.copy(stickerState = clip.stickerState.copy(scale = scale))
         clip.isVisualizerClip && clip.visualizer != null ->
             clip.copy(
                 visualizer = clip.visualizer.copy(
@@ -1450,8 +1437,6 @@ class EditorViewModel : ViewModel() {
     private fun setClipRotation(clip: EditorClip, rotation: Float): EditorClip = when {
         clip.isTextClip && clip.textState != null ->
             clip.copy(textState = clip.textState.copy(rotation = rotation))
-        clip.isStickerClip && clip.stickerState != null ->
-            clip.copy(stickerState = clip.stickerState.copy(rotation = rotation))
         clip.isVisualizerClip && clip.visualizer != null ->
             clip.copy(visualizer = clip.visualizer.copy(rotation = rotation))
         else -> clip.copy(rotation = rotation)
@@ -1584,12 +1569,6 @@ class EditorViewModel : ViewModel() {
         updateSelectedPositionBulk(anchorId, newX, newY)
 
     fun updateTextTransformBulk(anchorId: String, newScale: Float, newRot: Float) =
-        updateSelectedTransformBulk(anchorId, newScale, newRot)
-
-    fun updateStickerPositionBulk(anchorId: String, newX: Float, newY: Float) =
-        updateSelectedPositionBulk(anchorId, newX, newY)
-
-    fun updateStickerTransformBulk(anchorId: String, newScale: Float, newRot: Float) =
         updateSelectedTransformBulk(anchorId, newScale, newRot)
 
     private fun syncLinkedTrim(primary: EditorClip) {
@@ -2242,7 +2221,7 @@ class EditorViewModel : ViewModel() {
     }
 
     fun setVolume(v: Float) {
-        val clamped = v.coerceIn(0f, 1f)
+        val clamped = com.moody.moodyvideoeditor.utils.VolumeEngine.clamp(v)
         forEachSelectedClip { it.copy(volume = clamped) }
         _state.update { it.copy(volume = clamped) }
     }
@@ -2485,8 +2464,28 @@ class EditorViewModel : ViewModel() {
                 } else {
                     newState
                 }
+                val localTimeSec = KeyframeStore.clipLocalTimeSeconds(
+                    s.currentPosMs, clip.timelineStartMs, clip.durationMs
+                )
+                var keyframes = clip.keyframes
+                val animatedValues = listOf(
+                    KeyframeLibrary.TEXT_SIZE to
+                            (currentText.fontSize.toFloat() to updatedText.fontSize.toFloat()),
+                    KeyframeLibrary.TEXT_LETTER_SPACING to
+                            (currentText.letterSpacing to updatedText.letterSpacing),
+                    KeyframeLibrary.TEXT_OPACITY to
+                            (currentText.opacity to updatedText.opacity)
+                )
+                animatedValues.forEach { (property, values) ->
+                    if (values.first != values.second) {
+                        keyframes = KeyframeStore.autoKeyframeIfActive(
+                            keyframes, property, localTimeSec, values.second
+                        )
+                    }
+                }
                 clip.copy(
                     textState = updatedText,
+                    keyframes = keyframes,
                     name = "📝 ${updatedText.content.take(18).ifBlank { "Text" }}"
                 )
             }
@@ -2494,6 +2493,27 @@ class EditorViewModel : ViewModel() {
         if (updatedClips == s.clips) return
         pushHistory()
         _state.update { it.copy(clips = updatedClips) }
+        updateHistoryFlags()
+    }
+
+    fun applySelectedTextTypographyPreset(presetId: String) {
+        val state = _state.value
+        val clip = state.selectedClip?.takeIf { it.isTextClip } ?: return
+        val text = clip.textState ?: return
+        val preset = TypographyAnimationPresetLibrary.find(presetId) ?: return
+        val tracks = TypographyAnimationPresetLibrary.keyframesFor(
+            preset = preset,
+            baseSize = text.fontSize,
+            baseLetterSpacing = text.letterSpacing,
+            durationSec = clip.durationMs / 1000f
+        )
+        val keyframes = clip.keyframes +
+                (KeyframeLibrary.TEXT_SIZE to tracks.getValue(KeyframeLibrary.TEXT_SIZE)) +
+                (KeyframeLibrary.TEXT_LETTER_SPACING to
+                        tracks.getValue(KeyframeLibrary.TEXT_LETTER_SPACING))
+        if (keyframes == clip.keyframes) return
+        pushHistory()
+        updateClipDirect(clip.id) { it.copy(keyframes = keyframes) }
         updateHistoryFlags()
     }
 
@@ -2603,7 +2623,6 @@ class EditorViewModel : ViewModel() {
         val sel = _state.value.selectedClip ?: return "none"
         return when {
             sel.isTextClip -> sel.textState?.animation ?: "none"
-            sel.isStickerClip -> sel.stickerState?.animation ?: "none"
             else -> "none"
         }
     }
@@ -2612,7 +2631,6 @@ class EditorViewModel : ViewModel() {
         val sel = _state.value.selectedClip ?: return 0.6f
         return when {
             sel.isTextClip -> sel.textState?.animationDuration ?: 0.6f
-            sel.isStickerClip -> sel.stickerState?.animationDuration ?: 0.6f
             else -> 0.6f
         }
     }
@@ -2622,8 +2640,6 @@ class EditorViewModel : ViewModel() {
             when {
                 clip.isTextClip && clip.textState != null ->
                     clip.copy(textState = clip.textState.copy(animation = animation))
-                clip.isStickerClip && clip.stickerState != null ->
-                    clip.copy(stickerState = clip.stickerState.copy(animation = animation))
                 else -> clip
             }
         }
@@ -2634,8 +2650,6 @@ class EditorViewModel : ViewModel() {
             when {
                 clip.isTextClip && clip.textState != null ->
                     clip.copy(textState = clip.textState.copy(animationDuration = duration))
-                clip.isStickerClip && clip.stickerState != null ->
-                    clip.copy(stickerState = clip.stickerState.copy(animationDuration = duration))
                 else -> clip
             }
         }
@@ -2689,121 +2703,6 @@ class EditorViewModel : ViewModel() {
                     keyframes = kf
                 )
             } else c.copy(textState = st.copy(scale = scale, rotation = rotation))
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  STICKER
-    // ═══════════════════════════════════════════════════════════
-
-    fun addOrUpdateSticker(emoji: String) {
-        val sel = _state.value.selectedClip
-        if (sel != null && sel.isStickerClip) {
-            updateClipDirect(sel.id) {
-                it.copy(
-                    stickerState = (it.stickerState ?: StickerState()).copy(emoji = emoji),
-                    name = emoji
-                )
-            }
-            return
-        }
-        val s = _state.value
-        val clip = EditorClip(
-            id = UUID.randomUUID().toString(), uri = Uri.EMPTY,
-            name = emoji, type = "sticker/plain",
-            sourceStartMs = 0L, sourceEndMs = 3000L,
-            timelineStartMs = s.currentPosMs, trackIndex = 0,
-            isAudio = false, sourceTotalMs = Long.MAX_VALUE,
-            stickerState = StickerState(emoji = emoji)
-        )
-        pushHistory()
-        addClipOnNewLayer(clip, (s.selectedClip?.trackIndex ?: 0) + 1)
-        updateHistoryFlags()
-    }
-
-    fun createStickerAtTime(emoji: String, startMs: Long, endMs: Long) {
-        val s = _state.value
-        val durMs = (endMs - startMs).coerceAtLeast(500L)
-        val trackIdx = findOrCreateVisualTrack(0, startMs, durMs)
-        val clip = EditorClip(
-            id = UUID.randomUUID().toString(), uri = Uri.EMPTY,
-            name = emoji, type = "sticker/plain",
-            sourceStartMs = 0L, sourceEndMs = durMs,
-            timelineStartMs = startMs, trackIndex = trackIdx,
-            isAudio = false, sourceTotalMs = Long.MAX_VALUE,
-            stickerState = StickerState(emoji = emoji)
-        )
-        pushHistory()
-        val list = s.clips.toMutableList()
-        list.add(clip)
-        _state.update {
-            it.copy(
-                clips = list, selectedClipId = clip.id,
-                selectedTrackIndex = trackIdx, selectedIsAudio = false
-            )
-        }
-        updateHistoryFlags()
-    }
-
-    fun updateSelectedSticker(newState: StickerState) {
-        forEachSelectedClip { clip ->
-            if (clip.isStickerClip) clip.copy(stickerState = newState) else clip
-        }
-    }
-
-    fun getSelectedStickerState(): StickerState =
-        _state.value.selectedClip?.stickerState ?: StickerState()
-
-    fun removeSelectedSticker() {
-        val sel = _state.value.selectedClip ?: return
-        if (!sel.isStickerClip) return
-        pushHistory()
-        val list = _state.value.clips.toMutableList()
-        list.removeAll { it.id == sel.id }
-        _state.update { it.copy(clips = list, selectedClipId = null) }
-        updateHistoryFlags()
-    }
-
-    fun updateStickerPositionDirect(clipId: String, x: Float, y: Float) {
-        val s = _state.value
-        val clip = s.clips.firstOrNull { it.id == clipId } ?: return
-        if (!clip.isStickerClip) return
-        val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
-            s.currentPosMs, clip.timelineStartMs, clip.durationMs
-        )
-        val hasAnyKf = KeyframeStore.hasAnyKeyframes(clip.keyframes)
-        updateClipDirect(clipId) { c ->
-            val ss = c.stickerState ?: return@updateClipDirect c
-            var kf = c.keyframes
-            if (hasAnyKf) {
-                kf = KeyframeStore.autoKeyframeIfActive(kf, "x", currentTimeSec, x)
-                kf = KeyframeStore.autoKeyframeIfActive(kf, "y", currentTimeSec, y)
-                c.copy(stickerState = ss.copy(x = x, y = y), keyframes = kf)
-            } else c.copy(stickerState = ss.copy(x = x, y = y))
-        }
-    }
-
-    fun updateStickerTransformDirect(clipId: String, scale: Float, rotation: Float) {
-        val s = _state.value
-        val clip = s.clips.firstOrNull { it.id == clipId } ?: return
-        if (!clip.isStickerClip) return
-        val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
-            s.currentPosMs, clip.timelineStartMs, clip.durationMs
-        )
-        val hasAnyKf = KeyframeStore.hasAnyKeyframes(clip.keyframes)
-        updateClipDirect(clipId) { c ->
-            val ss = c.stickerState ?: return@updateClipDirect c
-            var kf = c.keyframes
-            if (hasAnyKf) {
-                kf = KeyframeStore.autoKeyframeIfActive(kf, "scale", currentTimeSec, scale)
-                kf = KeyframeStore.autoKeyframeIfActive(
-                    kf, "rotation", currentTimeSec, rotation
-                )
-                c.copy(
-                    stickerState = ss.copy(scale = scale, rotation = rotation),
-                    keyframes = kf
-                )
-            } else c.copy(stickerState = ss.copy(scale = scale, rotation = rotation))
         }
     }
 
@@ -3503,32 +3402,24 @@ class EditorViewModel : ViewModel() {
         val updated = when (prop) {
             "x" -> if (sel.isTextClip && sel.textState != null)
                 sel.copy(textState = sel.textState.copy(positionX = value))
-            else if (sel.isStickerClip && sel.stickerState != null)
-                sel.copy(stickerState = sel.stickerState.copy(x = value))
             else if (sel.isVisualizerClip && sel.visualizer != null)
                 sel.copy(visualizer = sel.visualizer.copy(positionX = value / 100f))
             else sel.copy(offsetX = (value - 50f) / 100f)
 
             "y" -> if (sel.isTextClip && sel.textState != null)
                 sel.copy(textState = sel.textState.copy(positionY = value))
-            else if (sel.isStickerClip && sel.stickerState != null)
-                sel.copy(stickerState = sel.stickerState.copy(y = value))
             else if (sel.isVisualizerClip && sel.visualizer != null)
                 sel.copy(visualizer = sel.visualizer.copy(positionY = value / 100f))
             else sel.copy(offsetY = (value - 50f) / 100f)
 
             "scale" -> if (sel.isTextClip && sel.textState != null)
                 sel.copy(textState = sel.textState.copy(scale = value))
-            else if (sel.isStickerClip && sel.stickerState != null)
-                sel.copy(stickerState = sel.stickerState.copy(scale = value))
             else if (sel.isVisualizerClip && sel.visualizer != null)
                 sel.copy(visualizer = sel.visualizer.copy(size = value / 100f * 0.32f))
             else sel.copy(scale = value / 100f)
 
             "rotation" -> if (sel.isTextClip && sel.textState != null)
                 sel.copy(textState = sel.textState.copy(rotation = value))
-            else if (sel.isStickerClip && sel.stickerState != null)
-                sel.copy(stickerState = sel.stickerState.copy(rotation = value))
             else if (sel.isVisualizerClip && sel.visualizer != null)
                 sel.copy(visualizer = sel.visualizer.copy(rotation = value))
             else sel.copy(rotation = value)
@@ -3545,6 +3436,7 @@ class EditorViewModel : ViewModel() {
             "cropR" -> sel.copy(cropR = value)
             "cropT" -> sel.copy(cropT = value)
             "cropB" -> sel.copy(cropB = value)
+            "layer.opacity" -> sel.copy(layerOpacity = value.coerceIn(0f, 100f))
             else -> sel
         }
 
@@ -3599,7 +3491,30 @@ class EditorViewModel : ViewModel() {
             )
         } else {
             val live = TransformApplier.resolveLive(sel, currentTimeSec)
-            val currentValue = if (sel.isSpotlightClip &&
+            val currentValue = if (sel.isTextClip && sel.textState != null &&
+                prop in setOf(
+                    KeyframeLibrary.TEXT_SIZE,
+                    KeyframeLibrary.TEXT_LETTER_SPACING,
+                    KeyframeLibrary.TEXT_OPACITY
+                )
+            ) {
+                val textState = sel.textState
+                when (prop) {
+                    KeyframeLibrary.TEXT_SIZE -> KeyframeStore.sample(
+                        sel.keyframes, prop, currentTimeSec, textState.fontSize.toFloat()
+                    )
+                    KeyframeLibrary.TEXT_LETTER_SPACING -> KeyframeStore.sample(
+                        sel.keyframes, prop, currentTimeSec, textState.letterSpacing
+                    )
+                    else -> KeyframeStore.sample(
+                        sel.keyframes, prop, currentTimeSec, textState.opacity
+                    )
+                }
+            } else if (prop == KeyframeLibrary.LAYER_OPACITY) {
+                KeyframeStore.sample(
+                    sel.keyframes, prop, currentTimeSec, sel.layerOpacity
+                )
+            } else if (sel.isSpotlightClip &&
                 prop in SpotlightAnimation.properties
             ) {
                 val sampled = SpotlightAnimation.sample(
@@ -3890,13 +3805,6 @@ class EditorViewModel : ViewModel() {
                     positionX = 50f, positionY = 50f,
                     scale = 100f, rotation = 0f,
                     anchorX = 50f, anchorY = 50f
-                ),
-                keyframes = emptyMap()
-            )
-
-            sel.isStickerClip && sel.stickerState != null -> sel.copy(
-                stickerState = sel.stickerState.copy(
-                    x = 50f, y = 50f, scale = 100f, rotation = 0f
                 ),
                 keyframes = emptyMap()
             )
@@ -4367,7 +4275,7 @@ class EditorViewModel : ViewModel() {
         val now = System.currentTimeMillis()
 
         val imageSlots = s.clips.count {
-            it.type.startsWith("image/") && !it.isTextClip && !it.isStickerClip
+            it.type.startsWith("image/") && !it.isTextClip
         }
         val textSlots = s.clips.count { it.isTextClip }
 
@@ -4739,10 +4647,7 @@ class EditorViewModel : ViewModel() {
 
     suspend fun createVisualizerClipWithBeats(context: Context): Boolean {
         val s = _state.value
-        val selectedAudio = s.selectedClip
-        if (selectedAudio == null || !selectedAudio.isAudio ||
-            selectedAudio.isAudioEffectClip
-        ) return false
+        val selectedAudio = resolveSelectedVisualizerAudio(s) ?: return false
 
         val existing = s.clips.firstOrNull {
             it.isVisualizerClip &&
@@ -4806,10 +4711,7 @@ class EditorViewModel : ViewModel() {
 
     fun createVisualizerClip(state: VisualizerState = VisualizerState()): Boolean {
         val s = _state.value
-        val selectedAudio = s.selectedClip
-        if (selectedAudio == null || !selectedAudio.isAudio ||
-            selectedAudio.isAudioEffectClip
-        ) return false
+        val selectedAudio = resolveSelectedVisualizerAudio(s) ?: return false
 
         val existing = s.clips.firstOrNull {
             it.isVisualizerClip &&
@@ -4847,6 +4749,16 @@ class EditorViewModel : ViewModel() {
         addClipOnNewLayer(clip, s.visualLayerCount)
         updateHistoryFlags()
         return true
+    }
+
+    private fun resolveSelectedVisualizerAudio(state: EditorState): EditorClip? {
+        val selected = state.selectedClip ?: return null
+        if (selected.isAudio && !selected.isAudioEffectClip) return selected
+        val linkId = selected.linkedId ?: return null
+        if (!selected.isVisualClip) return null
+        return state.clips.firstOrNull {
+            it.isAudio && !it.isAudioEffectClip && it.linkedId == linkId
+        }
     }
 
     fun syncBeatsToVisualizer(beats: BeatsState, audioClipId: String? = null) {

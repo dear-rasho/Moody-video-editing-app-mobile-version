@@ -69,6 +69,9 @@ import com.moody.moodyvideoeditor.utils.TimelineZoom
 import com.moody.moodyvideoeditor.utils.WaveformEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -832,6 +835,7 @@ private fun VisualTrackRow(
                 onDragCancel = onDragCancel,
                 onDragVisualUpdate = onDragVisualUpdate,
                 dragVisual = dragVisual,
+                hScroll = hScroll,
                 onTransitionDelete = onTransitionDelete,
                 onTransitionDurationChange = onTransitionDurationChange,
                 selectedTransitionClipId = selectedTransitionClipId,
@@ -1014,6 +1018,7 @@ private fun AudioTrackRow(
                 onDragCancel = onDragCancel,
                 onDragVisualUpdate = onDragVisualUpdate,
                 dragVisual = dragVisual,
+                hScroll = hScroll,
                 onTransitionDelete = onTransitionDelete,
                 onTransitionDurationChange = onTransitionDurationChange,
                 selectedTransitionClipId = selectedTransitionClipId,
@@ -1119,6 +1124,7 @@ private fun TrackContent(
     onDragCancel: () -> Unit,
     onDragVisualUpdate: (DragVisual) -> Unit,
     dragVisual: DragVisual,
+    hScroll: ScrollState,
     onTransitionDelete: (String) -> Unit,
     onTransitionDurationChange: (String, Long) -> Unit,
     selectedTransitionClipId: String?,
@@ -1211,6 +1217,7 @@ private fun TrackContent(
                 onDragEnd = onDragEnd,
                 onDragCancel = onDragCancel,
                 onDragVisualUpdate = onDragVisualUpdate,
+                hScroll = hScroll,
                 onSnapGuideUpdate = { x, label ->
                     snapGuideX = x
                     snapLabel = label
@@ -1386,6 +1393,7 @@ private fun ClipCard(
     onDragEnd: () -> Unit,
     onDragCancel: () -> Unit,
     onDragVisualUpdate: (DragVisual) -> Unit,
+    hScroll: ScrollState,
     onSnapGuideUpdate: (Float, String?) -> Unit,
     onReplaceRequested: (String) -> Unit = {},
     haptic: HapticFeedback
@@ -1710,6 +1718,8 @@ private fun ClipCard(
                     releaseMs = releaseMs,
                     onTrimLeft = onTrimLeft,
                     onTrimCommit = onTrimCommit,
+                    hScroll = hScroll,
+                    handleContentStartPx = startPx,
                     onSnapGuideUpdate = onSnapGuideUpdate
                 )
             }
@@ -1732,6 +1742,8 @@ private fun ClipCard(
                     releaseMs = releaseMs,
                     onTrimRight = onTrimRight,
                     onTrimCommit = onTrimCommit,
+                    hScroll = hScroll,
+                    handleContentStartPx = startPx + clipWidthPx - with(density) { 24.dp.toPx() },
                     onSnapGuideUpdate = onSnapGuideUpdate
                 )
             }
@@ -1767,8 +1779,11 @@ private fun TrimHandleLeft(
     releaseMs: Long,
     onTrimLeft: (Long) -> Unit,
     onTrimCommit: () -> Unit,
+    hScroll: ScrollState,
+    handleContentStartPx: Float,
     onSnapGuideUpdate: (Float, String?) -> Unit
 ) {
+    val coroutineScope = rememberCoroutineScope()
     val latestClip = rememberUpdatedState(clip)
     val latestAllClips = rememberUpdatedState(allClips)
     val latestCurrentPosMs = rememberUpdatedState(currentPosMs)
@@ -1788,6 +1803,40 @@ private fun TrimHandleLeft(
                 var endMs = 0L
                 var dragClip = clip
                 var activeTarget: SnapTarget? = null
+                var pointerScreenX = 0f
+                var autoScrollDirection = 0
+                var autoScrollJob: Job? = null
+
+                fun updateAutoScroll(change: androidx.compose.ui.input.pointer.PointerInputChange) {
+                    pointerScreenX = handleContentStartPx + change.position.x - hScroll.value
+                    val edgeSize = 40f
+                    autoScrollDirection = when {
+                        pointerScreenX < edgeSize -> -1
+                        pointerScreenX > hScroll.viewportSize - edgeSize -> 1
+                        else -> 0
+                    }
+                    if (autoScrollDirection == 0) {
+                        autoScrollJob?.cancel()
+                        autoScrollJob = null
+                    } else if (autoScrollJob?.isActive != true) {
+                        autoScrollJob = coroutineScope.launch {
+                            while (isActive && autoScrollDirection != 0) {
+                                val scrolled = hScroll.dispatchRawDelta(autoScrollDirection * 12f)
+                                if (abs(scrolled) < 0.5f) break
+                                accumX += scrolled
+                                val speed = dragClip.speed.coerceAtLeast(0.01f)
+                                val deltaMs = (accumX / latestPxPerMs.value).toLong()
+                                val trimmedStart = (startMs + (deltaMs * speed).toLong())
+                                    .coerceIn(0L, endMs - EditorClip.MIN_DURATION_MS)
+                                latestOnTrimLeft.value(trimmedStart)
+                                activeTarget = null
+                                latestOnSnapGuideUpdate.value(-1f, null)
+                                delay(16)
+                            }
+                        }
+                    }
+                }
+
                 detectDragGestures(
                     onDragStart = { _: Offset ->
                         accumX = 0f
@@ -1795,6 +1844,7 @@ private fun TrimHandleLeft(
                         startMs = dragClip.sourceStartMs
                         endMs = dragClip.sourceEndMs
                         activeTarget = null
+                        autoScrollDirection = 0
                     },
                     onDrag = { change, drag ->
                         change.consume()
@@ -1859,13 +1909,18 @@ private fun TrimHandleLeft(
                             latestOnTrimLeft.value(newStart)
                             latestOnSnapGuideUpdate.value(-1f, null)
                         }
+                        updateAutoScroll(change)
                     },
                     onDragEnd = {
+                        autoScrollJob?.cancel()
+                        autoScrollJob = null
                         latestOnSnapGuideUpdate.value(-1f, null)
                         activeTarget = null
                         latestOnTrimCommit.value()
                     },
                     onDragCancel = {
+                        autoScrollJob?.cancel()
+                        autoScrollJob = null
                         latestOnSnapGuideUpdate.value(-1f, null)
                         activeTarget = null
                         latestOnTrimCommit.value()
@@ -1897,8 +1952,11 @@ private fun TrimHandleRight(
     releaseMs: Long,
     onTrimRight: (Long) -> Unit,
     onTrimCommit: () -> Unit,
+    hScroll: ScrollState,
+    handleContentStartPx: Float,
     onSnapGuideUpdate: (Float, String?) -> Unit
 ) {
+    val coroutineScope = rememberCoroutineScope()
     val latestClip = rememberUpdatedState(clip)
     val latestAllClips = rememberUpdatedState(allClips)
     val latestCurrentPosMs = rememberUpdatedState(currentPosMs)
@@ -1918,6 +1976,43 @@ private fun TrimHandleRight(
                 var endMs = 0L
                 var dragClip = clip
                 var activeTarget: SnapTarget? = null
+                var autoScrollDirection = 0
+                var autoScrollJob: Job? = null
+
+                fun updateAutoScroll(change: androidx.compose.ui.input.pointer.PointerInputChange) {
+                    val pointerScreenX = handleContentStartPx + change.position.x - hScroll.value
+                    val edgeSize = 40f
+                    autoScrollDirection = when {
+                        pointerScreenX < edgeSize -> -1
+                        pointerScreenX > hScroll.viewportSize - edgeSize -> 1
+                        else -> 0
+                    }
+                    if (autoScrollDirection == 0) {
+                        autoScrollJob?.cancel()
+                        autoScrollJob = null
+                    } else if (autoScrollJob?.isActive != true) {
+                        autoScrollJob = coroutineScope.launch {
+                            while (isActive && autoScrollDirection != 0) {
+                                val scrolled = hScroll.dispatchRawDelta(autoScrollDirection * 12f)
+                                if (abs(scrolled) < 0.5f) break
+                                accumX += scrolled
+                                val speed = dragClip.speed.coerceAtLeast(0.01f)
+                                val deltaMs = (accumX / latestPxPerMs.value).toLong()
+                                val maxEnd = if (dragClip.sourceTotalMs != Long.MAX_VALUE)
+                                    dragClip.sourceTotalMs else Long.MAX_VALUE
+                                val trimmedEnd = (endMs + (deltaMs * speed).toLong())
+                                    .coerceIn(
+                                        startMs + EditorClip.MIN_DURATION_MS,
+                                        maxEnd
+                                    )
+                                latestOnTrimRight.value(trimmedEnd)
+                                activeTarget = null
+                                latestOnSnapGuideUpdate.value(-1f, null)
+                                delay(16)
+                            }
+                        }
+                    }
+                }
 
                 detectDragGestures(
                     onDragStart = { _: Offset ->
@@ -1926,6 +2021,7 @@ private fun TrimHandleRight(
                         startMs = dragClip.sourceStartMs
                         endMs = dragClip.sourceEndMs
                         activeTarget = null
+                        autoScrollDirection = 0
                     },
                     onDrag = { change, drag ->
                         change.consume()
@@ -2000,13 +2096,18 @@ private fun TrimHandleRight(
                             latestOnTrimRight.value(newEnd)
                             latestOnSnapGuideUpdate.value(-1f, null)
                         }
+                        updateAutoScroll(change)
                     },
                     onDragEnd = {
+                        autoScrollJob?.cancel()
+                        autoScrollJob = null
                         latestOnSnapGuideUpdate.value(-1f, null)
                         activeTarget = null
                         latestOnTrimCommit.value()
                     },
                     onDragCancel = {
+                        autoScrollJob?.cancel()
+                        autoScrollJob = null
                         latestOnSnapGuideUpdate.value(-1f, null)
                         activeTarget = null
                         latestOnTrimCommit.value()
@@ -2278,7 +2379,6 @@ private fun clipColor(clip: EditorClip): Color = when {
     clip.isFilterLayerClip -> Color(0xFFEC4899)
     clip.isAudio -> Color(0xFF10B981)
     clip.isTextClip -> Color(0xFFEC4899)
-    clip.isStickerClip -> Color(0xFFF59E0B)
     clip.isEffectClip -> Color(0xFFA855F7)
     clip.isAdjustmentClip -> Color(0xFF06B6D4)
     clip.isOverlayClip -> Color(0xFF3B82F6)

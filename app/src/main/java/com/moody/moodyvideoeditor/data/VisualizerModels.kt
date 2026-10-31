@@ -197,6 +197,8 @@ data class VisualizerState(
     val showImage: Boolean = false,
     val imageScale: Float = 0.55f,
     val imageOpacity: Float = 1f,
+    val backgroundImageUri: String? = null,
+    val showBackgroundImage: Boolean = false,
 
     val imageIdleRotation: Boolean = true,
     val imageIdleSpeed: Float = 0.5f,

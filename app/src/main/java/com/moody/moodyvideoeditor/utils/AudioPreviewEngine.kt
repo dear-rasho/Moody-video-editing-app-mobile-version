@@ -159,7 +159,13 @@ object AudioPreviewEngine {
                 )
             )
 
-            "noise_reduction" -> tryNoiseSuppressor(sessionId)
+            "noise_reduction" -> tryNoiseSuppressor(sessionId, t)
+            "robot" -> tryEq(
+                sessionId, listOf(
+                    0 to (-12f * t), 1 to (4f * t), 2 to (8f * t),
+                    3 to (-8f * t), 4 to (6f * t)
+                )
+            )
 
             // Reverb effects
             "echo", "reverb" -> tryReverb(sessionId, PresetReverb.PRESET_MEDIUMROOM)
@@ -202,14 +208,26 @@ object AudioPreviewEngine {
         }
     }
 
-    private fun tryNoiseSuppressor(sessionId: Int) {
-        if (!NoiseSuppressor.isAvailable()) return
+    private fun tryNoiseSuppressor(sessionId: Int, intensity: Float) {
+        if (!NoiseSuppressor.isAvailable()) {
+            tryEq(
+                sessionId,
+                listOf(0 to (-10f * intensity), 4 to (-8f * intensity))
+            )
+            return
+        }
         try {
-            val suppressor = NoiseSuppressor.create(sessionId) ?: return
+            val suppressor = NoiseSuppressor.create(sessionId) ?: run {
+                tryEq(sessionId, listOf(0 to (-10f * intensity), 4 to (-8f * intensity)))
+                return
+            }
             suppressor.enabled = true
             noiseSuppressors.add(suppressor)
         } catch (_: RuntimeException) {
-            // Noise suppression is device-dependent; export uses FFmpeg's software filter.
+            tryEq(
+                sessionId,
+                listOf(0 to (-10f * intensity), 4 to (-8f * intensity))
+            )
         }
     }
 

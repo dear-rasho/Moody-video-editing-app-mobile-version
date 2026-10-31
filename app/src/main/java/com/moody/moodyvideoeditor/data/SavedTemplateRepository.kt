@@ -79,6 +79,21 @@ object SavedTemplateRepository {
         }
     }
 
+    fun deleteMany(context: Context, templateIds: Set<String>) {
+        if (templateIds.isEmpty()) return
+        try {
+            templateIds.forEach { templateId ->
+                File(dir(context), "$templateId.json").delete()
+            }
+            writeIndex(
+                context,
+                listTemplates(context).filterNot { it.id in templateIds }
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun rename(context: Context, templateId: String, newName: String) {
         val index = listTemplates(context).toMutableList()
         val idx = index.indexOfFirst { it.id == templateId }
@@ -154,7 +169,10 @@ object SavedTemplateRepository {
         val arr = o.optJSONArray("clips") ?: JSONArray()
         for (i in 0 until arr.length()) {
             val obj = arr.optJSONObject(i) ?: continue
-            if (obj.optString("type") != "brush/plain") clips.add(clipFromJson(obj))
+            val type = obj.optString("type")
+            if (type != "brush/plain" && type != "sticker/plain") {
+                clips.add(clipFromJson(obj))
+            }
         }
         return EditorState(
             clips = clips,
@@ -171,7 +189,7 @@ object SavedTemplateRepository {
         put("id", c.id)
         // Placeholder: images lose their URI in templates
         val isImage = c.type.startsWith("image/")
-        put("uri", if (isImage && !c.isTextClip && !c.isStickerClip) "" else c.uri.toString())
+        put("uri", if (isImage && !c.isTextClip) "" else c.uri.toString())
         put("name", c.name)
         put("type", c.type)
         put("sourceStartMs", c.sourceStartMs)
@@ -195,6 +213,7 @@ object SavedTemplateRepository {
         put("isMuted", c.isMuted)
         put("blendMode", c.blendMode)
         put("blendOpacity", c.blendOpacity.toDouble())
+        put("layerOpacity", c.layerOpacity.toDouble())
         put("audioFx", c.audioFx)
         put("audioFxIntensity", c.audioFxIntensity.toDouble())
         put("soundFx", c.soundFx)
@@ -207,8 +226,6 @@ object SavedTemplateRepository {
 
         c.effectState?.let { put("effectState", effectStateToJson(it)) }
         c.textState?.let { put("textState", textStateToJson(it)) }
-        c.stickerState?.let { put("stickerState", stickerStateToJson(it)) }
-
         c.freeze?.let { put("freeze", freezeToJson(it)) }
         c.transition?.let { put("transition", transitionToJson(it)) }
         c.ratio?.let { put("ratio", ratioToJson(it)) }
@@ -261,6 +278,7 @@ object SavedTemplateRepository {
             isMuted = o.optBoolean("isMuted", false),
             blendMode = o.optString("blendMode", "normal"),
             blendOpacity = o.optDouble("blendOpacity", 100.0).toFloat(),
+            layerOpacity = o.optDouble("layerOpacity", 100.0).toFloat(),
             audioFx = o.optString("audioFx", "none"),
             audioFxIntensity = o.optDouble("audioFxIntensity", 100.0).toFloat(),
             soundFx = o.optString("soundFx", "none"),
@@ -271,8 +289,6 @@ object SavedTemplateRepository {
             overlay = overlayFromJson(o.optJSONObject("overlay")),
             effectState = o.optJSONObject("effectState")?.let { effectStateFromJson(it) },
             textState = o.optJSONObject("textState")?.let { textStateFromJson(it) },
-            stickerState = o.optJSONObject("stickerState")?.let { stickerStateFromJson(it) },
-
             freeze = o.optJSONObject("freeze")?.let { freezeFromJson(it) },
             transition = o.optJSONObject("transition")?.let { transitionFromJson(it) },
             ratio = o.optJSONObject("ratio")?.let { ratioFromJson(it) },
@@ -496,25 +512,6 @@ object SavedTemplateRepository {
         textureRotation = o.optDouble("textureRotation", 0.0).toFloat()
     )
 
-    private fun stickerStateToJson(s: StickerState) = JSONObject().apply {
-        put("emoji", s.emoji); put("x", s.x.toDouble()); put("y", s.y.toDouble())
-        put("scale", s.scale.toDouble()); put("rotation", s.rotation.toDouble())
-        put("animation", s.animation); put("animationDuration", s.animationDuration.toDouble())
-        put("opacity", s.opacity.toDouble())
-    }
-
-    private fun stickerStateFromJson(o: JSONObject) = StickerState(
-        emoji = o.optString("emoji", ""),
-        x = o.optDouble("x", 50.0).toFloat(),
-        y = o.optDouble("y", 50.0).toFloat(),
-        scale = o.optDouble("scale", 100.0).toFloat(),
-        rotation = o.optDouble("rotation", 0.0).toFloat(),
-        animation = o.optString("animation", "none"),
-        animationDuration = o.optDouble("animationDuration", 0.6).toFloat(),
-        opacity = o.optDouble("opacity", 100.0).toFloat()
-    )
-
-
     private fun freezeToJson(f: FreezeState) = JSONObject().apply {
         put("durationMs", f.durationMs); put("atTimeMs", f.atTimeMs)
     }
@@ -651,6 +648,8 @@ object SavedTemplateRepository {
         put("color1", v.color1); put("color2", v.color2)
         put("size", v.size.toDouble()); put("positionX", v.positionX.toDouble())
         put("positionY", v.positionY.toDouble()); put("opacity", v.opacity.toDouble())
+        put("backgroundImageUri", v.backgroundImageUri ?: JSONObject.NULL)
+        put("showBackgroundImage", v.showBackgroundImage)
     }
 
     private fun visualizerFromJson(o: JSONObject) = VisualizerState(
@@ -662,7 +661,10 @@ object SavedTemplateRepository {
         size = o.optDouble("size", 0.32).toFloat(),
         positionX = o.optDouble("positionX", 0.5).toFloat(),
         positionY = o.optDouble("positionY", 0.5).toFloat(),
-        opacity = o.optDouble("opacity", 1.0).toFloat()
+        opacity = o.optDouble("opacity", 1.0).toFloat(),
+        backgroundImageUri = if (o.isNull("backgroundImageUri")) null
+        else o.optString("backgroundImageUri", null),
+        showBackgroundImage = o.optBoolean("showBackgroundImage", false)
     )
 
     private fun keyframesFromJson(o: JSONObject?): Map<String, List<Keyframe>> {

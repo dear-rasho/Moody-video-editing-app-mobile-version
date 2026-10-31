@@ -50,7 +50,9 @@ data class TextOverlaySequence(
     val workingDirectory: File? = null,
     val imageFormat: String = "png",
     val blendMode: String = "normal",
-    val isStaticImage: Boolean = false
+    val isStaticImage: Boolean = false,
+    val layerOpacity: Float = 100f,
+    val layerOpacityKeyframes: Map<String, List<com.moody.moodyvideoeditor.data.Keyframe>> = emptyMap()
 )
 
 private data class OverlayRenderBuffer(
@@ -376,7 +378,19 @@ object TextBitmapRenderer {
                                             MaskEngine.drawMaskedLayer(
                                                 layerCanvas, clip.mask, localSec, W.toFloat(), H.toFloat()
                                             ) {
-                                                drawOverlayOnCanvas(layerCanvas, buffer, localSec, ov, W, H)
+                                                drawOverlayOnCanvas(
+                                                    layerCanvas,
+                                                    buffer,
+                                                    localSec,
+                                                    ov,
+                                                    W,
+                                                    H,
+                                                    KeyframeStore.layerOpacityAt(
+                                                        clip.keyframes,
+                                                        clip.layerOpacity,
+                                                        localSec
+                                                    ) / 100f
+                                                )
                                             }
                                         }
                                     }
@@ -423,16 +437,6 @@ object TextBitmapRenderer {
                                             textureBitmap !== textTextureBitmaps[clip.id] &&
                                             !textureBitmap.isRecycled
                                         ) textureBitmap.recycle()
-                                    }
-                                } else if (clip.isStickerClip) {
-                                    LayerShadowRenderer.applyToBitmap(
-                                        canvas, clip.layerShadow, W, H
-                                    ) { layerCanvas ->
-                                        MaskEngine.drawMaskedLayer(
-                                            layerCanvas, clip.mask, localSec, W.toFloat(), H.toFloat()
-                                        ) {
-                                            drawStickerClipAtTime(layerCanvas, clip, localSec, W, H)
-                                        }
                                     }
                                 }
                             }
@@ -534,16 +538,6 @@ object TextBitmapRenderer {
                     }
                     if (clip.keyframes.isNotEmpty()) anyAnimated = true
                 }
-                if (clip.isStickerClip) {
-                    val ss = clip.stickerState
-                    if (ss != null) {
-                        val animDur = ss.animationDuration.coerceAtLeast(0.1f)
-                        if (!ss.animation.equals("none", ignoreCase = true) && localSec < animDur) {
-                            anyAnimated = true
-                        }
-                    }
-                    if (clip.keyframes.isNotEmpty()) anyAnimated = true
-                }
                 if (clip.mask.hasKeyframes) anyAnimated = true
             }
         }
@@ -638,7 +632,14 @@ object TextBitmapRenderer {
         val destination = android.graphics.RectF((W - imageW) / 2f, (H - imageH) / 2f, (W + imageW) / 2f, (H + imageH) / 2f)
 
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-            alpha = (clip.filters.opacity / 100f * 255f).toInt().coerceIn(0, 255)
+            alpha = (
+                    clip.filters.opacity / 100f *
+                            KeyframeStore.layerOpacityAt(
+                                clip.keyframes,
+                                clip.layerOpacity,
+                                localTimeSec
+                            ) / 100f * 255f
+                    ).toInt().coerceIn(0, 255)
         }
 
         val pivotX = transform.anchorX / 100f * W
@@ -704,7 +705,7 @@ object TextBitmapRenderer {
 
     private fun drawOverlayOnCanvas(
         androidCanvas: Canvas, buffer: OverlayRenderBuffer,
-        timeSec: Float, overlay: OverlayState, W: Int, H: Int
+        timeSec: Float, overlay: OverlayState, W: Int, H: Int, layerOpacity: Float
     ) {
         buffer.androidCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
         buffer.drawScope.draw(
@@ -715,7 +716,10 @@ object TextBitmapRenderer {
         ) {
             OverlayEngine.draw(this, timeSec, overlay)
         }
-        androidCanvas.drawBitmap(buffer.bitmap, 0f, 0f, null)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            alpha = (layerOpacity.coerceIn(0f, 1f) * 255f).toInt()
+        }
+        androidCanvas.drawBitmap(buffer.bitmap, 0f, 0f, paint)
     }
 
     private fun drawTextClipAtTime(
@@ -728,6 +732,21 @@ object TextBitmapRenderer {
     ) {
         val baseState = clip.textState ?: return
         val st = baseState.copy(
+            fontSize = KeyframeStore.sample(
+                clip.keyframes, "text.size", localTimeSec, baseState.fontSize.toFloat()
+            ).coerceIn(0f, 200f).toInt(),
+            letterSpacing = KeyframeStore.sample(
+                clip.keyframes,
+                "text.letterSpacing",
+                localTimeSec,
+                baseState.letterSpacing
+            ).coerceIn(-200f, 300f),
+            opacity = KeyframeStore.sample(
+                clip.keyframes, "text.opacity", localTimeSec, baseState.opacity
+            ).coerceIn(0f, 100f) *
+                    (KeyframeStore.layerOpacityAt(
+                        clip.keyframes, clip.layerOpacity, localTimeSec
+                    ) / 100f),
             textureScale = KeyframeStore.sample(
                 clip.keyframes, "textTexture.scale", localTimeSec, baseState.textureScale
             ),
@@ -770,67 +789,6 @@ object TextBitmapRenderer {
             clip.durationMs,
             textureBitmap
         )
-    }
-
-    private fun drawStickerClipAtTime(canvas: Canvas, clip: EditorClip, localTimeSec: Float, W: Int, H: Int) {
-        val ss = clip.stickerState ?: return
-        if (ss.emoji.isBlank()) return
-
-        val animDur = ss.animationDuration.coerceAtLeast(0.1f)
-        val progress = (localTimeSec / animDur).coerceIn(0f, 1f)
-        val frame = try {
-            AnimationsEngine.computeFrame(ss.animation, progress, localTimeSec)
-        } catch (_: Throwable) {
-            AnimationsEngine.Frame()
-        }
-
-        val sampled = TransformApplier.resolveLive(clip, localTimeSec)
-        val baseSize = 48f * (minOf(W, H).toFloat() / REFERENCE_WIDTH_PX)
-
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = baseSize
-            textAlign = Paint.Align.CENTER
-            typeface = Typeface.DEFAULT
-            color = Color.WHITE
-        }
-
-        val minDim = minOf(W, H).toFloat()
-        val cx = W / 2f + (sampled.x.coerceIn(0f, 100f) - 50f) / 100f * minDim
-        val cy = H / 2f + (sampled.y.coerceIn(0f, 100f) - 50f) / 100f * minDim
-        val fm = paint.fontMetrics
-        val baseline = -(fm.ascent + fm.descent) / 2f
-
-        val alphaTotal = (ss.opacity / 100f * frame.alpha).coerceIn(0f, 1f)
-        val alphaInt = (alphaTotal * 255).toInt().coerceIn(0, 255)
-        if (alphaInt <= 0) return
-        paint.alpha = alphaInt
-
-        if (frame.blurRadiusPx > 0.5f) {
-            paint.maskFilter = BlurMaskFilter(frame.blurRadiusPx.coerceIn(0.5f, 40f), BlurMaskFilter.Blur.NORMAL)
-        }
-
-        // 3D Flip Approximation (jaisa text mein hota hai)
-        val flipScaleY = if (frame.rotationX != 0f) {
-            kotlin.math.abs(kotlin.math.cos(Math.toRadians(frame.rotationX.toDouble()))).toFloat().coerceAtLeast(0.05f)
-        } else 1f
-
-        val flipScaleX = if (frame.rotationY != 0f) {
-            kotlin.math.abs(kotlin.math.cos(Math.toRadians(frame.rotationY.toDouble()))).toFloat().coerceAtLeast(0.05f)
-        } else 1f
-
-        canvas.save()
-        // Apply Translation (Animation + User Position)
-        canvas.translate(cx + frame.translateX, cy + frame.translateY)
-        // Apply Rotation (Animation + User Rotation)
-        canvas.rotate(sampled.rotation + frame.rotationZ)
-        // Apply Scale (X, Y independently) + Flip
-        canvas.scale(
-            (sampled.scale / 100f) * frame.scaleX * flipScaleX,
-            (sampled.scale / 100f) * frame.scaleY * flipScaleY
-        )
-
-        canvas.drawText(ss.emoji, 0f, baseline, paint)
-        canvas.restore()
     }
 
     private fun drawTextBackground(
@@ -916,6 +874,7 @@ object TextBitmapRenderer {
         textureBitmap: Bitmap?
     ) {
         try {
+            if (st.fontSize <= 0) return
             val content = if (!st.animation.equals("none", ignoreCase = true)) {
                 CaptionPresetLibrary.visibleText(st.content, st.animation, progress)
             } else {
@@ -954,8 +913,13 @@ object TextBitmapRenderer {
                 typeface = typeface
             )
 
-            val spacingPx = st.letterSpacing * scale
-            val spacingEm = if (fontSize <= 0f) 0f else (spacingPx / fontSize).coerceIn(-0.3f, 0.3f)
+            val spacingPx = TextRenderContract.clampLetterSpacingPx(
+                st.content,
+                fontSize,
+                typeface,
+                st.letterSpacing * scale
+            )
+            val spacingEm = if (fontSize <= 0f) 0f else spacingPx / fontSize
 
             val basePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 this.typeface = typeface

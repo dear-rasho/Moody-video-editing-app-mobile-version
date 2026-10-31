@@ -116,7 +116,9 @@ object SpotlightBitmapRenderer {
                         workingDirectory = root,
                         imageFormat = "png",
                         blendMode = "addition",
-                        isStaticImage = !hasAnimation
+                        isStaticImage = !hasAnimation,
+                        layerOpacity = clip.layerOpacity,
+                        layerOpacityKeyframes = clip.keyframes
                     )
                 }
             sequences

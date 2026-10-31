@@ -72,4 +72,32 @@ class AdjustmentPixelEngineTest {
 
         assertEquals(atLimit, beyondLimit)
     }
+
+    @Test
+    fun sharpenPreservesUniformAreas() {
+        val flat = IntArray(25) { 0xFF646464.toInt() }
+
+        assertEquals(flat.toList(), AdjustmentPixelEngine.applySharpen(flat, 5, 5, 1f).toList())
+    }
+
+    @Test
+    fun sharpenIncreasesLocalContrastAndPreservesAlpha() {
+        val pixels = IntArray(25) { 0xFF646464.toInt() }
+        pixels[12] = 0xFFC8C8C8.toInt()
+
+        val sharpened = AdjustmentPixelEngine.applySharpen(pixels, 5, 5, 1f)
+
+        assertTrue((sharpened[12] and 0xFF) > (pixels[12] and 0xFF))
+        assertEquals(0xFF, sharpened[12] ushr 24)
+    }
+
+    @Test
+    fun sharpenDoesNotPullColorFromTransparentPixels() {
+        val pixels = IntArray(9) { 0x00FFFFFF }
+        pixels[4] = 0xFF646464.toInt()
+
+        val sharpened = AdjustmentPixelEngine.applySharpen(pixels, 3, 3, 2f)
+
+        assertEquals(pixels.toList(), sharpened.toList())
+    }
 }

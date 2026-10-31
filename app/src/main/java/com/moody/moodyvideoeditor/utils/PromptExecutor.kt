@@ -4,7 +4,6 @@ package com.moody.moodyvideoeditor.utils
 import com.moody.moodyvideoeditor.data.EffectLibrary
 import com.moody.moodyvideoeditor.data.FilterState
 import com.moody.moodyvideoeditor.data.RatioLibrary
-import com.moody.moodyvideoeditor.data.StickerState
 import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.data.ToneValue
 import com.moody.moodyvideoeditor.data.TransitionLibrary
@@ -80,7 +79,7 @@ object PromptExecutor {
                 }
 
                 CmdType.TIGHTEN -> {
-                    viewModel.closeGapsAfterSelectedClip()
+                    viewModel.closeGapsOnSelectedTrack()
                     applied.add("tighten track")
                 }
 
@@ -243,26 +242,6 @@ object PromptExecutor {
                     applied.add("duplicate text")
                 }
 
-                CmdType.STICKER_DELETE -> {
-                    val sel = selected
-                    if (sel == null || !sel.isStickerClip) {
-                        errors.add("delete sticker: no sticker selected")
-                        continue
-                    }
-                    viewModel.removeSelectedSticker()
-                    applied.add("delete sticker")
-                }
-
-                CmdType.STICKER_DUPLICATE -> {
-                    val sel = selected
-                    if (sel == null || !sel.isStickerClip) {
-                        errors.add("duplicate sticker: no sticker selected")
-                        continue
-                    }
-                    viewModel.duplicateCurrentClip()
-                    applied.add("duplicate sticker")
-                }
-
                 CmdType.TEXT_PROP -> {
                     val sel = selected
                     if (sel == null || !sel.isTextClip) {
@@ -373,7 +352,7 @@ object PromptExecutor {
             }
         }
         // ═══════════════════════════════════════════════════════
-        //  PRIORITY 3 — TEXT + STICKER (smart auto-stack)
+        //  PRIORITY 3 — TEXT (smart auto-stack)
         // ═══════════════════════════════════════════════════════
         //  Rules:
         //  1. If user provided "position X Y" → RESPECT IT (no auto-stack)
@@ -449,38 +428,6 @@ object PromptExecutor {
                     } else {
                         viewModel.createTextClip(textState)
                         applied.add("text \"$content\"")
-                    }
-                }
-
-                CmdType.STICKER -> {
-                    val emoji = cmd.stringValue ?: continue
-                    val startMs = cmd.startMs
-                    val endMs = cmd.endMs
-
-                    var state2 = StickerState(
-                        emoji = emoji
-                    )
-                    cmd.extra?.let { props ->
-                        state2 = applyStickerProps(state2, props)
-                    }
-
-                    if (startMs != null && endMs != null) {
-                        viewModel.createStickerAtTime(
-                            emoji = state2.emoji,
-                            startMs = startMs,
-                            endMs = endMs
-                        )
-                        val sel = viewModel.state.value.selectedClip
-                        if (sel != null && sel.isStickerClip) {
-                            viewModel.updateSelectedSticker(state2)
-                        }
-                        applied.add(
-                            "sticker @${startMs / 1000}s \"${state2.emoji}\""
-                        )
-                    } else {
-                        viewModel.addOrUpdateSticker(state2.emoji)
-                        viewModel.updateSelectedSticker(state2)
-                        applied.add("sticker ${state2.emoji}")
                     }
                 }
 
@@ -649,15 +596,8 @@ object PromptExecutor {
                                 viewModel.setTextAnimation(animKey)
                                 applied.add("text animation ${cmd.key}")
                             }
-                            sel.isStickerClip -> {
-                                val ss = sel.stickerState ?: StickerState()
-                                viewModel.updateSelectedSticker(ss.copy(animation = animKey))
-                                applied.add("sticker animation ${cmd.key}")
-                            }
                             else -> {
-                                errors.add(
-                                    "animation: select a text or sticker clip first"
-                                )
+                                errors.add("animation: select a text clip first")
                             }
                         }
                     }
@@ -2018,70 +1958,6 @@ object PromptExecutor {
         "bottom-center" -> 50f to 100f
         "bottom-right" -> 100f to 100f
         else -> 50f to 50f
-    }
-
-    //  STICKER PROPS PARSER
-
-    private fun applyStickerProps(
-        initial: StickerState,
-        props: String
-    ): StickerState {
-        var st = initial
-        val tokens = props.split(Regex("\\s+"))
-        var i = 0
-
-        while (i < tokens.size) {
-            when (tokens[i].lowercase()) {
-                "animation", "anim" -> {
-                    val a = tokens.getOrNull(i + 1)
-                    if (a != null) {
-                        st = st.copy(
-                            animation = PromptEngine.animationKey(a)
-                        )
-                    }
-                    i += 2
-                }
-
-                "duration", "dur" -> {
-                    val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
-                    if (v != null) st = st.copy(animationDuration = v)
-                    i += 2
-                }
-
-                "opacity" -> {
-                    val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
-                    if (v != null) {
-                        st = st.copy(opacity = v.coerceIn(0f, 100f))
-                    }
-                    i += 2
-                }
-
-                "position", "pos" -> {
-                    val x = tokens.getOrNull(i + 1)?.toFloatOrNull()
-                    val y = tokens.getOrNull(i + 2)?.toFloatOrNull()
-                    if (x != null) st = st.copy(x = x.coerceIn(0f, 100f))
-                    if (y != null) st = st.copy(y = y.coerceIn(0f, 100f))
-                    i += 3
-                }
-
-                "scale", "size" -> {
-                    val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
-                    if (v != null) {
-                        st = st.copy(scale = v.coerceIn(10f, 500f))
-                    }
-                    i += 2
-                }
-
-                "rotation", "rotate" -> {
-                    val v = tokens.getOrNull(i + 1)?.toFloatOrNull()
-                    if (v != null) st = st.copy(rotation = v)
-                    i += 2
-                }
-
-                else -> i++
-            }
-        }
-        return st
     }
 
     private fun colorToHue(name: String): Float = when (name.lowercase()) {

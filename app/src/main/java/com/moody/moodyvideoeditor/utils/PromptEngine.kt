@@ -8,7 +8,7 @@ enum class CmdType {
     ADJUSTMENT, FILTER, EFFECT, SPEED, TRANSFORM, TRIM,
     TRANSITION, TRANSITION_ALL, TRANSITION_AT, TRANSITION_LAYER,
     TRANSITION_LAYER_CLIPS, TRANSITION_CLIP_MAP,
-    TEXT, STICKER, AUDIO_FX, ANIMATION,
+    TEXT, AUDIO_FX, ANIMATION,
     COLOR_WHEEL, FONT, ALIGN, ANCHOR, KEYFRAME,
     RATIO, TIGHTEN, GRAPH, CLEAR_KEYFRAMES,
     TEMPLATE,
@@ -22,9 +22,6 @@ enum class CmdType {
     TEXT_PROP,       // maxwidth / textscale / animduration
     TEXT_LAYER,      // textlayer N
     TEXT_ALL,        // alltext PROP VALUE
-    // 🆕 STICKER MANAGEMENT
-    STICKER_DELETE,
-    STICKER_DUPLICATE,
     UNKNOWN
 }
 
@@ -509,18 +506,6 @@ object PromptEngine {
             return ParsedCommand(CmdType.TEXT_DUPLICATE, "duplicate", raw = text)
         }
 
-        // delete sticker
-        if (lower == "deletesticker" || lower == "delete sticker" ||
-            lower == "remove sticker"
-        ) {
-            return ParsedCommand(CmdType.STICKER_DELETE, "delete", raw = text)
-        }
-
-        // duplicate sticker
-        if (lower == "duplicatesticker" || lower == "duplicate sticker") {
-            return ParsedCommand(CmdType.STICKER_DUPLICATE, "duplicate", raw = text)
-        }
-
         // maxwidth N (standalone)
         Regex("""^maxwidth\s+([\d.]+)$""").find(lower)?.let { m ->
             return ParsedCommand(
@@ -578,22 +563,6 @@ object PromptEngine {
                     .replace("\\n", "\n")
                     .replace("\\t", "\t"),
                 extra = textFull.groupValues[2].ifBlank { null },
-                raw = text
-            )
-        }
-
-        // ── STICKER with optional properties ──
-        val stickerFull = Regex(
-            """^sticker\s+(\S+)(?:\s+(.+))?$""",
-            RegexOption.IGNORE_CASE
-        ).find(text)
-        if (stickerFull != null) {
-            val emoji = stickerFull.groupValues[1]
-            val extra = stickerFull.groupValues[2].ifBlank { null }
-            return ParsedCommand(
-                CmdType.STICKER, "emoji",
-                stringValue = emoji,
-                extra = extra,
                 raw = text
             )
         }

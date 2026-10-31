@@ -1,7 +1,5 @@
 package com.moody.moodyvideoeditor.ui.features
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.util.Log
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -46,24 +44,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.moody.moodyvideoeditor.R
 import com.moody.moodyvideoeditor.data.VisualizerPreset
 import com.moody.moodyvideoeditor.data.VisualizerState
 import com.moody.moodyvideoeditor.ui.components.ColorPickerField
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.VisualizerEngine
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 
 @Composable
@@ -72,7 +65,9 @@ fun VisualizerPanel(
     hasAudio: Boolean,
     onStateChanged: (VisualizerState) -> Unit,
     onPickImage: () -> Unit,
+    onPickBackgroundImage: () -> Unit,
     onClearImage: () -> Unit,
+    onClearBackgroundImage: () -> Unit,
     onRemove: () -> Unit,
     onClose: () -> Unit
 ) {
@@ -113,15 +108,6 @@ fun VisualizerPanel(
     // ═══════════════════════════════════════════════════════════
     //  MAIN VIEW
     // ═══════════════════════════════════════════════════════════
-
-    val context = LocalContext.current
-
-    var refBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(Unit) {
-        refBitmap = withContext(Dispatchers.IO) {
-            loadRefImage(context)
-        }
-    }
 
     val infiniteTransition = rememberInfiniteTransition(label = "vizClock")
     val clockSec by infiniteTransition.animateFloat(
@@ -182,15 +168,30 @@ fun VisualizerPanel(
                         )
                     }
                 }
+                if (hasAudio && !current.hasBeats) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF2A2110))
+                            .padding(10.dp)
+                    ) {
+                        Text(
+                            "No beats detected yet. Recreate the visualizer after checking that the linked clip has audio.",
+                            color = Color(0xFFFFC56D),
+                            fontSize = 10.sp
+                        )
+                    }
+                }
             }
 
             // ═══════════════════════════════════════════════════════════
             //  PRESET PICKER
             // ═══════════════════════════════════════════════════════════
 
+            SectionLabel("Visualizers")
             PresetPicker(
                 current = current,
-                refBitmap = refBitmap,
                 clockSec = clockSec,
                 onPick = { preset ->
                     onStateChanged(current.copy(preset = preset))
@@ -385,6 +386,57 @@ fun VisualizerPanel(
                         onStateChanged(current.copy(imageOpacity = it))
                     }
                 }
+            }
+
+            Spacer(Modifier.height(4.dp))
+            SectionLabel("Background Image")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF7C3AED))
+                        .pointerInput(Unit) {
+                            detectTapGestures { onPickBackgroundImage() }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        if (current.backgroundImageUri == null) "🖼 Choose Background"
+                        else "🖼 Change Background",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                if (current.backgroundImageUri != null) {
+                    Box(
+                        modifier = Modifier
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFFFF6B6B).copy(alpha = 0.2f))
+                            .pointerInput(Unit) {
+                                detectTapGestures { onClearBackgroundImage() }
+                            }
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "✕ Remove",
+                            color = Color(0xFFFF6B6B),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+            ToggleRow("Show Background Image", current.showBackgroundImage) {
+                onStateChanged(current.copy(showBackgroundImage = it))
             }
 
             // ═══════════════════════════════════════════════════════════
@@ -635,7 +687,6 @@ fun VisualizerPanel(
 @Composable
 private fun PresetPicker(
     current: VisualizerState,
-    refBitmap: Bitmap?,
     clockSec: Float,
     onPick: (VisualizerPreset) -> Unit
 ) {
@@ -693,7 +744,6 @@ private fun PresetPicker(
                 VisualizerPreviewCard(
                     preset = preset,
                     isSelected = current.preset == preset,
-                    refBitmap = refBitmap,
                     clockSec = clockSec,
                     onTap = { onPick(preset) }
                 )
@@ -711,12 +761,9 @@ private fun PresetPicker(
 private fun VisualizerPreviewCard(
     preset: VisualizerPreset,
     isSelected: Boolean,
-    refBitmap: Bitmap?,
     clockSec: Float,
     onTap: () -> Unit
 ) {
-    val hasImage = refBitmap != null && !refBitmap.isRecycled
-
     val previewState = remember(preset) {
         VisualizerState(
             preset = preset,
@@ -727,21 +774,11 @@ private fun VisualizerPreviewCard(
             positionY = 0.5f,
             opacity = 1f,
             glow = true,
-            showImage = true,
+            showImage = false,
             imageScale = 0.55f,
             imageOpacity = 1f,
             showText = false
         )
-    }
-
-    LaunchedEffect(refBitmap, preset.key) {
-        if (refBitmap != null && !refBitmap.isRecycled) {
-            VisualizerEngine.setCenterImage(
-                "preview_${preset.key}",
-                refBitmap.asImageBitmap(),
-                "preview_${preset.key}"
-            )
-        }
     }
 
     Column(
@@ -775,8 +812,7 @@ private fun VisualizerPreviewCard(
                     drawVisualizerPreview(
                         preset = preset,
                         state = previewState,
-                        clockSec = clockSec,
-                        refBitmap = refBitmap
+                        clockSec = clockSec
                     )
                 } catch (e: Throwable) {
                     Log.e("VIZ_PREVIEW", "Preview failed: ${preset.key}", e)
@@ -814,24 +850,12 @@ private fun VisualizerPreviewCard(
 private fun DrawScope.drawVisualizerPreview(
     preset: VisualizerPreset,
     state: VisualizerState,
-    clockSec: Float,
-    refBitmap: Bitmap?
+    clockSec: Float
 ) {
     val previewState = state.copy(
         preset = preset,
         opacity = 1f
     )
-
-    if (refBitmap != null && !refBitmap.isRecycled) {
-        try {
-            VisualizerEngine.setCenterImage(
-                "preview_${preset.key}",
-                refBitmap.asImageBitmap(),
-                "preview_${preset.key}"
-            )
-        } catch (_: Throwable) {
-        }
-    }
 
     VisualizerEngine.drawPreview(
         scope = this,
@@ -999,34 +1023,5 @@ private fun ValueSliderRow(
                     }
             )
         }
-    }
-}
-
-
-// ═══════════════════════════════════════════════════════════════
-//  REFERENCE IMAGE LOADER
-// ═══════════════════════════════════════════════════════════════
-
-private fun loadRefImage(context: android.content.Context): Bitmap? {
-    return try {
-        val opts = BitmapFactory.Options().apply { inScaled = false }
-        val bmp = BitmapFactory.decodeResource(
-            context.resources,
-            R.drawable.filter_ref_image,
-            opts
-        ) ?: return null
-
-        val minDim = minOf(bmp.width, bmp.height)
-        val x = (bmp.width - minDim) / 2
-        val y = (bmp.height - minDim) / 2
-        val cropped = Bitmap.createBitmap(bmp, x, y, minDim, minDim)
-        val scaled = Bitmap.createScaledBitmap(cropped, 120, 120, true)
-
-        if (cropped != scaled && cropped != bmp) cropped.recycle()
-        if (bmp != scaled && bmp != cropped) bmp.recycle()
-        scaled
-    } catch (e: Throwable) {
-        Log.e("VIZ_REF", "Failed to load reference image", e)
-        null
     }
 }

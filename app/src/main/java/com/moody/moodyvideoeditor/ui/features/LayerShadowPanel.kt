@@ -1,10 +1,15 @@
 package com.moody.moodyvideoeditor.ui.features
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
@@ -18,6 +23,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -69,6 +76,35 @@ fun LayerShadowPanel(
                 colorLong = settings.color,
                 onChange = { apply(settings.copy(color = it, enabled = true)) }
             )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                listOf(
+                    0xFF000000,
+                    0xFF171717,
+                    0xFF27211E,
+                    0xFF151B26,
+                    0xFF211629
+                ).forEach { color ->
+                    val selected = settings.color == color
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(color.toInt()))
+                            .border(
+                                width = if (selected) 2.dp else 1.dp,
+                                color = if (selected) Color(0xFF60EFFF) else Color(0xFF666666),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .clickable {
+                                apply(settings.copy(color = color, enabled = true))
+                            }
+                    )
+                }
+            }
             ShadowSlider(
                 label = "Blur",
                 value = settings.blur,

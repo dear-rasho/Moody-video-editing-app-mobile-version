@@ -33,6 +33,58 @@ data class Transform2D(
 
 object TransitionRenderer {
 
+    fun incomingClipModifier(transitionKey: String?, progress: Float): Modifier {
+        val key = transitionKey?.let(::normalizeTransitionKey) ?: return Modifier
+        if (key !in shapeMaskTransitions) return Modifier
+
+        val rawProgress = progress.coerceIn(0f, 1f)
+        val p = rawProgress * rawProgress * (3f - 2f * rawProgress)
+        return Modifier.drawWithContent {
+            when (key) {
+                "wipeleft", "coverleft", "revealleft" -> {
+                    clipRect(left = size.width * (1f - p)) {
+                        this@drawWithContent.drawContent()
+                    }
+                    return@drawWithContent
+                }
+
+                "wiperight", "coverright", "revealright" -> {
+                    clipRect(right = size.width * p) {
+                        this@drawWithContent.drawContent()
+                    }
+                    return@drawWithContent
+                }
+
+                "wipeup", "coverup", "revealup" -> {
+                    clipRect(top = size.height * (1f - p)) {
+                        this@drawWithContent.drawContent()
+                    }
+                    return@drawWithContent
+                }
+
+                "wipedown", "coverdown", "revealdown" -> {
+                    clipRect(bottom = size.height * p) {
+                        this@drawWithContent.drawContent()
+                    }
+                    return@drawWithContent
+                }
+            }
+
+            val full = androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height)
+            val outgoingMask = shapeTransitionMask(key, size.width, size.height, p)
+            if (outgoingMask == null) {
+                this@drawWithContent.drawContent()
+                return@drawWithContent
+            }
+            val incomingMask = Path().apply {
+                fillType = PathFillType.EvenOdd
+                addRect(full)
+                addPath(outgoingMask)
+            }
+            clipPath(incomingMask) { this@drawWithContent.drawContent() }
+        }
+    }
+
     @Composable
     fun Render(
         clip: EditorClip,
@@ -44,14 +96,12 @@ object TransitionRenderer {
     ) {
         val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
         val p = progress.coerceIn(0f, 1f)
-        val k = if (transitionKey.startsWith("xfade-")) {
-            transitionKey.removePrefix("xfade-").substringBeforeLast("-")
-        } else {
-            transitionKey.lowercase()
-        }
+        val k = normalizeTransitionKey(transitionKey)
 
         val eased = p * p * (3f - 2f * p)
         val outgoing = when {
+            isOpacityTransition(k) ->
+                OutgoingMotion(alpha = 1f - p)
             k.startsWith("style-cube-left") || k.startsWith("style-card-flip-left") ||
                     k.startsWith("style-orbit-left") ->
                 OutgoingMotion(
@@ -148,10 +198,8 @@ object TransitionRenderer {
                 OutgoingMotion(translationY = -eased * h)
             k.startsWith("slidedown") || k.startsWith("smoothdown") ->
                 OutgoingMotion(translationY = eased * h)
-            k == "diagtl" -> OutgoingMotion(translationX = -eased * w, translationY = -eased * h)
-            k == "diagtr" -> OutgoingMotion(translationX = eased * w, translationY = -eased * h)
-            k == "diagbl" -> OutgoingMotion(translationX = -eased * w, translationY = eased * h)
-            k == "diagbr" -> OutgoingMotion(translationX = eased * w, translationY = eased * h)
+            k in diagonalMaskTransitions ->
+                OutgoingMotion(alpha = 1f, clipKey = k, progress = eased)
             k == "zoomin" -> OutgoingMotion(
                 scaleX = 1f + eased * 0.5f,
                 scaleY = 1f + eased * 0.5f,
@@ -384,7 +432,7 @@ object TransitionRenderer {
         val centerX = width / 2f
         val centerY = height / 2f
         return when (key) {
-            "circleopen", "circlecrop", "radial" -> {
+            "circleopen", "circlecrop" -> {
                 val radius = sqrt(width * width + height * height) * 0.5f * progress
                 Path().apply {
                     fillType = PathFillType.EvenOdd
@@ -395,6 +443,27 @@ object TransitionRenderer {
                             centerX + radius, centerY + radius
                         )
                     )
+                }
+            }
+            "radial" -> {
+                val radius = sqrt(width * width + height * height) * 0.5f
+                val sweep = 360f * progress
+                Path().apply {
+                    fillType = PathFillType.EvenOdd
+                    addRect(full)
+                    if (sweep > 0f) {
+                        moveTo(centerX, centerY)
+                        arcTo(
+                            androidx.compose.ui.geometry.Rect(
+                                centerX - radius, centerY - radius,
+                                centerX + radius, centerY + radius
+                            ),
+                            -90f,
+                            sweep,
+                            false
+                        )
+                        close()
+                    }
                 }
             }
             "circleclose" -> {
@@ -438,47 +507,64 @@ object TransitionRenderer {
                     }
                 }
             }
+            in diagonalMaskTransitions -> diagonalWipePath(key, width, height, progress)
             else -> null
         }
     }
 
     private fun diagonalWipePath(key: String, width: Float, height: Float, progress: Float): Path {
-        val p = progress.coerceIn(0f, 1f)
-        val path = Path()
-        when (key) {
-            "diagtl", "wipetl" -> {
-                path.moveTo(width * p, 0f)
-                path.lineTo(width, 0f)
-                path.lineTo(width, height)
-                path.lineTo(0f, height * (1f - p))
+        data class Point(val x: Float, val y: Float, val distance: Float)
+
+        val normalizedKey = normalizeTransitionKey(key)
+        val fromRight = normalizedKey.endsWith("tr") || normalizedKey.endsWith("br")
+        val fromBottom = normalizedKey.endsWith("bl") || normalizedKey.endsWith("br")
+        val threshold = 2f * progress.coerceIn(0f, 1f)
+        val corners = listOf(
+            0f to 0f,
+            width to 0f,
+            width to height,
+            0f to height
+        ).map { (x, y) ->
+            val nx = if (width > 0f) x / width else 0f
+            val ny = if (height > 0f) y / height else 0f
+            val dx = if (fromRight) 1f - nx else nx
+            val dy = if (fromBottom) 1f - ny else ny
+            Point(x, y, dx + dy)
+        }
+        val reveal = mutableListOf<Point>()
+        corners.forEachIndexed { index, current ->
+            val previous = corners[(index - 1 + corners.size) % corners.size]
+            val previousInside = previous.distance <= threshold
+            val currentInside = current.distance <= threshold
+            if (previousInside != currentInside) {
+                val ratio = (threshold - previous.distance) /
+                        (current.distance - previous.distance)
+                reveal += Point(
+                    previous.x + (current.x - previous.x) * ratio,
+                    previous.y + (current.y - previous.y) * ratio,
+                    threshold
+                )
             }
-            "diagtr", "wipetr" -> {
-                path.moveTo(0f, 0f)
-                path.lineTo(width * (1f - p), 0f)
-                path.lineTo(width, height * p)
-                path.lineTo(width, height)
-                path.lineTo(0f, height)
-            }
-            "diagbl", "wipebl" -> {
-                path.moveTo(0f, 0f)
-                path.lineTo(width, 0f)
-                path.lineTo(width * (1f - p), height)
-                path.lineTo(0f, height * p)
-            }
-            else -> {
-                path.moveTo(0f, 0f)
-                path.lineTo(width, 0f)
-                path.lineTo(width, height * (1f - p))
-                path.lineTo(width * (1f - p), height)
-                path.lineTo(0f, height)
+            if (currentInside) reveal += current
+        }
+
+        val full = androidx.compose.ui.geometry.Rect(0f, 0f, width, height)
+        val revealPath = Path().apply {
+            if (reveal.isNotEmpty()) {
+                moveTo(reveal.first().x, reveal.first().y)
+                reveal.drop(1).forEach { lineTo(it.x, it.y) }
+                close()
             }
         }
-        path.close()
-        return path
+        return Path().apply {
+            fillType = PathFillType.EvenOdd
+            addRect(full)
+            addPath(revealPath)
+        }
     }
 
     fun getIncomingTransform(key: String, p: Float, w: Float, h: Float): Transform2D {
-        val k = key.lowercase()
+        val k = normalizeTransitionKey(key)
         val rawProgress = p.coerceIn(0f, 1f)
         val pr = if (k.startsWith("smooth")) {
             rawProgress * rawProgress * (3f - 2f * rawProgress)
@@ -487,11 +573,17 @@ object TransitionRenderer {
         }
 
         return when {
-            // Fades, Light Leaks, Glitches -> Clip static rehti hai, overlay kaam karta hai
-            k.contains("fade") || k.contains("dissolve") || k.contains("flash") ||
-                    k.contains("leak") || k.contains("glitch") || k.contains("burn") ||
+            k in shapeMaskTransitions ->
+                Transform2D()
+
+            isOpacityTransition(k) ->
+                Transform2D(alpha = pr)
+
+            // Light leaks and glitch transitions use overlays rather than opacity.
+            k.contains("flash") || k.contains("leak") || k.contains("glitch") ||
+                    k.contains("burn") ||
                     k == "blur" || k.contains("bloom") || k.contains("glow") ||
-                    k == "blinkfade" || k == "softglaze" ->
+                    k == "softglaze" ->
                 Transform2D()
 
             // Slides
@@ -531,4 +623,68 @@ object TransitionRenderer {
             else -> Transform2D()
         }
     }
+
+    private fun isOpacityTransition(key: String): Boolean = key in setOf(
+        "fade",
+        "fadefast",
+        "fadeslow",
+        "fadeblack",
+        "fadewhite",
+        "fadegrays",
+        "dissolve",
+        "blinkfade",
+        "softglaze",
+        "dreamybloom",
+        "glowdissolve",
+        "whiteflash"
+    )
+
+    private fun normalizeTransitionKey(key: String): String =
+        if (key.startsWith("xfade-", ignoreCase = true)) {
+            key.substringAfter("xfade-", "").substringBeforeLast("-").lowercase()
+        } else {
+            key.lowercase()
+        }
+
+    private val shapeMaskTransitions = setOf(
+        "circleopen",
+        "circleclose",
+        "circlecrop",
+        "rectcrop",
+        "radial",
+        "vertopen",
+        "vertclose",
+        "horzopen",
+        "horzclose",
+        "wipetl",
+        "wipetr",
+        "wipebl",
+        "wipebr",
+        "diagtl",
+        "diagtr",
+        "diagbl",
+        "diagbr",
+        "wipeleft",
+        "wiperight",
+        "wipeup",
+        "wipedown",
+        "coverleft",
+        "coverright",
+        "coverup",
+        "coverdown",
+        "revealleft",
+        "revealright",
+        "revealup",
+        "revealdown"
+    )
+    private val diagonalMaskTransitions = setOf(
+        "wipetl",
+        "wipetr",
+        "wipebl",
+        "wipebr",
+        "diagtl",
+        "diagtr",
+        "diagbl",
+        "diagbr"
+    )
 }

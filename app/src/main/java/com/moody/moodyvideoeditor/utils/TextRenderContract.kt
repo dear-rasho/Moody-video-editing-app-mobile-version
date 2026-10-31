@@ -90,12 +90,42 @@ object TextRenderContract {
         else -> Paint.Align.CENTER
     }
 
+    fun clampLetterSpacingPx(
+        content: String,
+        fontSizePx: Float,
+        typeface: Typeface,
+        letterSpacingPx: Float
+    ): Float {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.typeface = typeface
+            textSize = fontSizePx.coerceAtLeast(8f)
+        }
+        var smallestAdvance = Float.MAX_VALUE
+        var index = 0
+        while (index < content.length) {
+            val codePoint = content.codePointAt(index)
+            val charCount = Character.charCount(codePoint)
+            val category = Character.getType(codePoint)
+            if (category != Character.NON_SPACING_MARK.toInt() &&
+                category != Character.COMBINING_SPACING_MARK.toInt() &&
+                category != Character.ENCLOSING_MARK.toInt() &&
+                codePoint != '\n'.code && codePoint != '\r'.code
+            ) {
+                val advance = paint.measureText(content, index, index + charCount)
+                if (advance > 0.1f) smallestAdvance = min(smallestAdvance, advance)
+            }
+            index += charCount
+        }
+        if (smallestAdvance == Float.MAX_VALUE) return letterSpacingPx
+        return letterSpacingPx.coerceAtLeast(-smallestAdvance)
+    }
+
     data class GlowLayer(val fontScale: Float, val blurScale: Float, val alpha: Float)
     fun glowLayers(): List<GlowLayer> = listOf(
-        GlowLayer(1.00f, 0.45f, 0.72f),
-        GlowLayer(1.00f, 0.95f, 0.48f),
-        GlowLayer(1.00f, 1.80f, 0.24f),
-        GlowLayer(1.00f, 3.00f, 0.12f),
+        GlowLayer(1.00f, 0.45f, 0.90f),
+        GlowLayer(1.00f, 0.95f, 0.72f),
+        GlowLayer(1.00f, 1.80f, 0.48f),
+        GlowLayer(1.00f, 3.00f, 0.30f),
     )
 
     fun weight(st: TextState): Boolean = st.fontWeight == "bold"

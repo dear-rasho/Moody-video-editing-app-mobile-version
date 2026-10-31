@@ -54,11 +54,16 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import com.moody.moodyvideoeditor.data.TextState
+import com.moody.moodyvideoeditor.data.KeyframeMap
+import com.moody.moodyvideoeditor.data.KeyframeLibrary
+import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.ui.components.ColorPickerField
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.ui.components.FontPreviewRow
 import com.moody.moodyvideoeditor.utils.FontLibrary
 import com.moody.moodyvideoeditor.utils.CaptionPresetLibrary
+import com.moody.moodyvideoeditor.utils.TextStyleTemplateLibrary
+import com.moody.moodyvideoeditor.utils.TextRenderContract
 
 // ═══════════════════════════════════════════════════════════════
 //  MAIN TEXT PANEL
@@ -69,6 +74,11 @@ fun TextPanel(
     currentText: TextState,
     hasTextClipSelected: Boolean,
     startInEdit: Boolean = false,
+    keyframesEnabled: Boolean = false,
+    keyframeMap: KeyframeMap = emptyMap(),
+    keyframeTimeSec: Float = 0f,
+    onToggleKeyframe: (String) -> Unit = {},
+    onTypographyAnimationSelected: (String) -> Unit = {},
     onTextChanged: (TextState) -> Unit,
     onAlignmentChanged: ((String) -> Unit)? = null,
     onDraftTextChanged: (String) -> Unit = {},
@@ -126,19 +136,72 @@ fun TextPanel(
 
             "size" -> SliderSub(
                 title = "Font Size",
-                value = currentText.fontSize.toFloat(),
-                range = 8f..200f,
+                value = KeyframeStore.sample(
+                    keyframeMap,
+                    KeyframeLibrary.TEXT_SIZE,
+                    keyframeTimeSec,
+                    currentText.fontSize.toFloat()
+                ).coerceIn(-100f, 200f),
+                range = -100f..200f,
                 suffix = "pt",
-                onChange = { onTextChanged(currentText.copy(fontSize = it.toInt())) },
+                onChange = {
+                    onTextChanged(currentText.copy(fontSize = it.coerceIn(-100f, 200f).toInt()))
+                },
+                keyframeMap = keyframeMap.takeIf { keyframesEnabled },
+                keyframeTimeSec = keyframeTimeSec,
+                keyframeProperty = KeyframeLibrary.TEXT_SIZE.takeIf { keyframesEnabled },
+                onToggleKeyframe = onToggleKeyframe,
                 onBack = { subView = "options" }
             )
 
             "letterSpacing" -> SliderSub(
                 title = "Character Gaps",
-                value = currentText.letterSpacing,
-                range = -5f..30f,
+                value = KeyframeStore.sample(
+                    keyframeMap,
+                    KeyframeLibrary.TEXT_LETTER_SPACING,
+                    keyframeTimeSec,
+                    currentText.letterSpacing
+                ).coerceIn(
+                    TextRenderContract.clampLetterSpacingPx(
+                        currentText.content,
+                        currentText.fontSize.toFloat(),
+                        TextRenderContract.androidTypefaceFor(
+                            currentText.fontFamily,
+                            currentText.fontWeight == "bold",
+                            currentText.fontStyle == "italic"
+                        ),
+                        -200f
+                    ),
+                    300f
+                ),
+                range = TextRenderContract.clampLetterSpacingPx(
+                    currentText.content,
+                    currentText.fontSize.toFloat(),
+                    TextRenderContract.androidTypefaceFor(
+                        currentText.fontFamily,
+                        currentText.fontWeight == "bold",
+                        currentText.fontStyle == "italic"
+                    ),
+                    -200f
+                )..300f,
                 suffix = "sp",
-                onChange = { onTextChanged(currentText.copy(letterSpacing = it)) },
+                onChange = {
+                    val minSafeSpacing = TextRenderContract.clampLetterSpacingPx(
+                        currentText.content,
+                        currentText.fontSize.toFloat(),
+                        TextRenderContract.androidTypefaceFor(
+                            currentText.fontFamily,
+                            currentText.fontWeight == "bold",
+                            currentText.fontStyle == "italic"
+                        ),
+                        -200f
+                    )
+                    onTextChanged(currentText.copy(letterSpacing = it.coerceIn(minSafeSpacing, 300f)))
+                },
+                keyframeMap = keyframeMap.takeIf { keyframesEnabled },
+                keyframeTimeSec = keyframeTimeSec,
+                keyframeProperty = KeyframeLibrary.TEXT_LETTER_SPACING.takeIf { keyframesEnabled },
+                onToggleKeyframe = onToggleKeyframe,
                 onBack = { subView = "options" }
             )
 
@@ -247,6 +310,14 @@ fun TextPanel(
                         )
                     )
                 },
+                selectedTemplateId = currentText.templateId,
+                onTemplateSelected = { templateId ->
+                    onTextChanged(TextStyleTemplateLibrary.applyTo(currentText, templateId))
+                },
+                includeTextStyles = true,
+                includeTypographyAnimations = keyframesEnabled,
+                onTypographyAnimationSelected = onTypographyAnimationSelected,
+                title = "Choose a text preset",
                 onHighlightColorChanged = {
                     onTextChanged(currentText.copy(captionHighlightColor = it))
                 },
@@ -276,10 +347,19 @@ fun TextPanel(
 
             "opacity" -> SliderSub(
                 title = "Opacity",
-                value = currentText.opacity,
+                value = KeyframeStore.sample(
+                    keyframeMap,
+                    KeyframeLibrary.TEXT_OPACITY,
+                    keyframeTimeSec,
+                    currentText.opacity
+                ).coerceIn(0f, 100f),
                 range = 0f..100f,
                 suffix = "%",
-                onChange = { onTextChanged(currentText.copy(opacity = it)) },
+                onChange = { onTextChanged(currentText.copy(opacity = it.coerceIn(0f, 100f))) },
+                keyframeMap = keyframeMap.takeIf { keyframesEnabled },
+                keyframeTimeSec = keyframeTimeSec,
+                keyframeProperty = KeyframeLibrary.TEXT_OPACITY.takeIf { keyframesEnabled },
+                onToggleKeyframe = onToggleKeyframe,
                 onBack = { subView = "options" }
             )
         }
@@ -1325,6 +1405,10 @@ private fun SliderSub(
     range: ClosedFloatingPointRange<Float>,
     suffix: String,
     decimals: Int = 0,
+    keyframeMap: KeyframeMap? = null,
+    keyframeTimeSec: Float = 0f,
+    keyframeProperty: String? = null,
+    onToggleKeyframe: (String) -> Unit = {},
     onChange: (Float) -> Unit,
     onBack: () -> Unit
 ) {
@@ -1348,6 +1432,35 @@ private fun SliderSub(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            if (keyframeProperty != null) {
+                val hasKeyframe = KeyframeStore.hasKeyframeAt(
+                    keyframeMap.orEmpty(), keyframeProperty, keyframeTimeSec
+                )
+                val hasAnyKeyframe = KeyframeStore.getKeyframes(
+                    keyframeMap.orEmpty(), keyframeProperty
+                ).isNotEmpty()
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(
+                            when {
+                                hasKeyframe -> Color(0xFF4F9DFF).copy(alpha = 0.25f)
+                                hasAnyKeyframe -> Color(0xFF4F9DFF).copy(alpha = 0.10f)
+                                else -> Color(0xFF181818)
+                            }
+                        )
+                        .clickable { onToggleKeyframe(keyframeProperty) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "◆",
+                        color = if (hasKeyframe) Color(0xFF4F9DFF) else Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
             Slider(
                 value = value.coerceIn(range.start, range.endInclusive),
                 onValueChange = onChange,

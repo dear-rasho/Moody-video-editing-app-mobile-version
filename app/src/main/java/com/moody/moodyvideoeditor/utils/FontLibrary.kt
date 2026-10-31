@@ -189,6 +189,51 @@ object FontLibrary {
     // ═══════════════════════════════════════════════════════════
     //  CATEGORIES
     // ═══════════════════════════════════════════════════════════
+    val TITLE_FONT_ADDITIONS = listOf(
+        "Amita",
+        "Audiowide",
+        "Boogaloo",
+        "Bonbon",
+        "Castoro Titling",
+        "DynaPuff",
+        "DynaPuff Condensed Bold",
+        "DynaPuff SemiBold",
+        "Felipa",
+        "Gajraj One",
+        "Henny Penny",
+        "Isometra",
+        "Jaini",
+        "Kaluk Sans Black",
+        "Kaluk Sans Bold",
+        "Kaluk Sans ExtraBold",
+        "Lobster",
+        "Matemasie",
+        "Neonderthaw",
+        "Oswald",
+        "Oswald Medium",
+        "Oswald SemiBold",
+        "Palanquin Dark",
+        "Poppins Bold",
+        "Poppins SemiBold",
+        "Ranga",
+        "Ranga Bold",
+        "Sarpanch",
+        "Story Script",
+        "Yesteryear",
+        "Oleo Script Swash Caps",
+        "Grand Hotel",
+        "Arizonia",
+        "Ballet 60pt"
+    )
+
+    private val ORIGINAL_TITLE_FONTS = setOf(
+        "Anton", "Bangers", "BBH Bartle", "Caprasimo",
+        "Carter One", "Chango", "Creepster", "Erica One",
+        "Nosifer", "Oi", "Oswald Bold", "Poppins Black",
+        "Poppins ExtraBold", "DynaPuff Bold",
+        "Uncial Antiqua", "Unifraktur Maguntia"
+    )
+
     val FONT_CATEGORIES: Map<String, List<String>> = mapOf(
         "all" to FONT_METADATA.map { it.name },
         "english" to FONT_METADATA.filter {
@@ -220,13 +265,7 @@ object FontLibrary {
                     it.name == "Poppins Medium" || it.name == "Poppins SemiBold"
         }.map { it.name },
         "titles" to FONT_METADATA.filter {
-            it.name in setOf(
-                "Anton", "Bangers", "BBH Bartle", "Caprasimo",
-                "Carter One", "Chango", "Creepster", "Erica One",
-                "Nosifer", "Oi", "Oswald Bold", "Poppins Black",
-                "Poppins ExtraBold", "DynaPuff Bold",
-                "Uncial Antiqua", "Unifraktur Maguntia"
-            )
+            it.name in ORIGINAL_TITLE_FONTS || it.name in TITLE_FONT_ADDITIONS
         }.map { it.name }
     )
 

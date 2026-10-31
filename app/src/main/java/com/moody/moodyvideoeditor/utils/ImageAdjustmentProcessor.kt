@@ -43,7 +43,12 @@ object ImageAdjustmentProcessor {
             }
 
             val outputPixels = if (adj.sharpen > 0.01f) {
-                applySharpen(pixels, w, h, adj.sharpen / 100f)
+                AdjustmentPixelEngine.applySharpen(
+                    pixels,
+                    w,
+                    h,
+                    (adj.sharpen / 50f).coerceIn(0f, 2f)
+                )
             } else pixels
 
             val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -268,62 +273,4 @@ object ImageAdjustmentProcessor {
         return t * t * (3f - 2f * t)
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  SHARPEN — STRONG 9-point unsharp
-    // ═══════════════════════════════════════════════════════════
-
-    private fun applySharpen(
-        pixels: IntArray,
-        w: Int,
-        h: Int,
-        strength: Float
-    ): IntArray {
-        if (w < 3 || h < 3) return pixels
-
-        // Booster: slider 1.0 (100%) → multiplier 2.0
-        // Slider 3.0 (300%) → multiplier 3.0 (capped)
-        val s = (strength * 2f).coerceIn(0f, 3f)
-        val result = IntArray(pixels.size)
-
-        for (x in 0 until w) {
-            result[x] = pixels[x]
-            result[(h - 1) * w + x] = pixels[(h - 1) * w + x]
-        }
-        for (y in 0 until h) {
-            result[y * w] = pixels[y * w]
-            result[y * w + w - 1] = pixels[y * w + w - 1]
-        }
-
-        for (y in 1 until h - 1) {
-            for (x in 1 until w - 1) {
-                val idx = y * w + x
-                val center = pixels[idx]
-
-                val top = pixels[(y - 1) * w + x]
-                val bottom = pixels[(y + 1) * w + x]
-                val left = pixels[y * w + (x - 1)]
-                val right = pixels[y * w + (x + 1)]
-
-                val cA = (center ushr 24) and 0xFF
-                val cR = (center shr 16) and 0xFF
-                val cG = (center shr 8) and 0xFF
-                val cB = center and 0xFF
-
-                val avgR = (((top shr 16) and 0xFF) + ((bottom shr 16) and 0xFF) +
-                        ((left shr 16) and 0xFF) + ((right shr 16) and 0xFF)) / 4
-                val avgG = (((top shr 8) and 0xFF) + ((bottom shr 8) and 0xFF) +
-                        ((left shr 8) and 0xFF) + ((right shr 8) and 0xFF)) / 4
-                val avgB = ((top and 0xFF) + (bottom and 0xFF) +
-                        (left and 0xFF) + (right and 0xFF)) / 4
-
-                val newR = (cR + (cR - avgR) * s).toInt().coerceIn(0, 255)
-                val newG = (cG + (cG - avgG) * s).toInt().coerceIn(0, 255)
-                val newB = (cB + (cB - avgB) * s).toInt().coerceIn(0, 255)
-
-                result[idx] = (cA shl 24) or (newR shl 16) or (newG shl 8) or newB
-            }
-        }
-
-        return result
-    }
 }

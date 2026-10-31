@@ -4,8 +4,67 @@ import com.moody.moodyvideoeditor.data.AdjustmentData
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 object AdjustmentPixelEngine {
+
+    fun applySharpen(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        amount: Float
+    ): IntArray {
+        if (width < 3 || height < 3 || pixels.size < width * height || amount <= 0f) {
+            return pixels
+        }
+
+        val strength = amount.coerceIn(0f, 2f)
+        val result = pixels.copyOf()
+        val kernel = intArrayOf(1, 2, 1)
+
+        for (y in 1 until height - 1) {
+            for (x in 1 until width - 1) {
+                val centerIndex = y * width + x
+                val center = pixels[centerIndex]
+                val centerAlpha = center ushr 24
+                if (centerAlpha == 0) continue
+
+                var weightSum = 0f
+                var redSum = 0f
+                var greenSum = 0f
+                var blueSum = 0f
+                for (offsetY in -1..1) {
+                    for (offsetX in -1..1) {
+                        val neighbor = pixels[(y + offsetY) * width + x + offsetX]
+                        val neighborAlpha = (neighbor ushr 24) and 0xFF
+                        val weight = kernel[offsetY + 1] * kernel[offsetX + 1] *
+                                neighborAlpha / 255f
+                        weightSum += weight
+                        redSum += ((neighbor shr 16) and 0xFF) * weight
+                        greenSum += ((neighbor shr 8) and 0xFF) * weight
+                        blueSum += (neighbor and 0xFF) * weight
+                    }
+                }
+                if (weightSum <= 0f) continue
+
+                val centerRed = (center shr 16) and 0xFF
+                val centerGreen = (center shr 8) and 0xFF
+                val centerBlue = center and 0xFF
+                val blurredRed = redSum / weightSum
+                val blurredGreen = greenSum / weightSum
+                val blurredBlue = blueSum / weightSum
+                val red = (centerRed + (centerRed - blurredRed) * strength)
+                    .roundToInt().coerceIn(0, 255)
+                val green = (centerGreen + (centerGreen - blurredGreen) * strength)
+                    .roundToInt().coerceIn(0, 255)
+                val blue = (centerBlue + (centerBlue - blurredBlue) * strength)
+                    .roundToInt().coerceIn(0, 255)
+                result[centerIndex] =
+                    (centerAlpha shl 24) or (red shl 16) or (green shl 8) or blue
+            }
+        }
+        return result
+    }
 
     fun apply(
         r: Float,

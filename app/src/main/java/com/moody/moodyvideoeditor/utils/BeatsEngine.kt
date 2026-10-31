@@ -11,7 +11,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.nio.ByteOrder
 import kotlin.math.max
-import kotlin.math.pow
 import kotlin.math.sqrt
 
 object BeatsEngine {
@@ -25,18 +24,10 @@ object BeatsEngine {
     // Analysis params
     private const val HOP_SIZE_MS = 10L
     private const val MIN_BEAT_GAP_MS = 250L
-    private const val LOWPASS_ALPHA = 0.08f
 
     // Classification
     private const val HARD_PERCENTILE = 0.75f
     private const val SOFT_PERCENTILE = 0.25f
-
-    // Speech rejection
-    private const val MIN_BEATS = 12
-    private const val MUSICAL_GAP_MIN_MS = 250L
-    private const val MUSICAL_GAP_MAX_MS = 1200L
-    private const val MIN_MUSICAL_GAP_RATIO = 0.65f
-    private const val MIN_BPM_CONSISTENCY = 0.65f
 
     suspend fun detect(
         context: Context,
@@ -233,7 +224,7 @@ object BeatsEngine {
 
     //  ANALYZE — returns (times, strengths)
 
-    private fun analyzeBeatsWithStrengths(
+    internal fun analyzeBeatsWithStrengths(
         samples: FloatArray,
         filter: String
     ): Pair<List<Long>, List<Float>> {
@@ -241,92 +232,70 @@ object BeatsEngine {
 
         val samplesPerHop = (TARGET_SAMPLE_RATE * HOP_SIZE_MS / 1000L).toInt()
             .coerceAtLeast(1)
-        val numHops = samples.size / samplesPerHop
-        if (numHops < 20) return emptyList<Long>() to emptyList<Float>()
+        val numHops = (samples.size + samplesPerHop - 1) / samplesPerHop
+        if (numHops < 3) return emptyList<Long>() to emptyList<Float>()
 
-        // Energy envelope (bass-focused)
+        // Short-window energy preserves percussion attacks instead of smearing them.
         val energy = FloatArray(numHops)
-        var lowpass = 0f
+        var maxEnergy = 0f
         for (h in 0 until numHops) {
             val start = h * samplesPerHop
-            val end = (start + samplesPerHop).coerceAtMost(samples.size)
+            val end = (start + samplesPerHop * 2).coerceAtMost(samples.size)
             var sumSq = 0f
             for (i in start until end) {
                 val s = samples[i]
                 sumSq += s * s
             }
             val rms = sqrt(sumSq / (end - start).coerceAtLeast(1))
-            lowpass = lowpass + LOWPASS_ALPHA * (rms - lowpass)
-            energy[h] = lowpass
+            energy[h] = rms
+            maxEnergy = max(maxEnergy, rms)
         }
+        if (maxEnergy <= 1e-5f) return emptyList<Long>() to emptyList<Float>()
 
-        // Onset strength
+        // Positive energy flux emphasizes new attacks and ignores sustained loudness.
         val onset = FloatArray(numHops)
         for (h in 1 until numHops) {
-            val diff = energy[h] - energy[h - 1]
-            onset[h] = if (diff > 0f) diff else 0f
+            onset[h] = (energy[h] - energy[h - 1] * 0.65f).coerceAtLeast(0f)
         }
 
-        // Adaptive threshold
-        val thresholdWindow = 25
-        val threshold = FloatArray(numHops)
+        // Prefix sums keep the adaptive local threshold linear-time on long tracks.
+        val prefix = DoubleArray(numHops + 1)
+        val prefixSquares = DoubleArray(numHops + 1)
+        for (i in onset.indices) {
+            prefix[i + 1] = prefix[i] + onset[i]
+            prefixSquares[i + 1] = prefixSquares[i] + onset[i] * onset[i]
+        }
+        val thresholdWindow = 75
+        val rawBeats = mutableListOf<Pair<Long, Float>>()
         for (h in 0 until numHops) {
             val from = max(0, h - thresholdWindow)
             val to = (h + thresholdWindow).coerceAtMost(numHops)
-            var sum = 0f
-            for (i in from until to) sum += onset[i]
-            val avg = sum / (to - from).coerceAtLeast(1)
-            threshold[h] = avg * 1.5f + 0.003f
-        }
+            val count = (to - from).coerceAtLeast(1)
+            val mean = ((prefix[to] - prefix[from]) / count).toFloat()
+            val meanSquare = ((prefixSquares[to] - prefixSquares[from]) / count).toFloat()
+            val deviation = sqrt((meanSquare - mean * mean).coerceAtLeast(0f))
+            val threshold = max(
+                max(mean * 1.35f, mean + deviation * 0.55f),
+                maxEnergy * 0.025f
+            )
 
-        // Peak pick
-        val rawBeats = mutableListOf<Pair<Long, Float>>()
-        var lastBeatMs = -MIN_BEAT_GAP_MS
-        for (h in 1 until numHops - 1) {
-            val isPeak = onset[h] > onset[h - 1] && onset[h] > onset[h + 1]
-            val above = onset[h] > threshold[h]
+            if (h == 0 || h >= numHops - 1) continue
+            val isPeak = onset[h] >= onset[h - 1] && onset[h] > onset[h + 1]
+            if (!isPeak || onset[h] <= threshold) continue
+
+            // Replace a nearby weaker transient with the stronger attack.
             val timeMs = h * HOP_SIZE_MS
-
-            if (isPeak && above && timeMs - lastBeatMs >= MIN_BEAT_GAP_MS) {
+            val previous = rawBeats.lastOrNull()
+            if (previous != null && timeMs - previous.first < MIN_BEAT_GAP_MS) {
+                if (onset[h] > previous.second) {
+                    rawBeats[rawBeats.lastIndex] = timeMs to onset[h]
+                }
+            } else {
                 rawBeats.add(timeMs to onset[h])
-                lastBeatMs = timeMs
             }
         }
 
-        Log.e(TAG, "Raw peaks found: ${rawBeats.size}")
-
-        // Speech rejection
-        if (rawBeats.size < MIN_BEATS) {
-            Log.e(TAG, "❌ Speech — only ${rawBeats.size} peaks")
-            return emptyList<Long>() to emptyList<Float>()
-        }
-
-        val gaps = mutableListOf<Long>()
-        for (i in 1 until rawBeats.size) {
-            gaps.add(rawBeats[i].first - rawBeats[i - 1].first)
-        }
-
-        val musicalGaps = gaps.filter {
-            it in MUSICAL_GAP_MIN_MS..MUSICAL_GAP_MAX_MS
-        }
-        val musicalRatio = musicalGaps.size.toFloat() / gaps.size.toFloat()
-
-        if (musicalRatio < MIN_MUSICAL_GAP_RATIO) {
-            Log.e(TAG, "❌ Speech — ${(musicalRatio * 100).toInt()}% musical gaps")
-            return emptyList<Long>() to emptyList<Float>()
-        }
-
-        val meanGap = musicalGaps.average()
-        val variance = musicalGaps.map { (it - meanGap).pow(2) }.average()
-        val stdDev = sqrt(variance)
-        val consistency = (1.0 - (stdDev / meanGap)).coerceIn(0.0, 1.0)
-
-        Log.e(TAG, "BPM consistency: ${(consistency * 100).toInt()}%")
-
-        if (consistency < MIN_BPM_CONSISTENCY) {
-            Log.e(TAG, "❌ Speech — low BPM consistency")
-            return emptyList<Long>() to emptyList<Float>()
-        }
+        if (rawBeats.isEmpty()) return emptyList<Long>() to emptyList<Float>()
 
         // Classify by strength
         val sortedByStrength = rawBeats.sortedBy { it.second }
@@ -337,11 +306,15 @@ object BeatsEngine {
         // 🆕 Max strength for normalization
         val maxStrength = sortedByStrength.maxOfOrNull { it.second } ?: 1f
         val minStrength = sortedByStrength.minOfOrNull { it.second } ?: 0f
-        val strengthRange = (maxStrength - minStrength).coerceAtLeast(0.0001f)
+        val strengthRange = maxStrength - minStrength
 
-        // 🆕 Normalize all strengths to 0..1
+        // Equal-strength beats should still produce a visible reaction.
         val normalizedStrengths = rawBeats.associate { (t, s) ->
-            t to ((s - minStrength) / strengthRange).coerceIn(0f, 1f)
+            t to if (strengthRange > 0.0001f) {
+                ((s - minStrength) / strengthRange).coerceIn(0f, 1f)
+            } else {
+                0.65f
+            }
         }
 
         val hardSet = mutableSetOf<Long>()

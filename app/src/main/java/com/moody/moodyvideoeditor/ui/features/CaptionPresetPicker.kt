@@ -44,6 +44,12 @@ fun CaptionPresetPicker(
     highlightColor: Long,
     onPresetSelected: (String) -> Unit,
     onHighlightColorChanged: (Long) -> Unit,
+    selectedTemplateId: String? = null,
+    onTemplateSelected: (String) -> Unit = {},
+    includeTextStyles: Boolean = false,
+    includeTypographyAnimations: Boolean = false,
+    onTypographyAnimationSelected: (String) -> Unit = {},
+    title: String = "Choose a caption preset",
     onBack: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -69,7 +75,7 @@ fun CaptionPresetPicker(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                "Choose a caption preset",
+                title,
                 color = Color(0xFFAAAAAA),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
@@ -180,6 +186,17 @@ fun CaptionPresetPicker(
                 colorLong = highlightColor,
                 onChange = onHighlightColorChanged
             )
+        }
+        if (includeTextStyles) {
+            TextStyleTemplatePicker(
+                selectedTemplateId = selectedTemplateId,
+                onTemplateSelected = onTemplateSelected,
+                onBack = {},
+                embedded = true
+            )
+        }
+        if (includeTypographyAnimations) {
+            TypographyAnimationPresetPicker(onPresetSelected = onTypographyAnimationSelected)
         }
     }
 }

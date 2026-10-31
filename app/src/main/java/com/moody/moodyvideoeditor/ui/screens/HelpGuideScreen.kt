@@ -422,18 +422,6 @@ private fun CommandsContent() {
     )
 
     CommandCategory(
-        "😀 Stickers", listOf(
-            "sticker 🔥",
-            "sticker ⚡",
-            "sticker ✨",
-            "sticker 🔥 position 15 22 scale 90",
-            "sticker ⚡ animation popIn duration 0.6",
-            "deletesticker",
-            "duplicate sticker"
-        )
-    )
-
-    CommandCategory(
         "🎞️ Text Animations (89)", listOf(
             "animation fadeIn",
             "animation typewriter",
@@ -507,7 +495,6 @@ private fun CommandsContent() {
     CommandCategory(
         "🎬 Timeline", listOf(
             "[00:00 - 00:05] text \"Title\" animation typewriter",
-            "[00:02 - 00:08] sticker 🔥 position 85 18",
             "tighten track",
             "clear keyframes",
             "graph"
@@ -641,11 +628,9 @@ private fun GuideContent() {
     )
 
     GuideSection(
-        "📝 Text & Stickers", listOf(
+        "📝 Text", listOf(
             "Text panel → add text, font, color, gradient, shadow, glow",
             "Preview pe text drag/pinch → move/scale/rotate",
-            "Stickers → 10 categories × 20 emojis",
-            "Text + Sticker → keyframes + animations",
             "Fonts: 117 available — Arabic, Hindi, Script, Display, Modern",
             "Emphasis ke liye: stroke + glow + shadow + size use karo"
         )
@@ -732,7 +717,7 @@ private fun GuideContent() {
             "Bitrate: auto or manual (1-50 Mbps)",
             "Format: MP4 or MOV",
             "Multi-track base = V1 only",
-            "Text/stickers sab tracks se overlay hote hain"
+            "Text sab tracks se overlay hota hai"
         )
     )
 

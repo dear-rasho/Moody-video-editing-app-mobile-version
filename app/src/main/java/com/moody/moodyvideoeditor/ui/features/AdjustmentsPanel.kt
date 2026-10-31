@@ -77,7 +77,9 @@ fun AdjustmentsPanel(
 
             GroupLabel("Details — slider 50 max, box unlimited")
             AdjustmentRow("Noise", adj.noise, maxSlider = 50f) { onAdjChanged(adj.copy(noise = it)) }
-            AdjustmentRow("Sharpen", adj.sharpen, maxSlider = 50f) { onAdjChanged(adj.copy(sharpen = it)) }
+            AdjustmentRow("Sharpen", adj.sharpen, maxSlider = 50f, minSlider = 0f) {
+                onAdjChanged(adj.copy(sharpen = it.coerceAtLeast(0f)))
+            }
             AdjustmentRow("Vignette", adj.vignette, maxSlider = 50f) { onAdjChanged(adj.copy(vignette = it)) }
 
             GroupLabel("🎨 Color Channels — slider 50 max, box unlimited")
@@ -127,10 +129,11 @@ private fun AdjustmentRow(
     label: String,
     value: Float,
     maxSlider: Float = 200f,
+    minSlider: Float = -maxSlider,
     onChange: (Float) -> Unit
 ) {
-    var sliderValue by remember(value, maxSlider) {
-        mutableFloatStateOf(value.coerceIn(-maxSlider, maxSlider))
+    var sliderValue by remember(value, maxSlider, minSlider) {
+        mutableFloatStateOf(value.coerceIn(minSlider, maxSlider))
     }
     var textValue by remember {
         mutableStateOf(formatValue(value))
@@ -162,7 +165,7 @@ private fun AdjustmentRow(
                 onChange(it)
                 textValue = formatValue(it)
             },
-            valueRange = -maxSlider..maxSlider,
+            valueRange = minSlider..maxSlider,
             modifier = Modifier.weight(1f),
             colors = SliderDefaults.colors(
                 thumbColor = Color(0xFF7C3AED),

@@ -81,7 +81,15 @@ object EdgeGlowBitmapRenderer {
                         canvas = canvas,
                         size = Size(width.toFloat(), height.toFloat())
                     ) {
-                        drawEdgeGlow(config, frameTimeSec)
+                        val localTimeSec =
+                            frameTimeSec - clip.timelineStartMs / 1000f
+                        val opacity = KeyframeStore.layerOpacityAt(
+                            clip.keyframes, clip.layerOpacity, localTimeSec
+                        ) / 100f
+                        drawEdgeGlow(
+                            config.copy(intensity = config.intensity * opacity),
+                            frameTimeSec
+                        )
                     }
                     val output = File(directory, "frame_%05d.png".format(frame + 1))
                     FileOutputStream(output).use {

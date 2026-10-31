@@ -38,6 +38,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.BeatsState
@@ -61,6 +63,8 @@ import com.moody.moodyvideoeditor.data.ChromaKeyState
 import com.moody.moodyvideoeditor.data.ColorWheelState
 import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.OverlayState
+import com.moody.moodyvideoeditor.data.RecentMediaItem
+import com.moody.moodyvideoeditor.data.RecentMediaRepository
 import com.moody.moodyvideoeditor.data.RatioLibrary
 import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.data.SpotlightState
@@ -97,11 +101,12 @@ import com.moody.moodyvideoeditor.ui.features.ManualCaptionsPanel
 import com.moody.moodyvideoeditor.ui.features.MaskPanel
 
 import com.moody.moodyvideoeditor.ui.features.OverlaysPanel
+import com.moody.moodyvideoeditor.ui.features.OpacityPanel
+import com.moody.moodyvideoeditor.ui.features.RecentMediaPickerPanel
 import com.moody.moodyvideoeditor.ui.features.PromptPanel
 import com.moody.moodyvideoeditor.ui.features.SpeedPanel
 import com.moody.moodyvideoeditor.ui.features.SoundFxPanel
 import com.moody.moodyvideoeditor.ui.features.SpotlightPanel
-import com.moody.moodyvideoeditor.ui.features.StickersPanel
 import com.moody.moodyvideoeditor.ui.features.TextPanel
 import com.moody.moodyvideoeditor.ui.features.TransformPanel
 import com.moody.moodyvideoeditor.ui.features.TransitionsPanel
@@ -118,6 +123,7 @@ import com.moody.moodyvideoeditor.utils.SpeedEngine
 import com.moody.moodyvideoeditor.utils.TransformApplier
 import com.moody.moodyvideoeditor.utils.TransformValues
 import com.moody.moodyvideoeditor.utils.VideoUtils
+import com.moody.moodyvideoeditor.utils.VolumeEngine
 import com.moody.moodyvideoeditor.utils.VisualizerEngine
 import com.moody.moodyvideoeditor.utils.WhisperModelManager
 import com.moody.moodyvideoeditor.viewmodel.EditorViewModel
@@ -135,7 +141,8 @@ private data class MediaInfo(
     val durationMs: Long,
     val mimeType: String,
     val finalUri: Uri,
-    val hasAudioTrack: Boolean
+    val hasAudioTrack: Boolean,
+    val originalUri: Uri
 )
 
 @Composable
@@ -210,6 +217,10 @@ fun EditorScreen(
     var activePanel by remember {
         mutableStateOf<String?>(if (startInCodeMode) "code" else null)
     }
+    var showRecentMediaPicker by remember { mutableStateOf(false) }
+    var recentMedia by remember(projectId) {
+        mutableStateOf(RecentMediaRepository.getRecent(context, projectId))
+    }
     var openTextEditor by remember { mutableStateOf(false) }
     var lastLayerTap by remember { mutableStateOf<Pair<String, Long>?>(null) }
 
@@ -225,7 +236,6 @@ fun EditorScreen(
         openTextEditor = false
         when {
             clip.isTextClip -> activePanel = "text"
-            clip.isStickerClip -> activePanel = "stickers"
             clip.isFilterLayerClip -> {
                 filterEditLayerId = clip.id
                 activePanel = "filters"
@@ -243,6 +253,12 @@ fun EditorScreen(
                 activePanel = "effects"
             }
             clip.isVisualizerClip -> activePanel = "visualizer"
+            clip.type.startsWith("video/") &&
+                    clip.linkedId != null &&
+                    state.clips.any {
+                        it.isAudio && !it.isAudioEffectClip &&
+                                it.linkedId == clip.linkedId
+                    } -> activePanel = "visualizer"
             clip.isAudioEffectClip -> {
                 activePanel = if (clip.isSoundFxClip) "soundfx" else "audiofx"
             }
@@ -265,6 +281,7 @@ fun EditorScreen(
 
     var pendingUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var pendingVizImageUri by remember { mutableStateOf<String?>(null) }
+    var pendingVizImageIsBackground by remember { mutableStateOf(false) }
 
     var isDetectingBeats by remember { mutableStateOf(false) }
     var beatDetectionProgress by remember { mutableFloatStateOf(0f) }
@@ -404,6 +421,30 @@ fun EditorScreen(
                     state.currentPosMs < clip.timelineEndMs
         }
     }
+    val activeAudioClip = remember(state.clips, state.currentPosMs, state.mutedAudioTracks) {
+        state.clips
+            .filter {
+                it.isAudio &&
+                        !it.isAudioEffectClip &&
+                        it.uri.toString().isNotBlank() &&
+                        it.uri != Uri.EMPTY &&
+                        state.currentPosMs >= it.timelineStartMs &&
+                        state.currentPosMs < it.timelineEndMs &&
+                        !state.mutedAudioTracks.contains(it.trackIndex)
+            }
+            .maxByOrNull { it.trackIndex }
+    }
+
+    val videoPlaybackVolume = when {
+        state.isMuted -> 0f
+        activeClipTrackMuted -> 0f
+        anyActiveAudioMuted -> 0f
+        activeVideoHasSeparateAudio -> 0f
+        else -> activeVideoClip?.volume ?: state.volume
+    }
+    val audioPlaybackVolume = if (state.isMuted) 0f else activeAudioClip?.volume ?: 0f
+    val latestVideoPlaybackVolume by rememberUpdatedState(videoPlaybackVolume)
+    val latestAudioPlaybackVolume by rememberUpdatedState(audioPlaybackVolume)
 
     LaunchedEffect(
         state.volume,
@@ -414,12 +455,31 @@ fun EditorScreen(
         activeVideoClip?.volume,
         activeVideoHasSeparateAudio
     ) {
-        exoPlayer.volume = when {
-            state.isMuted -> 0f
-            activeClipTrackMuted -> 0f
-            anyActiveAudioMuted -> 0f
-            activeVideoHasSeparateAudio -> 0f
-            else -> activeVideoClip?.volume ?: state.volume
+        VolumeEngine.applyToPlayer(exoPlayer, videoPlaybackVolume)
+    }
+
+    LaunchedEffect(state.isMuted, activeAudioClip?.id, activeAudioClip?.volume) {
+        VolumeEngine.applyToPlayer(audioExoPlayer, audioPlaybackVolume)
+    }
+
+    DisposableEffect(exoPlayer, audioExoPlayer) {
+        val videoListener = object : Player.Listener {
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                VolumeEngine.applyToPlayer(exoPlayer, latestVideoPlaybackVolume)
+            }
+        }
+        val audioListener = object : Player.Listener {
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                VolumeEngine.applyToPlayer(audioExoPlayer, latestAudioPlaybackVolume)
+            }
+        }
+        exoPlayer.addListener(videoListener)
+        audioExoPlayer.addListener(audioListener)
+        onDispose {
+            exoPlayer.removeListener(videoListener)
+            audioExoPlayer.removeListener(audioListener)
+            VolumeEngine.releasePlayer(exoPlayer)
+            VolumeEngine.releasePlayer(audioExoPlayer)
         }
     }
 
@@ -427,7 +487,12 @@ fun EditorScreen(
     //  VIDEO PLAYBACK SYNC
     // ═══════════════════════════════════════════════════════════
 
-    LaunchedEffect(state.currentPosMs, state.clips, state.hiddenVisualTracks) {
+    LaunchedEffect(
+        state.currentPosMs,
+        state.clips,
+        state.hiddenVisualTracks,
+        isPlaybackActive
+    ) {
         val playheadMs = state.currentPosMs
         val activeClip = state.clips
             .filter {
@@ -440,7 +505,7 @@ fun EditorScreen(
             .maxByOrNull { it.trackIndex }
 
         if (activeClip == null) {
-            if (exoPlayer.isPlaying) exoPlayer.pause()
+            exoPlayer.pause()
             return@LaunchedEffect
         }
 
@@ -488,8 +553,10 @@ fun EditorScreen(
             }
         }
 
-        if (isPlaybackActive && !exoPlayer.isPlaying) {
-            exoPlayer.play()
+        if (isPlaybackActive) {
+            if (!exoPlayer.isPlaying) exoPlayer.play()
+        } else {
+            exoPlayer.pause()
         }
     }
 
@@ -497,22 +564,17 @@ fun EditorScreen(
     //  AUDIO PLAYBACK SYNC
     // ═══════════════════════════════════════════════════════════
 
-    LaunchedEffect(state.currentPosMs, state.clips, state.mutedAudioTracks) {
+    LaunchedEffect(
+        state.currentPosMs,
+        state.clips,
+        state.mutedAudioTracks,
+        isPlaybackActive
+    ) {
         val playheadMs = state.currentPosMs
-        val activeAudio = state.clips
-            .filter {
-                it.isAudio &&
-                        !it.isAudioEffectClip &&
-                        it.uri.toString().isNotBlank() &&
-                        it.uri != Uri.EMPTY &&
-                        playheadMs >= it.timelineStartMs &&
-                        playheadMs < it.timelineEndMs &&
-                        !state.mutedAudioTracks.contains(it.trackIndex)
-            }
-            .maxByOrNull { it.trackIndex }
+        val activeAudio = activeAudioClip
 
         if (activeAudio == null) {
-            if (audioExoPlayer.isPlaying) audioExoPlayer.pause()
+            audioExoPlayer.pause()
             return@LaunchedEffect
         }
 
@@ -549,11 +611,6 @@ fun EditorScreen(
             }
         }
 
-        val targetVolume = if (state.isMuted) 0f else activeAudio.volume
-        if (abs(audioExoPlayer.volume - targetVolume) > 0.01f) {
-            audioExoPlayer.volume = targetVolume
-        }
-
         val targetSpeed = SpeedEngine.clampForExoPlayer(activeAudio.speed)
         val currentSpeed = audioExoPlayer.playbackParameters.speed
         if (abs(currentSpeed - targetSpeed) > 0.01f) {
@@ -563,8 +620,10 @@ fun EditorScreen(
             }
         }
 
-        if (isPlaybackActive && !audioExoPlayer.isPlaying) {
-            audioExoPlayer.play()
+        if (isPlaybackActive) {
+            if (!audioExoPlayer.isPlaying) audioExoPlayer.play()
+        } else {
+            audioExoPlayer.pause()
         }
     }
 
@@ -789,7 +848,7 @@ fun EditorScreen(
                             mime.startsWith("audio/") -> true
                             else -> VideoUtils.hasAudioTrack(context, finalUri)
                         }
-                        MediaInfo(name, dur, mime, finalUri, hasAudioTrack)
+                        MediaInfo(name, dur, mime, finalUri, hasAudioTrack, uri)
                     } catch (e: Exception) {
                         Log.e("IMPORT", "Failed to import uri: $uri", e)
                         null
@@ -805,12 +864,43 @@ fun EditorScreen(
                     mediaType = info.mimeType,
                     hasAudioTrack = info.hasAudioTrack
                 )
+                if (info.mimeType.startsWith("video/") || info.mimeType.startsWith("image/")) {
+                    val recentItem = RecentMediaItem(info.originalUri, info.name)
+                    withContext(Dispatchers.IO) {
+                        RecentMediaRepository.add(context, projectId, recentItem)
+                    }
+                    recentMedia = RecentMediaRepository.getRecent(context, projectId)
+                }
             }
         } catch (e: Exception) {
             Log.e("IMPORT", "Multi-import failed", e)
         } finally {
             pendingUris = emptyList()
         }
+    }
+
+    if (showRecentMediaPicker) {
+        RecentMediaPickerPanel(
+            recentMedia = recentMedia,
+            onRecentSelected = { item ->
+                pendingUris = listOf(item.uri)
+                showRecentMediaPicker = false
+            },
+            onOpenStorage = {
+                showRecentMediaPicker = false
+                picker.launch(
+                    arrayOf(
+                        "video/*",
+                        "image/*",
+                        "audio/*",
+                        "image/jpeg",
+                        "image/jpg",
+                        "application/octet-stream"
+                    )
+                )
+            },
+            onDismiss = { showRecentMediaPicker = false }
+        )
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -862,7 +952,7 @@ fun EditorScreen(
                     beatDetectionError = "Could not create visualizer"
                 } else {
                     beatDetectionError = null
-                    activePanel = null
+                    activePanel = "visualizer"
                 }
             } catch (e: Throwable) {
                 isDetectingBeats = false
@@ -942,6 +1032,16 @@ fun EditorScreen(
                 hasTextClipSelected = selected?.isTextClip == true ||
                         state.multiSelectedIds.isNotEmpty(),
                 startInEdit = openTextEditor,
+                keyframesEnabled = selected?.isTextClip == true,
+                keyframeMap = selected?.keyframes.orEmpty(),
+                keyframeTimeSec = selected?.let {
+                    KeyframeStore.clipLocalTimeSeconds(
+                        state.currentPosMs, it.timelineStartMs, it.durationMs
+                    )
+                } ?: 0f,
+                onToggleKeyframe = viewModel::toggleKeyframeAtPlayhead,
+                onTypographyAnimationSelected =
+                    viewModel::applySelectedTextTypographyPreset,
                 onTextChanged = { viewModel.updateSelectedText(it) },
                 onAlignmentChanged = { viewModel.updateSelectedTextAlignment(it) },
                 onDraftTextChanged = { content ->
@@ -959,7 +1059,7 @@ fun EditorScreen(
             "layer_shadow" -> {
                 val target = selected?.takeIf {
                     !it.isAudio && (it.isVisualClip || it.isTextClip ||
-                            it.isColorMatteClip || it.isStickerClip || it.isOverlayClip ||
+                            it.isColorMatteClip || it.isOverlayClip ||
                             it.isVisualizerClip || it.isSpotlightClip ||
                             (it.isEffectClip && it.effectState?.overlay != null))
                 }
@@ -1011,7 +1111,6 @@ fun EditorScreen(
                 currentAnimation = viewModel.getSelectedAnimation(),
                 currentDuration = viewModel.getSelectedAnimationDuration(),
                 hasTextClipSelected = selected?.isTextClip == true ||
-                        selected?.isStickerClip == true ||
                         state.multiSelectedIds.isNotEmpty(),
                 onAnimationSelected = { viewModel.setSelectedAnimation(it) },
                 onDurationChanged = { viewModel.setSelectedAnimationDuration(it) },
@@ -1325,16 +1424,6 @@ fun EditorScreen(
                 onClose = { activePanel = null }
             )
 
-            "stickers" -> StickersPanel(
-                current = viewModel.getSelectedStickerState(),
-                hasStickerSelected = selected?.isStickerClip == true,
-                playheadMs = state.currentPosMs,
-                onStickerChanged = { viewModel.updateSelectedSticker(it) },
-                onEmojiTapped = { viewModel.addOrUpdateSticker(it) },
-                onRemove = { viewModel.removeSelectedSticker() },
-                onClose = { activePanel = null }
-            )
-
             "overlays" -> OverlaysPanel(
                 current = selected?.overlay ?: OverlayState(),
                 hasClipSelected = true,
@@ -1548,9 +1637,16 @@ fun EditorScreen(
             )
 
             "visualizer" -> {
-                val selectedAudioId: String? = selected?.takeIf {
-                    it.isAudio && !it.isAudioEffectClip
-                }?.id
+                val selectedAudio = when {
+                    selected?.isAudio == true && !selected.isAudioEffectClip -> selected
+                    selected?.isVisualClip == true && selected.linkedId != null ->
+                        state.clips.firstOrNull {
+                            it.isAudio && !it.isAudioEffectClip &&
+                                    it.linkedId == selected.linkedId
+                        }
+                    else -> null
+                }
+                val selectedAudioId = selectedAudio?.id
 
                 val vizClip = selected?.takeIf { it.isVisualizerClip }
                     ?: state.clips.firstOrNull { clip ->
@@ -1682,6 +1778,7 @@ fun EditorScreen(
                                             .pointerInput(Unit) {
                                                 detectTapGestures {
                                                     beatDetectionError = null
+                                                    launchVisualizerCreation()
                                                 }
                                             }
                                             .padding(horizontal = 20.dp),
@@ -1701,14 +1798,13 @@ fun EditorScreen(
 
                     vizClip == null -> {
                         val sel = selected
-                        val selectedIsAudio = sel != null &&
-                                sel.isAudio && !sel.isAudioEffectClip
+                        val hasSelectedAudio = selectedAudio != null
 
                         val anyVisualizerInTimeline = state.clips.any {
                             it.isVisualizerClip
                         }
 
-                        if (!selectedIsAudio) {
+                        if (!hasSelectedAudio) {
                             if (anyVisualizerInTimeline) {
                                 Box(
                                     modifier = Modifier
@@ -1779,8 +1875,8 @@ fun EditorScreen(
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            "Visualizer only reacts to its linked audio clip. " +
-                                                    "Please select an audio clip on the timeline.",
+                                            "Select a video with audio or an audio clip " +
+                                                    "to create a beat-reactive visualizer.",
                                             color = Color(0xFF888888),
                                             fontSize = 11.sp,
                                             textAlign = TextAlign.Center
@@ -1848,14 +1944,14 @@ fun EditorScreen(
                                 ) {
                                     Text("🎵", fontSize = 36.sp)
                                     Text(
-                                        "Create Visualizer for \"${sel.name.take(20)}\"",
+                                        "Create Visualizer for \"${selectedAudio?.name?.take(20).orEmpty()}\"",
                                         color = Color.White,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
                                         textAlign = TextAlign.Center
                                     )
                                     Text(
-                                        "Beats will be detected from this audio.",
+                                        "Beats will be detected from this clip's audio.",
                                         color = Color(0xFF888888),
                                         fontSize = 10.sp,
                                         textAlign = TextAlign.Center
@@ -1890,7 +1986,7 @@ fun EditorScreen(
                                                 .height(44.dp)
                                                 .clip(RoundedCornerShape(10.dp))
                                                 .background(Color(0xFF7C3AED))
-                                                .pointerInput(sel.id) {
+                                                .pointerInput(selectedAudio?.id) {
                                                     detectTapGestures {
                                                         launchVisualizerCreation()
                                                     }
@@ -1917,16 +2013,23 @@ fun EditorScreen(
                                 ?: return@LaunchedEffect
                             viewModel.updateVisualizerLayer(
                                 vizClip.id,
-                                (vizClip.visualizer ?: VisualizerState()).copy(
-                                    imageUri = uri,
-                                    showImage = true
-                                )
+                                (vizClip.visualizer ?: VisualizerState()).let { visualizer ->
+                                    if (pendingVizImageIsBackground) {
+                                        visualizer.copy(
+                                            backgroundImageUri = uri,
+                                            showBackgroundImage = true
+                                        )
+                                    } else {
+                                        visualizer.copy(imageUri = uri, showImage = true)
+                                    }
+                                }
                             )
                             pendingVizImageUri = null
                         }
 
+                        val vizAudioId = vizClip.visualizer?.linkedAudioClipId
                         val hasAudio = state.clips.any {
-                            it.isAudio && !it.isAudioEffectClip
+                            it.id == vizAudioId && it.isAudio && !it.isAudioEffectClip
                         }
 
                         VisualizerPanel(
@@ -1936,6 +2039,25 @@ fun EditorScreen(
                                 viewModel.updateVisualizerLayer(vizClip.id, it)
                             },
                             onPickImage = {
+                                pendingVizImageIsBackground = false
+                                vizImagePicker.launch(
+                                    arrayOf(
+                                        "image/*",
+                                        "image/jpeg",
+                                        "image/jpg",
+                                        "image/pjpeg",
+                                        "image/webp",
+                                        "image/gif",
+                                        "image/bmp",
+                                        "image/heic",
+                                        "image/heif",
+                                        "application/octet-stream",
+                                        "*/*"
+                                    )
+                                )
+                            },
+                            onPickBackgroundImage = {
+                                pendingVizImageIsBackground = true
                                 vizImagePicker.launch(
                                     arrayOf(
                                         "image/*",
@@ -1958,6 +2080,15 @@ fun EditorScreen(
                                     (vizClip.visualizer ?: VisualizerState()).copy(
                                         imageUri = null,
                                         showImage = false
+                                    )
+                                )
+                            },
+                            onClearBackgroundImage = {
+                                viewModel.updateVisualizerLayer(
+                                    vizClip.id,
+                                    (vizClip.visualizer ?: VisualizerState()).copy(
+                                        backgroundImageUri = null,
+                                        showBackgroundImage = false
                                     )
                                 )
                             },
@@ -2012,6 +2143,28 @@ fun EditorScreen(
                 multiCount = state.multiSelectedIds.size,
                 onBlendModeSelected = { key -> viewModel.setBlendMode(key) },
                 onBlendOpacityChanged = { v -> viewModel.setBlendOpacity(v) },
+                onClose = { activePanel = null }
+            )
+            "opacity" -> OpacityPanel(
+                layerName = selected?.name.orEmpty(),
+                opacity = selected?.let {
+                    KeyframeStore.layerOpacityAt(
+                        it.keyframes,
+                        it.layerOpacity,
+                        KeyframeStore.clipLocalTimeSeconds(
+                            state.currentPosMs, it.timelineStartMs, it.durationMs
+                        )
+                    )
+                } ?: 100f,
+                keyframes = selected?.keyframes.orEmpty(),
+                timeSec = selected?.let {
+                    KeyframeStore.clipLocalTimeSeconds(
+                        state.currentPosMs, it.timelineStartMs, it.durationMs
+                    )
+                } ?: 0f,
+                hasLayerSelected = selected != null && !selected.isAudio,
+                onOpacityChanged = { viewModel.changeTransformProperty("layer.opacity", it) },
+                onToggleKeyframe = viewModel::toggleKeyframeAtPlayhead,
                 onClose = { activePanel = null }
             )
             "captions" -> AutoCaptionsPanel(
@@ -2742,12 +2895,6 @@ fun EditorScreen(
                     onTextTransformChanged = { clipId: String, s: Float, r: Float ->
                         viewModel.updateSelectedTransformBulk(clipId, s, r)
                     },
-                    onStickerPositionChanged = { clipId: String, x: Float, y: Float ->
-                        viewModel.updateSelectedPositionBulk(clipId, x, y)
-                    },
-                    onStickerTransformChanged = { clipId: String, s: Float, r: Float ->
-                        viewModel.updateSelectedTransformBulk(clipId, s, r)
-                    },
                     onLayerPositionChanged = { clipId: String, x: Float, y: Float ->
                         viewModel.updateSelectedPositionBulk(clipId, x, y)
                     },
@@ -2784,18 +2931,7 @@ fun EditorScreen(
             //  3. CONTROL BAR — media, playback, undo and redo
             // ═══════════════════════════════════════════════════════════
             ControlBar(
-                onMediaClick = {
-                    picker.launch(
-                        arrayOf(
-                            "video/*",
-                            "image/*",
-                            "audio/*",
-                            "image/jpeg",
-                            "image/jpg",
-                            "application/octet-stream"
-                        )
-                    )
-                },
+                onMediaClick = { showRecentMediaPicker = true },
                 currentRatio = state.aspectRatio,
                 onRatioClick = { activePanel = "ratio" },
                 isPlaying = isPlaybackActive,
@@ -2847,7 +2983,7 @@ fun EditorScreen(
                 hasKeyframeAtPlayhead = viewModel.hasKeyframeAtPlayhead(),
                 onMuteToggle = { viewModel.toggleMute() },
                 onKeyframe = { viewModel.toggleKeyframeAll() },
-                onMagnet = { viewModel.closeGapsAfterSelectedClip() },
+                onMagnet = { viewModel.closeGapsOnSelectedTrack() },
                 onDuplicate = { viewModel.duplicateCurrentClip() },
                 onDelete = {
                     if (state.multiSelectedIds.isNotEmpty()) {

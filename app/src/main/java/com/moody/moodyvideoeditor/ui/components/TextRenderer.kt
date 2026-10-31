@@ -11,7 +11,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -45,6 +47,15 @@ fun TextOverlay(
 
     val family = FontLibrary.familyFor(text.fontFamily)
     val solidColor = Color(text.color)
+    val density = LocalDensity.current
+    val outlineWidthPx = with(density) { text.strokeWidth.dp.toPx() }
+    val textAlignment = when (text.alignment) {
+        "left" -> TextAlign.Left
+        "right" -> TextAlign.Right
+        else -> TextAlign.Center
+    }
+    val fontWeight = if (text.fontWeight == "bold") FontWeight.Bold else FontWeight.Normal
+    val fontStyle = if (text.fontStyle == "italic") FontStyle.Italic else FontStyle.Normal
 
     val gradient: Brush? = if (text.gradientEnabled) {
         val extent = 600f
@@ -67,26 +78,8 @@ fun TextOverlay(
         blurRadius = text.shadowBlur
     ) else null
 
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = text.content,
-            color = if (gradient != null) Color.Unspecified else solidColor,
-            fontSize = text.fontSize.sp,
-            fontWeight = if (text.fontWeight == "bold") FontWeight.Bold else FontWeight.Normal,
-            fontStyle = if (text.fontStyle == "italic") FontStyle.Italic else FontStyle.Normal,
-            fontFamily = family,
-            textAlign = when (text.alignment) {
-                "left" -> TextAlign.Left
-                "right" -> TextAlign.Right
-                else -> TextAlign.Center
-            },
-            style = TextStyle(
-                brush = gradient,
-                shadow = shadow
-            ),
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(
             modifier = Modifier
                 .offset(
                     x = ((text.positionX - 50f) * 3f).dp,
@@ -96,41 +89,63 @@ fun TextOverlay(
                     scaleX = (text.scale / 100f) * frame.scaleX,
                     scaleY = (text.scale / 100f) * frame.scaleY,
                     rotationZ = text.rotation + frame.rotationZ,
+                    rotationX = frame.rotationX,
+                    rotationY = frame.rotationY,
+                    cameraDistance = 16f * density.density,
                     alpha = (text.opacity / 100f) * frame.alpha,
                     translationX = frame.translateX,
                     translationY = frame.translateY
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (text.glowEnabled && text.glowRadius > 0f) {
+                Text(
+                    text = text.content,
+                    color = Color(text.glowColor).copy(alpha = 0.32f),
+                    fontSize = text.fontSize.sp,
+                    fontWeight = fontWeight,
+                    fontStyle = fontStyle,
+                    fontFamily = family,
+                    textAlign = textAlignment,
+                    style = TextStyle(
+                        shadow = Shadow(
+                            color = Color(text.glowColor),
+                            offset = Offset.Zero,
+                            blurRadius = text.glowRadius
+                        )
+                    )
                 )
-        )
-    }
-}
-
-@Composable
-fun StickerOverlay(
-    emoji: String,
-    x: Float,
-    y: Float,
-    scale: Float,
-    rotation: Float
-) {
-    if (emoji.isBlank()) return
-
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
+            }
+            if (text.strokeEnabled && text.strokeWidth > 0f) {
+                Text(
+                    text = text.content,
+                    color = Color(text.strokeColor),
+                    fontSize = text.fontSize.sp,
+                    fontWeight = fontWeight,
+                    fontStyle = fontStyle,
+                    fontFamily = family,
+                    textAlign = textAlignment,
+                    style = TextStyle(
+                        drawStyle = Stroke(
+                            width = outlineWidthPx,
+                            join = androidx.compose.ui.graphics.StrokeJoin.Round
+                        )
+                    )
+                )
+            }
         Text(
-            text = emoji,
-            fontSize = 48.sp,
-            modifier = Modifier
-                .offset(
-                    x = ((x - 50f) * 3f).dp,
-                    y = ((y - 50f) * 1.7f).dp
-                )
-                .graphicsLayer(
-                    scaleX = scale / 100f,
-                    scaleY = scale / 100f,
-                    rotationZ = rotation
-                )
+            text = text.content,
+            color = if (gradient != null) Color.Unspecified else solidColor,
+            fontSize = text.fontSize.sp,
+            fontWeight = fontWeight,
+            fontStyle = fontStyle,
+            fontFamily = family,
+            textAlign = textAlignment,
+            style = TextStyle(
+                brush = gradient,
+                shadow = shadow
+            )
         )
+        }
     }
 }

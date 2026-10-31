@@ -43,6 +43,7 @@ object VisualizerEngine {
 
     private data class CenterImage(val uri: String?, val bitmap: ImageBitmap?)
     private val centerImages = ConcurrentHashMap<String, CenterImage>()
+    private val backgroundImages = ConcurrentHashMap<String, CenterImage>()
 
     data class Features(
         val bass: Float, val mid: Float, val treble: Float,
@@ -101,8 +102,30 @@ object VisualizerEngine {
             feat = feat, elapsed = elapsedSec,
             state = state,
             instanceKey = instanceKey,
-            centerImage = centerImages[instanceKey]?.bitmap
+            centerImage = centerImages[instanceKey]?.bitmap,
+            backgroundImage = backgroundImages[instanceKey]?.bitmap
         )
+
+        ctx.backgroundImage?.takeIf { state.showBackgroundImage }?.let { image ->
+            val imageAspect = image.width.toFloat() / image.height.coerceAtLeast(1)
+            val canvasAspect = W / H.coerceAtLeast(1f)
+            val srcWidth: Int
+            val srcHeight: Int
+            if (imageAspect > canvasAspect) {
+                srcHeight = image.height
+                srcWidth = (image.height * canvasAspect).toInt().coerceIn(1, image.width)
+            } else {
+                srcWidth = image.width
+                srcHeight = (image.width / canvasAspect).toInt().coerceIn(1, image.height)
+            }
+            scope.drawImage(
+                image = image,
+                srcOffset = IntOffset((image.width - srcWidth) / 2, (image.height - srcHeight) / 2),
+                srcSize = IntSize(srcWidth, srcHeight),
+                dstOffset = IntOffset.Zero,
+                dstSize = IntSize(W.toInt(), H.toInt())
+            )
+        }
 
         // ═══════════════════════════════════════════════════════════
         //  DISPATCH
@@ -233,7 +256,8 @@ object VisualizerEngine {
         val cx: Float, val cy: Float, val baseR: Float,
         val feat: Features, val elapsed: Float,
         val state: VisualizerState, val instanceKey: String,
-        val centerImage: ImageBitmap?
+        val centerImage: ImageBitmap?,
+        val backgroundImage: ImageBitmap?
     ) {
         fun color1() = Color(state.color1).copy(alpha = state.opacity)
         fun color2() = Color(state.color2).copy(alpha = state.opacity)
@@ -1915,6 +1939,7 @@ object VisualizerEngine {
         val ts = c.state.textState
         val content = ts.content.ifBlank { c.state.textContent }
         if (content.isBlank()) return
+        if (ts.fontSize <= 0) return
         val lines = content.split('\n')
 
         val circleDiameter = circleRadius * 2f
@@ -1950,7 +1975,7 @@ object VisualizerEngine {
             }
 
             val letterSpacingEm = if (baseFontSize > 0f)
-                (ts.letterSpacing / baseFontSize).coerceIn(-0.3f, 0.3f)
+                (ts.letterSpacing * fontScale / baseFontSize)
             else 0f
 
             val alphaInt = (ts.opacity / 100f * c.state.opacity * 255)
@@ -2096,10 +2121,25 @@ object VisualizerEngine {
     }
 
     @Synchronized
+    fun setBackgroundImage(
+        uri: String?,
+        bitmap: ImageBitmap?,
+        instanceKey: String = "default"
+    ) {
+        backgroundImages[instanceKey] = CenterImage(uri, bitmap)
+    }
+
+    @Synchronized
+    fun clearBackgroundImage(instanceKey: String) {
+        backgroundImages.remove(instanceKey)
+    }
+
+    @Synchronized
     fun clearCache() {
         smoothBass.clear(); smoothMid.clear(); smoothTreble.clear()
         smoothRms.clear(); smoothBeat.clear(); imageRotation.clear()
         centerImages.clear()
+        backgroundImages.clear()
     }
 
     private fun hash(n: Double): Double {

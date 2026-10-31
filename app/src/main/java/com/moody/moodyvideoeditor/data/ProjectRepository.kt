@@ -76,6 +76,22 @@ object ProjectRepository {
         }
     }
 
+    fun deleteProjects(context: Context, projectIds: Set<String>) {
+        if (projectIds.isEmpty()) return
+        try {
+            projectIds.forEach { projectId ->
+                File(getProjectsDir(context), "$projectId.json").delete()
+                File(getThumbsDir(context), "$projectId.jpg").delete()
+            }
+            writeIndex(
+                context,
+                listProjects(context).filterNot { it.id in projectIds }
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun renameProject(context: Context, projectId: String, newName: String) {
         val index = listProjects(context).toMutableList()
         val idx = index.indexOfFirst { it.id == projectId }
@@ -169,7 +185,9 @@ object ProjectRepository {
         val arr = o.optJSONArray("clips") ?: JSONArray()
         for (i in 0 until arr.length()) {
             val obj = arr.optJSONObject(i)
-            if (obj != null && obj.optString("type") != "brush/plain") {
+            if (obj != null && obj.optString("type") != "brush/plain" &&
+                obj.optString("type") != "sticker/plain"
+            ) {
                 clips.add(clipFromJson(obj))
             }
         }
@@ -227,6 +245,7 @@ object ProjectRepository {
         put("isMuted", c.isMuted)
         put("blendMode", c.blendMode)
         put("blendOpacity", c.blendOpacity.toDouble())
+        put("layerOpacity", c.layerOpacity.toDouble())
 
         put("audioFx", c.audioFx)
         put("audioFxIntensity", c.audioFxIntensity.toDouble())
@@ -243,10 +262,6 @@ object ProjectRepository {
 
         val textState = c.textState
         if (textState != null) put("textState", textStateToJson(textState))
-
-        val stickerState = c.stickerState
-        if (stickerState != null) put("stickerState", stickerStateToJson(stickerState))
-
 
         val freeze = c.freeze
         if (freeze != null) put("freeze", freezeToJson(freeze))
@@ -314,6 +329,7 @@ object ProjectRepository {
             isMuted = o.optBoolean("isMuted", false),
             blendMode = o.optString("blendMode", "normal"),
             blendOpacity = o.optDouble("blendOpacity", 100.0).toFloat(),
+            layerOpacity = o.optDouble("layerOpacity", 100.0).toFloat(),
 
             audioFx = o.optString("audioFx", "none"),
             audioFxIntensity = o.optDouble("audioFxIntensity", 100.0).toFloat(),
@@ -327,8 +343,6 @@ object ProjectRepository {
 
             effectState = o.optJSONObject("effectState")?.let { effectStateFromJson(it) },
             textState = o.optJSONObject("textState")?.let { textStateFromJson(it) },
-            stickerState = o.optJSONObject("stickerState")?.let { stickerStateFromJson(it) },
-
             freeze = o.optJSONObject("freeze")?.let { freezeFromJson(it) },
             transition = o.optJSONObject("transition")?.let { transitionFromJson(it) },
             ratio = o.optJSONObject("ratio")?.let { ratioFromJson(it) },
@@ -1084,28 +1098,6 @@ object ProjectRepository {
     }
 
 
-    //  STICKER
-
-
-    private fun stickerStateToJson(s: StickerState) = JSONObject().apply {
-        put("emoji", s.emoji)
-        put("x", s.x.toDouble())
-        put("y", s.y.toDouble())
-        put("scale", s.scale.toDouble())
-        put("rotation", s.rotation.toDouble())
-    }
-
-    private fun stickerStateFromJson(o: JSONObject): StickerState = StickerState(
-        emoji = o.optString("emoji", ""),
-        x = o.optDouble("x", 50.0).toFloat(),
-        y = o.optDouble("y", 50.0).toFloat(),
-        scale = o.optDouble("scale", 100.0).toFloat(),
-        rotation = o.optDouble("rotation", 0.0).toFloat()
-    )
-
-
-
-
     //  FREEZE
 
 
@@ -1436,6 +1428,8 @@ object ProjectRepository {
             put("showImage", v.showImage)
             put("imageScale", v.imageScale.toDouble())
             put("imageOpacity", v.imageOpacity.toDouble())
+            put("backgroundImageUri", v.backgroundImageUri ?: JSONObject.NULL)
+            put("showBackgroundImage", v.showBackgroundImage)
 
             put("imageIdleRotation", v.imageIdleRotation)
             put("imageIdleSpeed", v.imageIdleSpeed.toDouble())
@@ -1509,6 +1503,9 @@ object ProjectRepository {
             showImage = o.optBoolean("showImage", false),
             imageScale = o.optDouble("imageScale", 0.55).toFloat(),
             imageOpacity = o.optDouble("imageOpacity", 1.0).toFloat(),
+            backgroundImageUri = if (o.isNull("backgroundImageUri")) null
+            else o.optString("backgroundImageUri", null),
+            showBackgroundImage = o.optBoolean("showBackgroundImage", false),
 
             imageIdleRotation = o.optBoolean("imageIdleRotation", true),
             imageIdleSpeed = o.optDouble("imageIdleSpeed", 0.5).toFloat(),

@@ -33,6 +33,17 @@ object KeyframeStore {
         return localMs / 1000f
     }
 
+    fun layerOpacityAt(
+        keyframes: KeyframeMap,
+        baseOpacity: Float,
+        timeSec: Float
+    ): Float = sample(
+        keyframes,
+        KeyframeLibrary.LAYER_OPACITY,
+        timeSec,
+        baseOpacity
+    ).coerceIn(0f, 100f)
+
     fun keyframeXInClip(
         keyframeTimeSec: Float,
         clipDurationMs: Long,

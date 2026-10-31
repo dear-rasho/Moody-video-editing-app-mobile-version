@@ -52,8 +52,8 @@ fun AnimationsPanel(
         if (!hasTextClipSelected) {
             EmptyState(
                 icon = "📝",
-                title = "No text or sticker selected",
-                text = "Pehle Text ya Sticker panel se ek clip add karo, phir yahan animation lagao."
+                title = "No text selected",
+                text = "Pehle Text panel se ek clip add karo, phir yahan animation lagao."
             )
             return@FeaturePanel
         }

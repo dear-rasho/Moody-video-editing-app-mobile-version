@@ -393,7 +393,7 @@ private fun EmptyState() {
             fontWeight = FontWeight.Bold
         )
         Text(
-            "Select a video, text or sticker layer first.",
+            "Select a video or text layer first.",
             color = Color(0xFF888888), fontSize = 10.sp
         )
     }

@@ -178,12 +178,17 @@ object LightningBitmapRenderer {
                     val cfg = clip.effectState?.lightning ?: return@forEach
                     val localMs = (timelineMs - clip.timelineStartMs).coerceAtLeast(0L)
                     val localSec = localMs / 1000f
+                    val layerOpacity = KeyframeStore.layerOpacityAt(
+                        clip.keyframes, clip.layerOpacity, localSec
+                    ) / 100f
+                    if (layerOpacity <= 0f) return@forEach
+                    val effectiveConfig = cfg.copy(intensity = cfg.intensity * layerOpacity)
 
-                    val flash = LightningEngine.flashAt(cfg, localSec)
+                    val flash = LightningEngine.flashAt(effectiveConfig, localSec)
                     if (flash <= 0.01f) return@forEach
 
                     // ── Soft ambient screen flash (matches preview) ──
-                    val flashColor = cfg.color
+                    val flashColor = effectiveConfig.color
                     val r = ((flashColor shr 16) and 0xFF).toInt()
                     val g = ((flashColor shr 8) and 0xFF).toInt()
                     val b = (flashColor and 0xFF).toInt()
@@ -197,12 +202,12 @@ object LightningBitmapRenderer {
                     )
 
                     // ── Bolt lines with glow ──
-                    val freq = cfg.frequency.coerceIn(0.2f, 5f)
+                    val freq = effectiveConfig.frequency.coerceIn(0.2f, 5f)
                     val cycleIdx = kotlin.math.floor(localSec * freq).toInt()
 
                     LightningEngine.drawBoltAndroid(
                         canvas = canvas,
-                        cfg = cfg,
+                        cfg = effectiveConfig,
                         flashStrength = flash,
                         cycleIndex = cycleIdx,
                         W = W, H = H

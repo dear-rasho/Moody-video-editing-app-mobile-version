@@ -167,10 +167,14 @@ object ParticleBitmapRenderer {
                     val cfg = clip.effectState?.particle ?: return@forEach
                     val localMs = (timelineMs - clip.timelineStartMs).coerceAtLeast(0L)
                     val localSec = localMs / 1000f
+                    val layerOpacity = KeyframeStore.layerOpacityAt(
+                        clip.keyframes, clip.layerOpacity, localSec
+                    ) / 100f
+                    if (layerOpacity <= 0f) return@forEach
 
                     ParticleEngine.drawOnCanvas(
                         canvas = canvas,
-                        cfg = cfg,
+                        cfg = cfg.copy(masterIntensity = cfg.masterIntensity * layerOpacity),
                         localTimeSec = localSec,
                         W = W, H = H
                     )

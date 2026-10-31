@@ -26,11 +26,21 @@ class TextScalerTest {
     }
 
     @Test
+    fun characterSpacingRetainsLargePositiveAndNegativeValues() {
+        assertEquals(-200f, TextScaler.letterSpacing(-200f, canvasWidthPx = 720f), 0.001f)
+        assertEquals(300f, TextScaler.letterSpacing(300f, canvasWidthPx = 720f), 0.001f)
+    }
+
+    @Test
     fun glowLayersKeepTheTextGlyphShapeInsteadOfExpandingItsOutline() {
         assertEquals(4, TextRenderContract.glowLayers().size)
         assertEquals(
             listOf(1f, 1f, 1f, 1f),
             TextRenderContract.glowLayers().map { it.fontScale }
+        )
+        assertEquals(
+            listOf(0.90f, 0.72f, 0.48f, 0.30f),
+            TextRenderContract.glowLayers().map { it.alpha }
         )
     }
 }

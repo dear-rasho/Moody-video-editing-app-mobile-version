@@ -19,11 +19,17 @@ typealias KeyframeMap = Map<String, List<Keyframe>>
 
 object KeyframeLibrary {
 
+    const val TEXT_SIZE = "text.size"
+    const val TEXT_LETTER_SPACING = "text.letterSpacing"
+    const val TEXT_OPACITY = "text.opacity"
+    const val LAYER_OPACITY = "layer.opacity"
+
     // Mirrors js/workspace/keyframeStore.js ANIMATABLE_PROPS
     val ANIMATABLE_PROPS = listOf(
         "x", "y",
         "scale", "rotation",
         "anchorX", "anchorY",
+        TEXT_SIZE, TEXT_LETTER_SPACING, TEXT_OPACITY, LAYER_OPACITY,
         "cropL", "cropR", "cropT", "cropB",
         "spotlight.sourceX", "spotlight.sourceY",
         "spotlight.targetX", "spotlight.targetY",

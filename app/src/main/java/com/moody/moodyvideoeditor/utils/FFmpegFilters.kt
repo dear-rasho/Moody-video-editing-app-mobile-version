@@ -21,7 +21,7 @@ object FFmpegFilters {
 
             if (adj.sharpen > 0f) {
                 val amount = (adj.sharpen / 50f).coerceIn(0f, 2f)
-                filters.add("unsharp=5:5:${f(amount)}:5:5:0")
+                filters.add("unsharp=3:3:${f(amount)}:3:3:${f(amount)}")
             }
 
             if (adj.vignette != 0f) {

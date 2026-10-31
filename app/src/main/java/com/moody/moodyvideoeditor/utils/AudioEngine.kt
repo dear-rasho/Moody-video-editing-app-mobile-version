@@ -1,5 +1,8 @@
 package com.moody.moodyvideoeditor.utils
 
+import com.moody.moodyvideoeditor.data.EditorClip
+import java.util.Locale
+
 // Audio FX → FFmpeg filter chain builder.
 // Intensity (0..200) scales filter parameters.
 object AudioEngine {
@@ -114,7 +117,7 @@ object AudioEngine {
                 }"
             }
 
-            "robot" -> "afftfilt=real='hypot(re,im)*sin(0)':imag='hypot(re,im)*cos(0)':win_size=512:overlap=0.75"
+            "robot" -> "tremolo=f=${(24f + 18f * t).coerceIn(1f, 200f)}:d=0.8,acrusher=bits=${(10f - 3f * t).toInt().coerceIn(5, 10)}:mix=${(0.25f + 0.2f * t).coerceIn(0f, 1f)}"
 
             "echo" -> buildEchoFilter(
                 (0.8f * t).coerceIn(0f, 1f),
@@ -144,7 +147,7 @@ object AudioEngine {
                 0.4f * t
             )
 
-            "noise_reduction" -> "afftdn=nr=${(6f + 12f * t).coerceIn(6f, 30f)}:nf=-50"
+            "noise_reduction" -> "highpass=f=70,afftdn=nr=${(8f + 11f * t).coerceIn(8f, 30f)}:nf=-35:tn=1:gs=5"
 
             "telephone" -> "highpass=f=300,lowpass=f=${
                 (3000 + 1000 * (1f - t)).toInt().coerceIn(1000, 8000)
@@ -159,16 +162,136 @@ object AudioEngine {
                 (4000 - 1000 * (1f - t)).toInt().coerceIn(1000, 6000)
             },volume=${(1.0 + 0.5 * t)}"
 
-            // SOUND FX — synthesized tones
-            "pop" -> "sine=frequency=${(200 + 400 * t).toInt()}:duration=0.1"
-            "click" -> "sine=frequency=${(1500 * t).toInt().coerceAtLeast(500)}:duration=0.03"
-            "tick" -> "sine=frequency=${(2000 * t).toInt().coerceAtLeast(800)}:duration=0.02"
-            "ding" -> "sine=frequency=${(1200 * t).toInt().coerceAtLeast(500)}:duration=0.3"
-            "bell" -> "sine=frequency=${(800 * t).toInt().coerceAtLeast(300)}:duration=0.8"
-            "coin" -> "sine=frequency=${(1800 * t).toInt().coerceAtLeast(800)}:duration=0.15"
-
             else -> ""
         }
+    }
+
+    fun appendTimelineAudioEffects(
+        filterParts: MutableList<String>,
+        clips: List<EditorClip>,
+        rangeStartMs: Long,
+        baseLabel: String,
+        outLabel: String
+    ): String {
+        var currentLabel = baseLabel
+        val audioFxLayers = clips.filter { it.isAudioFxClip }.sortedBy { it.timelineStartMs }
+        val activeAudioFxLayers = audioFxLayers.mapNotNull { layer ->
+            val start = ((layer.timelineStartMs - rangeStartMs).coerceAtLeast(0L)) / 1000.0
+            val end = ((layer.timelineEndMs - rangeStartMs).coerceAtLeast(0L)) / 1000.0
+            val filter = buildAudioFilter(layer.audioFx, layer.audioFxIntensity)
+            if (end - start < 0.02 || filter.isBlank()) null else Triple(start, end, filter)
+        }
+
+        if (activeAudioFxLayers.isNotEmpty()) {
+            val splitLabels = (0..activeAudioFxLayers.size).map { "fxsplt$it" }
+            filterParts.add(
+                "[$currentLabel]asplit=${splitLabels.size}" +
+                        splitLabels.joinToString("") { "[$it]" }
+            )
+            val baseMute = activeAudioFxLayers.joinToString(",") { (start, end, _) ->
+                "volume=0:enable='between(t,%.3f,%.3f)'".format(Locale.US, start, end)
+            }
+            filterParts.add("[${splitLabels[0]}]$baseMute[fxn0]")
+
+            activeAudioFxLayers.forEachIndexed { index, (start, end, filter) ->
+                val outsideMute =
+                    "volume=0:enable='not(between(t,%.3f,%.3f))'".format(Locale.US, start, end)
+                filterParts.add(
+                    "[${splitLabels[index + 1]}]$outsideMute,$filter[fxn${index + 1}]"
+                )
+            }
+
+            currentLabel = "audioFxMixed"
+            filterParts.add(
+                "${(0..activeAudioFxLayers.size).joinToString("") { "[fxn$it]" }}" +
+                        "amix=inputs=${activeAudioFxLayers.size + 1}:duration=longest[$currentLabel]"
+            )
+        }
+
+        val soundFxLayers = clips.filter { it.isSoundFxClip }.sortedBy { it.timelineStartMs }
+        val soundLabels = mutableListOf<String>()
+        soundFxLayers.forEachIndexed { index, layer ->
+            val timelineStartMs = (layer.timelineStartMs - rangeStartMs).coerceAtLeast(0L)
+            val layerDurationSeconds = (layer.durationMs / 1000.0).coerceAtLeast(0.02)
+            val source = buildSoundFxSource(
+                layer.soundFx,
+                layer.soundFxIntensity,
+                layerDurationSeconds
+            ) ?: return@forEachIndexed
+            val sourceDuration = source.substringAfterLast(":d=")
+                .toDoubleOrNull() ?: layerDurationSeconds
+            val fadeStart = (sourceDuration * 0.75).coerceAtLeast(0.0)
+            val fadeDuration = (sourceDuration - fadeStart).coerceAtLeast(0.01)
+            val sourceLabel = "soundFxSource$index"
+            val outputLabel = "soundFxAudio$index"
+            filterParts.add("$source[$sourceLabel]")
+            filterParts.add(
+                "[$sourceLabel]aformat=sample_rates=44100:channel_layouts=stereo," +
+                        "afade=t=out:st=%.4f:d=%.4f,".format(Locale.US, fadeStart, fadeDuration) +
+                        "adelay=$timelineStartMs|$timelineStartMs[$outputLabel]"
+            )
+            soundLabels.add("[$outputLabel]")
+        }
+
+        if (soundLabels.isNotEmpty()) {
+            filterParts.add(
+                "[$currentLabel]${soundLabels.joinToString("")}" +
+                        "amix=inputs=${soundLabels.size + 1}:duration=longest:" +
+                        "dropout_transition=0[$outLabel]"
+            )
+            return outLabel
+        }
+
+        if (currentLabel != baseLabel && currentLabel != outLabel) {
+            filterParts.add("[$currentLabel]anull[$outLabel]")
+            return outLabel
+        }
+        return currentLabel
+    }
+
+    fun buildSoundFxSource(fx: String, intensity: Float, layerDurationSeconds: Double): String? {
+        val profile = when (fx) {
+            "pop" -> Triple(900f, 120f, 0.12)
+            "click" -> Triple(2200f, 700f, 0.04)
+            "tick" -> Triple(2800f, 900f, 0.06)
+            "ding" -> Triple(1400f, 950f, 0.35)
+            "bell" -> Triple(1000f, 720f, 0.75)
+            "coin" -> Triple(2000f, 1300f, 0.22)
+            "whoosh" -> Triple(180f, 70f, 0.50)
+            "swoosh" -> Triple(250f, 90f, 0.40)
+            "slide" -> Triple(260f, 900f, 0.50)
+            "rise" -> Triple(180f, 1400f, 0.60)
+            "fall" -> Triple(1400f, 160f, 0.60)
+            "boom" -> Triple(100f, 38f, 0.65)
+            "thud" -> Triple(150f, 45f, 0.22)
+            "clap" -> Triple(1200f, 500f, 0.12)
+            "heartbeat" -> Triple(75f, 55f, 0.80)
+            "zap" -> Triple(1600f, 100f, 0.30)
+            "laser" -> Triple(1200f, 100f, 0.25)
+            "glitch" -> Triple(700f, 2400f, 0.35)
+            "alarm" -> Triple(700f, 1100f, 0.50)
+            "boing" -> Triple(650f, 180f, 0.40)
+            else -> return null
+        }
+
+        val safeIntensity = intensity.takeIf { it.isFinite() } ?: 100f
+        val amplitude = (0.28f * (safeIntensity / 100f).coerceIn(0f, 2f))
+            .coerceIn(0f, 0.56f)
+        val duration = layerDurationSeconds
+            .takeIf { it.isFinite() && it > 0.0 }
+            ?.coerceAtMost(profile.third)
+            ?: profile.third
+        val durationText = String.format(java.util.Locale.US, "%.4f", duration)
+        val startFrequency = String.format(java.util.Locale.US, "%.2f", profile.first)
+        val frequencyDelta = String.format(
+            java.util.Locale.US,
+            "%.2f",
+            profile.second - profile.first
+        )
+        val amplitudeText = String.format(java.util.Locale.US, "%.4f", amplitude)
+        val expression =
+            "$amplitudeText*sin(2*PI*($startFrequency*t+($frequencyDelta)*t*t/(2*$durationText)))"
+        return "aevalsrc=exprs='$expression':s=44100:d=$durationText"
     }
 
     private fun buildEchoFilter(

@@ -2,6 +2,7 @@ package com.moody.moodyvideoeditor.ui.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -34,7 +36,11 @@ import com.moody.moodyvideoeditor.ui.components.SavedTemplatePreview
 fun SavedTemplatesShelf(
     templates: List<SavedTemplateMeta>,
     onOpen: (String) -> Unit,
-    onDelete: (String) -> Unit
+    onDelete: (String) -> Unit,
+    selectionMode: Boolean = false,
+    selectedIds: Set<String> = emptySet(),
+    onToggleSelection: (String) -> Unit = {},
+    onStartSelection: (String) -> Unit = {}
 ) {
     if (templates.isEmpty()) {
         Box(
@@ -75,8 +81,13 @@ fun SavedTemplatesShelf(
         templates.forEach { t ->
             TemplateCard(
                 template = t,
-                onClick = { onOpen(t.id) },
-                onDelete = { onDelete(t.id) }
+                onClick = {
+                    if (selectionMode) onToggleSelection(t.id) else onOpen(t.id)
+                },
+                onDelete = { onDelete(t.id) },
+                isSelected = t.id in selectedIds,
+                selectionMode = selectionMode,
+                onLongClick = { onStartSelection(t.id) }
             )
         }
         Box(modifier = Modifier.width(4.dp))
@@ -87,14 +98,22 @@ fun SavedTemplatesShelf(
 private fun TemplateCard(
     template: SavedTemplateMeta,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    isSelected: Boolean = false,
+    selectionMode: Boolean = false,
+    onLongClick: () -> Unit = {}
 ) {
     Box(
         modifier = Modifier
             .width(160.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(Color(0xFF181818))
-            .clickable { onClick() }
+            .pointerInput(template.id, selectionMode, isSelected) {
+                detectTapGestures(
+                    onTap = { onClick() },
+                    onLongPress = { onLongClick() }
+                )
+            }
     ) {
         Column {
             // ─── Thumbnail area ───
@@ -186,23 +205,43 @@ private fun TemplateCard(
         }
 
         // ─── Delete button (top-right) ───
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(6.dp)
-                .size(24.dp)
-                .clip(CircleShape)
-                .background(Color(0xFF2A1414))
-                .clickable { onDelete() }
-                .zIndex(10f),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                "✕",
-                color = Color(0xFFFF6B6B),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
+        if (selectionMode) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(if (isSelected) Color(0xFF7C3AED) else Color(0xFF2A2A2A))
+                    .zIndex(10f),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (isSelected) "✓" else "",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF2A1414))
+                    .clickable { onDelete() }
+                    .zIndex(10f),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "✕",
+                    color = Color(0xFFFF6B6B),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }

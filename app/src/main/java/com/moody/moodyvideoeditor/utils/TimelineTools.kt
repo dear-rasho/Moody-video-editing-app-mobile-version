@@ -4,6 +4,22 @@ import com.moody.moodyvideoeditor.data.EditorClip
 
 object TimelineTools {
 
+    fun closeGapsOnTrack(track: List<EditorClip>): List<EditorClip> {
+        if (track.size < 2) return track
+
+        val sorted = track.sortedBy { it.timelineStartMs }
+        val result = sorted.toMutableList()
+        var cursor = sorted.first().timelineEndMs
+
+        for (i in 1 until result.size) {
+            val clip = result[i]
+            if (clip.timelineStartMs > cursor) {
+                result[i] = clip.copy(timelineStartMs = cursor)
+            }
+            cursor = maxOf(cursor, result[i].timelineEndMs)
+        }
+        return result
+    }
 
     // MAGNET — pack clips after the selected clip on the same track.
 
