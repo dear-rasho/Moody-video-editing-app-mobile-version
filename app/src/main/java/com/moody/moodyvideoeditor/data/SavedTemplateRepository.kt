@@ -232,8 +232,8 @@ object SavedTemplateRepository {
         put("mask", maskToJson(c.mask))
         put("matteStyle", matteStyleToJson(c.matteStyle))
         put("layerShadow", layerShadowToJson(c.layerShadow))
-        c.visualizer?.let { put("visualizer", visualizerToJson(it)) }
         c.spotlight?.let { put("spotlight", it.toJson()) }
+        c.visualizer?.let { put("visualizer", it.toJson()) }
 
         val kfObj = JSONObject()
         c.keyframes.forEach { (prop, list) ->
@@ -295,13 +295,38 @@ object SavedTemplateRepository {
             mask = maskFromJson(o.optJSONObject("mask")),
             matteStyle = matteStyleFromJson(o.optJSONObject("matteStyle")),
             layerShadow = layerShadowFromJson(o.optJSONObject("layerShadow")),
-            visualizer = o.optJSONObject("visualizer")?.let { visualizerFromJson(it) },
             spotlight = o.optJSONObject("spotlight")?.let { SpotlightState.fromJson(it) },
+            visualizer = o.optJSONObject("visualizer")?.let { VisualizerState.fromJson(it) },
             keyframes = keyframesFromJson(o.optJSONObject("keyframes"))
         )
     }
 
     // ─── Sub-serializers ───
+
+    private fun keyframesFromJson(o: JSONObject?): Map<String, List<Keyframe>> {
+        if (o == null) return emptyMap()
+        val result = mutableMapOf<String, List<Keyframe>>()
+        val keys = o.keys()
+        while (keys.hasNext()) {
+            val prop = keys.next()
+            val arr = o.optJSONArray(prop) ?: continue
+            val list = mutableListOf<Keyframe>()
+            for (i in 0 until arr.length()) {
+                val kf = arr.optJSONObject(i)
+                if (kf != null) {
+                    list.add(
+                        Keyframe(
+                            time = kf.optDouble("time", 0.0).toFloat(),
+                            value = kf.optDouble("value", 0.0).toFloat(),
+                            ease = kf.optString("ease", Keyframe.DEFAULT_EASE)
+                        )
+                    )
+                }
+            }
+            result[prop] = list
+        }
+        return result
+    }
 
     private fun layerShadowToJson(state: LayerShadowState) = JSONObject().apply {
         put("enabled", state.enabled)
@@ -642,49 +667,5 @@ object SavedTemplateRepository {
         } catch (_: Exception) { ColorMatteStyle() }
     }
 
-    private fun visualizerToJson(v: VisualizerState) = JSONObject().apply {
-        put("preset", v.preset.key)
-        put("linkedAudioClipId", v.linkedAudioClipId ?: JSONObject.NULL)
-        put("color1", v.color1); put("color2", v.color2)
-        put("size", v.size.toDouble()); put("positionX", v.positionX.toDouble())
-        put("positionY", v.positionY.toDouble()); put("opacity", v.opacity.toDouble())
-        put("backgroundImageUri", v.backgroundImageUri ?: JSONObject.NULL)
-        put("showBackgroundImage", v.showBackgroundImage)
-    }
 
-    private fun visualizerFromJson(o: JSONObject) = VisualizerState(
-        preset = VisualizerPreset.fromKey(o.optString("preset", "neonGlowRing")),
-        linkedAudioClipId = if (o.isNull("linkedAudioClipId")) null
-        else o.optString("linkedAudioClipId", null),
-        color1 = o.optLong("color1", 0xFFFFD166L),
-        color2 = o.optLong("color2", 0xFFFFA500L),
-        size = o.optDouble("size", 0.32).toFloat(),
-        positionX = o.optDouble("positionX", 0.5).toFloat(),
-        positionY = o.optDouble("positionY", 0.5).toFloat(),
-        opacity = o.optDouble("opacity", 1.0).toFloat(),
-        backgroundImageUri = if (o.isNull("backgroundImageUri")) null
-        else o.optString("backgroundImageUri", null),
-        showBackgroundImage = o.optBoolean("showBackgroundImage", false)
-    )
-
-    private fun keyframesFromJson(o: JSONObject?): Map<String, List<Keyframe>> {
-        if (o == null) return emptyMap()
-        val result = mutableMapOf<String, List<Keyframe>>()
-        val keys = o.keys()
-        while (keys.hasNext()) {
-            val prop = keys.next()
-            val arr = o.optJSONArray(prop) ?: continue
-            val list = mutableListOf<Keyframe>()
-            for (i in 0 until arr.length()) {
-                val kf = arr.optJSONObject(i) ?: continue
-                list.add(Keyframe(
-                    time = kf.optDouble("time", 0.0).toFloat(),
-                    value = kf.optDouble("value", 0.0).toFloat(),
-                    ease = kf.optString("ease", Keyframe.DEFAULT_EASE)
-                ))
-            }
-            result[prop] = list
-        }
-        return result
-    }
 }

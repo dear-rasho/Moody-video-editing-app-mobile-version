@@ -32,6 +32,34 @@ object VisualizerBitmapRenderer {
     private const val CHUNK_SIZE = 90           // ← pehle 60
     private const val MAX_PARALLEL_CHUNKS = 4   // ← pehle 1
 
+    suspend fun render(
+        context: Context,
+        visualizerClips: List<EditorClip>,
+        allClips: List<EditorClip>,
+        rangeStartMs: Long,
+        rangeEndMs: Long,
+        width: Int,
+        height: Int,
+        fps: Int,
+        onProgress: (Float) -> Unit = {},
+        shouldCancel: () -> Boolean = { false },
+        imageFormat: String = "png",
+        jpegQuality: Int = 90
+    ): List<TextOverlaySequence> = renderCombinedOverlays(
+        context = context,
+        visualizerClips = visualizerClips,
+        allClips = allClips,
+        rangeStart = rangeStartMs,
+        W = width,
+        H = height,
+        fps = fps,
+        totalDurationMs = (rangeEndMs - rangeStartMs).coerceAtLeast(1L),
+        onProgress = onProgress,
+        shouldCancel = shouldCancel,
+        imageFormat = imageFormat,
+        jpegQuality = jpegQuality
+    )
+
     suspend fun renderCombinedOverlays(
         context: Context,
         visualizerClips: List<EditorClip>,
@@ -102,6 +130,26 @@ object VisualizerBitmapRenderer {
             val completedCounter = AtomicInteger(0)
             val nextChunk = AtomicInteger(0)
             val audioById = allClips.associateBy { it.id }
+            val audioSpectra = mutableMapOf<String, VisualizerSpectrum>()
+            sortedViz.mapNotNull { it.visualizer?.linkedAudioClipId }
+                .distinct()
+                .forEach { audioId ->
+                    val audioClip = audioById[audioId]
+                        ?: throw java.io.IOException(
+                            "Visualizer audio source $audioId is missing from the project"
+                        )
+                    try {
+                        audioSpectra[audioId] =
+                            VisualizerAudioAnalyzer.analyze(context, audioClip.uri)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        throw java.io.IOException(
+                            "Could not analyze audio for visualizer source $audioId",
+                            error
+                        )
+                    }
+                }
 
             Log.e(
                 TAG, "Rendering $totalFrames frames in $totalChunks chunks " +
@@ -131,6 +179,7 @@ object VisualizerBitmapRenderer {
                                 vizBitmaps = vizBitmaps,
                                 vizBackgroundBitmaps = vizBackgroundBitmaps,
                                 audioById = audioById,
+                                audioSpectra = audioSpectra,
                                 emptyPngBytes = emptyPngBytes,
                                 renderTrackIndex = renderTrackIndex,
                                 shouldCancel = shouldCancel,
@@ -154,8 +203,12 @@ object VisualizerBitmapRenderer {
             throw e
         } finally {
             sortedViz.forEach { clip ->
-                VisualizerEngine.clearCenterImage("export_${clip.id}")
-                VisualizerEngine.clearBackgroundImage("export_${clip.id}")
+                repeat((totalFrames - 1) / CHUNK_SIZE + 1) { chunkIdx ->
+                    val instanceKey = "export_${clip.id}_$chunkIdx"
+                    VisualizerEngine.clearCenterImage(instanceKey)
+                    VisualizerEngine.clearBackgroundImage(instanceKey)
+                    VisualizerEngine.clearAnimationState(instanceKey)
+                }
             }
             (vizBitmaps.values + vizBackgroundBitmaps.values)
                 .filterNotNull()
@@ -179,6 +232,7 @@ object VisualizerBitmapRenderer {
         vizBitmaps: Map<String, Bitmap?>,
         vizBackgroundBitmaps: Map<String, Bitmap?>,
         audioById: Map<String, EditorClip>,
+        audioSpectra: Map<String, VisualizerSpectrum>,
         emptyPngBytes: ByteArray,
         renderTrackIndex: Int,
         shouldCancel: () -> Boolean,
@@ -236,15 +290,16 @@ object VisualizerBitmapRenderer {
                             val state = vc.visualizer ?: return@forEach
                             val imageBmp = vizBitmaps[vc.id]
 
-                            val timelineOffset =
-                                (timelineMsReal - vc.timelineStartMs).coerceAtLeast(0L)
-
                             val audioClip = state.linkedAudioClipId?.let(audioById::get)
                             val sourceStart = audioClip?.sourceStartMs ?: 0L
                             val speed = audioClip?.speed?.coerceAtLeast(0.01f) ?: 1.0f
 
-                            val relativeMs = sourceStart +
-                                    (timelineOffset * speed).toLong()
+                            val timelineOffset =
+                                (timelineMsReal - vc.timelineStartMs).coerceAtLeast(0L)
+                            val audioTimelineOffset = audioClip?.let {
+                                (timelineMsReal - it.timelineStartMs).coerceAtLeast(0L)
+                            } ?: timelineOffset
+                            val relativeMs = sourceStart + (audioTimelineOffset * speed).toLong()
                             val elapsedSec = timelineMsLocal / 1000f
 
                             LayerShadowRenderer.applyToBitmap(
@@ -278,7 +333,10 @@ object VisualizerBitmapRenderer {
                                             W = W, H = H,
                                             imageBitmap = imageBmp,
                                             backgroundImageBitmap = vizBackgroundBitmaps[vc.id],
-                                            instanceKey = "export_${vc.id}"
+                                            instanceKey = "export_${vc.id}_$chunkIdx",
+                                            audioBands = audioSpectra[
+                                                state.linkedAudioClipId
+                                            ]?.bandsAt(relativeMs)
                                         )
                                     } finally {
                                         layerCanvas.restoreToCount(opacityLayer)

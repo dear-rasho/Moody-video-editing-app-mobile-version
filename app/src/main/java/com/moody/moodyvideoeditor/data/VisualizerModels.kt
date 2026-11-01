@@ -192,6 +192,7 @@ data class VisualizerState(
     val rotation: Float = 0f,
     val opacity: Float = 1f,
     val glow: Boolean = true,
+    val glowIntensity: Float = 1f,
 
     val imageUri: String? = null,
     val showImage: Boolean = false,
@@ -260,6 +261,8 @@ data class VisualizerState(
     /** Particle size multiplier — 0.5..5.0 (used by particle presets) */
     val particleSize: Float = 1.0f
 ) {
+    companion object
+
     val isActive: Boolean get() = opacity > 0f
 
     fun strengthAt(sourceMs: Long): Float {

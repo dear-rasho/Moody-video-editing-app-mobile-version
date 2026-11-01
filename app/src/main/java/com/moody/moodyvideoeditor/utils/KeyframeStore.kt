@@ -176,6 +176,19 @@ object KeyframeStore {
         return map + (prop to list)
     }
 
+    fun updateKeyframeIfPresent(
+        map: KeyframeMap,
+        prop: String,
+        time: Float,
+        value: Float
+    ): KeyframeMap {
+        val list = getKeyframes(map, prop).toMutableList()
+        val idx = findIndex(list, time)
+        if (idx < 0) return map
+        list[idx] = list[idx].copy(value = value)
+        return map + (prop to list)
+    }
+
 
     //  SAMPLE
 

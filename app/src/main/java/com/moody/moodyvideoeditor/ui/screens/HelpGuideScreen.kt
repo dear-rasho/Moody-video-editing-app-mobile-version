@@ -539,20 +539,6 @@ private fun CommandsContent() {
     )
 
     CommandCategory(
-        "🎵 Visualizer", listOf(
-            "visualizer add",
-            "visualizer preset circularSpectrum",
-            "visualizer preset vortex",
-            "visualizer color1 #ff0066",
-            "visualizer color2 cyan",
-            "visualizer size 50",
-            "visualizer glow on",
-            "visualizer text \"Hello\"",
-            "visualizer show text"
-        )
-    )
-
-    CommandCategory(
         "⚙️ Special", listOf(
             "ratio 9:16", "ratio 16:9", "ratio 1:1",
             "speed 2x", "trim left", "split",
@@ -672,21 +658,6 @@ private fun GuideContent() {
         "🎭 Mask", listOf(
             "Mask → Circle/Rect/Linear/Heart/Custom",
             "Custom → Pen tool → tap points → close on first point"
-        )
-    )
-
-    GuideSection(
-        "🎵 Visualizer", listOf(
-            "1. Timeline pe AUDIO clip add karo",
-            "2. Audio clip SELECT karo",
-            "3. FeatureShelf → 🎵 Visualizer tap karo",
-            "4. Beats auto-detect honge (2-5 sec)",
-            "5. Visualizer timeline pe V-layer mein ban jayegi",
-            "6. Preview pe drag/pinch → move/scale/rotate",
-            "7. Circle Content: 🖼️ Image ya 📝 Text ON karo",
-            "8. Text mode mein full TextPanel khulta hai",
-            "9. Both ON → Order toggle (Image→Text / Text→Image)",
-            "10. Visualizer layer ko V2/V3 pe drag karo"
         )
     )
 

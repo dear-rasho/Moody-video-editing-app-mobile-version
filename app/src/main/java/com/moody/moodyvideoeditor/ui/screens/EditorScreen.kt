@@ -68,8 +68,8 @@ import com.moody.moodyvideoeditor.data.RecentMediaRepository
 import com.moody.moodyvideoeditor.data.RatioLibrary
 import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.data.SpotlightState
-import com.moody.moodyvideoeditor.data.TransitionState
 import com.moody.moodyvideoeditor.data.VisualizerState
+import com.moody.moodyvideoeditor.data.TransitionState
 import com.moody.moodyvideoeditor.ui.components.ControlBar
 import com.moody.moodyvideoeditor.ui.components.EyedropperOverlay
 import com.moody.moodyvideoeditor.ui.components.FeatureShelf
@@ -111,9 +111,10 @@ import com.moody.moodyvideoeditor.ui.features.TextPanel
 import com.moody.moodyvideoeditor.ui.features.TransformPanel
 import com.moody.moodyvideoeditor.ui.features.TransitionsPanel
 import com.moody.moodyvideoeditor.ui.features.TrimPanel
-import com.moody.moodyvideoeditor.ui.features.VisualizerPanel
 import com.moody.moodyvideoeditor.ui.features.VolumePanel
+import com.moody.moodyvideoeditor.ui.features.VisualizerPanel
 import com.moody.moodyvideoeditor.utils.AudioPreviewEngine
+import com.moody.moodyvideoeditor.utils.AudioExtractionEngine
 import com.moody.moodyvideoeditor.utils.CropEngine
 import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.utils.PromptEngine
@@ -124,7 +125,6 @@ import com.moody.moodyvideoeditor.utils.TransformApplier
 import com.moody.moodyvideoeditor.utils.TransformValues
 import com.moody.moodyvideoeditor.utils.VideoUtils
 import com.moody.moodyvideoeditor.utils.VolumeEngine
-import com.moody.moodyvideoeditor.utils.VisualizerEngine
 import com.moody.moodyvideoeditor.utils.WhisperModelManager
 import com.moody.moodyvideoeditor.viewmodel.EditorViewModel
 import com.moody.moodyvideoeditor.viewmodel.ExportUiStateBundle
@@ -230,6 +230,7 @@ fun EditorScreen(
     var effectEditLayerId by remember { mutableStateOf<String?>(null) }
     var matteEditLayerId by remember { mutableStateOf<String?>(null) }
     var spotlightEditLayerId by remember { mutableStateOf<String?>(null) }
+    var visualizerEditLayerId by remember { mutableStateOf<String?>(null) }
 
     fun openLayerPanel(clip: EditorClip) {
         viewModel.selectClip(clip)
@@ -248,17 +249,14 @@ fun EditorScreen(
                 spotlightEditLayerId = clip.id
                 activePanel = "spotlight"
             }
+            clip.isVisualizerClip -> {
+                visualizerEditLayerId = clip.id
+                activePanel = "visualizer"
+            }
             clip.isEffectClip -> {
                 effectEditLayerId = clip.id
                 activePanel = "effects"
             }
-            clip.isVisualizerClip -> activePanel = "visualizer"
-            clip.type.startsWith("video/") &&
-                    clip.linkedId != null &&
-                    state.clips.any {
-                        it.isAudio && !it.isAudioEffectClip &&
-                                it.linkedId == clip.linkedId
-                    } -> activePanel = "visualizer"
             clip.isAudioEffectClip -> {
                 activePanel = if (clip.isSoundFxClip) "soundfx" else "audiofx"
             }
@@ -280,12 +278,7 @@ fun EditorScreen(
     var isMaskHandMode by remember { mutableStateOf(false) }
 
     var pendingUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
-    var pendingVizImageUri by remember { mutableStateOf<String?>(null) }
-    var pendingVizImageIsBackground by remember { mutableStateOf(false) }
-
-    var isDetectingBeats by remember { mutableStateOf(false) }
-    var beatDetectionProgress by remember { mutableFloatStateOf(0f) }
-    var beatDetectionError by remember { mutableStateOf<String?>(null) }
+    var pendingAudioExtractionUri by remember { mutableStateOf<Uri?>(null) }
 
     var exportStartMs by remember { mutableLongStateOf(0L) }
     var exportEndMs by remember { mutableLongStateOf(0L) }
@@ -324,12 +317,6 @@ fun EditorScreen(
         onDispose {
             exoPlayer.release()
             audioExoPlayer.release()
-        }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            VisualizerEngine.clearCache()
         }
     }
 
@@ -671,6 +658,14 @@ fun EditorScreen(
         }
     }
 
+    val audioExtractionPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            pendingAudioExtractionUri = uri
+        }
+    }
+
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
@@ -690,34 +685,37 @@ fun EditorScreen(
         viewModel.setExportFolderUri(uri.toString())
     }
 
-    val vizImagePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri == null) {
-            return@rememberLauncherForActivityResult
-        }
+    fun updateVisualizerImage(uri: Uri?, isBackground: Boolean) {
+        if (uri == null) return
         try {
             context.contentResolver.takePersistableUriPermission(
                 uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
             )
-        } catch (_: Exception) {
+        } catch (error: SecurityException) {
+            Log.e("VISUALIZER_IMAGE", "Could not retain image access for $uri", error)
         }
-
-        val cacheUri = try {
-            val cacheFile = java.io.File(
-                context.cacheDir,
-                "viz_${System.currentTimeMillis()}_${uri.hashCode()}.jpg"
-            )
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                cacheFile.outputStream().use { out -> input.copyTo(out) }
+        val layerId = visualizerEditLayerId ?: return
+        val layer = viewModel.state.value.clips.firstOrNull {
+            it.id == layerId && it.isVisualizerClip
+        } ?: return
+        val current = layer.visualizer ?: return
+        viewModel.updateVisualizerClip(
+            layerId,
+            if (isBackground) {
+                current.copy(backgroundImageUri = uri.toString(), showBackgroundImage = true)
+            } else {
+                current.copy(imageUri = uri.toString(), showImage = true)
             }
-            Uri.fromFile(cacheFile)
-        } catch (_: Exception) {
-            uri
-        }
-
-        pendingVizImageUri = cacheUri.toString()
+        )
     }
+
+    val visualizerImagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? -> updateVisualizerImage(uri, isBackground = false) }
+
+    val visualizerBackgroundPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? -> updateVisualizerImage(uri, isBackground = true) }
 
     val textTexturePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -879,6 +877,49 @@ fun EditorScreen(
         }
     }
 
+    LaunchedEffect(pendingAudioExtractionUri) {
+        val sourceUri = pendingAudioExtractionUri ?: return@LaunchedEffect
+        try {
+            android.widget.Toast.makeText(
+                context,
+                "Extracting audio…",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+            val extractedAudio = withContext(Dispatchers.IO) {
+                AudioExtractionEngine.extractAudio(context, sourceUri)
+            }
+            val sourceName = withContext(Dispatchers.IO) {
+                VideoUtils.getFileName(context, sourceUri)
+            }
+            val audioName = "${sourceName.substringBeforeLast('.', sourceName)}.m4a"
+            viewModel.addClipSmart(
+                uri = extractedAudio.uri,
+                name = audioName,
+                durationMs = extractedAudio.durationMs,
+                mediaType = "audio/mp4",
+                hasAudioTrack = true
+            )
+            android.widget.Toast.makeText(
+                context,
+                "Audio added to the timeline",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Log.e("AUDIO_EXTRACTION", "Could not extract audio from $sourceUri", error)
+            android.widget.Toast.makeText(
+                context,
+                "Audio extraction failed: ${error.message ?: "unknown error"}",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+        } finally {
+            if (pendingAudioExtractionUri == sourceUri) {
+                pendingAudioExtractionUri = null
+            }
+        }
+    }
+
     if (showRecentMediaPicker) {
         RecentMediaPickerPanel(
             recentMedia = recentMedia,
@@ -898,6 +939,10 @@ fun EditorScreen(
                         "application/octet-stream"
                     )
                 )
+            },
+            onExtractAudio = {
+                showRecentMediaPicker = false
+                audioExtractionPicker.launch(arrayOf("video/*"))
             },
             onDismiss = { showRecentMediaPicker = false }
         )
@@ -935,36 +980,6 @@ fun EditorScreen(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  VISUALIZER CREATION WITH BEAT DETECTION
-    // ═══════════════════════════════════════════════════════════
-
-    fun launchVisualizerCreation() {
-        isDetectingBeats = true
-        beatDetectionProgress = 0f
-        beatDetectionError = null
-
-        CoroutineScope(Dispatchers.Main).launch {
-            try {
-                val success = viewModel.createVisualizerClipWithBeats(context)
-                isDetectingBeats = false
-                if (!success) {
-                    beatDetectionError = "Could not create visualizer"
-                } else {
-                    beatDetectionError = null
-                    activePanel = "visualizer"
-                }
-            } catch (e: Throwable) {
-                isDetectingBeats = false
-                beatDetectionError = "Failed: ${e.message}"
-                Log.e("VISUALIZER", "Create failed", e)
-            }
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  PANEL HOST
-    // ═══════════════════════════════════════════════════════════
     @Composable
     fun EditorPanelHost() {
         val selected = state.selectedClip
@@ -982,6 +997,17 @@ fun EditorScreen(
                         val spotlightClip = selected?.takeIf { it.isSpotlightClip }
                             ?: viewModel.createSpotlightClip()
                         spotlightEditLayerId = spotlightClip.id
+                    }
+                    if (key == "visualizer") {
+                        val existing = selected?.takeIf { it.isVisualizerClip }
+                        val audio = selected?.takeIf {
+                            (it.isAudio && !it.isAudioEffectClip) || it.type.startsWith("video/")
+                        } ?: state.clips.firstOrNull {
+                            (it.isAudio && !it.isAudioEffectClip) ||
+                                    it.type.startsWith("video/")
+                        }
+                        visualizerEditLayerId = existing?.id
+                            ?: audio?.let { viewModel.createVisualizerClip(it.id)?.id }
                     }
                     activePanel = key
                 },
@@ -1060,7 +1086,7 @@ fun EditorScreen(
                 val target = selected?.takeIf {
                     !it.isAudio && (it.isVisualClip || it.isTextClip ||
                             it.isColorMatteClip || it.isOverlayClip ||
-                            it.isVisualizerClip || it.isSpotlightClip ||
+                            it.isSpotlightClip ||
                             (it.isEffectClip && it.effectState?.overlay != null))
                 }
                 LayerShadowPanel(
@@ -1546,7 +1572,11 @@ fun EditorScreen(
                     currentTimeSec = currentTimeSec,
                     clipDurationSec = clipDurSec,
                     onPropertyChanged = { prop, value ->
-                        viewModel.changeTransformProperty(prop, value)
+                        viewModel.changeTransformProperty(
+                            prop,
+                            value,
+                            autoKeyframe = false
+                        )
                     },
                     onToggleKeyframe = { prop ->
                         viewModel.toggleKeyframeAtPlayhead(prop)
@@ -1637,469 +1667,51 @@ fun EditorScreen(
             )
 
             "visualizer" -> {
-                val selectedAudio = when {
-                    selected?.isAudio == true && !selected.isAudioEffectClip -> selected
-                    selected?.isVisualClip == true && selected.linkedId != null ->
-                        state.clips.firstOrNull {
-                            it.isAudio && !it.isAudioEffectClip &&
-                                    it.linkedId == selected.linkedId
-                        }
-                    else -> null
+                val layer = visualizerEditLayerId?.let { id ->
+                    state.clips.firstOrNull { it.id == id && it.isVisualizerClip }
                 }
-                val selectedAudioId = selectedAudio?.id
-
-                val vizClip = selected?.takeIf { it.isVisualizerClip }
-                    ?: state.clips.firstOrNull { clip ->
-                        clip.isVisualizerClip &&
-                                selectedAudioId != null &&
-                                clip.visualizer?.linkedAudioClipId == selectedAudioId
+                val visualizer = layer?.visualizer ?: VisualizerState()
+                val linkedAudio = visualizer.linkedAudioClipId?.let { id ->
+                    state.clips.firstOrNull {
+                        it.id == id && ((it.isAudio && !it.isAudioEffectClip) ||
+                                it.type.startsWith("video/"))
                     }
-
-                when {
-                    isDetectingBeats -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFF1A1F3A))
-                                .padding(20.dp)
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Text("🎵", fontSize = 36.sp)
-                                Text(
-                                    "Detecting beats...",
-                                    color = Color(0xFF60EFFF),
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    "Analyzing linked audio. This may take a few seconds.",
-                                    color = Color(0xFF888888),
-                                    fontSize = 10.sp,
-                                    textAlign = TextAlign.Center
-                                )
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(4.dp)
-                                        .clip(RoundedCornerShape(2.dp))
-                                        .background(Color(0xFF0F0F0F))
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth(
-                                                beatDetectionProgress.coerceIn(0f, 1f)
-                                            )
-                                            .height(4.dp)
-                                            .background(Color(0xFF60EFFF))
-                                    )
-                                }
-
-                                Box(
-                                    modifier = Modifier
-                                        .height(36.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color(0xFF181818))
-                                        .pointerInput(Unit) {
-                                            detectTapGestures {
-                                                isDetectingBeats = false
-                                                beatDetectionError = null
-                                                activePanel = null
-                                            }
-                                        }
-                                        .padding(horizontal = 20.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        "✕ Cancel",
-                                        color = Color(0xFFAAAAAA),
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    beatDetectionError != null && vizClip == null -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFF2A0F0F))
-                                .padding(16.dp)
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text("❌", fontSize = 32.sp)
-                                Text(
-                                    beatDetectionError ?: "Error",
-                                    color = Color(0xFFFF6B6B),
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    textAlign = TextAlign.Center
-                                )
-
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .height(36.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(Color(0xFF181818))
-                                            .pointerInput(Unit) {
-                                                detectTapGestures {
-                                                    beatDetectionError = null
-                                                    activePanel = null
-                                                }
-                                            }
-                                            .padding(horizontal = 20.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            "✕ Back",
-                                            color = Color(0xFFAAAAAA),
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-
-                                    Box(
-                                        modifier = Modifier
-                                            .height(36.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(Color(0xFF7C3AED))
-                                            .pointerInput(Unit) {
-                                                detectTapGestures {
-                                                    beatDetectionError = null
-                                                    launchVisualizerCreation()
-                                                }
-                                            }
-                                            .padding(horizontal = 20.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            "↻ Retry",
-                                            color = Color.White,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    vizClip == null -> {
-                        val sel = selected
-                        val hasSelectedAudio = selectedAudio != null
-
-                        val anyVisualizerInTimeline = state.clips.any {
-                            it.isVisualizerClip
-                        }
-
-                        if (!hasSelectedAudio) {
-                            if (anyVisualizerInTimeline) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(Color(0xFF1A1F3A))
-                                        .padding(16.dp)
-                                ) {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        Text("🎵", fontSize = 36.sp)
-                                        Text(
-                                            "Visualizer exists on timeline",
-                                            color = Color.White,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            textAlign = TextAlign.Center
-                                        )
-                                        Text(
-                                            "Tap it on the timeline to edit, " +
-                                                    "or select an audio clip to create a new one.",
-                                            color = Color(0xFF888888),
-                                            fontSize = 10.sp,
-                                            textAlign = TextAlign.Center
-                                        )
-
-                                        Box(
-                                            modifier = Modifier
-                                                .height(40.dp)
-                                                .clip(RoundedCornerShape(10.dp))
-                                                .background(Color(0xFF7C3AED))
-                                                .pointerInput(Unit) {
-                                                    detectTapGestures {
-                                                        activePanel = null
-                                                    }
-                                                }
-                                                .padding(horizontal = 24.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                "✕ Back to Editor",
-                                                color = Color.White,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                }
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(Color(0xFF2A0F0F))
-                                        .padding(16.dp)
-                                ) {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Text("⚠️", fontSize = 32.sp)
-                                        Text(
-                                            "Select an audio clip first",
-                                            color = Color(0xFFFF6B6B),
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Text(
-                                            "Select a video with audio or an audio clip " +
-                                                    "to create a beat-reactive visualizer.",
-                                            color = Color(0xFF888888),
-                                            fontSize = 11.sp,
-                                            textAlign = TextAlign.Center
-                                        )
-
-                                        Row(
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .height(36.dp)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .background(Color(0xFF181818))
-                                                    .pointerInput(Unit) {
-                                                        detectTapGestures {
-                                                            activePanel = null
-                                                        }
-                                                    }
-                                                    .padding(horizontal = 20.dp),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Text(
-                                                    "✕ Back",
-                                                    color = Color(0xFFAAAAAA),
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-
-                                            Box(
-                                                modifier = Modifier
-                                                    .height(36.dp)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .background(Color(0xFF7C3AED))
-                                                    .pointerInput(Unit) {
-                                                        detectTapGestures {
-                                                            activePanel = null
-                                                        }
-                                                    }
-                                                    .padding(horizontal = 20.dp),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Text(
-                                                    "✓ OK",
-                                                    color = Color.White,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFF1A1F3A))
-                                    .padding(16.dp)
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    Text("🎵", fontSize = 36.sp)
-                                    Text(
-                                        "Create Visualizer for \"${selectedAudio?.name?.take(20).orEmpty()}\"",
-                                        color = Color.White,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    Text(
-                                        "Beats will be detected from this clip's audio.",
-                                        color = Color(0xFF888888),
-                                        fontSize = 10.sp,
-                                        textAlign = TextAlign.Center
-                                    )
-
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .height(44.dp)
-                                                .clip(RoundedCornerShape(10.dp))
-                                                .background(Color(0xFF181818))
-                                                .pointerInput(Unit) {
-                                                    detectTapGestures {
-                                                        activePanel = null
-                                                    }
-                                                }
-                                                .padding(horizontal = 16.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                "✕ Cancel",
-                                                color = Color(0xFFAAAAAA),
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-
-                                        Box(
-                                            modifier = Modifier
-                                                .height(44.dp)
-                                                .clip(RoundedCornerShape(10.dp))
-                                                .background(Color(0xFF7C3AED))
-                                                .pointerInput(selectedAudio?.id) {
-                                                    detectTapGestures {
-                                                        launchVisualizerCreation()
-                                                    }
-                                                }
-                                                .padding(horizontal = 24.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                "✨ Create Visualizer",
-                                                color = Color.White,
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    else -> {
-                        LaunchedEffect(pendingVizImageUri) {
-                            val uri = pendingVizImageUri
-                                ?: return@LaunchedEffect
-                            viewModel.updateVisualizerLayer(
-                                vizClip.id,
-                                (vizClip.visualizer ?: VisualizerState()).let { visualizer ->
-                                    if (pendingVizImageIsBackground) {
-                                        visualizer.copy(
-                                            backgroundImageUri = uri,
-                                            showBackgroundImage = true
-                                        )
-                                    } else {
-                                        visualizer.copy(imageUri = uri, showImage = true)
-                                    }
-                                }
+                }
+                VisualizerPanel(
+                    current = visualizer,
+                    hasAudio = linkedAudio != null,
+                    onStateChanged = { updated ->
+                        layer?.let { viewModel.updateVisualizerClip(it.id, updated) }
+                    },
+                    onPickImage = { visualizerImagePicker.launch(arrayOf("image/*")) },
+                    onPickBackgroundImage = {
+                        visualizerBackgroundPicker.launch(arrayOf("image/*"))
+                    },
+                    onClearImage = {
+                        layer?.let {
+                            viewModel.updateVisualizerClip(
+                                it.id, visualizer.copy(imageUri = null, showImage = false)
                             )
-                            pendingVizImageUri = null
                         }
-
-                        val vizAudioId = vizClip.visualizer?.linkedAudioClipId
-                        val hasAudio = state.clips.any {
-                            it.id == vizAudioId && it.isAudio && !it.isAudioEffectClip
+                    },
+                    onClearBackgroundImage = {
+                        layer?.let {
+                            viewModel.updateVisualizerClip(
+                                it.id,
+                                visualizer.copy(
+                                    backgroundImageUri = null,
+                                    showBackgroundImage = false
+                                )
+                            )
                         }
-
-                        VisualizerPanel(
-                            current = vizClip.visualizer ?: VisualizerState(),
-                            hasAudio = hasAudio,
-                            onStateChanged = {
-                                viewModel.updateVisualizerLayer(vizClip.id, it)
-                            },
-                            onPickImage = {
-                                pendingVizImageIsBackground = false
-                                vizImagePicker.launch(
-                                    arrayOf(
-                                        "image/*",
-                                        "image/jpeg",
-                                        "image/jpg",
-                                        "image/pjpeg",
-                                        "image/webp",
-                                        "image/gif",
-                                        "image/bmp",
-                                        "image/heic",
-                                        "image/heif",
-                                        "application/octet-stream",
-                                        "*/*"
-                                    )
-                                )
-                            },
-                            onPickBackgroundImage = {
-                                pendingVizImageIsBackground = true
-                                vizImagePicker.launch(
-                                    arrayOf(
-                                        "image/*",
-                                        "image/jpeg",
-                                        "image/jpg",
-                                        "image/pjpeg",
-                                        "image/webp",
-                                        "image/gif",
-                                        "image/bmp",
-                                        "image/heic",
-                                        "image/heif",
-                                        "application/octet-stream",
-                                        "*/*"
-                                    )
-                                )
-                            },
-                            onClearImage = {
-                                viewModel.updateVisualizerLayer(
-                                    vizClip.id,
-                                    (vizClip.visualizer ?: VisualizerState()).copy(
-                                        imageUri = null,
-                                        showImage = false
-                                    )
-                                )
-                            },
-                            onClearBackgroundImage = {
-                                viewModel.updateVisualizerLayer(
-                                    vizClip.id,
-                                    (vizClip.visualizer ?: VisualizerState()).copy(
-                                        backgroundImageUri = null,
-                                        showBackgroundImage = false
-                                    )
-                                )
-                            },
-                            onRemove = {
-                                viewModel.removeVisualizerLayer(vizClip.id)
-                                activePanel = null
-                            },
-                            onClose = { activePanel = null }
-                        )
-                    }
-                }
+                    },
+                    onRemove = {
+                        layer?.let { viewModel.removeVisualizerClip(it.id) }
+                        visualizerEditLayerId = null
+                        activePanel = null
+                    },
+                    onClose = { activePanel = null }
+                )
             }
 
             "ratio" -> AspectRatioPanel(
@@ -2901,14 +2513,11 @@ fun EditorScreen(
                     onLayerTransformChanged = { clipId: String, s: Float, r: Float ->
                         viewModel.updateSelectedTransformBulk(clipId, s, r)
                     },
-                    onVisualizerPositionChanged = { clipId: String, x: Float, y: Float ->
-                        viewModel.updateSelectedPositionBulk(clipId, x, y)
-                    },
-                    onVisualizerTransformChanged = { clipId: String, s: Float, r: Float ->
-                        viewModel.updateSelectedTransformBulk(clipId, s, r)
-                    },
                     onSpotlightChanged = { clipId, spotlight ->
                         viewModel.updateSpotlight(clipId, spotlight)
+                    },
+                    onVisualizerChanged = { clipId, visualizer ->
+                        viewModel.updateVisualizerClip(clipId, visualizer)
                     },
                 )
 

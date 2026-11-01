@@ -164,6 +164,8 @@ data class TextState(
     // Is this state customized from default?
     val isDefault: Boolean
         get() = this == TextState()
+
+    companion object
 }
 
 // Text clip on timeline — mirrors JS text clip structure.

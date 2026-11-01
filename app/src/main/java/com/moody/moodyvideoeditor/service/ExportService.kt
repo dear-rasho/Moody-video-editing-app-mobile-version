@@ -323,8 +323,7 @@ class ExportService : Service() {
             else -> when {
                 p < 0.05f -> "Preparing..."
                 p < 0.20f -> "Rendering text ${((p - 0.05f) / 0.15f * 100).toInt()}%"
-                p < 0.40f -> "Rendering visualizer ${((p - 0.20f) / 0.20f * 100).toInt()}%"
-                p < 0.99f -> "Encoding video ${((p - 0.40f) / 0.60f * 100).toInt()}%"
+                p < 0.99f -> "Encoding video ${((p - 0.20f) / 0.80f * 100).toInt()}%"
                 else -> "Finalizing..."
             }
         }

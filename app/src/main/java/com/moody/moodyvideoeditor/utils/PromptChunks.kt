@@ -539,50 +539,7 @@ Rules:
 """.trimIndent()
 
     // ═══════════════════════════════════════════════════════════
-    //  12. VISUALIZER
-    // ═══════════════════════════════════════════════════════════
-    val VISUALIZER = """
-## 🎵 VISUALIZER (audio-reactive)
-Requires an audio clip selected first, then run "visualizer add".
-
-Commands:
-  visualizer add | create | new
-  visualizer remove | delete
-  visualizer preset NAME
-  visualizer color1 #hex
-  visualizer color2 #hex
-  visualizer size N             15..60
-  visualizer pos X Y            0..100
-  visualizer opacity N          0..100
-  visualizer glow on | off
-  visualizer reaction N         0..2
-  visualizer text "WORDS" [size N]
-  visualizer show text | image
-  visualizer hide text | image
-  visualizer order text-top | image-top
-
-Preset categories (100+ total):
-  SPECTRUM:  circularSpectrum, linearWaveform, radialBars, heartbeatWave,
-             dotMatrix, sineWave, perspective3d, tornadoSpiral, starBurst
-  PARTICLES: bassParticles, floatingDust, matrixRain, snowfall,
-             cosmicNebula, sparkTrail, fireflyGlow, confettiPop, galaxyVortex
-  NEON:      neonGlowRing, rgbGlitch, vaporwaveGrid, vhsNoise, laserBeam,
-             digitalEq, chromaPulse, scanlineDistort, tronWireframe, ledMatrix
-  GEOMETRIC: minimalDots, rotatingPoly, kaleidoscope, interlockingRings,
-             fractalZoom, isometricBlocks, dnaStrand, checkerboard
-  CINEMATIC: lensFlare, cameraShutter, cinematicDust, vignetteBreathe,
-             sunbeams, raindrops, filmGrain, bokehDrift, goldenHour
-
-Short aliases: bars, neon, rgb, glitch, particles, matrix, sphere, ring
-
-Examples:
-  visualizer add, visualizer preset circularSpectrum
-  visualizer color1 #ff0066, visualizer color2 cyan, visualizer glow on
-  visualizer text "Hello" size 60, visualizer show text
-""".trimIndent()
-
-    // ═══════════════════════════════════════════════════════════
-    //  13. AUDIO FX
+    //  12. AUDIO FX
     // ═══════════════════════════════════════════════════════════
     val AUDIO = """
 ## 🎙️ AUDIO FX (applies to selected clip)
@@ -605,7 +562,7 @@ Examples:
 """.trimIndent()
 
     // ═══════════════════════════════════════════════════════════
-    //  14. SPECIAL
+    //  13. SPECIAL
     // ═══════════════════════════════════════════════════════════
     val SPECIAL = """
 ## ⚙️ SPECIAL COMMANDS
@@ -638,7 +595,7 @@ Examples:
 """.trimIndent()
 
     // ═══════════════════════════════════════════════════════════
-    //  15. EXAMPLES — timed blocks + recipes
+    //  14. EXAMPLES — timed blocks + recipes
     // ═══════════════════════════════════════════════════════════
     val EXAMPLES = """
 ## ⏱️ TIMESTAMPED BLOCKS
@@ -700,8 +657,6 @@ Example:
             "Shadows / midtones / highlights / HDR", COLOR_WHEEL),
         PromptChunk("transitions", "⇄", "Transitions",
             "100+ transition presets, per-clip patterns", TRANSITIONS),
-        PromptChunk("visualizer", "🎵", "Visualizer",
-            "Audio-reactive visualizer", VISUALIZER),
         PromptChunk("audio", "🎙️", "Audio FX",
             "Audio and sound effects", AUDIO),
         PromptChunk("special", "⚙️", "Special",

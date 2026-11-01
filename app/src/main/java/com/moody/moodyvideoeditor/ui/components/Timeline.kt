@@ -2372,8 +2372,8 @@ private fun clipColor(clip: EditorClip): Color = when {
         else Color(r, g, b).copy(alpha = 0.9f)
     }
 
-    clip.isVisualizerClip -> Color(0xFFFFD166)
     clip.isSpotlightClip -> Color(0xFFFFD35A)
+    clip.isVisualizerClip -> Color(0xFF16D9FF)
     clip.isAudioFxClip -> Color(0xFFA855F7)
     clip.isSoundFxClip -> Color(0xFF3B82F6)
     clip.isFilterLayerClip -> Color(0xFFEC4899)

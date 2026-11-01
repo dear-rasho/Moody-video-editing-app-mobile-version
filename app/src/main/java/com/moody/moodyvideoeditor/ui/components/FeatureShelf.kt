@@ -61,12 +61,12 @@ val FEATURES = listOf(
     Feature("overlays", "Overlays", "🎬"),
     Feature("transitions", "Transitions", "⇄"),
     Feature("mask", "Mask", "▣"),
-    Feature("visualizer", "Visualizer", "🎵"),
     Feature("transform", "Transform", "🔲"),
     Feature("crop", "Crop", "📐"),
     Feature("volume", "Volume", "🔊"),
     Feature("audiofx", "Audio FX", "🎧"),
     Feature("beats", "Beats", "🥁"),
+    Feature("visualizer", "Visualizer", "🎵"),
 
     Feature("freeze", "Freeze", "❄️"),
     Feature("ratio", "Ratio", "🖼️"),

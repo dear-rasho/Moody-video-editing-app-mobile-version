@@ -49,10 +49,17 @@ target_compile_options(whisper PRIVATE
 # ─── JNI bridge ───
 add_library(moodywhisper SHARED
         whisper_jni.cpp
+        MoodyVisualizerJNI.cpp
+        core/SpectrumProcessor.cpp
+        graphics/GeometryGenerator.cpp
+        graphics/ShaderManager.cpp
 )
+
+find_library(GLESV3_LIBRARY GLESv3 REQUIRED)
 
 target_link_libraries(moodywhisper
         whisper
         android
         log
+        ${GLESV3_LIBRARY}
 )

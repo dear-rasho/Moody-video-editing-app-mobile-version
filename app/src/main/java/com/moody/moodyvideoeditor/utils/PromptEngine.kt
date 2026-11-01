@@ -13,7 +13,6 @@ enum class CmdType {
     RATIO, TIGHTEN, GRAPH, CLEAR_KEYFRAMES,
     TEMPLATE,
     BEAT_ANIMATION,
-    VISUALIZER,
     COLOR_MATTE,
     // 🆕 TEXT MANAGEMENT
     TEXT_EDIT,       // edittext / settext
@@ -563,127 +562,6 @@ object PromptEngine {
                     .replace("\\n", "\n")
                     .replace("\\t", "\t"),
                 extra = textFull.groupValues[2].ifBlank { null },
-                raw = text
-            )
-        }
-
-        // ═══════════════════════════════════════════════════════
-        //  VISUALIZER COMMANDS
-        // ═══════════════════════════════════════════════════════
-
-        if (lower == "visualizer" || lower.startsWith("visualizer ")) {
-            val rest = if (lower == "visualizer") "" else lower.substring(11).trim()
-
-            if (rest == "add" || rest == "create" || rest == "new") {
-                return ParsedCommand(CmdType.VISUALIZER, "add", raw = text)
-            }
-            if (rest == "remove" || rest == "delete") {
-                return ParsedCommand(CmdType.VISUALIZER, "remove", raw = text)
-            }
-
-            Regex("""^preset\s+(\S+)$""").find(rest)?.let { m ->
-                return ParsedCommand(
-                    CmdType.VISUALIZER, "preset",
-                    stringValue = m.groupValues[1],
-                    raw = text
-                )
-            }
-
-            Regex("""^color1\s+(?:#([0-9a-fA-F]{6})|([a-z]+))$""").find(rest)?.let { m ->
-                val hex = m.groupValues[1].ifBlank { colorNameToHex(m.groupValues[2]) }
-                return ParsedCommand(
-                    CmdType.VISUALIZER, "color1",
-                    stringValue = "#$hex",
-                    raw = text
-                )
-            }
-
-            Regex("""^color2\s+(?:#([0-9a-fA-F]{6})|([a-z]+))$""").find(rest)?.let { m ->
-                val hex = m.groupValues[1].ifBlank { colorNameToHex(m.groupValues[2]) }
-                return ParsedCommand(
-                    CmdType.VISUALIZER, "color2",
-                    stringValue = "#$hex",
-                    raw = text
-                )
-            }
-
-            Regex("""^size\s+([\d.]+)$""").find(rest)?.let { m ->
-                return ParsedCommand(
-                    CmdType.VISUALIZER, "size",
-                    value1 = m.groupValues[1].toFloatOrNull(),
-                    raw = text
-                )
-            }
-
-            Regex("""^pos(?:ition)?\s+([\d.]+)\s+([\d.]+)$""").find(rest)?.let { m ->
-                return ParsedCommand(
-                    CmdType.VISUALIZER, "position",
-                    value1 = m.groupValues[1].toFloatOrNull(),
-                    value2 = m.groupValues[2].toFloatOrNull(),
-                    raw = text
-                )
-            }
-
-            Regex("""^opacity\s+([\d.]+)$""").find(rest)?.let { m ->
-                return ParsedCommand(
-                    CmdType.VISUALIZER, "opacity",
-                    value1 = m.groupValues[1].toFloatOrNull(),
-                    raw = text
-                )
-            }
-
-            Regex("""^glow\s+(on|off)$""").find(rest)?.let { m ->
-                return ParsedCommand(
-                    CmdType.VISUALIZER, "glow",
-                    stringValue = m.groupValues[1],
-                    raw = text
-                )
-            }
-
-            Regex("""^reaction\s+([\d.]+)$""").find(rest)?.let { m ->
-                return ParsedCommand(
-                    CmdType.VISUALIZER, "reaction",
-                    value1 = m.groupValues[1].toFloatOrNull(),
-                    raw = text
-                )
-            }
-
-            Regex("""^text\s+"([^"]+)"(?:\s+size\s+(\d+))?$""").find(text)?.let { m ->
-                return ParsedCommand(
-                    CmdType.VISUALIZER, "text",
-                    stringValue = m.groupValues[1],
-                    value1 = m.groupValues[2].toFloatOrNull(),
-                    raw = text
-                )
-            }
-
-            Regex("""^show\s+(text|image)$""").find(rest)?.let { m ->
-                return ParsedCommand(
-                    CmdType.VISUALIZER, "show",
-                    stringValue = m.groupValues[1],
-                    raw = text
-                )
-            }
-
-            Regex("""^hide\s+(text|image)$""").find(rest)?.let { m ->
-                return ParsedCommand(
-                    CmdType.VISUALIZER, "hide",
-                    stringValue = m.groupValues[1],
-                    raw = text
-                )
-            }
-
-            Regex("""^order\s+(text-top|image-top)$""").find(rest)?.let { m ->
-                return ParsedCommand(
-                    CmdType.VISUALIZER, "order",
-                    stringValue = m.groupValues[1],
-                    raw = text
-                )
-            }
-
-            return ParsedCommand(
-                CmdType.VISUALIZER, "unknown",
-                stringValue = rest,
                 raw = text
             )
         }

@@ -24,7 +24,8 @@ object VisualizerBitmapHelper {
         H: Int,
         imageBitmap: Bitmap?,
         backgroundImageBitmap: Bitmap? = null,
-        instanceKey: String = "export"
+        instanceKey: String = "export",
+        audioBands: FloatArray? = null
     ) {
         val overlayBmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
         val imageBitmapCompose = overlayBmp.asImageBitmap()
@@ -55,7 +56,8 @@ object VisualizerBitmapHelper {
                 state = state,
                 relativeMs = relativeMs,
                 elapsedSec = elapsedSec,
-                instanceKey = instanceKey
+                instanceKey = instanceKey,
+                audioBands = audioBands
             )
         }
 

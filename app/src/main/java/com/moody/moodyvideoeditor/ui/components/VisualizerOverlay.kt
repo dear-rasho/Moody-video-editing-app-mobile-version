@@ -20,6 +20,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.VisualizerState
+import com.moody.moodyvideoeditor.utils.VisualizerAudioAnalyzer
+import com.moody.moodyvideoeditor.utils.VisualizerSpectrum
 import com.moody.moodyvideoeditor.utils.VisualizerEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -47,7 +49,22 @@ fun VisualizerOverlay(
 
     val linkedAudio = remember(state.linkedAudioClipId, allClips) {
         state.linkedAudioClipId?.let { id ->
-            allClips.firstOrNull { it.id == id && it.isAudio }
+            allClips.firstOrNull {
+                it.id == id && ((it.isAudio && !it.isAudioEffectClip) ||
+                        it.type.startsWith("video/"))
+            }
+        }
+    }
+    var audioSpectrum by remember(linkedAudio?.uri) {
+        androidx.compose.runtime.mutableStateOf<VisualizerSpectrum?>(null)
+    }
+
+    LaunchedEffect(linkedAudio?.uri) {
+        audioSpectrum = if (linkedAudio == null) null else try {
+            VisualizerAudioAnalyzer.analyze(context, linkedAudio.uri)
+        } catch (error: Exception) {
+            Log.e(TAG, "Audio analysis failed for ${linkedAudio.uri}", error)
+            null
         }
     }
 
@@ -113,6 +130,7 @@ fun VisualizerOverlay(
         onDispose {
             VisualizerEngine.clearCenterImage(visualizerClip.id)
             VisualizerEngine.clearBackgroundImage(visualizerClip.id)
+            VisualizerEngine.clearAnimationState(visualizerClip.id)
         }
     }
 
@@ -148,6 +166,9 @@ fun VisualizerOverlay(
         val speed = audio.speed.coerceAtLeast(0.01f)
         (audio.sourceStartMs + (timelineOffset * speed).toLong())
     }
+    val audioBands = remember(audioSpectrum, relativeMs) {
+        audioSpectrum?.bandsAt(relativeMs)
+    }
 
 
     // ═══════════════════════════════════════════════════════════
@@ -160,7 +181,8 @@ fun VisualizerOverlay(
             state = state,
             relativeMs = relativeMs,
             elapsedSec = elapsedSec,
-            instanceKey = visualizerClip.id
+            instanceKey = visualizerClip.id,
+            audioBands = audioBands
         )
     }
 }

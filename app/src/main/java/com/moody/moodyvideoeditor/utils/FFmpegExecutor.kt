@@ -685,7 +685,11 @@ class FFmpegExecutor(
                 trimmedAllClips.filter { it.isVisualClip && it.type.startsWith("image/") && it.trackIndex > 0 }
             val overlayClips =
                 trimmedAllClips.filter { it.isOverlayClip || (it.isEffectClip && it.effectState?.overlay != null) }
-            val vizClips = trimmedAllClips.filter { it.isVisualizerClip }
+            val visualizerClips = allClips.filter {
+                it.isVisualizerClip &&
+                        it.timelineEndMs > effectiveStart &&
+                        it.timelineStartMs < effectiveEnd
+            }
             val spotlightClips = trimmedAllClips.filter { it.isSpotlightClip }
 
             val textSequences =
@@ -709,23 +713,22 @@ class FFmpegExecutor(
                 } else emptyList()
             generatedSequences = textSequences
 
-            val vizSequences = if (vizClips.isNotEmpty()) {
-                VisualizerBitmapRenderer.renderCombinedOverlays(
-                    context,
-                    vizClips,
-                    allClips,
-                    effectiveStart,
-                    targetW,
-                    targetH,
-                    fps,
-                    effectiveDurMs,
+            generatedSequences = textSequences
+
+            val visualizerSequences = if (visualizerClips.isNotEmpty()) {
+                VisualizerBitmapRenderer.render(
+                    context = context,
+                    visualizerClips = visualizerClips,
+                    allClips = allClips,
+                    rangeStartMs = effectiveStart,
+                    rangeEndMs = effectiveEnd,
+                    width = targetW,
+                    height = targetH,
+                    fps = fps,
                     onProgress = { p -> onProgress(0.25f + p * 0.25f) },
-                    shouldCancel = { isCancelled },
-                    imageFormat = imageFormat,
-                    jpegQuality = jpegQuality
+                    shouldCancel = { isCancelled }
                 )
             } else emptyList()
-            generatedSequences = textSequences + vizSequences
 
             val spotlightSequences = if (spotlightClips.isNotEmpty()) {
                 SpotlightBitmapRenderer.render(
@@ -741,7 +744,8 @@ class FFmpegExecutor(
             } else emptyList()
 
             val allSequences =
-                (textSequences + vizSequences + spotlightSequences).sortedBy { it.trackIndex }
+                (textSequences + visualizerSequences + spotlightSequences)
+                    .sortedBy { it.trackIndex }
             generatedSequences = allSequences
             val baseVisualClips = trimmedAllClips.filter {
                 it.isVisualClip && it.uri.toString()

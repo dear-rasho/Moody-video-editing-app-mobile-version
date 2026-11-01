@@ -23,6 +23,35 @@ class AdjustmentPixelEngineTest {
     }
 
     @Test
+    fun channelSliderMidpointProducesClearlyVisibleColorChange() {
+        val input = Triple(204f, 51f, 26f)
+        val adjusted = AdjustmentPixelEngine.applyColorChannels(
+            input.first,
+            input.second,
+            input.third,
+            AdjustmentData(reds = 50f)
+        )
+
+        assertTrue(adjusted.first - input.first > 35f)
+        assertTrue(input.second - adjusted.second > 15f)
+        assertTrue(input.third - adjusted.third > 8f)
+    }
+
+    @Test
+    fun skinToneSliderMidpointProducesVisibleWarmth() {
+        val input = Triple(204f, 120f, 70f)
+        val adjusted = AdjustmentPixelEngine.applyColorChannels(
+            input.first,
+            input.second,
+            input.third,
+            AdjustmentData(skinTones = 50f)
+        )
+
+        assertTrue(adjusted.first - input.first > 15f)
+        assertTrue(adjusted.second - input.second > 5f)
+    }
+
+    @Test
     fun colorChannelAdjustmentLeavesUnsaturatedPixelsUnchanged() {
         val input = Triple(100f, 100f, 100f)
         val adjusted = AdjustmentPixelEngine.applyColorChannels(

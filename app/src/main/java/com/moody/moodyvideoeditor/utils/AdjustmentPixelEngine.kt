@@ -125,7 +125,7 @@ object AdjustmentPixelEngine {
         }
 
         fun amount(value: Float, target: Float, range: Float): Float {
-            val normalized = (value / 100f).coerceIn(-5f, 5f)
+            val normalized = (value / 50f).coerceIn(-5f, 5f)
             val hueWeight = weight(target, range)
             return if (abs(normalized) > 0.001f && hueWeight > 0.001f) {
                 normalized * hueWeight
@@ -239,7 +239,7 @@ object AdjustmentPixelEngine {
             }
         }
 
-        val skinTones = (adjustment.skinTones / 100f).coerceIn(-5f, 5f)
+        val skinTones = (adjustment.skinTones / 50f).coerceIn(-5f, 5f)
         if (skinTones != 0f) {
             val skinWeight = weight(0.069f, 0.055f)
             r = (r + skinTones * skinWeight * 30f).coerceIn(0f, 255f)

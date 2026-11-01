@@ -37,6 +37,44 @@ class KeyframeStoreTest {
     }
 
     @Test
+    fun manualTransformEditDoesNotCreateKeyframeBetweenExistingKeys() {
+        val keyframes = mapOf(
+            "x" to listOf(
+                Keyframe(time = 0f, value = 50f),
+                Keyframe(time = 2f, value = 70f)
+            )
+        )
+
+        val updated = KeyframeStore.updateKeyframeIfPresent(
+            keyframes, "x", time = 1f, value = 90f
+        )
+
+        assertEquals(keyframes, updated)
+    }
+
+    @Test
+    fun manualTransformEditUpdatesKeyAtPlayheadWithoutChangingEase() {
+        val keyframes = mapOf(
+            "x" to listOf(
+                Keyframe(time = 0f, value = 50f, ease = "easeIn"),
+                Keyframe(time = 2f, value = 70f)
+            )
+        )
+
+        val updated = KeyframeStore.updateKeyframeIfPresent(
+            keyframes, "x", time = 0.04f, value = 90f
+        )
+
+        assertEquals(
+            listOf(
+                Keyframe(time = 0f, value = 90f, ease = "easeIn"),
+                Keyframe(time = 2f, value = 70f)
+            ),
+            updated["x"]
+        )
+    }
+
+    @Test
     fun textStylePropertiesAreAnimatableAndInterpolate() {
         val map = mapOf(
             KeyframeLibrary.TEXT_SIZE to listOf(

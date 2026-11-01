@@ -119,6 +119,7 @@ import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.data.MaskType
 import com.moody.moodyvideoeditor.data.OverlayState
 import com.moody.moodyvideoeditor.data.SpotlightState
+import com.moody.moodyvideoeditor.data.VisualizerState
 import com.moody.moodyvideoeditor.ui.components.FourColorMatteGradient
 import com.moody.moodyvideoeditor.ui.features.SpotlightOverlay
 import com.moody.moodyvideoeditor.utils.SpotlightAnimation
@@ -141,6 +142,9 @@ import com.moody.moodyvideoeditor.utils.TextScaler
 import com.moody.moodyvideoeditor.utils.Transform2D
 import com.moody.moodyvideoeditor.utils.TransformApplier
 import com.moody.moodyvideoeditor.utils.TransitionRenderer
+import com.moody.moodyvideoeditor.utils.VisualizerAudioAnalyzer
+import com.moody.moodyvideoeditor.utils.VisualizerNative
+import com.moody.moodyvideoeditor.utils.VisualizerSpectrum
 import com.moody.moodyvideoeditor.utils.applyTransparentCrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -197,7 +201,7 @@ half4 main(float2 fragCoord) {
     if (abs(uBlues) > 0.001) { float w = hueWeight(h, 0.667, 0.083, s); if (w > 0.001) { float amt = uBlues * w; if (amt > 0.0) { b = b + (255.0 - b) * amt * 0.9; r = r * (1.0 - amt * 0.45); g = g * (1.0 - amt * 0.45); } else { float avg = (r + g + b) / 3.0; b = b + (avg - b) * (-amt) * 0.9; r = r + (avg - r) * (-amt) * 0.5; g = g + (avg - g) * (-amt) * 0.5; } } }
     if (abs(uPurples) > 0.001) { float w = hueWeight(h, 0.778, 0.070, s); if (w > 0.001) { float amt = uPurples * w; if (amt > 0.0) { r = r + (220.0 - r) * amt * 0.7; b = b + (255.0 - b) * amt * 0.7; g = g * (1.0 - amt * 0.6); } else { float avg = (r + g + b) / 3.0; r = r + (avg - r) * (-amt) * 0.7; b = b + (avg - b) * (-amt) * 0.7; } } }
     if (abs(uMagentas) > 0.001) { float w = hueWeight(h, 0.833, 0.070, s); if (w > 0.001) { float amt = uMagentas * w; if (amt > 0.0) { r = r + (255.0 - r) * amt * 0.75; b = b + (255.0 - b) * amt * 0.75; g = g * (1.0 - amt * 0.6); } else { float avg = (r + g + b) / 3.0; r = r + (avg - r) * (-amt) * 0.7; b = b + (avg - b) * (-amt) * 0.7; } } }
-    if (abs(uSkinTones) > 0.001) { float w = hueWeight(h, 0.069, 0.055, s); if (w > 0.001) { float amt = uSkinTones * w; r = clamp(r + amt * w * 30.0, 0.0, 255.0); g = clamp(g + amt * w * 15.0, 0.0, 255.0); } }
+    if (abs(uSkinTones) > 0.001) { float w = hueWeight(h, 0.069, 0.055, s); if (w > 0.001) { float amt = uSkinTones * w; r = clamp(r + amt * 30.0, 0.0, 255.0); g = clamp(g + amt * 15.0, 0.0, 255.0); } }
     float3 result = clamp(float3(r, g, b) / 255.0, 0.0, 1.0);
     if (uSharpen > 0.001) {
         half4 topLeft = input.eval(fragCoord + float2(-1.0, -1.0));
@@ -369,9 +373,8 @@ fun PreviewCanvas(
     onTextTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onLayerPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onLayerTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
-    onVisualizerPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
-    onVisualizerTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
-    onSpotlightChanged: (String, SpotlightState) -> Unit = { _, _ -> }
+    onSpotlightChanged: (String, SpotlightState) -> Unit = { _, _ -> },
+    onVisualizerChanged: (String, VisualizerState) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
 
@@ -413,7 +416,7 @@ fun PreviewCanvas(
 
     val topVideoClip = activeClips.filter { it.isVisualClip && !it.type.startsWith("image/") }
         .maxByOrNull { it.trackIndex }
-    val activeVisual = activeClips.maxByOrNull { it.trackIndex }
+    val activeVisual = activeClips.filter { it.isVisualClip }.maxByOrNull { it.trackIndex }
     val videoTrackIdx = activeVisual?.trackIndex ?: 0
 
     val latestPreviewPositionMs by rememberUpdatedState(currentPosMs)
@@ -773,16 +776,16 @@ fun PreviewCanvas(
         if (needsShader && Build.VERSION.SDK_INT >= 33) {
             try {
                 val shader = android.graphics.RuntimeShader(HSL_SHARPEN_SHADER)
-                shader.setFloatUniform("uReds", (adj!!.reds / 100f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uOranges", (adj.oranges / 100f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uYellows", (adj.yellows / 100f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uGreens", (adj.greens / 100f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uCyans", (adj.cyans / 100f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uBlues", (adj.blues / 100f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uPurples", (adj.purples / 100f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uMagentas", (adj.magentas / 100f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uSkinTones", (adj.skinTones / 100f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uSharpen", (adj.sharpen / 50f).coerceIn(0f, 2f))
+                shader.setFloatUniform("uReds", (adj!!.reds / 50f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uOranges", (adj.oranges / 50f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uYellows", (adj.yellows / 50f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uGreens", (adj.greens / 50f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uCyans", (adj.cyans / 50f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uBlues", (adj.blues / 50f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uPurples", (adj.purples / 50f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uMagentas", (adj.magentas / 50f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uSkinTones", (adj.skinTones / 50f).coerceIn(-5f, 5f))
+                shader.setFloatUniform("uSharpen", (adj.sharpen / 25f).coerceIn(0f, 2f))
                 Modifier.graphicsLayer {
                     shader.setFloatUniform("uResolution", size.width, size.height)
                     renderEffect =
@@ -1558,6 +1561,20 @@ fun PreviewCanvas(
                         }
                     }
 
+                    clip.isVisualizerClip -> {
+                        val visualizer = clip.visualizer ?: return@forEach
+                        VisualizerOverlay(
+                            state = visualizer,
+                            visualizerClip = clip,
+                            allClips = clips,
+                            currentPosMs = currentPosMs,
+                            isPlaying = isPlaying,
+                            modifier = Modifier.fillMaxSize().graphicsLayer {
+                                alpha = layerOpacityAlpha
+                            }
+                        )
+                    }
+
                     clip.isSpotlightClip -> {
                         val localTimeSec = KeyframeStore.clipLocalTimeSeconds(
                             currentPosMs,
@@ -1849,175 +1866,7 @@ fun PreviewCanvas(
                         }
                     }
 
-                    clip.isVisualizerClip -> {
-                        val vs = clip.visualizer ?: return@forEach
-                        val minDimDp = minOf(canvasW, canvasH)
-                        val radiusDp = vs.size * minDimDp
-                        val diameterDp = radiusDp * 2f
-                        val leftDp = vs.positionX * canvasW - radiusDp
-                        val topDp = vs.positionY * canvasH - radiusDp
-                        val isSel = clip.id == selectedClipId
-                        val isMulti = clip.id in multiSelectedIds
 
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .graphicsLayer {
-                                            compositingStrategy =
-                                                CompositingStrategy.Offscreen; blendMode =
-                                            blendKeyToCompose(clip.blendMode)
-                                            alpha = layerOpacityAlpha
-                                                if (Build.VERSION.SDK_INT >= 31) {
-                                                    renderEffect = LayerShadowRenderer.create(
-                                                        clip.layerShadow, size.width / 720f
-                                                    )?.asComposeRenderEffect()
-                                                }
-                                            }) {
-                                    VisualizerOverlay(
-                                        state = vs,
-                                        visualizerClip = clip,
-                                        allClips = clips,
-                                        currentPosMs = currentPosMs,
-                                        isPlaying = isPlaying,
-                                        enabled = true,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                }
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .offset(x = leftDp.dp, y = topDp.dp)
-                                    .size(diameterDp.dp)
-                                    .then(
-                                        if (isSel || isMulti) Modifier.border(
-                                            width = if (isSel) 2.dp else 1.dp,
-                                            color = if (isSel) Color(0xFF60EFFF) else Color(
-                                                0xFFFFD166
-                                            ),
-                                            shape = RoundedCornerShape(8.dp)
-                                        ) else Modifier
-                                    )
-                                    .pointerInput(
-                                        clip.id,
-                                        isSel,
-                                        isMulti,
-                                        canvasW,
-                                        canvasH,
-                                    ) {
-                                        awaitEachGesture {
-                                            awaitFirstDown(requireUnconsumed = true)
-                                            onGroupGestureStart()
-                                            val baseX = vs.positionX * 100f;
-                                            val baseY = vs.positionY * 100f
-                                            val baseScale = vs.size / 0.32f * 100f;
-                                            val baseRot = vs.rotation
-                                            var accumPanX = 0f;
-                                            var accumPanY = 0f;
-                                            var accumZoom = 1f;
-                                            var accumRot = 0f
-                                            var lastDist = 0f;
-                                            var lastAngle = 0f;
-                                            var hasMulti = false
-                                            if (!isSel && !isMulti) onClipSelected(clip.id)
-                                            var continueGesture = true
-                                            while (continueGesture) {
-                                                val event = awaitPointerEvent()
-                                                val pressed = event.changes.filter { it.pressed }
-                                                if (pressed.isEmpty()) {
-                                                    continueGesture = false
-                                                } else {
-                                                    if (pressed.size == 1) {
-                                                        val ch = pressed.first();
-                                                        val pan = ch.position - ch.previousPosition
-                                                        accumPanX += pan.x; accumPanY += pan.y; ch.consume()
-                                                    } else if (pressed.size >= 2) {
-                                                        val c1 = pressed[0];
-                                                        val c2 = pressed[1]
-                                                        val d = c1.position - c2.position
-                                                        val dist =
-                                                            kotlin.math.sqrt(d.x * d.x + d.y * d.y)
-                                                        val angle = kotlin.math.atan2(d.y, d.x)
-                                                        if (hasMulti && lastDist > 1f) {
-                                                            accumZoom *= dist / lastDist
-                                                            accumRot += Math.toDegrees(
-                                                                normalizeAngle(angle - lastAngle).toDouble()
-                                                            ).toFloat()
-                                                        }
-                                                        lastDist = dist; lastAngle =
-                                                            angle; hasMulti = true
-                                                        c1.consume(); c2.consume()
-                                                    }
-                                                    val newX =
-                                                        (baseX + accumPanX / size.width * 100f).coerceIn(
-                                                            0f,
-                                                            100f
-                                                        )
-                                                    val newY =
-                                                        (baseY + accumPanY / size.height * 100f).coerceIn(
-                                                            0f,
-                                                            100f
-                                                        )
-                                                    val newScale =
-                                                        (baseScale * accumZoom).coerceIn(10f, 500f)
-                                                    val newRot = baseRot + accumRot
-                                                    if (isMulti) onGroupGesture(
-                                                        clip.id,
-                                                        newX,
-                                                        newY,
-                                                        newScale,
-                                                        newRot
-                                                    )
-                                                    else {
-                                                        onVisualizerPositionChanged(
-                                                            clip.id,
-                                                            newX,
-                                                            newY
-                                                        ); onVisualizerTransformChanged(
-                                                            clip.id,
-                                                            newScale,
-                                                            newRot
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                            onGroupGestureEnd()
-                                        }
-                                    }
-                                    .pointerInput(clip.id, isMulti) {
-                                        detectTapGestures { if (!isMulti) onClipSelected(clip.id) }
-                                    }
-                            ) {
-                                if (isSel) {
-                                    LayerTransformHandles(
-                                        clipId = clip.id,
-                                        scale = (vs.size / 0.32f) * 100f,
-                                        rotation = vs.rotation,
-                                        positionX = vs.positionX * 100f,
-                                        positionY = vs.positionY * 100f,
-                                        onPositionChanged = { x, y ->
-                                            onVisualizerPositionChanged(
-                                                clip.id,
-                                                x,
-                                                y
-                                            )
-                                        },
-                                        onGestureStart = onGroupGestureStart,
-                                        onGestureEnd = onGroupGestureEnd,
-                                        onTransformChanged = { s, r ->
-                                            onVisualizerTransformChanged(
-                                                clip.id,
-                                                s,
-                                                r
-                                            )
-                                        },
-                                        onDelete = { onDeleteLayer(clip.id) },
-                                    )
-                                }
-                            }
-                        }
-                    }
 
                 }
             }

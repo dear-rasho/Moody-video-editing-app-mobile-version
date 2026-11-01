@@ -20,7 +20,7 @@ object FFmpegFilters {
             }
 
             if (adj.sharpen > 0f) {
-                val amount = (adj.sharpen / 50f).coerceIn(0f, 2f)
+                val amount = (adj.sharpen / 25f).coerceIn(0f, 2f)
                 filters.add("unsharp=3:3:${f(amount)}:3:3:${f(amount)}")
             }
 

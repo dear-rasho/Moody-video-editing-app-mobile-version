@@ -657,6 +657,9 @@ fun VisualizerPanel(
             ToggleRow("Glow", current.glow) {
                 onStateChanged(current.copy(glow = it))
             }
+            ValueSliderRow("Glow Intensity", current.glowIntensity, 0f..5f, "%.2f") {
+                onStateChanged(current.copy(glowIntensity = it.coerceIn(0f, 5f)))
+            }
 
             Spacer(Modifier.height(8.dp))
 

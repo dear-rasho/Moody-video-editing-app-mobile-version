@@ -161,8 +161,11 @@ class VideoExporter(
             rangeStart,
             rangeEnd
         )
-        val vizClips =
-            clips.filter { it.isVisualizerClip && it.timelineEndMs > rangeStart && it.timelineStartMs < rangeEnd }
+        val visualizerClips = clips.filter {
+            it.isVisualizerClip && it.timelineEndMs > rangeStart &&
+                    it.timelineStartMs < rangeEnd
+        }
+
         val edgeGlowClips = clips.filter {
             it.isEffectClip &&
                     it.effectState?.edgeGlow != null &&
@@ -174,7 +177,7 @@ class VideoExporter(
         val hasBaseVideo = trimmedVisualClips.isNotEmpty() || trimmedMatteClips.isNotEmpty()
         val hasSynthetic =
             trimmedTextClips.isNotEmpty() || overlayImageClips.isNotEmpty() ||
-                    vizClips.isNotEmpty() || spotlightClips.isNotEmpty() ||
+                    spotlightClips.isNotEmpty() || visualizerClips.isNotEmpty() ||
                     edgeGlowClips.isNotEmpty()
 
         when {
@@ -205,21 +208,20 @@ class VideoExporter(
                     onError("Text render failed: ${e.message}"); return
                 }
 
-                val vizSequences = if (vizClips.isNotEmpty()) {
+
+                val visualizerSequences = if (visualizerClips.isNotEmpty()) {
                     try {
-                        VisualizerBitmapRenderer.renderCombinedOverlays(
+                        VisualizerBitmapRenderer.render(
                             context = context,
-                            visualizerClips = vizClips,
+                            visualizerClips = visualizerClips,
                             allClips = clips,
-                            rangeStart = rangeStart,
-                            W = targetW,
-                            H = targetH,
+                            rangeStartMs = rangeStart,
+                            rangeEndMs = rangeEnd,
+                            width = targetW,
+                            height = targetH,
                             fps = fps,
-                            totalDurationMs = exportDurationMs,
                             onProgress = { p -> onProgress(0.15f + p * 0.15f) },
-                            shouldCancel = { isCancelled },
-                            imageFormat = imageFormat,
-                            jpegQuality = jpegQuality
+                            shouldCancel = { isCancelled }
                         )
                     } catch (e: Exception) {
                         cleanupSequences(textSequences)
@@ -244,7 +246,7 @@ class VideoExporter(
                             shouldCancel = { isCancelled }
                         )
                     } catch (e: Exception) {
-                        cleanupSequences(textSequences + vizSequences)
+                        cleanupSequences(textSequences + visualizerSequences)
                         if (isCancelled) {
                             onCancelled(); return
                         }
@@ -267,7 +269,7 @@ class VideoExporter(
                             shouldCancel = { isCancelled }
                         )
                     } catch (e: Exception) {
-                        cleanupSequences(textSequences + vizSequences + spotlightSequences)
+                        cleanupSequences(textSequences + visualizerSequences + spotlightSequences)
                         if (e is CancellationException) {
                             if (isCancelled) {
                                 onCancelled(); return
@@ -283,7 +285,7 @@ class VideoExporter(
                 } else emptyList()
 
                 val allSequences =
-                    (textSequences + vizSequences + spotlightSequences + edgeGlowSequences)
+                    (textSequences + visualizerSequences + spotlightSequences + edgeGlowSequences)
                         .sortedBy { it.trackIndex }
                 onProgress(0.40f)
 
@@ -332,7 +334,7 @@ class VideoExporter(
                         textClips = trimmedTextClips,
                         overlayImageClips = overlayImageClips,
                         overlayClips = trimmedOverlayClips,
-                        vizClips = vizClips,
+                        visualizerClips = visualizerClips,
                         spotlightClips = spotlightClips,
                         edgeGlowClips = edgeGlowClips,
                         matteClips = trimmedMatteClips,
@@ -543,7 +545,7 @@ class VideoExporter(
         textClips: List<EditorClip>,
         overlayImageClips: List<EditorClip>,
         overlayClips: List<EditorClip>,
-        vizClips: List<EditorClip>,
+        visualizerClips: List<EditorClip>,
         spotlightClips: List<EditorClip> = emptyList(),
         edgeGlowClips: List<EditorClip> = emptyList(),
         matteClips: List<EditorClip> = emptyList(),
@@ -562,30 +564,6 @@ class VideoExporter(
         val durationMs = (rangeEnd - rangeStart).coerceAtLeast(500L)
         onProgress(0.01f)
 
-        val vizSequences = if (vizClips.isNotEmpty()) {
-            try {
-                VisualizerBitmapRenderer.renderCombinedOverlays(
-                    context = context,
-                    visualizerClips = vizClips,
-                    allClips = allClips,
-                    rangeStart = rangeStart,
-                    W = targetW,
-                    H = targetH,
-                    fps = fps,
-                    totalDurationMs = durationMs,
-                    onProgress = { p -> onProgress(p * 0.20f) },
-                    shouldCancel = { isCancelled },
-                    imageFormat = imageFormat,
-                    jpegQuality = jpegQuality
-                )
-            } catch (e: Exception) {
-                if (isCancelled) {
-                    onCancelled(); return
-                }
-                Log.e("EXPORT", "Visualizer rendering failed", e)
-                onError("Visualizer render failed: ${e.message}"); return
-            }
-        } else emptyList()
 
         val textSequences =
             if (textClips.isNotEmpty() || overlayImageClips.isNotEmpty() ||
@@ -601,13 +579,12 @@ class VideoExporter(
                         H = targetH,
                         fps = fps,
                         totalDurationMs = durationMs,
-                        onProgress = { p -> onProgress(0.20f + p * 0.18f) },
+                        onProgress = { p -> onProgress(0.05f + p * 0.15f) },
                         shouldCancel = { isCancelled },
                         imageFormat = imageFormat,
                         jpegQuality = jpegQuality
                     )
                 } catch (e: Exception) {
-                    cleanupSequences(vizSequences)
                     if (isCancelled) {
                         onCancelled(); return
                     }
@@ -615,6 +592,30 @@ class VideoExporter(
                     onError("Text render failed: ${e.message}"); return
                 }
             } else emptyList()
+
+        val visualizerSequences = if (visualizerClips.isNotEmpty()) {
+            try {
+                VisualizerBitmapRenderer.render(
+                    context = context,
+                    visualizerClips = visualizerClips,
+                    allClips = allClips,
+                    rangeStartMs = rangeStart,
+                    rangeEndMs = rangeEnd,
+                    width = targetW,
+                    height = targetH,
+                    fps = fps,
+                    onProgress = { p -> onProgress(0.20f + p * 0.18f) },
+                    shouldCancel = { isCancelled }
+                )
+            } catch (e: Exception) {
+                cleanupSequences(textSequences)
+                if (isCancelled) {
+                    onCancelled(); return
+                }
+                Log.e("EXPORT", "Visualizer rendering failed", e)
+                onError("Visualizer render failed: ${e.message}"); return
+            }
+        } else emptyList()
 
         val spotlightSequences = if (spotlightClips.isNotEmpty()) {
             try {
@@ -629,7 +630,7 @@ class VideoExporter(
                     shouldCancel = { isCancelled }
                 )
             } catch (e: Exception) {
-                cleanupSequences(vizSequences + textSequences)
+                cleanupSequences(textSequences + visualizerSequences)
                 if (isCancelled) {
                     onCancelled(); return
                 }
@@ -652,7 +653,7 @@ class VideoExporter(
                     shouldCancel = { isCancelled }
                 )
             } catch (e: Exception) {
-                cleanupSequences(vizSequences + textSequences + spotlightSequences)
+                cleanupSequences(textSequences + visualizerSequences + spotlightSequences)
                 if (e is CancellationException) {
                     if (isCancelled) {
                         onCancelled(); return
@@ -668,7 +669,7 @@ class VideoExporter(
         } else emptyList()
 
         val allSequences =
-            (vizSequences + textSequences + spotlightSequences + edgeGlowSequences)
+            (textSequences + visualizerSequences + spotlightSequences + edgeGlowSequences)
                 .sortedBy { it.trackIndex }
         onProgress(0.50f)
 

@@ -54,6 +54,7 @@ fun RecentMediaPickerPanel(
     recentMedia: List<RecentMediaItem>,
     onRecentSelected: (RecentMediaItem) -> Unit,
     onOpenStorage: () -> Unit,
+    onExtractAudio: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -141,6 +142,17 @@ fun RecentMediaPickerPanel(
                             .clip(RoundedCornerShape(10.dp))
                             .background(Color(0xFF60EFFF))
                             .clickable(onClick = onOpenStorage)
+                            .padding(horizontal = 24.dp, vertical = 12.dp)
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Extract Audio from Video",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF353535))
+                            .clickable(onClick = onExtractAudio)
                             .padding(horizontal = 24.dp, vertical = 12.dp)
                     )
                 }

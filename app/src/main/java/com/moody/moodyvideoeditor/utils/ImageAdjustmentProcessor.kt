@@ -47,7 +47,7 @@ object ImageAdjustmentProcessor {
                     pixels,
                     w,
                     h,
-                    (adj.sharpen / 50f).coerceIn(0f, 2f)
+                    (adj.sharpen / 25f).coerceIn(0f, 2f)
                 )
             } else pixels
 
@@ -75,15 +75,15 @@ object ImageAdjustmentProcessor {
     // ═══════════════════════════════════════════════════════════
 
     private fun applyColorChannels(pixels: IntArray, adj: AdjustmentData) {
-        val reds = (adj.reds / 100f).coerceIn(-5f, 5f)
-        val oranges = (adj.oranges / 100f).coerceIn(-5f, 5f)
-        val yellows = (adj.yellows / 100f).coerceIn(-5f, 5f)
-        val greens = (adj.greens / 100f).coerceIn(-5f, 5f)
-        val cyans = (adj.cyans / 100f).coerceIn(-5f, 5f)
-        val blues = (adj.blues / 100f).coerceIn(-5f, 5f)
-        val purples = (adj.purples / 100f).coerceIn(-5f, 5f)
-        val magentas = (adj.magentas / 100f).coerceIn(-5f, 5f)
-        val skinTones = (adj.skinTones / 100f).coerceIn(-5f, 5f)
+        val reds = (adj.reds / 50f).coerceIn(-5f, 5f)
+        val oranges = (adj.oranges / 50f).coerceIn(-5f, 5f)
+        val yellows = (adj.yellows / 50f).coerceIn(-5f, 5f)
+        val greens = (adj.greens / 50f).coerceIn(-5f, 5f)
+        val cyans = (adj.cyans / 50f).coerceIn(-5f, 5f)
+        val blues = (adj.blues / 50f).coerceIn(-5f, 5f)
+        val purples = (adj.purples / 50f).coerceIn(-5f, 5f)
+        val magentas = (adj.magentas / 50f).coerceIn(-5f, 5f)
+        val skinTones = (adj.skinTones / 50f).coerceIn(-5f, 5f)
 
         val hsv = FloatArray(3)
 

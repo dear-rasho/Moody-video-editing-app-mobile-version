@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.moody.moodyvideoeditor.data.VisualizerPreset
 import com.moody.moodyvideoeditor.data.VisualizerState
+import kotlin.math.ln
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.PI
 import kotlin.math.abs
@@ -39,7 +40,6 @@ object VisualizerEngine {
     private val smoothTreble = ConcurrentHashMap<String, Float>()
     private val smoothRms = ConcurrentHashMap<String, Float>()
     private val smoothBeat = ConcurrentHashMap<String, Float>()
-    private val imageRotation = ConcurrentHashMap<String, Float>()
 
     private data class CenterImage(val uri: String?, val bitmap: ImageBitmap?)
     private val centerImages = ConcurrentHashMap<String, CenterImage>()
@@ -59,13 +59,14 @@ object VisualizerEngine {
         state: VisualizerState,
         relativeMs: Long,
         elapsedSec: Float,
-        instanceKey: String = "default"
+        instanceKey: String = "default",
+        audioBands: FloatArray? = null
     ) {
         if (!state.isActive) return
         val offsetMs = state.audioOffsetMs.toLong()
         val adjustedMs = (relativeMs + offsetMs).coerceAtLeast(0L)
         val beatPulse = state.strengthAt(adjustedMs)
-        drawInternal(scope, state, beatPulse, elapsedSec, instanceKey)
+        drawInternal(scope, state, beatPulse, elapsedSec, instanceKey, audioBands)
     }
 
     fun drawPreview(
@@ -77,7 +78,7 @@ object VisualizerEngine {
         if (!state.isActive) return
         val t = elapsedSec * 2f
         val beatPulse = ((sin(t * PI.toFloat() * 2f) + 1f) / 2f).coerceIn(0f, 1f)
-        drawInternal(scope, state, beatPulse, elapsedSec, instanceKey)
+        drawInternal(scope, state, beatPulse, elapsedSec, instanceKey, null)
     }
 
     private fun drawInternal(
@@ -85,7 +86,8 @@ object VisualizerEngine {
         state: VisualizerState,
         beatPulse: Float,
         elapsedSec: Float,
-        instanceKey: String
+        instanceKey: String,
+        audioBands: FloatArray?
     ) {
         val W = scope.size.width
         val H = scope.size.height
@@ -94,7 +96,7 @@ object VisualizerEngine {
         val minDim = min(W, H)
         val baseR = state.size * minDim
 
-        val feat = computeFeatures(instanceKey, beatPulse, state)
+        val feat = computeFeatures(instanceKey, beatPulse, state, audioBands)
 
         val ctx = DrawCtx(
             scope = scope, W = W, H = H,
@@ -107,6 +109,7 @@ object VisualizerEngine {
         )
 
         ctx.backgroundImage?.takeIf { state.showBackgroundImage }?.let { image ->
+            val scale = backgroundScale(ctx)
             val imageAspect = image.width.toFloat() / image.height.coerceAtLeast(1)
             val canvasAspect = W / H.coerceAtLeast(1f)
             val srcWidth: Int
@@ -122,8 +125,14 @@ object VisualizerEngine {
                 image = image,
                 srcOffset = IntOffset((image.width - srcWidth) / 2, (image.height - srcHeight) / 2),
                 srcSize = IntSize(srcWidth, srcHeight),
-                dstOffset = IntOffset.Zero,
-                dstSize = IntSize(W.toInt(), H.toInt())
+                dstOffset = IntOffset(
+                    (W * (1f - scale) * 0.5f).toInt(),
+                    (H * (1f - scale) * 0.5f).toInt()
+                ),
+                dstSize = IntSize(
+                    (W * scale).toInt(),
+                    (H * scale).toInt()
+                )
             )
         }
 
@@ -263,6 +272,10 @@ object VisualizerEngine {
         fun color2() = Color(state.color2).copy(alpha = state.opacity)
         fun color1a(a: Float) = Color(state.color1).copy(alpha = a * state.opacity)
         fun color2a(a: Float) = Color(state.color2).copy(alpha = a * state.opacity)
+        fun glowColor1(a: Float) = color1a(a * state.glowIntensity.coerceIn(0f, 5f))
+        fun glowColor2(a: Float) = color2a(a * state.glowIntensity.coerceIn(0f, 5f))
+        fun glowWidth(width: Float) =
+            width * (0.5f + state.glowIntensity.coerceIn(0f, 5f) * 0.5f)
         fun sweep() = Brush.sweepGradient(
             colors = listOf(color1(), color2(), color1()),
             center = Offset(cx, cy)
@@ -274,43 +287,32 @@ object VisualizerEngine {
     // ═══════════════════════════════════════════════════════════
 
     private fun computeFeatures(
-        instanceKey: String, beatPulse: Float, state: VisualizerState
+        instanceKey: String,
+        beatPulse: Float,
+        state: VisualizerState,
+        audioBands: FloatArray?
     ): Features {
         val baseline = 0.02f
         val k = state.lerpFactor.coerceIn(0.05f, 0.95f)
-
-        val rawFft = AudioVisualizerBridge.getFft()
-        val useLiveFft = rawFft.isNotEmpty() && AudioVisualizerBridge.isFresh()
-
-        val bassTarget: Float
-        val midTarget: Float
-        val trebleTarget: Float
-        val rmsTarget: Float
-        val liveBands: FloatArray?
-
-        if (useLiveFft) {
-            val bands = state.bands.coerceIn(1, 6400)
-            liveBands = AudioVisualizerBridge.sampleBands(
-                fft = rawFft,
-                bands = bands,
-                startHz = state.startFrequencyHz,
-                endHz = state.endFrequencyHz
-            )
-            val quarter = (bands / 4).coerceAtLeast(1)
-            val half = (bands / 2).coerceAtLeast(1)
-            bassTarget = liveBands.take(quarter).average().toFloat().coerceIn(0f, 1f)
-            midTarget = liveBands.drop(quarter).take(half)
-                .average().toFloat().coerceIn(0f, 1f)
-            trebleTarget = liveBands.drop(quarter + half)
-                .average().toFloat().coerceIn(0f, 1f)
-            rmsTarget = liveBands.average().toFloat().coerceIn(0f, 1f)
-        } else {
-            bassTarget = (beatPulse * state.bassRingBoost).coerceIn(0f, 1f)
-            midTarget = (beatPulse * 0.55f * state.midBarBoost).coerceIn(0f, 1f)
-            trebleTarget = (beatPulse * 0.35f * state.trebleSpikeBoost).coerceIn(0f, 1f)
-            rmsTarget = (beatPulse * 0.75f).coerceIn(0f, 1f)
-            liveBands = null
+        val count = state.bands.coerceIn(1, 6400)
+        val liveBands = audioBands?.takeIf { it.isNotEmpty() }?.let {
+            sampleFrequencyRange(it, count, state.startFrequencyHz, state.endFrequencyHz)
         }
+        val bassEnd = (count / 4).coerceIn(1, count)
+        val midEnd = (count * 3 / 4).coerceIn(bassEnd, count)
+        val bassTarget = liveBands?.take(bassEnd)?.average()?.toFloat()?.coerceIn(0f, 1f)
+            ?: (beatPulse * state.bassRingBoost).coerceIn(0f, 1f)
+        val midTarget = liveBands?.sliceArray(bassEnd until midEnd)
+            ?.takeIf { it.isNotEmpty() }
+            ?.average()?.toFloat()
+            ?.coerceIn(0f, 1f)
+            ?: (beatPulse * 0.55f * state.midBarBoost).coerceIn(0f, 1f)
+        val trebleTarget = liveBands?.drop(midEnd)?.takeIf { it.isNotEmpty() }
+            ?.average()?.toFloat()
+            ?.coerceIn(0f, 1f)
+            ?: (beatPulse * 0.35f * state.trebleSpikeBoost).coerceIn(0f, 1f)
+        val rmsTarget = liveBands?.average()?.toFloat()?.coerceIn(0f, 1f)
+            ?: (beatPulse * 0.75f).coerceIn(0f, 1f)
 
         val bassPrev = smoothBass[instanceKey] ?: baseline
         val midPrev = smoothMid[instanceKey] ?: baseline
@@ -336,7 +338,7 @@ object VisualizerEngine {
         smoothRms[instanceKey] = rms
         smoothBeat[instanceKey] = beat
 
-        val barCount = state.bands.coerceIn(1, 6400)
+        val barCount = count
         val bars: FloatArray = if (liveBands != null && liveBands.size == barCount) {
             liveBands
         } else {
@@ -354,6 +356,37 @@ object VisualizerEngine {
         }
         return Features(bass, mid, treble, rms, beat, bars)
     }
+
+    private fun sampleFrequencyRange(
+        input: FloatArray,
+        count: Int,
+        startHz: Float,
+        endHz: Float
+    ): FloatArray {
+        if (count <= 0) return FloatArray(0)
+        if (input.size == 1) return FloatArray(count) { input[0] }
+        val minFrequency = 20f
+        val maxFrequency = VisualizerSpectrum.SAMPLE_RATE / 2f
+        val low = startHz.coerceIn(minFrequency, maxFrequency)
+        val high = endHz.coerceIn(low, maxFrequency)
+        val logRange = (ln(maxFrequency) - ln(minFrequency)).coerceAtLeast(0.001f)
+        val start = ((ln(low) - ln(minFrequency)) / logRange * (input.size - 1))
+            .coerceIn(0f, (input.size - 1).toFloat())
+        val end = ((ln(high) - ln(minFrequency)) / logRange * (input.size - 1))
+            .coerceIn(start, (input.size - 1).toFloat())
+        return FloatArray(count) { index ->
+            val fraction = if (count == 1) 0.5f else index.toFloat() / (count - 1)
+            val position = start + (end - start) * fraction
+            val before = position.toInt()
+            val after = (before + 1).coerceAtMost(input.lastIndex)
+            val blend = position - before
+            input[before] * (1f - blend) + input[after] * blend
+        }
+    }
+
+    private fun backgroundScale(ctx: DrawCtx): Float =
+        (1f + ctx.feat.bass * ctx.state.sensitivity.coerceAtLeast(0f) * 0.12f)
+            .coerceIn(1f, 1.4f)
 
     // ═══════════════════════════════════════════════════════════
     //  1. CIRCULAR BARS
@@ -376,12 +409,12 @@ object VisualizerEngine {
             val startR = if (variant == 1) r0 - len else r0
             val endR = if (variant == 1) r0 else r0 + len
 
-            if (c.state.glow && variant != 4) {
+            if (c.state.glow && c.state.glowIntensity > 0f && variant != 4) {
                 s.drawLine(
-                    color = c.color1a(0.20f + v * 0.3f),
+                    color = c.glowColor1(0.20f + v * 0.3f),
                     start = Offset(c.cx + cos(angle) * startR, c.cy + sin(angle) * startR),
                     end = Offset(c.cx + cos(angle) * endR, c.cy + sin(angle) * endR),
-                    strokeWidth = barW * 2.0f,
+                    strokeWidth = c.glowWidth(barW * 2.0f),
                     cap = StrokeCap.Round
                 )
             }
@@ -607,11 +640,11 @@ object VisualizerEngine {
             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
 
-        if (c.state.glow) {
+        if (c.state.glow && c.state.glowIntensity > 0f) {
             s.drawPath(
                 path = path,
-                color = c.color1a(0.25f),
-                style = Stroke(width = c.state.lineWidth * 2.4f, cap = StrokeCap.Round)
+                color = c.glowColor1(0.25f),
+                style = Stroke(width = c.glowWidth(c.state.lineWidth * 2.4f), cap = StrokeCap.Round)
             )
         }
         s.drawPath(
@@ -803,8 +836,11 @@ object VisualizerEngine {
             val y = c.cy + sin(angle) * r
             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
-        if (c.state.glow) {
-            s.drawPath(path, c.color1a(0.25f), style = Stroke(width = c.state.lineWidth * 3f))
+        if (c.state.glow && c.state.glowIntensity > 0f) {
+            s.drawPath(
+                path, c.glowColor1(0.25f),
+                style = Stroke(width = c.glowWidth(c.state.lineWidth * 3f))
+            )
         }
         s.drawPath(
             path, c.sweep(),
@@ -842,11 +878,11 @@ object VisualizerEngine {
                 center = Offset(c.cx + offsetX, c.cy + offsetY),
                 style = Stroke(width = c.state.lineWidth + c.feat.beat * 2f)
             )
-            if (c.state.glow) {
+            if (c.state.glow && c.state.glowIntensity > 0f) {
                 s.drawCircle(
-                    color = c.color1a(0.15f),
+                    color = c.glowColor1(0.15f),
                     radius = r, center = Offset(c.cx + offsetX, c.cy + offsetY),
-                    style = Stroke(width = 10f)
+                    style = Stroke(width = c.glowWidth(10f))
                 )
             }
         }
@@ -1306,13 +1342,13 @@ object VisualizerEngine {
         val pulse = 1f + c.feat.bass * 0.35f + c.feat.beat * 0.30f
         val r = c.baseR * pulse
 
-        if (c.state.glow) {
+        if (c.state.glow && c.state.glowIntensity > 0f) {
             listOf(1.35f to 0.12f, 1.15f to 0.25f, 1.0f to 0.5f).forEach { (m, a) ->
                 s.drawCircle(
-                    color = c.color1a(a * (1f + c.feat.beat * 0.8f)),
+                    color = c.glowColor1(a * (1f + c.feat.beat * 0.8f)),
                     radius = r * m,
                     center = Offset(c.cx, c.cy),
-                    style = Stroke(width = c.baseR * 0.14f)
+                    style = Stroke(width = c.glowWidth(c.baseR * 0.14f))
                 )
             }
         }
@@ -1590,10 +1626,10 @@ object VisualizerEngine {
                     c.baseR * (0.3f + c.feat.rms * 0.5f)
             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
-        if (c.state.glow) {
+        if (c.state.glow && c.state.glowIntensity > 0f) {
             s.drawPath(
-                path, c.color1a(0.3f),
-                style = Stroke(width = c.state.lineWidth * 4f, cap = StrokeCap.Round)
+                path, c.glowColor1(0.3f),
+                style = Stroke(width = c.glowWidth(c.state.lineWidth * 4f), cap = StrokeCap.Round)
             )
         }
         s.drawPath(
@@ -1627,8 +1663,11 @@ object VisualizerEngine {
         }
         path.close()
 
-        if (c.state.glow) {
-            s.drawPath(path, c.color1a(0.2f), style = Stroke(width = 12f))
+        if (c.state.glow && c.state.glowIntensity > 0f) {
+            s.drawPath(
+                path, c.glowColor1(0.2f),
+                style = Stroke(width = c.glowWidth(12f))
+            )
         }
         s.drawPath(
             path, c.sweep(),
@@ -1651,13 +1690,13 @@ object VisualizerEngine {
         val baseRadius = c.baseR * 0.7f
         val maxBarLen = c.baseR * 0.9f * c.state.maxHeight
 
-        if (c.state.glow) {
+        if (c.state.glow && c.state.glowIntensity > 0f) {
             val glowR = baseRadius * (1.3f + c.feat.bass * 0.4f)
             s.drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        c.color1a(0.35f + c.feat.beat * 0.3f),
-                        c.color2a(0.18f),
+                        c.glowColor1(0.35f + c.feat.beat * 0.3f),
+                        c.glowColor2(0.18f),
                         Color.Transparent
                     ),
                     center = Offset(c.cx, c.cy),
@@ -1693,12 +1732,12 @@ object VisualizerEngine {
             val x2 = c.cx + cos(angle) * endR
             val y2 = c.cy + sin(angle) * endR
 
-            if (c.state.glow) {
+            if (c.state.glow && c.state.glowIntensity > 0f) {
                 s.drawLine(
-                    color = c.color1a(0.15f + v * 0.3f),
+                    color = c.glowColor1(0.15f + v * 0.3f),
                     start = Offset(x1, y1),
                     end = Offset(x2, y2),
-                    strokeWidth = c.state.lineWidth * 2.5f,
+                    strokeWidth = c.glowWidth(c.state.lineWidth * 2.5f),
                     cap = StrokeCap.Round
                 )
             }
@@ -1770,12 +1809,12 @@ object VisualizerEngine {
             val x2 = c.cx + cos(angle) * endR
             val y2 = c.cy + sin(angle) * endR
 
-            if (c.state.glow) {
+            if (c.state.glow && c.state.glowIntensity > 0f) {
                 s.drawLine(
-                    color = c.color1a(0.2f + v * 0.4f),
+                    color = c.glowColor1(0.2f + v * 0.4f),
                     start = Offset(x1, y1),
                     end = Offset(x2, y2),
-                    strokeWidth = c.state.lineWidth * 3.5f,
+                    strokeWidth = c.glowWidth(c.state.lineWidth * 3.5f),
                     cap = StrokeCap.Round
                 )
             }
@@ -1819,12 +1858,12 @@ object VisualizerEngine {
             val x = c.cx - t * maxHalf
             val barW = (maxHalf / samples) * 0.55f
 
-            if (c.state.glow) {
+            if (c.state.glow && c.state.glowIntensity > 0f) {
                 s.drawLine(
-                    color = c.color1a(0.15f + v * 0.3f),
+                    color = c.glowColor1(0.15f + v * 0.3f),
                     start = Offset(x, midY - h),
                     end = Offset(x, midY + h),
-                    strokeWidth = barW * 3f,
+                    strokeWidth = c.glowWidth(barW * 3f),
                     cap = StrokeCap.Round
                 )
             }
@@ -1845,12 +1884,12 @@ object VisualizerEngine {
             val x = c.cx + t * maxHalf
             val barW = (maxHalf / samples) * 0.55f
 
-            if (c.state.glow) {
+            if (c.state.glow && c.state.glowIntensity > 0f) {
                 s.drawLine(
-                    color = c.color2a(0.15f + v * 0.3f),
+                    color = c.glowColor2(0.15f + v * 0.3f),
                     start = Offset(x, midY - h),
                     end = Offset(x, midY + h),
-                    strokeWidth = barW * 3f,
+                    strokeWidth = c.glowWidth(barW * 3f),
                     cap = StrokeCap.Round
                 )
             }
@@ -1887,12 +1926,9 @@ object VisualizerEngine {
         val left = c.cx - size
         val top = c.cy - size
 
-        val rotKey = c.instanceKey
-        val prevRot = imageRotation[rotKey] ?: 0f
         val newRot = if (c.state.imageIdleRotation && c.state.showImage) {
-            (prevRot + c.state.imageIdleSpeed) % 360f
+            (c.elapsed * 60f * c.state.imageIdleSpeed) % 360f
         } else 0f
-        imageRotation[rotKey] = newRot
 
         val circlePath = Path().apply {
             addOval(Rect(left, top, left + size * 2, top + size * 2))
@@ -2134,10 +2170,18 @@ object VisualizerEngine {
         backgroundImages.remove(instanceKey)
     }
 
+    fun clearAnimationState(instanceKey: String) {
+        smoothBass.remove(instanceKey)
+        smoothMid.remove(instanceKey)
+        smoothTreble.remove(instanceKey)
+        smoothRms.remove(instanceKey)
+        smoothBeat.remove(instanceKey)
+    }
+
     @Synchronized
     fun clearCache() {
         smoothBass.clear(); smoothMid.clear(); smoothTreble.clear()
-        smoothRms.clear(); smoothBeat.clear(); imageRotation.clear()
+        smoothRms.clear(); smoothBeat.clear()
         centerImages.clear()
         backgroundImages.clear()
     }
