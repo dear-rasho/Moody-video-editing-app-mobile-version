@@ -50,6 +50,7 @@ import kotlin.math.abs
 @Composable
 fun TransformPanel(
     clipName: String,
+    clipId: String? = null,
     hasClipSelected: Boolean,
     base: TransformValues,
     keyframeMap: Map<String, List<Keyframe>>,
@@ -70,6 +71,7 @@ fun TransformPanel(
     if (showGraph) {
         KeyframeGraphDialog(
             clipName = clipName,
+            clipId = clipId,
             keyframeMap = keyframeMap,
             clipDurationSec = clipDurationSec,
             onUpdateKeyframe = onUpdateKeyframe,

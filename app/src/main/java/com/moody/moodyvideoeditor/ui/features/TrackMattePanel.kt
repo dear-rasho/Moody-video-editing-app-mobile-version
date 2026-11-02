@@ -37,6 +37,7 @@ import com.moody.moodyvideoeditor.ui.components.KeyframeGraphDialog
 
 @Composable
 fun TrackMattePanel(
+    clipId: String? = null,
     textState: TextState?,
     onPickTexture: () -> Unit,
     onTextStateChange: (TextState) -> Unit,
@@ -54,6 +55,7 @@ fun TrackMattePanel(
     if (showKeyframeGraph) {
         KeyframeGraphDialog(
             clipName = "Text Texture",
+            clipId = clipId,
             keyframeMap = keyframeMap.filterKeys { it.startsWith("textTexture.") },
             clipDurationSec = clipDurationSec,
             onUpdateKeyframe = onUpdateKeyframe,

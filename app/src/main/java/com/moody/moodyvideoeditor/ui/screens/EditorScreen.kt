@@ -136,6 +136,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.data.KeyframeLibrary
 private data class MediaInfo(
     val name: String,
     val durationMs: Long,
@@ -513,14 +514,10 @@ fun EditorScreen(
             exoPlayer.prepare()
         }
 
-        val speed = activeClip.speed.coerceAtLeast(0.01f)
         val playheadOffset = (playheadMs - activeClip.timelineStartMs)
-            .coerceAtLeast(0L)
-        val localMs = activeClip.sourceStartMs + (playheadOffset * speed).toLong()
-        val clampedLocal = localMs.coerceIn(
-            activeClip.sourceStartMs,
-            activeClip.sourceEndMs
-        )
+            .coerceIn(0L, activeClip.durationMs)
+        val clampedLocal = SpeedEngine.sourcePositionAt(activeClip, playheadOffset)
+        val speed = SpeedEngine.playbackSpeedAt(activeClip, playheadOffset)
 
         val driftThreshold = (150f * speed).toLong().coerceAtLeast(80L)
         val drift = abs(exoPlayer.currentPosition - clampedLocal)
@@ -531,7 +528,7 @@ fun EditorScreen(
             }
         }
 
-        val targetSpeed = SpeedEngine.clampForExoPlayer(activeClip.speed)
+        val targetSpeed = SpeedEngine.clampForExoPlayer(speed)
         val currentSpeed = exoPlayer.playbackParameters.speed
         if (abs(currentSpeed - targetSpeed) > 0.01f) {
             try {
@@ -580,14 +577,10 @@ fun EditorScreen(
             audioExoPlayer.prepare()
         }
 
-        val speed = activeAudio.speed.coerceAtLeast(0.01f)
         val playheadOffset = (playheadMs - activeAudio.timelineStartMs)
-            .coerceAtLeast(0L)
-        val localMs = activeAudio.sourceStartMs + (playheadOffset * speed).toLong()
-        val clampedLocal = localMs.coerceIn(
-            activeAudio.sourceStartMs,
-            activeAudio.sourceEndMs
-        )
+            .coerceIn(0L, activeAudio.durationMs)
+        val clampedLocal = SpeedEngine.sourcePositionAt(activeAudio, playheadOffset)
+        val speed = SpeedEngine.playbackSpeedAt(activeAudio, playheadOffset)
 
         val driftThreshold = (150f * speed).toLong().coerceAtLeast(80L)
         val drift = abs(audioExoPlayer.currentPosition - clampedLocal)
@@ -598,7 +591,7 @@ fun EditorScreen(
             }
         }
 
-        val targetSpeed = SpeedEngine.clampForExoPlayer(activeAudio.speed)
+        val targetSpeed = SpeedEngine.clampForExoPlayer(speed)
         val currentSpeed = audioExoPlayer.playbackParameters.speed
         if (abs(currentSpeed - targetSpeed) > 0.01f) {
             try {
@@ -1045,9 +1038,32 @@ fun EditorScreen(
 
             "speed" -> SpeedPanel(
                 clipName = selected?.name ?: "",
+                clipId = selected?.id,
                 baseDurationMs = viewModel.getSelectedBaseDurationMs(),
-                currentSpeed = selected?.speed ?: 1.0f,
+                currentSpeed = selected?.let { clip ->
+                    val localMs = (state.currentPosMs - clip.timelineStartMs)
+                        .coerceIn(0L, clip.durationMs)
+                    SpeedEngine.speedAt(clip, localMs)
+                } ?: 1.0f,
                 hasClipSelected = selected != null,
+                clipDurationSec = (selected?.durationMs ?: 0L) / 1000f,
+                playheadTimeSec = selected?.let {
+                    KeyframeStore.clipLocalTimeSeconds(
+                        state.currentPosMs, it.timelineStartMs, it.durationMs
+                    )
+                } ?: 0f,
+                speedKeyframes = selected?.keyframes
+                    ?.get(KeyframeLibrary.SPEED).orEmpty(),
+                onAddOrToggleKeyframe = viewModel::toggleSpeedKeyframeAtPlayhead,
+                onUpdateKeyframe = { oldTime, newTime, newValue ->
+                    viewModel.updateKeyframeInGraph("speed", oldTime, newTime, newValue)
+                },
+                onDeleteKeyframe = { time ->
+                    viewModel.deleteKeyframeFromGraph("speed", time)
+                },
+                onSetKeyframeEase = viewModel::setSpeedKeyframeEase,
+                onGraphEditStart = viewModel::beginKeyframeGraphEdit,
+                onGraphEditEnd = viewModel::commitKeyframeGraphEdit,
                 onSpeedChanged = { viewModel.setSpeed(it) },
                 onReset = { viewModel.resetSpeed() },
                 onClose = { activePanel = null }
@@ -1103,6 +1119,7 @@ fun EditorScreen(
             "track_matte" -> {
                 val selectedText = selected?.takeIf { it.isTextClip }
                 TrackMattePanel(
+                    clipId = selectedText?.id,
                     textState = selectedText?.textState,
                     onPickTexture = {
                         if (selectedText != null) {
@@ -1566,6 +1583,7 @@ fun EditorScreen(
                     clipName = if (state.multiSelectedIds.size > 1)
                         "${state.multiSelectedIds.size} clips"
                     else selected?.name ?: "",
+                    clipId = selected?.id,
                     hasClipSelected = hasAnySelected,
                     base = base,
                     keyframeMap = selected?.keyframes ?: emptyMap(),
@@ -1595,22 +1613,16 @@ fun EditorScreen(
             }
 
             "keyframe_easing" -> {
-                val playheadTimeSec = selected?.let {
-                    KeyframeStore.clipLocalTimeSeconds(
-                        state.currentPosMs, it.timelineStartMs, it.durationMs
-                    )
-                } ?: 0f
                 KeyframeEasingPanel(
+                    clipName = selected?.name ?: "Keyframes",
                     clipId = selected?.id,
                     keyframeMap = selected?.keyframes ?: emptyMap(),
-                    playheadTimeSec = playheadTimeSec,
-                    hasTimelineKeyframes = state.clips.any {
-                        KeyframeStore.hasAnyKeyframes(it.keyframes)
-                    },
-                    onApplySelected = { ease ->
-                        viewModel.setEaseAtPlayhead(ease)
-                    },
-                    onApplyTimeline = viewModel::setTimelineKeyframeEases,
+                    clipDurationSec = (selected?.durationMs ?: 1000L) / 1000f,
+                    onUpdateKeyframe = viewModel::updateKeyframeInGraph,
+                    onDeleteKeyframe = viewModel::deleteKeyframeFromGraph,
+                    onSetKeyframeEase = viewModel::setKeyframeEaseInGraph,
+                    onKeyframeEditStart = viewModel::beginKeyframeGraphEdit,
+                    onKeyframeEditEnd = viewModel::commitKeyframeGraphEdit,
                     onClose = { activePanel = null }
                 )
             }

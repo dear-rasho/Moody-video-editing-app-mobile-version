@@ -59,6 +59,7 @@ fun SpotlightPanel(
     if (showGraph) {
         KeyframeGraphDialog(
             clipName = "Spotlight",
+            clipId = editLayerId,
             keyframeMap = keyframeMap,
             clipDurationSec = clipDurationSec,
             onUpdateKeyframe = onUpdateKeyframe,

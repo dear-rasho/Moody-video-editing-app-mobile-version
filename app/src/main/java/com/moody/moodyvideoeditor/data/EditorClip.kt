@@ -3,6 +3,7 @@ package com.moody.moodyvideoeditor.data
 import android.net.Uri
 import java.util.UUID
 import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.utils.SpeedEngine
 import com.moody.moodyvideoeditor.utils.TimelineZoom
 
 data class EditorClip(
@@ -67,7 +68,9 @@ data class EditorClip(
     val keyframes: Map<String, List<Keyframe>> = emptyMap()
 ) {
     val sourceDurationMs: Long get() = sourceEndMs - sourceStartMs
-    val durationMs: Long get() = (sourceDurationMs / speed).toLong()
+    // Speed keyframes change only their timeline segments; duration follows their integrated rate.
+    val durationMs: Long
+        get() = SpeedEngine.durationMsFor(sourceDurationMs, speed, keyframes)
     val timelineEndMs: Long get() = timelineStartMs + durationMs
 
     val isVisualClip: Boolean

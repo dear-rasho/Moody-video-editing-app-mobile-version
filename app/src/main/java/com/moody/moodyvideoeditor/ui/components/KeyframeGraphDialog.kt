@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,8 +20,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -33,12 +37,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.Keyframe
 import com.moody.moodyvideoeditor.data.KeyframeLibrary
 import com.moody.moodyvideoeditor.utils.KeyframeStore
+import com.moody.moodyvideoeditor.utils.SpeedEngine
 import kotlin.math.abs
 
 // Keyframe Graph — fullscreen, horizontal-scrollable time axis.
@@ -46,6 +52,7 @@ import kotlin.math.abs
 @Composable
 fun KeyframeGraphDialog(
     clipName: String,
+    clipId: String? = null,
     keyframeMap: Map<String, List<Keyframe>>,
     clipDurationSec: Float,
     readOnly: Boolean = false,
@@ -54,6 +61,8 @@ fun KeyframeGraphDialog(
     selectedKeyframe: Pair<String, Float>? = null,
     selectAllKeyframes: Boolean = false,
     onSelectKeyframe: (prop: String, time: Float) -> Unit = { _, _ -> },
+    onSetKeyframeEase: (prop: String, time: Float, ease: String) -> Unit = { _, _, _ -> },
+    enableEaseEditing: Boolean = false,
     onKeyframeEditStart: () -> Unit = {},
     onKeyframeEditEnd: () -> Unit = {},
     onClose: () -> Unit
@@ -75,6 +84,7 @@ fun KeyframeGraphDialog(
         "cropR" to Color(0xFFFB923C),
         "cropT" to Color(0xFFFACC15),
         "cropB" to Color(0xFF84CC16),
+        KeyframeLibrary.SPEED to Color(0xFF38BDF8),
         "spotlight.sourceX" to Color(0xFFFFC857),
         "spotlight.sourceY" to Color(0xFFFFE08A),
         "spotlight.targetX" to Color(0xFF3DD6D0),
@@ -91,15 +101,17 @@ fun KeyframeGraphDialog(
         "spotlight.targetColorB" to Color(0xFF9BB9FF)
     )
 
-    val propRanges = remember(keyframeMap, activeProps) {
+    val propRanges = remember(clipId, clipName, activeProps) {
         activeProps.associateWith { prop ->
             val kfs = keyframeMap[prop] ?: emptyList()
-            if (kfs.isEmpty()) 0f to 1f
+            if (prop == KeyframeLibrary.SPEED) {
+                SpeedEngine.MIN_SPEED to SpeedEngine.MAX_SPEED
+            } else if (kfs.isEmpty()) 0f to 1f
             else {
                 val minV = kfs.minOf { it.value }
                 val maxV = kfs.maxOf { it.value }
-                if (abs(maxV - minV) < 0.01f) (minV - 1f) to (maxV + 1f)
-                else minV to maxV
+                val padding = maxOf((maxV - minV) * 0.15f, abs(minV) * 0.05f, 0.1f)
+                (minV - padding) to (maxV + padding)
             }
         }
     }
@@ -107,12 +119,20 @@ fun KeyframeGraphDialog(
     var dragProp by remember { mutableStateOf<String?>(null) }
     var dragOriginalTime by remember { mutableStateOf(0f) }
     var selectedGraphKeyframe by remember { mutableStateOf<Pair<String, Float>?>(null) }
-    val activeSelection = selectedGraphKeyframe ?: selectedKeyframe
-
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var selectedProp by remember(activeProps) {
+        mutableStateOf(
+            selectedKeyframe?.first?.takeIf { it in activeProps } ?: activeProps.firstOrNull()
+        )
+    }
+    val graphDurationSec by remember(clipId, clipName) {
+        mutableFloatStateOf(clipDurationSec.coerceAtLeast(0.1f))
+    }
+    val dragHitRadiusPx = with(LocalDensity.current) { 40.dp.toPx() }
+    val activeSelection = selectedGraphKeyframe
+        ?: selectedKeyframe?.takeIf { it.first == selectedProp }
+    val visibleProps = selectedProp?.let(::listOf).orEmpty()
     val hScroll = rememberScrollState()
-
-    // 80 dp per second → canvas width
-    val canvasWidthDp = (clipDurationSec * 80f).coerceAtLeast(600f)
 
     Box(
         modifier = Modifier
@@ -138,7 +158,7 @@ fun KeyframeGraphDialog(
                         "${clipName.take(20)}  •  ${
                             String.format(
                                 "%.2fs",
-                                clipDurationSec
+                                graphDurationSec
                             )
                         }  •  swipe to scroll",
                         color = Color(0xFF888888), fontSize = 10.sp
@@ -177,7 +197,7 @@ fun KeyframeGraphDialog(
                 }
             }
 
-            // LEGEND
+            // PROPERTY SELECTOR
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -193,7 +213,22 @@ fun KeyframeGraphDialog(
                     )
                 } else {
                     activeProps.forEach { prop ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (selectedProp == prop) Color(0xFF33245C)
+                                    else Color(0xFF202020)
+                                )
+                                .pointerInput(prop) {
+                                    detectTapGestures {
+                                        selectedProp = prop
+                                        selectedGraphKeyframe = null
+                                    }
+                                }
+                                .padding(horizontal = 10.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Box(
                                 modifier = Modifier
                                     .size(8.dp)
@@ -202,12 +237,42 @@ fun KeyframeGraphDialog(
                             )
                             Spacer(Modifier.width(3.dp))
                             Text(
-                                prop, color = Color(0xFFCCCCCC), fontSize = 10.sp,
+                                prop,
+                                color = if (selectedProp == prop) Color.White else Color(0xFFCCCCCC),
+                                fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
                     }
                 }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF141414))
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("Zoom", color = Color(0xFFAAAAAA), fontSize = 10.sp)
+                Slider(
+                    value = zoom,
+                    onValueChange = { zoom = it },
+                    valueRange = 0.5f..4f,
+                    modifier = Modifier.weight(1f),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color(0xFF9B72FF),
+                        activeTrackColor = Color(0xFF9B72FF),
+                        inactiveTrackColor = Color(0xFF383838)
+                    )
+                )
+                Text(
+                    "${"%.1f".format(zoom)}x",
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    modifier = Modifier.width(34.dp)
+                )
             }
 
             // SCROLLABLE CANVAS
@@ -240,7 +305,12 @@ fun KeyframeGraphDialog(
                         }
                     }
                 } else {
-                    Box(
+                    BoxWithConstraints(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        val canvasWidthDp =
+                            maxOf(maxWidth.value, graphDurationSec * 80f * zoom)
+                        Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .horizontalScroll(hScroll)
@@ -249,7 +319,9 @@ fun KeyframeGraphDialog(
                             modifier = Modifier
                                 .width(canvasWidthDp.dp)
                                 .fillMaxSize()
-                                .pointerInput(activeProps, propRanges, clipDurationSec) {
+                                .pointerInput(
+                                    visibleProps, propRanges, graphDurationSec, dragHitRadiusPx
+                                ) {
                                     detectTapGestures { offset ->
                                         val padL = 44f
                                         val padT = 20f
@@ -258,11 +330,11 @@ fun KeyframeGraphDialog(
                                         val plotW = size.width - padL - padR
                                         val plotH = size.height - padT - padB
                                         var best: Pair<String, Float>? = null
-                                        var bestDistSq = 26f * 26f
-                                        activeProps.forEach { prop ->
+                                        var bestDistSq = dragHitRadiusPx * dragHitRadiusPx
+                                        visibleProps.forEach { prop ->
                                             val range = propRanges[prop] ?: return@forEach
                                             (keyframeMap[prop] ?: emptyList()).forEach { keyframe ->
-                                                val x = padL + keyframe.time / clipDurationSec * plotW
+                                                val x = padL + keyframe.time / graphDurationSec * plotW
                                                 val y = padT + plotH * (
                                                         1f - (keyframe.value - range.first) /
                                                                 (range.second - range.first)
@@ -278,11 +350,14 @@ fun KeyframeGraphDialog(
                                         }
                                         best?.let {
                                             selectedGraphKeyframe = it
+                                            selectedProp = it.first
                                             onSelectKeyframe(it.first, it.second)
                                         }
                                     }
                                 }
-                                .pointerInput(activeProps, propRanges, clipDurationSec) {
+                                .pointerInput(
+                                    visibleProps, propRanges, graphDurationSec, dragHitRadiusPx
+                                ) {
                                     if (!readOnly) {
                                     detectDragGestures(
                                         onDragStart = { offset ->
@@ -297,18 +372,20 @@ fun KeyframeGraphDialog(
                                             var bestTime = 0f
                                             var bestDistSq = Float.MAX_VALUE
 
-                                            activeProps.forEach { prop ->
+                                            visibleProps.forEach { prop ->
                                                 val range = propRanges[prop] ?: return@forEach
                                                 val kfs = keyframeMap[prop] ?: return@forEach
                                                 kfs.forEach { kf ->
                                                     val px =
-                                                        padL + (kf.time / clipDurationSec) * plotW
+                                                        padL + (kf.time / graphDurationSec) * plotW
                                                     val py = padT + plotH * (1f -
                                                             (kf.value - range.first) / (range.second - range.first))
                                                     val dx = offset.x - px
                                                     val dy = offset.y - py
                                                     val d2 = dx * dx + dy * dy
-                                                    if (d2 < bestDistSq && d2 < 26f * 26f) {
+                                                    if (d2 < bestDistSq &&
+                                                        d2 < dragHitRadiusPx * dragHitRadiusPx
+                                                    ) {
                                                         bestDistSq = d2
                                                         bestProp = prop
                                                         bestTime = kf.time
@@ -319,6 +396,8 @@ fun KeyframeGraphDialog(
                                             if (bestProp != null) {
                                                 dragProp = bestProp
                                                 dragOriginalTime = bestTime
+                                                selectedProp = bestProp
+                                                selectedGraphKeyframe = bestProp to bestTime
                                                 onKeyframeEditStart()
                                             }
                                         },
@@ -335,7 +414,8 @@ fun KeyframeGraphDialog(
                                                 propRanges[prop] ?: return@detectDragGestures
 
                                             val newTime = ((change.position.x - padL) / plotW *
-                                                    clipDurationSec).coerceIn(0f, clipDurationSec)
+                                                    graphDurationSec)
+                                                .coerceIn(0f, graphDurationSec)
                                             val normY = (1f - (change.position.y - padT) / plotH)
                                                 .coerceIn(0f, 1f)
                                             val newValue =
@@ -370,11 +450,11 @@ fun KeyframeGraphDialog(
                             val plotH = size.height - padT - padB
 
                             // HORIZONTAL GRID (per second)
-                            val totalSeconds = clipDurationSec.toInt() + 1
+                            val totalSeconds = graphDurationSec.toInt() + 1
                             for (s in 0..totalSeconds) {
                                 val sec = s.toFloat()
-                                if (sec > clipDurationSec) break
-                                val x = padL + (sec / clipDurationSec) * plotW
+                                if (sec > graphDurationSec) break
+                                val x = padL + (sec / graphDurationSec) * plotW
                                 drawLine(
                                     color = if (s % 5 == 0) Color(0xFF333333) else Color(0xFF1A1A1A),
                                     start = Offset(x, padT),
@@ -403,7 +483,7 @@ fun KeyframeGraphDialog(
                             )
 
                             // CURVES + DOTS
-                            activeProps.forEach { prop ->
+                            visibleProps.forEach { prop ->
                                 val kfs = (keyframeMap[prop] ?: emptyList()).sortedBy { it.time }
                                 if (kfs.isEmpty()) return@forEach
                                 val color = propColors[prop] ?: Color.White
@@ -414,16 +494,16 @@ fun KeyframeGraphDialog(
                                 val path = Path()
                                 val samples = 200
                                 for (i in 0..samples) {
-                                    val t = clipDurationSec * (i / samples.toFloat())
+                                    val t = graphDurationSec * (i / samples.toFloat())
                                     val v = KeyframeStore.sample(keyframeMap, prop, t, kfs[0].value)
-                                    val x = padL + (t / clipDurationSec) * plotW
+                                    val x = padL + (t / graphDurationSec) * plotW
                                     val y = padT + plotH * (1f - (v - range.first) / span)
                                     if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
                                 }
                                 drawPath(path, color, style = Stroke(width = 2.5f))
 
                                 kfs.forEach { kf ->
-                                    val x = padL + (kf.time / clipDurationSec) * plotW
+                                    val x = padL + (kf.time / graphDurationSec) * plotW
                                     val y = padT + plotH * (1f - (kf.value - range.first) / span)
                                     val isActive = dragProp == prop &&
                                             abs(kf.time - dragOriginalTime) < 0.05f
@@ -475,6 +555,53 @@ fun KeyframeGraphDialog(
 
                             // TIME LABELS
                             // (Canvas can't draw text; skip)
+                        }
+                    }
+                    }
+                }
+            }
+
+            val selectedFrame = activeSelection?.let { (prop, time) ->
+                keyframeMap[prop].orEmpty().minByOrNull { abs(it.time - time) }
+                    ?.takeIf { abs(it.time - time) < 0.1f }
+            }
+            if (enableEaseEditing && !readOnly &&
+                activeSelection != null && selectedFrame != null
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF141414))
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        "linear" to "Linear",
+                        "easeIn" to "Ease In",
+                        "easeOut" to "Ease Out",
+                        "easeInOut" to "Ease In-Out"
+                    ).forEach { (ease, label) ->
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(7.dp))
+                                .background(
+                                    if (selectedFrame.ease == ease) Color(0xFF5B3DA5)
+                                    else Color(0xFF282828)
+                                )
+                                .pointerInput(activeSelection, ease) {
+                                    detectTapGestures {
+                                        onSetKeyframeEase(
+                                            activeSelection.first,
+                                            activeSelection.second,
+                                            ease
+                                        )
+                                    }
+                                }
+                                .padding(horizontal = 10.dp, vertical = 7.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(label, color = Color.White, fontSize = 10.sp)
                         }
                     }
                 }

@@ -315,6 +315,24 @@ class EditorViewModel : ViewModel() {
         _state.update { it.copy(clips = list) }
     }
 
+    private fun syncSpeedKeyframes(sourceClip: EditorClip, sourceFrames: List<Keyframe>) {
+        val linkedId = sourceClip.linkedId
+        val clips = _state.value.clips.map { clip ->
+            if (clip.id != sourceClip.id && (linkedId == null || clip.linkedId != linkedId)) {
+                return@map clip
+            }
+
+            val frames = sourceFrames.sortedBy { it.time }
+            val keyframes = if (frames.isEmpty()) {
+                clip.keyframes - KeyframeLibrary.SPEED
+            } else {
+                clip.keyframes + (KeyframeLibrary.SPEED to frames)
+            }
+            clip.copy(keyframes = keyframes)
+        }
+        _state.update { it.copy(clips = clips) }
+    }
+
     private fun forEachSelectedClip(transform: (EditorClip) -> EditorClip) {
         val s = _state.value
         val targetIds: Set<String> = if (s.multiSelectedIds.isNotEmpty()) {
@@ -2137,15 +2155,118 @@ class EditorViewModel : ViewModel() {
             s.clips.filter { it.linkedId == c.linkedId }.forEach { allIds.add(it.id) }
         }
         val list = s.clips.toMutableList()
+        val selected = s.selectedClip
+        val hasSpeedRamp = selected?.keyframes?.get(KeyframeLibrary.SPEED)
+            .orEmpty().isNotEmpty()
+        val rampTimeSec = selected?.let {
+            KeyframeStore.clipLocalTimeSeconds(s.currentPosMs, it.timelineStartMs, it.durationMs)
+        } ?: 0f
+        val selectedSpeedFrames = if (selected != null && hasSpeedRamp) {
+            KeyframeStore.autoKeyframeIfActive(
+                selected.keyframes,
+                KeyframeLibrary.SPEED,
+                rampTimeSec,
+                clamped
+            )[KeyframeLibrary.SPEED].orEmpty()
+        } else emptyList()
         for (i in list.indices) {
-            if (list[i].id in allIds) list[i] = list[i].copy(speed = clamped)
+            if (list[i].id in allIds) {
+                val clip = list[i]
+                list[i] = if (clip.id == selected?.id && hasSpeedRamp) {
+                    clip.copy(
+                        speed = clamped,
+                        keyframes = clip.keyframes + (KeyframeLibrary.SPEED to selectedSpeedFrames)
+                    )
+                } else if (selected?.linkedId != null && clip.linkedId == selected.linkedId) {
+                    val linkedFrames = selectedSpeedFrames.sortedBy { it.time }
+                    val keyframes = if (linkedFrames.isEmpty()) {
+                        clip.keyframes - KeyframeLibrary.SPEED
+                    } else {
+                        clip.keyframes + (KeyframeLibrary.SPEED to linkedFrames)
+                    }
+                    clip.copy(speed = clamped, keyframes = keyframes)
+                } else {
+                    clip.copy(speed = clamped)
+                }
+            }
         }
         _state.update { it.copy(clips = list, speed = clamped) }
     }
 
     fun resetSpeed() {
+        val s = _state.value
+        val selectedIds = if (s.multiSelectedIds.isNotEmpty()) {
+            s.multiSelectedIds
+        } else setOfNotNull(s.selectedClipId)
+        val linkedIds = s.clips
+            .filter { it.id in selectedIds && it.linkedId != null }
+            .mapNotNull { linkedClip -> linkedClip.linkedId }
+            .toSet()
+        val targetIds = selectedIds + s.clips
+            .filter { it.linkedId in linkedIds }
+            .map { it.id }
+        if (targetIds.isEmpty()) return
         pushHistory()
-        setSpeed(1.0f)
+        val updated = s.clips.map { clip ->
+            if (clip.id in targetIds) {
+                clip.copy(
+                    speed = SpeedEngine.DEFAULT_SPEED,
+                    keyframes = clip.keyframes - KeyframeLibrary.SPEED
+                )
+            } else clip
+        }
+        _state.update { it.copy(clips = updated, speed = SpeedEngine.DEFAULT_SPEED) }
+        updateHistoryFlags()
+    }
+
+    fun toggleSpeedKeyframeAtPlayhead() {
+        val clip = _state.value.selectedClip ?: return
+        val timeSec = KeyframeStore.clipLocalTimeSeconds(
+            _state.value.currentPosMs, clip.timelineStartMs, clip.durationMs
+        )
+        val speedTrack = clip.keyframes[KeyframeLibrary.SPEED].orEmpty()
+        val updatedKeyframes = if (KeyframeStore.hasKeyframeAt(
+                clip.keyframes, KeyframeLibrary.SPEED, timeSec
+            )
+        ) {
+            KeyframeStore.removeKeyframe(clip.keyframes, KeyframeLibrary.SPEED, timeSec)
+        } else {
+            var keyframes = clip.keyframes
+            if (speedTrack.isEmpty()) {
+                val durationSec = clip.durationMs / 1000f
+                keyframes = KeyframeStore.setKeyframe(
+                    keyframes, KeyframeLibrary.SPEED, 0f, clip.speed
+                )
+                if (durationSec > 0.05f) {
+                    keyframes = KeyframeStore.setKeyframe(
+                        keyframes, KeyframeLibrary.SPEED, durationSec, clip.speed
+                    )
+                }
+            }
+            KeyframeStore.setKeyframe(
+                keyframes,
+                KeyframeLibrary.SPEED,
+                timeSec,
+                SpeedEngine.speedAt(clip, (timeSec * 1000f).toLong())
+            )
+        }
+        if (updatedKeyframes == clip.keyframes) return
+        pushHistory()
+        syncSpeedKeyframes(
+            clip,
+            updatedKeyframes[KeyframeLibrary.SPEED].orEmpty()
+        )
+        updateHistoryFlags()
+    }
+
+    fun setSpeedKeyframeEase(timeSec: Float, ease: String) {
+        val clip = _state.value.selectedClip ?: return
+        val frames = clip.keyframes[KeyframeLibrary.SPEED].orEmpty().toMutableList()
+        val index = frames.indices.minByOrNull { abs(frames[it].time - timeSec) } ?: return
+        if (abs(frames[index].time - timeSec) >= 0.08f || frames[index].ease == ease) return
+        frames[index] = frames[index].copy(ease = ease)
+        pushHistory()
+        syncSpeedKeyframes(clip, frames)
         updateHistoryFlags()
     }
 
@@ -3696,35 +3817,75 @@ class EditorViewModel : ViewModel() {
     ) {
         val sel = _state.value.selectedClip ?: return
         val list = KeyframeStore.getKeyframes(sel.keyframes, prop).toMutableList()
-        val idx = list.indexOfFirst { abs(it.time - oldTime) < 0.08f }
-        if (idx < 0) return
-        val clipDurSec = sel.durationMs / 1000f
-        val t = newTime.coerceIn(0f, clipDurSec)
-        val filtered = list.filterIndexed { i, kf ->
-            i == idx || abs(kf.time - t) > 0.08f
-        }.toMutableList()
-        val realIdx = filtered.indexOfFirst { abs(it.time - oldTime) < 0.08f }
-        if (realIdx >= 0) {
-            filtered[realIdx] = Keyframe(t, newValue, list[idx].ease)
+        val idx = list.indices.minByOrNull { abs(list[it].time - oldTime) } ?: return
+        if (abs(list[idx].time - oldTime) >= 0.08f) return
+        val clipDurationSec = (sel.durationMs / 1000f).coerceAtLeast(0f)
+        var t = if (prop == KeyframeLibrary.SPEED) {
+            newTime.coerceAtLeast(0f)
         } else {
-            filtered.add(Keyframe(t, newValue, list[idx].ease))
+            newTime.coerceIn(0f, clipDurationSec)
         }
-        filtered.sortBy { it.time }
+        val collision = list.withIndex()
+            .filter { it.index != idx }
+            .minByOrNull { abs(it.value.time - t) }
+        if (collision != null && abs(collision.value.time - t) < 0.005f) {
+            val nudge = if (t >= collision.value.time) 0.005f else -0.005f
+            t = (collision.value.time + nudge).coerceAtLeast(0f)
+        }
+        val updatedFrames = list.toMutableList()
+        updatedFrames[idx] = list[idx].copy(time = t, value = newValue)
+        updatedFrames.sortBy { it.time }
 
         if (keyframeGraphBaseline == null) pushHistory()
-        updateClipDirect(sel.id) {
-            it.copy(keyframes = it.keyframes + (prop to filtered))
+        if (prop == KeyframeLibrary.SPEED) {
+            syncSpeedKeyframes(sel, updatedFrames)
+        } else {
+            updateClipDirect(sel.id) {
+                it.copy(keyframes = it.keyframes + (prop to updatedFrames))
+            }
+        }
+        updateHistoryFlags()
+    }
+
+    fun setKeyframeEaseInGraph(prop: String, timeSec: Float, ease: String) {
+        val clip = _state.value.selectedClip ?: return
+        val frames = clip.keyframes[prop].orEmpty().toMutableList()
+        val index = frames.indices.minByOrNull { abs(frames[it].time - timeSec) } ?: return
+        if (abs(frames[index].time - timeSec) >= 0.08f || frames[index].ease == ease) return
+        frames[index] = frames[index].copy(ease = ease)
+        pushHistory()
+        if (prop == KeyframeLibrary.SPEED) {
+            syncSpeedKeyframes(clip, frames)
+        } else {
+            updateClipDirect(clip.id) {
+                it.copy(keyframes = it.keyframes + (prop to frames))
+            }
         }
         updateHistoryFlags()
     }
 
     fun deleteKeyframeFromGraph(prop: String, time: Float) {
         val sel = _state.value.selectedClip ?: return
-        val updatedKeyframes = KeyframeStore.removeKeyframe(sel.keyframes, prop, time)
+        val frames = sel.keyframes[prop].orEmpty()
+        val index = frames.indices.minByOrNull { abs(frames[it].time - time) } ?: return
+        if (abs(frames[index].time - time) >= 0.08f) return
+        val updatedFrames = frames.toMutableList().apply { removeAt(index) }
+        val updatedKeyframes = if (updatedFrames.isEmpty()) {
+            sel.keyframes - prop
+        } else {
+            sel.keyframes + (prop to updatedFrames)
+        }
         if (updatedKeyframes == sel.keyframes) return
         pushHistory()
-        updateClipDirect(sel.id) {
-            it.copy(keyframes = updatedKeyframes)
+        if (prop == KeyframeLibrary.SPEED) {
+            syncSpeedKeyframes(
+                sel,
+                updatedKeyframes[KeyframeLibrary.SPEED].orEmpty()
+            )
+        } else {
+            updateClipDirect(sel.id) {
+                it.copy(keyframes = updatedKeyframes)
+            }
         }
         updateHistoryFlags()
     }
