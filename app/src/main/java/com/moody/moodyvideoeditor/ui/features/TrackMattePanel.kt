@@ -31,9 +31,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
 import com.moody.moodyvideoeditor.data.Keyframe
+import com.moody.moodyvideoeditor.data.KeyframeEaseScope
 import com.moody.moodyvideoeditor.data.TextState
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
-import com.moody.moodyvideoeditor.ui.components.KeyframeGraphDialog
 
 @Composable
 fun TrackMattePanel(
@@ -44,29 +44,10 @@ fun TrackMattePanel(
     onToggleKeyframe: (String) -> Unit,
     hasKeyframeAtPlayhead: (String) -> Boolean,
     keyframeMap: Map<String, List<Keyframe>>,
-    clipDurationSec: Float,
-    onUpdateKeyframe: (String, Float, Float, Float) -> Unit,
-    onDeleteKeyframe: (String, Float) -> Unit,
-    onKeyframeEditStart: () -> Unit,
-    onKeyframeEditEnd: () -> Unit,
+    playheadTimeSec: Float,
+    onApplyEasePreset: (String, KeyframeEaseScope, Float) -> Unit,
     onClose: () -> Unit
 ) {
-    var showKeyframeGraph by remember { mutableStateOf(false) }
-    if (showKeyframeGraph) {
-        KeyframeGraphDialog(
-            clipName = "Text Texture",
-            clipId = clipId,
-            keyframeMap = keyframeMap.filterKeys { it.startsWith("textTexture.") },
-            clipDurationSec = clipDurationSec,
-            onUpdateKeyframe = onUpdateKeyframe,
-            onDeleteKeyframe = onDeleteKeyframe,
-            onKeyframeEditStart = onKeyframeEditStart,
-            onKeyframeEditEnd = onKeyframeEditEnd,
-            onClose = { showKeyframeGraph = false }
-        )
-        return
-    }
-
     FeaturePanel(title = "🖼️ Track Matte", onClose = onClose) {
         Column(
             modifier = Modifier
@@ -97,9 +78,11 @@ fun TrackMattePanel(
                     onClick = onPickTexture
                 )
                 textState.textureUri?.let { uri ->
-                ActionButton(
-                    label = "◆ Select / Delete Texture Keyframes",
-                    onClick = { showKeyframeGraph = true }
+                KeyframeEasePresetsPanel(
+                    clipId = clipId,
+                    keyframeMap = keyframeMap,
+                    playheadTimeSec = playheadTimeSec,
+                    onApply = onApplyEasePreset
                 )
                 Row(
                         modifier = Modifier.fillMaxWidth(),

@@ -666,8 +666,7 @@ private fun GuideContent() {
             "Transform → Position/Scale/Rotation/Anchor",
             "◆ icon → add/remove keyframe at playhead",
             "Auto-keyframe: agar keyframes hain, values change karne pe auto-add",
-            "📊 Easing Graphs → 14 presets",
-            "📈 Full Keyframe Graph → drag points to edit"
+            "Easing presets → 14 curves; apply to one keyframe, a clip, or the timeline"
         )
     )
 

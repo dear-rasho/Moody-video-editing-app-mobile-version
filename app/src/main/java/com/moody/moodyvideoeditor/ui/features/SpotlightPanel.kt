@@ -29,9 +29,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.Keyframe
+import com.moody.moodyvideoeditor.data.KeyframeEaseScope
 import com.moody.moodyvideoeditor.data.SpotlightPresets
 import com.moody.moodyvideoeditor.data.SpotlightState
-import com.moody.moodyvideoeditor.ui.components.KeyframeGraphDialog
 import com.moody.moodyvideoeditor.ui.components.ColorPickerField
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.KeyframeStore
@@ -42,33 +42,15 @@ fun SpotlightPanel(
     initialState: SpotlightState,
     keyframeMap: Map<String, List<Keyframe>> = emptyMap(),
     currentTimeSec: Float = 0f,
-    clipDurationSec: Float = 5f,
     onToggleKeyframe: (String) -> Unit = {},
-    onUpdateKeyframe: (String, Float, Float, Float) -> Unit = { _, _, _, _ -> },
-    onDeleteKeyframe: (String, Float) -> Unit = { _, _ -> },
-    onKeyframeEditStart: () -> Unit = {},
-    onKeyframeEditEnd: () -> Unit = {},
+    onApplyEasePreset: (String, KeyframeEaseScope, Float) -> Unit = { _, _, _ -> },
     onCreate: (SpotlightState) -> Unit,
     onUpdate: (SpotlightState) -> Unit,
     onDelete: () -> Unit,
     onClose: () -> Unit
 ) {
     var spotlight by remember(editLayerId) { mutableStateOf(initialState) }
-    var showGraph by remember { mutableStateOf(false) }
     val isEditMode = editLayerId != null
-    if (showGraph) {
-        KeyframeGraphDialog(
-            clipName = "Spotlight",
-            clipId = editLayerId,
-            keyframeMap = keyframeMap,
-            clipDurationSec = clipDurationSec,
-            onUpdateKeyframe = onUpdateKeyframe,
-            onDeleteKeyframe = onDeleteKeyframe,
-            onKeyframeEditStart = onKeyframeEditStart,
-            onKeyframeEditEnd = onKeyframeEditEnd,
-            onClose = { showGraph = false }
-        )
-    }
 
     LaunchedEffect(editLayerId, initialState) {
         spotlight = initialState
@@ -95,19 +77,17 @@ fun SpotlightPanel(
                 color = Color(0xFFAAAAAA),
                 fontSize = 10.sp
             )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    "Keyframes at ${"%.2f".format(currentTimeSec)}s",
-                    color = Color(0xFFAAAAAA),
-                    fontSize = 10.sp
-                )
-                TextButton(onClick = { showGraph = true }) {
-                    Text("Open Keyframe Graph", fontSize = 10.sp)
-                }
-            }
+            Text(
+                "Keyframes at ${"%.2f".format(currentTimeSec)}s",
+                color = Color(0xFFAAAAAA),
+                fontSize = 10.sp
+            )
+            KeyframeEasePresetsPanel(
+                clipId = editLayerId,
+                keyframeMap = keyframeMap,
+                playheadTimeSec = currentTimeSec,
+                onApply = onApplyEasePreset
+            )
 
             Text("Presets", color = Color(0xFF888888), fontSize = 10.sp, fontWeight = FontWeight.Bold)
             Row(

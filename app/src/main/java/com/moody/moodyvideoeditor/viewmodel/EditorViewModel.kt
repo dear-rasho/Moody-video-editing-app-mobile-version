@@ -20,6 +20,7 @@ import com.moody.moodyvideoeditor.data.EffectState
 import com.moody.moodyvideoeditor.data.FilterState
 import com.moody.moodyvideoeditor.data.Keyframe
 import com.moody.moodyvideoeditor.data.KeyframeLibrary
+import com.moody.moodyvideoeditor.data.KeyframeEaseScope
 import com.moody.moodyvideoeditor.data.LayerShadowState
 import com.moody.moodyvideoeditor.data.MaskAnimatableProps
 import com.moody.moodyvideoeditor.data.MaskLibrary
@@ -446,8 +447,12 @@ class EditorViewModel : ViewModel() {
             return
         }
 
-        val deltaScale = if (abs(anchorBase.scale) < 0.001f) 1f
-        else (newScale / anchorBase.scale)
+        val safeNewScale = newScale.coerceIn(0f, 500f)
+        val deltaScale = if (anchorBase.scale > 0.001f) {
+            safeNewScale / anchorBase.scale
+        } else {
+            safeNewScale / 100f
+        }
         val deltaRot = newRotation - anchorBase.rotation
 
         var cx = 0f
@@ -483,7 +488,11 @@ class EditorViewModel : ViewModel() {
             val scaledY = rotY * deltaScale
             val finalX = cx + scaledX + tx
             val finalY = cy + scaledY + ty
-            val newClipScale = snap.scale * deltaScale
+            val newClipScale = if (list[i].id == anchorId) {
+                safeNewScale
+            } else {
+                snap.scale * deltaScale
+            }
             val newClipRot = snap.rotation + deltaRot
 
             val clip = list[i]
@@ -1389,8 +1398,8 @@ class EditorViewModel : ViewModel() {
 
     private fun setClipScale(clip: EditorClip, scale: Float): EditorClip = when {
         clip.isTextClip && clip.textState != null ->
-            clip.copy(textState = clip.textState.copy(scale = scale))
-        else -> clip.copy(scale = scale / 100f)
+            clip.copy(textState = clip.textState.copy(scale = scale.coerceIn(0f, 500f)))
+        else -> clip.copy(scale = scale.coerceIn(0f, 500f) / 100f)
     }
 
     private fun setClipRotation(clip: EditorClip, rotation: Float): EditorClip = when {
@@ -1406,20 +1415,24 @@ class EditorViewModel : ViewModel() {
         value: Float
     ): Map<String, List<Keyframe>> {
         if (KeyframeStore.getKeyframes(keyframes, prop).isEmpty()) return keyframes
-        return KeyframeStore.setKeyframe(keyframes, prop, timeSec, value)
+        val safeValue = if (prop in setOf("scale", "scaleX", "scaleY")) {
+            value.coerceIn(0f, 500f)
+        } else value
+        return KeyframeStore.setKeyframe(keyframes, prop, timeSec, safeValue)
     }
 
     private fun setClipTransformWithAutoKeyframes(
         clip: EditorClip,
         x: Float, y: Float, scale: Float, rotation: Float, timeSec: Float
     ): EditorClip {
-        var updated = setClipRotation(setClipScale(setClipPos(clip, x, y), scale), rotation)
+        val safeScale = scale.coerceIn(0f, 500f)
+        var updated = setClipRotation(setClipScale(setClipPos(clip, x, y), safeScale), rotation)
         if (!KeyframeStore.hasAnyKeyframes(clip.keyframes)) return updated
 
         var keyframes = clip.keyframes
         keyframes = KeyframeStore.autoKeyframeIfActive(keyframes, "x", timeSec, x)
         keyframes = KeyframeStore.autoKeyframeIfActive(keyframes, "y", timeSec, y)
-        keyframes = KeyframeStore.autoKeyframeIfActive(keyframes, "scale", timeSec, scale)
+        keyframes = KeyframeStore.autoKeyframeIfActive(keyframes, "scale", timeSec, safeScale)
         keyframes = KeyframeStore.autoKeyframeIfActive(
             keyframes, "rotation", timeSec, rotation
         )
@@ -1479,6 +1492,7 @@ class EditorViewModel : ViewModel() {
         val s = _state.value
         val anchor = s.clips.firstOrNull { it.id == anchorId } ?: return
         val isMulti = s.multiSelectedIds.size > 1 && anchorId in s.multiSelectedIds
+        val safeScale = newScale.coerceIn(0f, 500f)
 
         if (!isMulti) {
             val currentTimeSec = KeyframeStore.clipLocalTimeSeconds(
@@ -1487,10 +1501,10 @@ class EditorViewModel : ViewModel() {
             val hasAnyKf = KeyframeStore.hasAnyKeyframes(anchor.keyframes)
 
             updateClipDirect(anchorId) { c ->
-                var updated = setClipRotation(setClipScale(c, newScale), newRotation)
+                var updated = setClipRotation(setClipScale(c, safeScale), newRotation)
                 if (hasAnyKf) {
                     var kf = c.keyframes
-                    kf = setKeyframeIfTrackExists(kf, "scale", currentTimeSec, newScale)
+                    kf = setKeyframeIfTrackExists(kf, "scale", currentTimeSec, safeScale)
                     kf = setKeyframeIfTrackExists(kf, "rotation", currentTimeSec, newRotation)
                     updated = updated.copy(keyframes = kf)
                 }
@@ -1501,7 +1515,7 @@ class EditorViewModel : ViewModel() {
 
         val anchorScale = getClipScale(anchor)
         val anchorRot = getClipRotation(anchor)
-        val scaleFactor = if (abs(anchorScale) > 0.001f) newScale / anchorScale else 1f
+        val scaleFactor = if (anchorScale > 0.001f) safeScale / anchorScale else safeScale / 100f
         val rotDelta = newRotation - anchorRot
 
         val list = s.clips.toMutableList()
@@ -3517,13 +3531,13 @@ class EditorViewModel : ViewModel() {
 
             "scale" -> if (sel.isTextClip && sel.textState != null)
                 sel.copy(
-                    textState = sel.textState.copy(scale = value),
+                    textState = sel.textState.copy(scale = value.coerceIn(0f, 500f)),
                     scaleX = 1f,
                     scaleY = 1f,
                     keyframes = sel.keyframes - "scaleX" - "scaleY"
                 )
             else sel.copy(
-                scale = value / 100f,
+                scale = value.coerceIn(0f, 500f) / 100f,
                 scaleX = 1f,
                 scaleY = 1f,
                 keyframes = sel.keyframes - "scaleX" - "scaleY"
@@ -3531,14 +3545,14 @@ class EditorViewModel : ViewModel() {
 
             "scaleX" -> {
                 val liveScale = TransformApplier.resolveLive(sel, currentTimeSec).scale
-                val safeScale = if (kotlin.math.abs(liveScale) > 0.001f) liveScale else 0.001f
-                sel.copy(scaleX = value / safeScale)
+                val safeScale = liveScale.coerceAtLeast(0.001f)
+                sel.copy(scaleX = value.coerceIn(0f, 500f) / safeScale)
             }
 
             "scaleY" -> {
                 val liveScale = TransformApplier.resolveLive(sel, currentTimeSec).scale
-                val safeScale = if (kotlin.math.abs(liveScale) > 0.001f) liveScale else 0.001f
-                sel.copy(scaleY = value / safeScale)
+                val safeScale = liveScale.coerceAtLeast(0.001f)
+                sel.copy(scaleY = value.coerceIn(0f, 500f) / safeScale)
             }
 
             "rotation" -> if (sel.isTextClip && sel.textState != null)
@@ -3582,11 +3596,14 @@ class EditorViewModel : ViewModel() {
 
         val list = KeyframeStore.getKeyframes(clip.keyframes, prop).toMutableList()
         val idx = list.indexOfFirst { abs(it.time - timeSec) < 0.05f }
+        val safeValue = if (prop in setOf("scale", "scaleX", "scaleY")) {
+            value.coerceIn(0f, 500f)
+        } else value
 
         if (idx >= 0) {
-            list[idx] = list[idx].copy(value = value)
+            list[idx] = list[idx].copy(value = safeValue)
         } else {
-            list.add(Keyframe(timeSec, value, Keyframe.DEFAULT_EASE))
+            list.add(Keyframe(timeSec, safeValue, Keyframe.DEFAULT_EASE))
             list.sortBy { it.time }
         }
 
@@ -3898,6 +3915,110 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
+    fun applyKeyframeEasePreset(
+        clipId: String?,
+        ease: String,
+        scope: KeyframeEaseScope,
+        timeSec: Float
+    ): Boolean {
+        if (ease !in KeyframeLibrary.EASING_OPTIONS) return false
+        val state = _state.value
+        val clip = state.clips.firstOrNull { it.id == clipId } ?: return false
+        val sourceSpeedFrames = clip.keyframes[KeyframeLibrary.SPEED].orEmpty()
+        val hasSpeedKeyAtTime = sourceSpeedFrames.any { abs(it.time - timeSec) <= 0.1f }
+        val syncLinkedSpeed = clip.linkedId != null && when (scope) {
+            KeyframeEaseScope.SINGLE_KEYFRAME -> hasSpeedKeyAtTime
+            KeyframeEaseScope.SELECTED_CLIP -> sourceSpeedFrames.isNotEmpty()
+            KeyframeEaseScope.ENTIRE_TIMELINE -> false
+        }
+        val linkedSpeedIds = if (syncLinkedSpeed) {
+            state.clips.filter { it.id != clip.id && it.linkedId == clip.linkedId }
+                .mapTo(mutableSetOf()) { it.id }
+        } else {
+            emptySet()
+        }
+        var changed = false
+        val updatedClips = state.clips.map { target ->
+            val isLinkedSpeedOnly = target.id in linkedSpeedIds
+            val isScopeTarget = scope == KeyframeEaseScope.ENTIRE_TIMELINE ||
+                    target.id == clip.id
+            if (!isScopeTarget && !isLinkedSpeedOnly) return@map target
+
+            val updatedKeyframes = if (isLinkedSpeedOnly) {
+                val speedFrames = target.keyframes[KeyframeLibrary.SPEED].orEmpty()
+                if (speedFrames.isEmpty()) {
+                    target.keyframes
+                } else {
+                    val updatedSpeedFrames = KeyframeStore.applyEasePreset(
+                        mapOf(KeyframeLibrary.SPEED to speedFrames),
+                        ease,
+                        scope == KeyframeEaseScope.SINGLE_KEYFRAME,
+                        timeSec
+                    )[KeyframeLibrary.SPEED].orEmpty()
+                    if (updatedSpeedFrames == speedFrames) target.keyframes
+                    else target.keyframes + (KeyframeLibrary.SPEED to updatedSpeedFrames)
+                }
+            } else {
+                KeyframeStore.applyEasePreset(
+                    target.keyframes,
+                    ease,
+                    scope == KeyframeEaseScope.SINGLE_KEYFRAME,
+                    timeSec
+                )
+            }
+            val updatedMaskTracks = if (isLinkedSpeedOnly) {
+                target.mask.propertyKeyframes
+            } else {
+                KeyframeStore.applyEasePreset(
+                    target.mask.propertyKeyframes,
+                    ease,
+                    scope == KeyframeEaseScope.SINGLE_KEYFRAME,
+                    timeSec
+                )
+            }
+            val updatedLegacyMaskFrames = if (isLinkedSpeedOnly) {
+                target.mask.keyframes
+            } else {
+                val frames = target.mask.keyframes
+                if (scope != KeyframeEaseScope.SINGLE_KEYFRAME) {
+                    frames.map { if (it.ease == ease) it else it.copy(ease = ease) }
+                } else {
+                    val nearestIndex = frames.indices.minByOrNull {
+                        abs(frames[it].timeMs / 1000f - timeSec)
+                    }
+                    if (nearestIndex == null ||
+                        abs(frames[nearestIndex].timeMs / 1000f - timeSec) > 0.1f ||
+                        frames[nearestIndex].ease == ease
+                    ) frames else frames.toMutableList().apply {
+                        this[nearestIndex] = this[nearestIndex].copy(ease = ease)
+                    }
+                }
+            }
+            val updatedMask = if (updatedMaskTracks == target.mask.propertyKeyframes &&
+                updatedLegacyMaskFrames == target.mask.keyframes
+            ) {
+                target.mask
+            } else {
+                target.mask.copy(
+                    propertyKeyframes = updatedMaskTracks,
+                    keyframes = updatedLegacyMaskFrames
+                )
+            }
+            if (updatedKeyframes == target.keyframes && updatedMask == target.mask) {
+                target
+            } else {
+                changed = true
+                target.copy(keyframes = updatedKeyframes, mask = updatedMask)
+            }
+        }
+
+        if (!changed) return false
+        pushHistory()
+        _state.update { it.copy(clips = updatedClips) }
+        updateHistoryFlags()
+        return true
+    }
+
     fun deleteKeyframeFromGraph(prop: String, time: Float) {
         val sel = _state.value.selectedClip ?: return
         val frames = sel.keyframes[prop].orEmpty()
@@ -3982,7 +4103,7 @@ class EditorViewModel : ViewModel() {
     }
 
     fun setClipScale(v: Float) {
-        val clamped = v.coerceIn(0.1f, 5f)
+        val clamped = v.coerceIn(0f, 5f)
         forEachSelectedClip { it.copy(scale = clamped) }
     }
 
@@ -4311,26 +4432,26 @@ class EditorViewModel : ViewModel() {
             when (type) {
                 "pulse" -> {
                     val factor = 1f + (amount / 100f)
-                    val peakScale = (base.scale * factor).coerceIn(10f, 500f)
+                    val peakScale = (base.scale * factor).coerceIn(0f, 500f)
                     addKf(newKf, "scale", peakTime, peakScale, "easeOut")
                     addKf(newKf, "scale", returnTime, base.scale, "easeOut")
                     appliedCount++
                 }
                 "scale" -> {
-                    val peakScale = amount.coerceIn(10f, 500f)
+                    val peakScale = amount.coerceIn(0f, 500f)
                     addKf(newKf, "scale", peakTime, peakScale, "easeOut")
                     addKf(newKf, "scale", returnTime, base.scale, "easeOut")
                     appliedCount++
                 }
                 "bounce" -> {
-                    val peakScale = (base.scale * (1f + amount / 100f)).coerceIn(10f, 500f)
+                    val peakScale = (base.scale * (1f + amount / 100f)).coerceIn(0f, 500f)
                     addKf(newKf, "scale", peakTime, peakScale, "easeOutBack")
                     addKf(newKf, "scale", returnTime, base.scale, "easeOutBounce")
                     appliedCount++
                 }
                 "zoom" -> {
                     val factor = 1f + (amount / 200f)
-                    val peakScale = (base.scale * factor).coerceIn(10f, 500f)
+                    val peakScale = (base.scale * factor).coerceIn(0f, 500f)
                     addKf(newKf, "scale", peakTime, peakScale, "easeOut")
                     addKf(newKf, "scale", returnTime, base.scale, "easeIn")
                     appliedCount++
@@ -4371,7 +4492,7 @@ class EditorViewModel : ViewModel() {
                 }
                 "pop" -> {
                     val factor = 1f + (amount / 80f)
-                    val peakScale = (base.scale * factor).coerceIn(10f, 500f)
+                    val peakScale = (base.scale * factor).coerceIn(0f, 500f)
                     addKf(newKf, "scale", peakTime, peakScale, "easeOutBack")
                     addKf(newKf, "scale", returnTime, base.scale, "easeOutElastic")
                     appliedCount++

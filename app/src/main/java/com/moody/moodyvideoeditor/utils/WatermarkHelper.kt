@@ -15,9 +15,9 @@ object WatermarkHelper {
             return cachedPath
         }
 
-        val file = File(context.filesDir, "watermark_img.png")
+        val file = File(context.filesDir, "new_watermark.png")
         try {
-            val resId = context.resources.getIdentifier("watermark_img", "drawable", context.packageName)
+            val resId = context.resources.getIdentifier("new_watermark", "drawable", context.packageName)
             if (resId != 0) {
                 val bmp = BitmapFactory.decodeResource(context.resources, resId)
                 FileOutputStream(file).use { out ->

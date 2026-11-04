@@ -4,6 +4,7 @@ import com.moody.moodyvideoeditor.data.Keyframe
 import com.moody.moodyvideoeditor.data.KeyframeLibrary
 import com.moody.moodyvideoeditor.utils.KeyframeStore
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -149,5 +150,113 @@ class KeyframeStoreTest {
         assertTrue(expression.length < 20_000)
         assertEquals(expression.count { it == '(' }, expression.count { it == ')' })
         assertTrue(expression.contains("pow("))
+    }
+
+    @Test
+    fun singleKeyframeEaseAutomaticallyUpdatesEveryPropertyAtPlayhead() {
+        val map = mapOf(
+            "x" to listOf(
+                Keyframe(time = 1f, value = 40f),
+                Keyframe(time = 2f, value = 60f)
+            ),
+            "rotation" to listOf(
+                Keyframe(time = 1.04f, value = 20f),
+                Keyframe(time = 3f, value = 90f)
+            ),
+            "anchorX" to listOf(Keyframe(time = 1.3f, value = 50f))
+        )
+
+        val updated = KeyframeStore.applyEasePreset(
+            map, "easeOut", singleKeyframe = true, timeSec = 1f
+        )
+
+        assertEquals("easeOut", updated.getValue("x").first().ease)
+        assertEquals("easeOut", updated.getValue("rotation").first().ease)
+        assertEquals("linear", updated.getValue("anchorX").first().ease)
+        assertEquals("linear", updated.getValue("x").last().ease)
+    }
+
+    @Test
+    fun clipEasePresetUpdatesEveryKeyframeOnEveryProperty() {
+        val map = mapOf(
+            "x" to listOf(Keyframe(time = 0f, value = 40f), Keyframe(time = 2f, value = 60f)),
+            "rotation" to listOf(Keyframe(time = 1f, value = 90f))
+        )
+
+        val updated = KeyframeStore.applyEasePreset(
+            map, "cubicInOut", singleKeyframe = false, timeSec = 0f
+        )
+
+        assertTrue(updated.values.flatten().all { it.ease == "cubicInOut" })
+    }
+
+    @Test
+    fun ffmpegExpressionSupportsEveryEasingPresetWithoutLinearFallback() {
+        val map = mapOf(
+            "x" to listOf(
+                Keyframe(time = 0f, value = 0f),
+                Keyframe(time = 1f, value = 100f)
+            )
+        )
+        val linear = KeyframeStore.ffmpegExpression(
+            mapOf("x" to map.getValue("x").map { it.copy(ease = "linear") }),
+            "x",
+            0f
+        )
+
+        KeyframeLibrary.EASING_OPTIONS.filterNot { it == "linear" }.forEach { ease ->
+            val expression = KeyframeStore.ffmpegExpression(
+                mapOf("x" to map.getValue("x").map { it.copy(ease = ease) }),
+                "x",
+                0f
+            )
+            assertFalse("$ease fell back to linear", expression == linear)
+            assertEquals(
+                "$ease has unbalanced expression syntax",
+                expression.count { it == '(' },
+                expression.count { it == ')' }
+            )
+        }
+
+        val circular = KeyframeStore.ffmpegExpression(
+            mapOf("x" to map.getValue("x").map { it.copy(ease = "circInOut") }),
+            "x",
+            0f
+        )
+        assertTrue(circular.contains("sqrt(max(0,"))
+    }
+
+    @Test
+    fun bounceEaseUsesCompactFfmpegExpression() {
+        val expression = KeyframeStore.ffmpegExpression(
+            mapOf(
+                "scaleX" to listOf(
+                    Keyframe(time = 0.263f, value = 89.65f, ease = "bounceOut"),
+                    Keyframe(time = 2.344f, value = 32.788f),
+                    Keyframe(time = 4.425f, value = 66.92f)
+                )
+            ),
+            "scaleX",
+            100f
+        )
+
+        assertTrue(expression.contains("st(0,clip("))
+        assertTrue(expression.contains("ld(0)"))
+        assertTrue(expression.length < 2_000)
+        assertEquals(expression.count { it == '(' }, expression.count { it == ')' })
+    }
+
+    @Test
+    fun ffmpegFilterExpressionEscapesCommasWithoutDoubleEscaping() {
+        val expression = "min(max(t,0),1)"
+
+        assertEquals(
+            "min(max(t\\,0)\\,1)",
+            KeyframeStore.escapeFfmpegExpression(expression)
+        )
+        assertEquals(
+            "min(max(t\\,0)\\,1)",
+            KeyframeStore.escapeFfmpegExpression("min(max(t\\,0)\\,1)")
+        )
     }
 }

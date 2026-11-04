@@ -45,7 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.Keyframe
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
-import com.moody.moodyvideoeditor.ui.components.KeyframeGraphDialog
+import com.moody.moodyvideoeditor.data.KeyframeEaseScope
 import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.utils.TransformValues
 import kotlin.math.abs
@@ -58,33 +58,14 @@ fun TransformPanel(
     base: TransformValues,
     keyframeMap: Map<String, List<Keyframe>>,
     currentTimeSec: Float,
-    clipDurationSec: Float = 5f,
+    onApplyKeyframeEase: (String, KeyframeEaseScope, Float) -> Unit = { _, _, _ -> },
     onPropertyChanged: (String, Float) -> Unit,
     onToggleKeyframe: (String) -> Unit,
     onResetAll: () -> Unit,
-    onUpdateKeyframe: (String, Float, Float, Float) -> Unit = { _, _, _, _ -> },
-    onDeleteKeyframe: (String, Float) -> Unit = { _, _ -> },
-    onKeyframeEditStart: () -> Unit = {},
-    onKeyframeEditEnd: () -> Unit = {},
     onClose: () -> Unit
 ) {
-    var showGraph by remember { mutableStateOf(false) }
     var uniformScale by remember(clipId) { mutableStateOf(true) }
     val focusManager = LocalFocusManager.current
-
-    if (showGraph) {
-        KeyframeGraphDialog(
-            clipName = clipName,
-            clipId = clipId,
-            keyframeMap = keyframeMap,
-            clipDurationSec = clipDurationSec,
-            onUpdateKeyframe = onUpdateKeyframe,
-            onDeleteKeyframe = onDeleteKeyframe,
-            onKeyframeEditStart = onKeyframeEditStart,
-            onKeyframeEditEnd = onKeyframeEditEnd,
-            onClose = { showGraph = false }
-        )
-    }
 
     FeaturePanel(title = "🔲 Transform", onClose = onClose) {
 
@@ -98,6 +79,8 @@ fun TransformPanel(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .weight(1f)
+                .verticalScrollWithScrollbar(rememberScrollState())
                 .pointerInput(Unit) {
                     awaitPointerEventScope {
                         while (true) {
@@ -214,30 +197,12 @@ fun TransformPanel(
             Spacer(Modifier.height(8.dp))
 
 
-            //  OPEN FULL KEYFRAME GRAPH
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(38.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(
-                        if (hasAnyKf) Color(0xFF4F9DFF).copy(alpha = 0.20f)
-                        else Color(0xFF181818)
-                    )
-                    .pointerInput(hasAnyKf) {
-                        detectTapGestures {
-                            focusManager.clearFocus()
-                            if (hasAnyKf) showGraph = true
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    if (hasAnyKf) "📈  Full Keyframe Graph"
-                    else "📈  Add keyframes first",
-                    color = if (hasAnyKf) Color(0xFF4F9DFF) else Color(0xFF555555),
-                    fontSize = 11.sp, fontWeight = FontWeight.Bold
+            if (hasAnyKf) {
+                KeyframeEasePresetsPanel(
+                    clipId = clipId,
+                    keyframeMap = keyframeMap,
+                    playheadTimeSec = currentTimeSec,
+                    onApply = onApplyKeyframeEase
                 )
             }
 
@@ -293,7 +258,7 @@ private fun PropRow(
     val hasAnyKf = KeyframeStore.getKeyframes(keyframeMap, propKey).isNotEmpty()
     val valueRange = when (propKey) {
         "x", "y", "anchorX", "anchorY" -> -100f..200f
-        "scale", "scaleX", "scaleY" -> 10f..500f
+        "scale", "scaleX", "scaleY" -> 0f..500f
         "rotation" -> -360f..360f
         else -> -100f..200f
     }

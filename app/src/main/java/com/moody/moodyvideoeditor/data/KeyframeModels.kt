@@ -17,6 +17,25 @@ data class Keyframe(
 // Value = sorted list of keyframes
 typealias KeyframeMap = Map<String, List<Keyframe>>
 
+fun EditorClip.easingKeyframeMap(): KeyframeMap {
+    val allKeyframes = keyframes.toMutableMap()
+    mask.propertyKeyframes.forEach { (property, frames) ->
+        allKeyframes["mask.$property"] = frames
+    }
+    if (mask.keyframes.isNotEmpty()) {
+        allKeyframes["mask.legacy"] = mask.keyframes.map {
+            Keyframe(it.timeMs / 1000f, 0f, it.ease)
+        }
+    }
+    return allKeyframes
+}
+
+enum class KeyframeEaseScope {
+    SINGLE_KEYFRAME,
+    SELECTED_CLIP,
+    ENTIRE_TIMELINE
+}
+
 object KeyframeLibrary {
 
     const val TEXT_SIZE = "text.size"
@@ -42,7 +61,7 @@ object KeyframeLibrary {
         "textTexture.scale", "textTexture.x", "textTexture.y", "textTexture.rotation"
     )
 
-    // 25 easing functions — mirrors keyframeStore.js easeFn()
+    // Supported easing presets — mirrors keyframeStore.js easeFn()
     val EASING_OPTIONS = listOf(
         "linear",
         "easeIn", "easeOut", "easeInOut",
@@ -52,6 +71,7 @@ object KeyframeLibrary {
         "quartIn", "quartOut", "quartInOut",
         "quintIn", "quintOut", "quintInOut",
         "expoIn", "expoOut", "expoInOut",
+        "circInOut",
         "backIn", "backOut", "backInOut",
         "elasticIn", "elasticOut",
         "bounceOut"
@@ -80,6 +100,7 @@ object KeyframeLibrary {
         "expoIn" to "Expo In",
         "expoOut" to "Expo Out",
         "expoInOut" to "Expo In-Out",
+        "circInOut" to "Circ In-Out",
         "backIn" to "Back In",
         "backOut" to "Back Out",
         "backInOut" to "Back In-Out",

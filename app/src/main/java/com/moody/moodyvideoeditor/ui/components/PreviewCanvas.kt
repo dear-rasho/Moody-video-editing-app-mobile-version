@@ -281,6 +281,13 @@ private fun blendOpacityFactor(clip: EditorClip): Float =
     if (clip.blendMode.lowercase() == "normal") 1f
     else (clip.blendOpacity / 100f).coerceIn(0f, 1f)
 
+private fun scaleAfterGesture(baseScale: Float, zoomFactor: Float): Float =
+    if (baseScale <= 0f) {
+        ((zoomFactor - 1f) * 100f).coerceIn(0f, 500f)
+    } else {
+        (baseScale * zoomFactor).coerceIn(0f, 500f)
+    }
+
 private fun buildClipMatrix(
     clip: EditorClip,
     globalMatrix: android.graphics.ColorMatrix,
@@ -1000,7 +1007,7 @@ fun PreviewCanvas(
                                             target.id,
                                             (base.x + panX / canvasWidth * 100f).coerceIn(-100f, 200f),
                                             (base.y + panY / canvasHeight * 100f).coerceIn(-100f, 200f),
-                                            (base.scale * zoom).coerceIn(10f, 500f),
+                                            scaleAfterGesture(base.scale, zoom),
                                             base.rotation + rotation
                                         )
                                     }
@@ -1331,7 +1338,7 @@ fun PreviewCanvas(
                                                     clip.id,
                                                     newX,
                                                     newY,
-                                                    (baseScale * zoom).coerceIn(10f, 500f),
+                                                    scaleAfterGesture(baseScale, zoom),
                                                     baseRotation + rotation
                                                 )
                                             }
@@ -1698,7 +1705,7 @@ fun PreviewCanvas(
                                                             100f
                                                         )
                                                     val newScale =
-                                                        (baseScale * accumZoom).coerceIn(10f, 500f)
+                                                        scaleAfterGesture(baseScale, accumZoom)
                                                     val newRot = baseRot + accumRot
                                                     latestOnGroupGesture.value(
                                                         clip.id,
@@ -2057,7 +2064,7 @@ fun PreviewCanvas(
                                                             100f
                                                         )
                                                     val newScale =
-                                                        (baseScale * accumZoom).coerceIn(10f, 500f)
+                                                        scaleAfterGesture(baseScale, accumZoom)
                                                     val newRot = baseRot + accumRot
                                                     if (isMulti) onGroupGesture(
                                                         clip.id,
@@ -4261,7 +4268,7 @@ private fun InteractiveTextOverlay(
                                 val rawY = baseY + accumPanY / canvasHpx * 100f
                                 val cx = rawX.coerceIn(-100f, 200f);
                                 val cy = rawY.coerceIn(-100f, 200f)
-                                val newScale = (baseScale * accumZoom).coerceIn(10f, 500f);
+                                val newScale = scaleAfterGesture(baseScale, accumZoom);
                                 val newRot = baseRot + accumRot
                                 if (isMulti) onGroupGesture(
                                     clip.id,
@@ -4679,10 +4686,15 @@ private fun TransformHandle(
                             val currentAngle = kotlin.math.atan2(currentY, currentX)
                             accumulatedRotation += normalizeAngle(currentAngle - previousAngle); previousAngle =
                                 currentAngle
-                            if (corner == TransformHandleCorner.Scale) currentOnTransformChanged.value(
-                                (startScale * currentDistance / startDistance).coerceIn(10f, 500f),
-                                startRotation
-                            )
+                            if (corner == TransformHandleCorner.Scale) {
+                                val signedScaleFactor =
+                                    (currentX * startX + currentY * startY) /
+                                            (startDistance * startDistance)
+                                currentOnTransformChanged.value(
+                                    scaleAfterGesture(startScale, signedScaleFactor),
+                                    startRotation
+                                )
+                            }
                             else currentOnTransformChanged.value(
                                 startScale,
                                 startRotation + Math.toDegrees(accumulatedRotation.toDouble())

@@ -10,6 +10,7 @@ import android.os.Build
 import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegSession
+import com.arthenica.ffmpegkit.Level
 import com.arthenica.ffmpegkit.ReturnCode
 import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.ColorFilterValues
@@ -828,7 +829,9 @@ class FFmpegExecutor(
                 val clip = baseVisualClips[0]
                 if (clip.speed != 1.0f && !isImage(clip)) baseVf.add("setpts=${1.0f / clip.speed}*PTS")
                 baseVf.addAll(buildPerClipFilterChain(clip, allClips, fps))
-                baseVf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
+                baseVf.addAll(
+                    buildVisualTransformFilters(clip, targetW, targetH, frameRate = fps)
+                )
                 flattenBaseLayerOpacity(clip)?.let(baseVf::add)
             } else {
                 baseVisualClips.forEachIndexed { idx, clip ->
@@ -843,7 +846,8 @@ class FFmpegExecutor(
                         buildVisualTransformFilters(
                             clip,
                             targetW,
-                            targetH
+                            targetH,
+                            frameRate = fps
                         )
                     ); vf.add("fps=$fps"); vf.add("format=yuv420p")
                     flattenBaseLayerOpacity(clip)?.let { flattenFilter ->
@@ -1208,14 +1212,15 @@ class FFmpegExecutor(
     }
 
     /**
-     * FIXED: Crop is offset-aware, no double-crop. Preview & export match.
+     * Keep animated transforms on a fixed-size canvas so FFmpeg filters can process every frame.
      */
     private fun buildVisualTransformFilters(
         clip: EditorClip,
         targetW: Int,
         targetH: Int,
         transparentPadding: Boolean = false,
-        positionByOverlay: Boolean = false
+        positionByOverlay: Boolean = false,
+        frameRate: Int = 30
     ): List<String> {
         val filters = mutableListOf<String>()
         val keepTransparentPadding = transparentPadding
@@ -1228,19 +1233,31 @@ class FFmpegExecutor(
             .map { it.value }
             .distinctBy { (it * 1000f).toInt() }
             .size > 1
+        val rotationTrack = clip.keyframes["rotation"].orEmpty()
+        val anchorXTrack = clip.keyframes["anchorX"].orEmpty()
+        val anchorYTrack = clip.keyframes["anchorY"].orEmpty()
+        val xTrack = clip.keyframes["x"].orEmpty()
+        val yTrack = clip.keyframes["y"].orEmpty()
+        val hasKeyframedRotation = rotationTrack.isNotEmpty()
+        val hasKeyframedAnchor = anchorXTrack.isNotEmpty() || anchorYTrack.isNotEmpty()
+        val hasKeyframedPosition = xTrack.isNotEmpty() || yTrack.isNotEmpty()
         val userScale = if (scaleTrack.isNotEmpty() && !hasAnimatedScale) {
-            (scaleTrack.first().value / 100f).coerceIn(0.1f, 5f)
+            (scaleTrack.first().value / 100f).coerceIn(0f, 5f)
         } else {
-            clip.scale.coerceIn(0.1f, 5f)
+            clip.scale.coerceIn(0f, 5f)
         }
         val userScaleX = if (scaleXTrack.isNotEmpty() && scaleXTrack.size == 1) {
-            scaleXTrack.first().value / 100f
-        } else userScale * clip.scaleX
+            (scaleXTrack.first().value / 100f).coerceIn(0f, 5f)
+        } else (userScale * clip.scaleX).coerceIn(0f, 5f)
         val userScaleY = if (scaleYTrack.isNotEmpty() && scaleYTrack.size == 1) {
-            scaleYTrack.first().value / 100f
-        } else userScale * clip.scaleY
+            (scaleYTrack.first().value / 100f).coerceIn(0f, 5f)
+        } else (userScale * clip.scaleY).coerceIn(0f, 5f)
         val hasScaleTrack = hasAnimatedScale || scaleXTrack.isNotEmpty() || scaleYTrack.isNotEmpty() ||
                 kotlin.math.abs(userScaleX - userScaleY) > 0.01f
+        val useKeyframedTransform =
+            hasScaleTrack || hasKeyframedRotation || hasKeyframedAnchor ||
+                    (!positionByOverlay && hasKeyframedPosition)
+        val scaleTimeExpression = if (useKeyframedTransform) "on/$frameRate" else "t"
         val offsetXpx = (clip.offsetX * targetW).toInt()
         val offsetYpx = (clip.offsetY * targetH).toInt()
         val hasOffset = offsetXpx != 0 || offsetYpx != 0
@@ -1257,42 +1274,240 @@ class FFmpegExecutor(
         //  STEP 1: Fit source into canvas (letterbox) — WITHOUT user scale
         //  Because user scale must apply to ORIGINAL clip, not letterboxed
         // ═══════════════════════════════════════════════════════════
-        if (hasScaleTrack) {
-            // Keep the transformed image larger than the output canvas so
-            // animated position can reveal parts that extend beyond its edges.
-            filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
+        if (useKeyframedTransform) {
             val scaleExpr = KeyframeStore.ffmpegExpression(
-                clip.keyframes, "scale", clip.scale * 100f
+                clip.keyframes, "scale", clip.scale * 100f, scaleTimeExpression
             )
             val scaleXExpr = if (scaleXTrack.isNotEmpty()) {
                 KeyframeStore.ffmpegExpression(
-                    clip.keyframes, "scaleX", clip.scale * clip.scaleX * 100f
+                    clip.keyframes,
+                    "scaleX",
+                    clip.scale * clip.scaleX * 100f,
+                    scaleTimeExpression
                 )
             } else "($scaleExpr*${clip.scaleX})"
             val scaleYExpr = if (scaleYTrack.isNotEmpty()) {
                 KeyframeStore.ffmpegExpression(
-                    clip.keyframes, "scaleY", clip.scale * clip.scaleY * 100f
+                    clip.keyframes,
+                    "scaleY",
+                    clip.scale * clip.scaleY * 100f,
+                    scaleTimeExpression
                 )
             } else "($scaleExpr*${clip.scaleY})"
+            val canvasW = overscanSize.first
+            val canvasH = overscanSize.second
+            filters.add("fps=$frameRate")
             filters.add(
-                "scale=w='iw*($scaleXExpr/100)':h='ih*($scaleYExpr/100)':eval=frame"
+                "scale=$targetW:$targetH:force_original_aspect_ratio=decrease"
             )
-            if (preserveOverscan) {
-                filters.add(
-                    "pad=${overscanSize.first}:${overscanSize.second}:" +
-                            "x='(ow-iw)/2':y='(oh-ih)/2':color=$fillColor:eval=frame"
+            filters.add("format=rgba")
+            filters.add(
+                "pad=$canvasW:$canvasH:(ow-iw)/2:(oh-ih)/2:color=$fillColor"
+            )
+
+            val scaleAtFrameX = KeyframeStore.escapeFfmpegExpression(
+                "max(0.001\\,clip(($scaleXExpr)/100\\,0\\,5))"
+            )
+            val scaleAtFrameY = KeyframeStore.escapeFfmpegExpression(
+                "max(0.001\\,clip(($scaleYExpr)/100\\,0\\,5))"
+            )
+            val rotationExpr = KeyframeStore.escapeFfmpegExpression(
+                "(${KeyframeStore.ffmpegExpression(
+                    clip.keyframes,
+                    "rotation",
+                    clip.rotation,
+                    scaleTimeExpression
+                )}*PI/180)"
+            )
+            val anchorXExpr = KeyframeStore.escapeFfmpegExpression(
+                "(${KeyframeStore.ffmpegExpression(
+                    clip.keyframes,
+                    "anchorX",
+                    50f,
+                    scaleTimeExpression
+                )}/100)"
+            )
+            val anchorYExpr = KeyframeStore.escapeFfmpegExpression(
+                "(${KeyframeStore.ffmpegExpression(
+                    clip.keyframes,
+                    "anchorY",
+                    50f,
+                    scaleTimeExpression
+                )}/100)"
+            )
+            val baseX = 50f + clip.offsetX * 100f
+            val baseY = 50f + clip.offsetY * 100f
+            val positionHandledByOverlay = positionByOverlay &&
+                    (preserveOverscan || hasKeyframedPosition)
+            val xPositionExpr = KeyframeStore.escapeFfmpegExpression(
+                KeyframeStore.ffmpegExpression(
+                    clip.keyframes,
+                    "x",
+                    baseX,
+                    scaleTimeExpression
+                )
+            )
+            val yPositionExpr = KeyframeStore.escapeFfmpegExpression(
+                KeyframeStore.ffmpegExpression(
+                    clip.keyframes,
+                    "y",
+                    baseY,
+                    scaleTimeExpression
+                )
+            )
+            val offsetXExpr =
+                if (positionHandledByOverlay) "0" else "(($xPositionExpr-50)*$targetW/100)"
+            val offsetYExpr =
+                if (positionHandledByOverlay) "0" else "(($yPositionExpr-50)*$targetH/100)"
+            val insetX = (canvasW - targetW) / 2
+            val insetY = (canvasH - targetH) / 2
+            val anchorX = "($insetX+$targetW*$anchorXExpr)"
+            val anchorY = "($insetY+$targetH*$anchorYExpr)"
+            val cos = "cos($rotationExpr)"
+            val sin = "sin($rotationExpr)"
+            fun transformedX(x: Int, y: Int) =
+                "($anchorX+($x-$anchorX)*$scaleAtFrameX*$cos-" +
+                        "($y-$anchorY)*$scaleAtFrameY*$sin+$offsetXExpr)"
+            fun transformedY(x: Int, y: Int) =
+                "($anchorY+($x-$anchorX)*$scaleAtFrameX*$sin+" +
+                        "($y-$anchorY)*$scaleAtFrameY*$cos+$offsetYExpr)"
+            val x0 = transformedX(0, 0)
+            val y0 = transformedY(0, 0)
+            val x1 = transformedX(canvasW, 0)
+            val y1 = transformedY(canvasW, 0)
+            val x2 = transformedX(0, canvasH)
+            val y2 = transformedY(0, canvasH)
+            val x3 = transformedX(canvasW, canvasH)
+            val y3 = transformedY(canvasW, canvasH)
+            filters.add(
+                "perspective=x0='$x0':y0='$y0':x1='$x1':y1='$y1':" +
+                        "x2='$x2':y2='$y2':x3='$x3':y3='$y3':" +
+                        "eval=frame:sense=destination"
+            )
+            val maskTimeExpression = "N/$frameRate"
+            val maskScaleExpr = KeyframeStore.ffmpegExpression(
+                clip.keyframes, "scale", clip.scale * 100f, maskTimeExpression
+            )
+            val maskScaleXExpr = if (scaleXTrack.isNotEmpty()) {
+                KeyframeStore.ffmpegExpression(
+                    clip.keyframes,
+                    "scaleX",
+                    clip.scale * clip.scaleX * 100f,
+                    maskTimeExpression
+                )
+            } else "($maskScaleExpr*${clip.scaleX})"
+            val maskScaleYExpr = if (scaleYTrack.isNotEmpty()) {
+                KeyframeStore.ffmpegExpression(
+                    clip.keyframes,
+                    "scaleY",
+                    clip.scale * clip.scaleY * 100f,
+                    maskTimeExpression
+                )
+            } else "($maskScaleExpr*${clip.scaleY})"
+            val maskScaleAtFrameX = KeyframeStore.escapeFfmpegExpression(
+                "max(0.001,clip(($maskScaleXExpr)/100,0,5))"
+            )
+            val maskScaleAtFrameY = KeyframeStore.escapeFfmpegExpression(
+                "max(0.001,clip(($maskScaleYExpr)/100,0,5))"
+            )
+            val scaleVisibility = KeyframeStore.escapeFfmpegExpression(
+                "gt(($maskScaleXExpr),0)*gt(($maskScaleYExpr),0)"
+            )
+            val canUseAxisAlignedMask =
+                !hasKeyframedRotation && kotlin.math.abs(clip.rotation) < 0.001f
+            val insideSourceBounds = if (canUseAxisAlignedMask) {
+                val maskAnchorXExpr = KeyframeStore.escapeFfmpegExpression(
+                    "(${KeyframeStore.ffmpegExpression(
+                        clip.keyframes, "anchorX", 50f, maskTimeExpression
+                    )}/100)"
+                )
+                val maskAnchorYExpr = KeyframeStore.escapeFfmpegExpression(
+                    "(${KeyframeStore.ffmpegExpression(
+                        clip.keyframes, "anchorY", 50f, maskTimeExpression
+                    )}/100)"
+                )
+                val maskAnchorX = "($insetX+$targetW*$maskAnchorXExpr)"
+                val maskAnchorY = "($insetY+$targetH*$maskAnchorYExpr)"
+                val maskOffsetXExpr = if (positionHandledByOverlay) {
+                    "0"
+                } else {
+                    KeyframeStore.escapeFfmpegExpression(
+                        "((${KeyframeStore.ffmpegExpression(
+                            clip.keyframes, "x", baseX, maskTimeExpression
+                        )}-50)*$targetW/100)"
+                    )
+                }
+                val maskOffsetYExpr = if (positionHandledByOverlay) {
+                    "0"
+                } else {
+                    KeyframeStore.escapeFfmpegExpression(
+                        "((${KeyframeStore.ffmpegExpression(
+                            clip.keyframes, "y", baseY, maskTimeExpression
+                        )}-50)*$targetH/100)"
+                    )
+                }
+                val left = "($maskAnchorX-$maskAnchorX*$maskScaleAtFrameX+$maskOffsetXExpr)"
+                val right =
+                    "($maskAnchorX+($canvasW-$maskAnchorX)*$maskScaleAtFrameX+$maskOffsetXExpr)"
+                val top = "($maskAnchorY-$maskAnchorY*$maskScaleAtFrameY+$maskOffsetYExpr)"
+                val bottom =
+                    "($maskAnchorY+($canvasH-$maskAnchorY)*$maskScaleAtFrameY+$maskOffsetYExpr)"
+                KeyframeStore.escapeFfmpegExpression(
+                    "gte(X,$left)*lte(X,$right)*gte(Y,$top)*lte(Y,$bottom)"
                 )
             } else {
-                val cropX = "max(0\\,min(iw-$targetW\\,(iw-$targetW)/2-$offsetXpx))"
-                val cropY = "max(0\\,min(ih-$targetH\\,(ih-$targetH)/2-$offsetYpx))"
-                filters.add(
-                    "crop=w='min(iw,$targetW)':h='min(ih,$targetH)':" +
-                            "x='$cropX':y='$cropY':eval=frame"
+                val maskRotationExpr = KeyframeStore.escapeFfmpegExpression(
+                    "(${KeyframeStore.ffmpegExpression(
+                        clip.keyframes, "rotation", clip.rotation, maskTimeExpression
+                    )}*PI/180)"
                 )
-                val padX = "max(0\\,min($targetW-iw\\,($targetW-iw)/2+$offsetXpx))"
-                val padY = "max(0\\,min($targetH-ih\\,($targetH-ih)/2+$offsetYpx))"
-                filters.add("pad=$targetW:$targetH:x='$padX':y='$padY':color=$fillColor:eval=frame")
+                val maskAnchorXExpr = KeyframeStore.escapeFfmpegExpression(
+                    "(${KeyframeStore.ffmpegExpression(
+                        clip.keyframes, "anchorX", 50f, maskTimeExpression
+                    )}/100)"
+                )
+                val maskAnchorYExpr = KeyframeStore.escapeFfmpegExpression(
+                    "(${KeyframeStore.ffmpegExpression(
+                        clip.keyframes, "anchorY", 50f, maskTimeExpression
+                    )}/100)"
+                )
+                val maskAnchorX = "($insetX+$targetW*$maskAnchorXExpr)"
+                val maskAnchorY = "($insetY+$targetH*$maskAnchorYExpr)"
+                val maskCos = "cos($maskRotationExpr)"
+                val maskSin = "sin($maskRotationExpr)"
+                val maskOffsetXExpr = if (positionHandledByOverlay) {
+                    "0"
+                } else {
+                    KeyframeStore.escapeFfmpegExpression(
+                        "((${KeyframeStore.ffmpegExpression(
+                            clip.keyframes, "x", baseX, maskTimeExpression
+                        )}-50)*$targetW/100)"
+                    )
+                }
+                val maskOffsetYExpr = if (positionHandledByOverlay) {
+                    "0"
+                } else {
+                    KeyframeStore.escapeFfmpegExpression(
+                        "((${KeyframeStore.ffmpegExpression(
+                            clip.keyframes, "y", baseY, maskTimeExpression
+                        )}-50)*$targetH/100)"
+                    )
+                }
+                val inverseDx = "(X-$maskAnchorX-$maskOffsetXExpr)"
+                val inverseDy = "(Y-$maskAnchorY-$maskOffsetYExpr)"
+                val sourceX =
+                    "($maskAnchorX+($inverseDx*$maskCos+$inverseDy*$maskSin)/$maskScaleAtFrameX)"
+                val sourceY =
+                    "($maskAnchorY+(-$inverseDx*$maskSin+$inverseDy*$maskCos)/$maskScaleAtFrameY)"
+                KeyframeStore.escapeFfmpegExpression(
+                    "gte($sourceX,0)*lte($sourceX,$canvasW)*" +
+                            "gte($sourceY,0)*lte($sourceY,$canvasH)"
+                )
             }
+            filters.add(
+                "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':" +
+                        "a='alpha(X,Y)*$insideSourceBounds*$scaleVisibility'"
+            )
         } else if (kotlin.math.abs(userScaleX - 1.0f) > 0.01f ||
             kotlin.math.abs(userScaleY - 1.0f) > 0.01f
         ) {
@@ -1304,8 +1519,8 @@ class FFmpegExecutor(
                 // ═══════════════════════════════════════════════════
                 filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
                 filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=$fillColor")
-                val scaleFmtX = String.format(Locale.US, "%.4f", userScaleX)
-                val scaleFmtY = String.format(Locale.US, "%.4f", userScaleY)
+                val scaleFmtX = String.format(Locale.US, "%.4f", userScaleX.coerceAtLeast(0.01f))
+                val scaleFmtY = String.format(Locale.US, "%.4f", userScaleY.coerceAtLeast(0.01f))
                 filters.add("scale=iw*$scaleFmtX:ih*$scaleFmtY")
                 if (preserveOverscan) {
                     filters.add(
@@ -1323,8 +1538,8 @@ class FFmpegExecutor(
                 //  ZOOM-OUT: Fit, scale down, pad to canvas (no crop)
                 // ═══════════════════════════════════════════════════
                 filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
-                val scaleFmtX = String.format(Locale.US, "%.4f", userScaleX)
-                val scaleFmtY = String.format(Locale.US, "%.4f", userScaleY)
+                val scaleFmtX = String.format(Locale.US, "%.4f", userScaleX.coerceAtLeast(0.01f))
+                val scaleFmtY = String.format(Locale.US, "%.4f", userScaleY.coerceAtLeast(0.01f))
                 filters.add("scale=iw*$scaleFmtX:ih*$scaleFmtY")
                 filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=$fillColor")
             }
@@ -1351,14 +1566,18 @@ class FFmpegExecutor(
                 filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=$fillColor")
             }
         }
+        if (!useKeyframedTransform && (userScaleX <= 0f || userScaleY <= 0f)) {
+            filters.add("format=rgba")
+            filters.add("colorchannelmixer=aa=0")
+        }
 
         // ═══════════════════════════════════════════════════════════
         //  ROTATION (unchanged)
         // ═══════════════════════════════════════════════════════════
-        val hasRotationTrack = clip.keyframes["rotation"].orEmpty().isNotEmpty()
+        val hasRotationTrack = rotationTrack.isNotEmpty() && !useKeyframedTransform
         if (hasRotationTrack) {
             val rotationExpr = KeyframeStore.ffmpegExpression(clip.keyframes, "rotation", clip.rotation)
-            val angleExpr = "(($rotationExpr)*PI/180)"
+            val angleExpr = KeyframeStore.escapeFfmpegExpression("(($rotationExpr)*PI/180)")
             val outputSize = if (preserveOverscan) {
                 val rotationCanvas = rotationCanvasSize(overscanSize.first, overscanSize.second)
                 "ow=$rotationCanvas:oh=$rotationCanvas"
@@ -1990,7 +2209,8 @@ class FFmpegExecutor(
                                 targetW,
                                 targetH,
                                 true,
-                                true
+                                true,
+                                frameRate = fps
                             )
                         )
                         chain.add("setpts=PTS-STARTPTS+${startSec}/TB")
@@ -2043,7 +2263,8 @@ class FFmpegExecutor(
                                 targetW,
                                 targetH,
                                 true,
-                                positionByOverlay = !isBlendActive
+                                positionByOverlay = !isBlendActive,
+                                frameRate = fps
                             )
                         )
                         filters.add("fps=$fps"); filters.add("trim=duration=$clipDurationSec"); filters.add(
@@ -2122,8 +2343,12 @@ class FFmpegExecutor(
                                 val baseY = 50f + clip.offsetY * 100f
                                 val localTimeExpression = "(t-${String.format(Locale.US, "%.6f", startSec)})"
 
-                                val x = "((${KeyframeStore.ffmpegExpression(clip.keyframes, "x", baseX, localTimeExpression)}-50)*$targetW/100-$padding)"
-                                val y = "((${KeyframeStore.ffmpegExpression(clip.keyframes, "y", baseY, localTimeExpression)}-50)*$targetH/100-$padding)"
+                                val x = KeyframeStore.escapeFfmpegExpression(
+                                    "((${KeyframeStore.ffmpegExpression(clip.keyframes, "x", baseX, localTimeExpression)}-50)*$targetW/100-$padding)"
+                                )
+                                val y = KeyframeStore.escapeFfmpegExpression(
+                                    "((${KeyframeStore.ffmpegExpression(clip.keyframes, "y", baseY, localTimeExpression)}-50)*$targetH/100-$padding)"
+                                )
 
                                 filterParts.add("[$canvasLabel][$layerLabel]overlay=x='$x':y='$y':eval=frame:eof_action=pass:repeatlast=0:enable='between(t,$startExpr,$endExpr)'[$outLabel]")
                             }
@@ -2349,7 +2574,9 @@ class FFmpegExecutor(
             val baseVf = mutableListOf<String>()
             if (clip.speed != 1.0f && !img) baseVf.add("setpts=${1.0f / clip.speed}*PTS")
             baseVf.addAll(buildPerClipFilterChain(clip, allClips, fps))
-            baseVf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
+            baseVf.addAll(
+                buildVisualTransformFilters(clip, targetW, targetH, frameRate = fps)
+            )
             if (extraPadSec > 0.05) baseVf.add(
                 "tpad=stop_mode=add:stop_duration=${
                     String.format(
@@ -2482,7 +2709,9 @@ class FFmpegExecutor(
             val baseVf = mutableListOf<String>()
             if (clip.speed != 1.0f && !img) baseVf.add("setpts=${1.0f / clip.speed}*PTS")
             baseVf.addAll(buildPerClipFilterChain(clip, allClips, fps))
-            baseVf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
+            baseVf.addAll(
+                buildVisualTransformFilters(clip, targetW, targetH, frameRate = fps)
+            )
             if (extraPadSec > 0.05) baseVf.add(
                 "tpad=stop_mode=add:stop_duration=${
                     String.format(
@@ -2749,7 +2978,9 @@ class FFmpegExecutor(
                 )
                 if (clip.speed != 1.0f && !isImage(clip)) vf.add("setpts=${1.0f / clip.speed}*PTS")
                 vf.addAll(buildPerClipFilterChain(clip, allClips, fps))
-                vf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
+                vf.addAll(
+                    buildVisualTransformFilters(clip, targetW, targetH, frameRate = fps)
+                )
                 vf.addAll(
                     listOf(
                         "fps=$fps",
@@ -2820,7 +3051,9 @@ class FFmpegExecutor(
                 )
                 buildTransparentCropFilter(matte)?.let(matteFilters::add)
                 matteFilters.addAll(
-                    buildVisualTransformFilters(matte, targetW, targetH, true, true)
+                    buildVisualTransformFilters(
+                        matte, targetW, targetH, true, true, frameRate = fps
+                    )
                 )
                 matteFilters.add("setpts=PTS-STARTPTS+${startSec}/TB")
                 filterParts.add(
@@ -3008,7 +3241,9 @@ class FFmpegExecutor(
                 )
                 if (clip.speed != 1.0f && !isImage(clip)) vf.add("setpts=${1.0f / clip.speed}*PTS")
                 vf.addAll(buildPerClipFilterChain(clip, allClips, fps))
-                vf.addAll(buildVisualTransformFilters(clip, targetW, targetH))
+                vf.addAll(
+                    buildVisualTransformFilters(clip, targetW, targetH, frameRate = fps)
+                )
                 vf.addAll(listOf("fps=$fps", "format=yuv420p"))
                 filterParts.add("[$idx:v]${vf.joinToString(",")}[v$idx]")
 
@@ -3474,7 +3709,11 @@ class FFmpegExecutor(
                         cleanupMaskSequences(); onError("Callback error: ${e.message}")
                     }
                 },
-                { _ -> },
+                { ffmpegLog ->
+                    if (ffmpegLog.level.value <= Level.AV_LOG_WARNING.value) {
+                        Log.e("FFMPEG_DIAGNOSTIC", ffmpegLog.message.trimEnd())
+                    }
+                },
                 { stats ->
                     try {
                         val t = stats.time

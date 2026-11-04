@@ -51,9 +51,9 @@ object TransformApplier {
             val st = clip.textState
             return TransformValues(
                 x = st.positionX, y = st.positionY,
-                scale = st.scale, rotation = st.rotation,
-                scaleX = st.scale * clip.scaleX,
-                scaleY = st.scale * clip.scaleY,
+                scale = st.scale.coerceIn(0f, 500f), rotation = st.rotation,
+                scaleX = (st.scale * clip.scaleX).coerceIn(0f, 500f),
+                scaleY = (st.scale * clip.scaleY).coerceIn(0f, 500f),
                 anchorX = st.anchorX, anchorY = st.anchorY,
                 cropL = clip.cropL, cropR = clip.cropR,
                 cropT = clip.cropT, cropB = clip.cropB
@@ -63,9 +63,9 @@ object TransformApplier {
         return TransformValues(
             x = 50f + clip.offsetX * 100f,
             y = 50f + clip.offsetY * 100f,
-            scale = clip.scale * 100f,
-            scaleX = clip.scale * clip.scaleX * 100f,
-            scaleY = clip.scale * clip.scaleY * 100f,
+            scale = (clip.scale * 100f).coerceIn(0f, 500f),
+            scaleX = (clip.scale * clip.scaleX * 100f).coerceIn(0f, 500f),
+            scaleY = (clip.scale * clip.scaleY * 100f).coerceIn(0f, 500f),
             rotation = clip.rotation,
             anchorX = 50f, anchorY = 50f,
             cropL = clip.cropL, cropR = clip.cropR,
@@ -77,9 +77,14 @@ object TransformApplier {
     fun resolveLive(clip: EditorClip, timeSec: Float): TransformValues {
         val base = baseOf(clip)
         val kfs: KeyframeMap = clip.keyframes
-        return if (KeyframeStore.hasAnyKeyframes(kfs)) {
+        val sampled = if (KeyframeStore.hasAnyKeyframes(kfs)) {
             KeyframeStore.sampleAll(kfs, timeSec, base)
         } else base
+        return sampled.copy(
+            scale = sampled.scale.coerceIn(0f, 500f),
+            scaleX = sampled.scaleX.coerceIn(0f, 500f),
+            scaleY = sampled.scaleY.coerceIn(0f, 500f)
+        )
     }
 
     // Draw with transform applied — for Canvas-only rendering (export).

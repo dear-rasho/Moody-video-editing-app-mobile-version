@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -47,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.moody.moodyvideoeditor.ui.features.horizontalScrollWithTwoFinger
+import com.moody.moodyvideoeditor.ui.features.verticalScrollWithScrollbar
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.data.Keyframe
 import com.moody.moodyvideoeditor.data.KeyframeLibrary
@@ -124,6 +129,7 @@ fun KeyframeGraphDialog(
     selectedKeyframe: Pair<String, Float>? = null,
     selectAllKeyframes: Boolean = false,
     inlinePanel: Boolean = false,
+    mediaLayer: Boolean = false,
     onSelectKeyframe: (prop: String, time: Float) -> Unit = { _, _ -> },
     onSetKeyframeEase: (prop: String, time: Float, ease: String) -> Unit = { _, _, _ -> },
     enableEaseEditing: Boolean = false,
@@ -166,6 +172,23 @@ fun KeyframeGraphDialog(
         "spotlight.targetColorG" to Color(0xFFA3ECA8),
         "spotlight.targetColorB" to Color(0xFF9BB9FF)
     )
+    val mediaPropColors = mapOf(
+        "x" to Color(0xFFFF5A5F),
+        "y" to Color(0xFFE53935),
+        "scale" to Color(0xFFFF8A65),
+        "scaleX" to Color(0xFFFF7043),
+        "scaleY" to Color(0xFFD84343),
+        "rotation" to Color(0xFFFF1744),
+        "anchorX" to Color(0xFFEF5350),
+        "anchorY" to Color(0xFFFF6E6E),
+        "cropL" to Color(0xFFC62828),
+        "cropR" to Color(0xFFE57373),
+        "cropT" to Color(0xFFB71C1C),
+        "cropB" to Color(0xFFFF5252)
+    )
+    fun colorForProp(prop: String): Color =
+        if (mediaLayer) mediaPropColors[prop] ?: Color(0xFFFF5A5F)
+        else propColors[prop] ?: Color.White
 
     val propRanges = remember(clipId, clipName, activeProps) {
         activeProps.associateWith { prop ->
@@ -279,7 +302,7 @@ fun KeyframeGraphDialog(
                                 modifier = Modifier
                                     .size(8.dp)
                                     .clip(RoundedCornerShape(4.dp))
-                                    .background(propColors[prop] ?: Color.White)
+                                    .background(colorForProp(prop))
                             )
                             Spacer(Modifier.width(3.dp))
                             Text(
@@ -325,7 +348,10 @@ fun KeyframeGraphDialog(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
+                    .then(
+                        if (inlinePanel) Modifier.height(220.dp)
+                        else Modifier.weight(1f)
+                    )
                     .padding(6.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(Color(0xFF101010))
@@ -359,7 +385,7 @@ fun KeyframeGraphDialog(
                         Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .horizontalScroll(hScroll)
+                            .horizontalScrollWithTwoFinger(hScroll)
                     ) {
                         Canvas(
                             modifier = Modifier
@@ -398,6 +424,33 @@ fun KeyframeGraphDialog(
                                             selectedGraphKeyframe = it
                                             selectedProp = it.first
                                             onSelectKeyframe(it.first, it.second)
+                                        }
+                                    }
+                                }
+                                .pointerInput(Unit) {
+                                    awaitEachGesture {
+                                        awaitFirstDown(requireUnconsumed = false)
+                                        var previousDistance = 0f
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            val pointers = event.changes.filter { it.pressed }
+                                            if (pointers.isEmpty()) break
+                                            if (pointers.size >= 2) {
+                                                val first = pointers[0].position
+                                                val second = pointers[1].position
+                                                val dx = first.x - second.x
+                                                val dy = first.y - second.y
+                                                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+                                                if (previousDistance > 0f && distance > 0f) {
+                                                    zoom = (
+                                                            zoom * distance / previousDistance
+                                                            ).coerceIn(0.5f, 4f)
+                                                }
+                                                previousDistance = distance
+                                                pointers.forEach { it.consume() }
+                                            } else {
+                                                previousDistance = 0f
+                                            }
                                         }
                                     }
                                 }
@@ -532,7 +585,7 @@ fun KeyframeGraphDialog(
                             visibleProps.forEach { prop ->
                                 val kfs = (keyframeMap[prop] ?: emptyList()).sortedBy { it.time }
                                 if (kfs.isEmpty()) return@forEach
-                                val color = propColors[prop] ?: Color.White
+                                val color = colorForProp(prop)
                                 val range = propRanges[prop] ?: return@forEach
                                 val span = (range.second - range.first)
                                     .takeIf { abs(it) > 0.001f } ?: 1f
@@ -565,7 +618,7 @@ fun KeyframeGraphDialog(
 
                                     if (isEaseSelected) {
                                         drawCircle(
-                                            Color(0xFF1689FF),
+                                            if (mediaLayer) Color(0xFFFF1744) else Color(0xFF1689FF),
                                             radius = 12f,
                                             center = Offset(x, y),
                                             style = Stroke(width = 3f)
@@ -574,7 +627,7 @@ fun KeyframeGraphDialog(
 
                                     if (kf.ease != "linear" || isEaseSelected) {
                                         val markerColor = if (isEaseSelected || isActive) {
-                                            Color(0xFF1689FF)
+                                            if (mediaLayer) Color(0xFFFF1744) else Color(0xFF1689FF)
                                         } else {
                                             color
                                         }
@@ -684,7 +737,8 @@ private fun KeyframeGraphHost(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 560.dp)
-                    .fillMaxHeight(),
+                    .fillMaxHeight()
+                    .verticalScrollWithScrollbar(rememberScrollState()),
                 content = content
             )
         }

@@ -189,6 +189,31 @@ object KeyframeStore {
         return map + (prop to list)
     }
 
+    fun applyEasePreset(
+        map: KeyframeMap,
+        ease: String,
+        singleKeyframe: Boolean,
+        timeSec: Float,
+        toleranceSec: Float = 0.1f
+    ): KeyframeMap = map.mapValues { (_, frames) ->
+        if (frames.isEmpty()) return@mapValues frames
+        if (!singleKeyframe) {
+            frames.map { if (it.ease == ease) it else it.copy(ease = ease) }
+        } else {
+            val index = frames.indices.minByOrNull { abs(frames[it].time - timeSec) }
+                ?: return@mapValues frames
+            if (abs(frames[index].time - timeSec) > toleranceSec ||
+                frames[index].ease == ease
+            ) {
+                frames
+            } else {
+                frames.toMutableList().apply {
+                    this[index] = this[index].copy(ease = ease)
+                }
+            }
+        }
+    }
+
 
     //  SAMPLE
 
@@ -275,7 +300,7 @@ object KeyframeStore {
         String.format(Locale.US, "%.8f", value)
 
     private fun ffmpegEaseExpression(progress: String, ease: String): String {
-        val p = "min(max($progress,0),1)"
+        val p = "clip($progress,0,1)"
         return when (ease) {
             "easeIn", "quadIn" -> "pow($p,2)"
             "easeOut", "quadOut" -> "(1-pow(1-$p,2))"
@@ -298,7 +323,37 @@ object KeyframeStore {
             "expoInOut" -> "(pow(2,20*$p-10)/2*lt($p,0.5)+(2-pow(2,-20*$p+10))/2*(1-lt($p,0.5)))"
             "circIn" -> "(1-sqrt(1-pow($p,2)))"
             "circOut" -> "sqrt(1-pow($p-1,2))"
-            "circInOut" -> "((1-sqrt(1-pow(2*$p,2)))/2*lt($p,0.5)+(sqrt(1-pow(-2*$p+2,2))+1)/2*(1-lt($p,0.5)))"
+            "circInOut" ->
+                "((1-sqrt(max(0,1-pow(min(2*$p,1),2))))/2*lt($p,0.5)+" +
+                        "(sqrt(max(0,1-pow(min(-2*$p+2,1),2)))+1)/2*(1-lt($p,0.5)))"
+            "backIn" -> "(2.70158*pow($p,3)-1.70158*pow($p,2))"
+            "backOut" ->
+                "(1+2.70158*pow($p-1,3)+1.70158*pow($p-1,2))"
+            "backInOut" -> {
+                val c2 = 2.5949095f
+                "((pow(2*$p,2)*((${c2 + 1f})*2*$p-$c2)/2)*lt($p,0.5)+" +
+                        "((pow(2*$p-2,2)*((${c2 + 1f})*(2*$p-2)+$c2)+2)/2)*(1-lt($p,0.5)))"
+            }
+            "elasticIn" ->
+                "(-pow(2,10*$p-10)*sin((10*$p-10.75)*2*PI/3))"
+            "elasticOut" ->
+                "(pow(2,-10*$p)*sin((10*$p-0.75)*2*PI/3)+1)"
+            "bounceOut" -> {
+                val n1 = 7.5625f
+                val d1 = 2.75f
+                val first = 1f / d1
+                val second = 2f / d1
+                val third = 2.5f / d1
+                val localProgress = "ld(0)"
+                val bounce = "($n1*pow($localProgress,2)*lt($localProgress,$first)+" +
+                        "($n1*pow($localProgress-${1.5f / d1},2)+0.75)*" +
+                        "(lt($localProgress,$second)-lt($localProgress,$first))+" +
+                        "($n1*pow($localProgress-${2.25f / d1},2)+0.9375)*" +
+                        "(lt($localProgress,$third)-lt($localProgress,$second))+" +
+                        "($n1*pow($localProgress-${2.625f / d1},2)+0.984375)*" +
+                        "(1-lt($localProgress,$third)))"
+                "(st(0,$p)*0+$bounce)"
+            }
             "linear" -> p
             else -> p
         }

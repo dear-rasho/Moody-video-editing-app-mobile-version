@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.Keyframe
 import com.moody.moodyvideoeditor.data.KeyframeLibrary
+import com.moody.moodyvideoeditor.data.KeyframeEaseScope
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.utils.SpeedEngine
@@ -58,15 +59,11 @@ fun SpeedPanel(
     baseDurationMs: Long,
     currentSpeed: Float,
     hasClipSelected: Boolean,
-    clipDurationSec: Float,
     playheadTimeSec: Float,
     speedKeyframes: List<Keyframe>,
+    easingKeyframeMap: Map<String, List<Keyframe>>,
     onAddOrToggleKeyframe: () -> Unit,
-    onUpdateKeyframe: (oldTime: Float, newTime: Float, newValue: Float) -> Unit,
-    onDeleteKeyframe: (time: Float) -> Unit,
-    onSetKeyframeEase: (time: Float, ease: String) -> Unit,
-    onGraphEditStart: () -> Unit,
-    onGraphEditEnd: () -> Unit,
+    onApplyEasePreset: (String, KeyframeEaseScope, Float) -> Unit,
     onSpeedChanged: (Float) -> Unit,
     onReset: () -> Unit,
     onClose: () -> Unit
@@ -90,11 +87,6 @@ fun SpeedPanel(
                 .verticalScrollWithScrollbar(rememberScrollState())
         ) {
         var sliderValue by remember(currentSpeed) { mutableFloatStateOf(currentSpeed) }
-        var selectedGraphTime by remember(clipId, clipName) { mutableStateOf<Float?>(null) }
-        var graphZoom by remember { mutableFloatStateOf(1f) }
-        val graphDurationSec by remember(clipId, clipName) {
-            mutableFloatStateOf(clipDurationSec.coerceAtLeast(0.1f))
-        }
 
 
         // PRESETS ROW
@@ -193,7 +185,7 @@ fun SpeedPanel(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "${speedKeyframes.size} keyframes · drag handles to set time and speed",
+                    "${speedKeyframes.size} keyframes · tap the playhead keyframe to ease it",
                     color = Color(0xFF888888),
                     fontSize = 9.sp
                 )
@@ -222,102 +214,12 @@ fun SpeedPanel(
             }
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text("Graph zoom", color = Color(0xFF888888), fontSize = 10.sp)
-            Slider(
-                value = graphZoom,
-                onValueChange = { graphZoom = it },
-                valueRange = 0.5f..4f,
-                modifier = Modifier.weight(1f),
-                colors = SliderDefaults.colors(
-                    thumbColor = Color(0xFF7C3AED),
-                    activeTrackColor = Color(0xFF7C3AED),
-                    inactiveTrackColor = Color(0xFF303030)
-                )
-            )
-            Text(
-                "${"%.1f".format(graphZoom)}x",
-                color = Color.White,
-                fontSize = 10.sp,
-                modifier = Modifier.width(36.dp)
-            )
-        }
-
-        SpeedRampGraph(
-            keyframes = speedKeyframes,
-            durationSec = graphDurationSec,
-            graphKey = "$clipId:$clipName",
-            currentSpeed = currentSpeed,
+        KeyframeEasePresetsPanel(
+            clipId = clipId,
+            keyframeMap = easingKeyframeMap,
             playheadTimeSec = playheadTimeSec,
-            graphZoom = graphZoom,
-            onSelectKeyframe = { selectedGraphTime = it },
-            onUpdateKeyframe = onUpdateKeyframe,
-            onEditStart = onGraphEditStart,
-            onEditEnd = onGraphEditEnd
+            onApply = onApplyEasePreset
         )
-
-        val selectedKeyframe = selectedGraphTime?.let { time ->
-            speedKeyframes.minByOrNull { abs(it.time - time) }
-                ?.takeIf { abs(it.time - time) < 0.1f }
-        } ?: speedKeyframes.minByOrNull { abs(it.time - playheadTimeSec) }
-            ?.takeIf { abs(it.time - playheadTimeSec) < 0.1f }
-            ?: speedKeyframes.firstOrNull()
-        if (selectedKeyframe != null) {
-            Text(
-                "Selected · ${"%.2f".format(selectedKeyframe.time)}s · ${
-                    "%.2f".format(selectedKeyframe.value)
-                }x",
-                color = Color(0xFFBDBDBD),
-                fontSize = 10.sp
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScrollWithTwoFinger(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                listOf(
-                    "linear" to "Linear",
-                    "easeIn" to "Ease In",
-                    "easeOut" to "Ease Out",
-                    "easeInOut" to "Ease In-Out"
-                ).forEach { (ease, label) ->
-                    val active = selectedKeyframe.ease == ease
-                    Box(
-                        modifier = Modifier
-                            .height(30.dp)
-                            .clip(RoundedCornerShape(7.dp))
-                            .background(if (active) Color(0xFF7C3AED) else Color(0xFF181818))
-                            .pointerInput(selectedKeyframe.time, ease) {
-                                detectTapGestures {
-                                    onSetKeyframeEase(selectedKeyframe.time, ease)
-                                }
-                            }
-                            .padding(horizontal = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(label, color = Color.White, fontSize = 9.sp)
-                    }
-                }
-                Box(
-                    modifier = Modifier
-                        .height(30.dp)
-                        .clip(RoundedCornerShape(7.dp))
-                        .background(Color(0xFF4A2024))
-                        .pointerInput(selectedKeyframe.time) {
-                            detectTapGestures { onDeleteKeyframe(selectedKeyframe.time) }
-                        }
-                        .padding(horizontal = 10.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("Delete", color = Color(0xFFFF7777), fontSize = 9.sp)
-                }
-            }
-        }
 
         Spacer(Modifier.height(8.dp))
 

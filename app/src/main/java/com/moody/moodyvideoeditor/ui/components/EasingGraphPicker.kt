@@ -68,7 +68,7 @@ fun EasingGraphPicker(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                "Easing Graphs",
+                "Easing Presets",
                 color = Color(0xFF888888),
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,

@@ -62,6 +62,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.BeatsState
+import com.moody.moodyvideoeditor.data.easingKeyframeMap
 
 import com.moody.moodyvideoeditor.data.ChromaKeyState
 import com.moody.moodyvideoeditor.data.ColorWheelState
@@ -1128,7 +1129,6 @@ fun EditorScreen(
                     SpeedEngine.speedAt(clip, localMs)
                 } ?: 1.0f,
                 hasClipSelected = selected != null,
-                clipDurationSec = (selected?.durationMs ?: 0L) / 1000f,
                 playheadTimeSec = selected?.let {
                     KeyframeStore.clipLocalTimeSeconds(
                         state.currentPosMs, it.timelineStartMs, it.durationMs
@@ -1136,16 +1136,13 @@ fun EditorScreen(
                 } ?: 0f,
                 speedKeyframes = selected?.keyframes
                     ?.get(KeyframeLibrary.SPEED).orEmpty(),
+                easingKeyframeMap = selected?.easingKeyframeMap().orEmpty(),
                 onAddOrToggleKeyframe = viewModel::toggleSpeedKeyframeAtPlayhead,
-                onUpdateKeyframe = { oldTime, newTime, newValue ->
-                    viewModel.updateKeyframeInGraph("speed", oldTime, newTime, newValue)
+                onApplyEasePreset = { ease, scope, time ->
+                    viewModel.applyKeyframeEasePreset(
+                        selected?.id, ease, scope, time
+                    )
                 },
-                onDeleteKeyframe = { time ->
-                    viewModel.deleteKeyframeFromGraph("speed", time)
-                },
-                onSetKeyframeEase = viewModel::setSpeedKeyframeEase,
-                onGraphEditStart = viewModel::beginKeyframeGraphEdit,
-                onGraphEditEnd = viewModel::commitKeyframeGraphEdit,
                 onSpeedChanged = { viewModel.setSpeed(it) },
                 onReset = { viewModel.resetSpeed() },
                 onClose = { activePanel = null }
@@ -1216,18 +1213,17 @@ fun EditorScreen(
                     hasKeyframeAtPlayhead = { property ->
                         viewModel.hasKeyframeForPropertyAtPlayhead(property)
                     },
-                    keyframeMap = selectedText?.keyframes ?: emptyMap(),
-                    clipDurationSec = (selectedText?.durationMs ?: 3000L) / 1000f,
-                    onUpdateKeyframe = { property, oldTime, newTime, newValue ->
-                        viewModel.updateKeyframeInGraph(
-                            property, oldTime, newTime, newValue
+                    keyframeMap = selectedText?.easingKeyframeMap() ?: emptyMap(),
+                    playheadTimeSec = selectedText?.let {
+                        KeyframeStore.clipLocalTimeSeconds(
+                            state.currentPosMs, it.timelineStartMs, it.durationMs
+                        )
+                    } ?: 0f,
+                    onApplyEasePreset = { ease, scope, time ->
+                        viewModel.applyKeyframeEasePreset(
+                            selectedText?.id, ease, scope, time
                         )
                     },
-                    onDeleteKeyframe = { property, time ->
-                        viewModel.deleteKeyframeFromGraph(property, time)
-                    },
-                    onKeyframeEditStart = { viewModel.beginKeyframeGraphEdit() },
-                    onKeyframeEditEnd = { viewModel.commitKeyframeGraphEdit() },
                     onClose = { activePanel = null }
                 )
             }
@@ -1288,7 +1284,7 @@ fun EditorScreen(
                 SpotlightPanel(
                     editLayerId = editLayer?.id,
                     initialState = editLayer?.spotlight ?: SpotlightState(),
-                    keyframeMap = editLayer?.keyframes ?: emptyMap(),
+                    keyframeMap = editLayer?.easingKeyframeMap() ?: emptyMap(),
                     currentTimeSec = editLayer?.let {
                         KeyframeStore.clipLocalTimeSeconds(
                             state.currentPosMs,
@@ -1296,19 +1292,15 @@ fun EditorScreen(
                             it.durationMs
                         )
                     } ?: 0f,
-                    clipDurationSec = (editLayer?.durationMs ?: 5_000L) / 1000f,
                     onToggleKeyframe = { property ->
                         editLayer?.let { viewModel.selectClip(it) }
                         viewModel.toggleKeyframeAtPlayhead(property)
                     },
-                    onUpdateKeyframe = { property, oldTime, newTime, newValue ->
-                        viewModel.updateKeyframeInGraph(property, oldTime, newTime, newValue)
+                    onApplyEasePreset = { ease, scope, time ->
+                        viewModel.applyKeyframeEasePreset(
+                            editLayer?.id, ease, scope, time
+                        )
                     },
-                    onDeleteKeyframe = { property, time ->
-                        viewModel.deleteKeyframeFromGraph(property, time)
-                    },
-                    onKeyframeEditStart = { viewModel.beginKeyframeGraphEdit() },
-                    onKeyframeEditEnd = { viewModel.commitKeyframeGraphEdit() },
                     onCreate = { spotlight ->
                         val created = viewModel.createSpotlightClip()
                         viewModel.updateSpotlight(created.id, spotlight)
@@ -1656,7 +1648,6 @@ fun EditorScreen(
                         state.currentPosMs, it.timelineStartMs, it.durationMs
                     )
                 } ?: 0f
-                val clipDurSec = selected?.let { it.durationMs / 1000f } ?: 5f
                 val base = selected?.let { clip ->
                     TransformApplier.resolveLive(clip, currentTimeSec)
                 } ?: TransformValues()
@@ -1667,9 +1658,8 @@ fun EditorScreen(
                     clipId = selected?.id,
                     hasClipSelected = hasAnySelected,
                     base = base,
-                    keyframeMap = selected?.keyframes ?: emptyMap(),
+                    keyframeMap = selected?.easingKeyframeMap() ?: emptyMap(),
                     currentTimeSec = currentTimeSec,
-                    clipDurationSec = clipDurSec,
                     onPropertyChanged = { prop, value ->
                         viewModel.changeTransformProperty(
                             prop,
@@ -1681,14 +1671,11 @@ fun EditorScreen(
                         viewModel.toggleKeyframeAtPlayhead(prop)
                     },
                     onResetAll = { viewModel.resetAllSelectedTransforms() },
-                    onUpdateKeyframe = { prop, oldT, newT, newV ->
-                        viewModel.updateKeyframeInGraph(prop, oldT, newT, newV)
+                    onApplyKeyframeEase = { ease, scope, time ->
+                        viewModel.applyKeyframeEasePreset(
+                            selected?.id, ease, scope, time
+                        )
                     },
-                    onDeleteKeyframe = { prop, t ->
-                        viewModel.deleteKeyframeFromGraph(prop, t)
-                    },
-                    onKeyframeEditStart = { viewModel.beginKeyframeGraphEdit() },
-                    onKeyframeEditEnd = { viewModel.commitKeyframeGraphEdit() },
                     onClose = { activePanel = null }
                 )
             }
@@ -1697,13 +1684,17 @@ fun EditorScreen(
                 KeyframeEasingPanel(
                     clipName = selected?.name ?: "Keyframes",
                     clipId = selected?.id,
-                    keyframeMap = selected?.keyframes ?: emptyMap(),
-                    clipDurationSec = (selected?.durationMs ?: 1000L) / 1000f,
-                    onUpdateKeyframe = viewModel::updateKeyframeInGraph,
-                    onDeleteKeyframe = viewModel::deleteKeyframeFromGraph,
-                    onSetKeyframeEase = viewModel::setKeyframeEaseInGraph,
-                    onKeyframeEditStart = viewModel::beginKeyframeGraphEdit,
-                    onKeyframeEditEnd = viewModel::commitKeyframeGraphEdit,
+                    keyframeMap = selected?.easingKeyframeMap() ?: emptyMap(),
+                    playheadTimeSec = selected?.let {
+                        KeyframeStore.clipLocalTimeSeconds(
+                            state.currentPosMs, it.timelineStartMs, it.durationMs
+                        )
+                    } ?: 0f,
+                    onApply = { ease, scope, time ->
+                        viewModel.applyKeyframeEasePreset(
+                            selected?.id, ease, scope, time
+                        )
+                    },
                     onClose = { activePanel = null }
                 )
             }
