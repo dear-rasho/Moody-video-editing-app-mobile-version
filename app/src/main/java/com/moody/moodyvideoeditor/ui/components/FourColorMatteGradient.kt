@@ -35,12 +35,30 @@ fun FourColorMatteGradient(
 
     Canvas(modifier = modifier) {
         drawIntoCanvas { canvas ->
+            val nativeCanvas = canvas.nativeCanvas
+            val radians = Math.toRadians(style.fourColorAngleDeg.toDouble())
+            val cos = kotlin.math.abs(kotlin.math.cos(radians)).toFloat()
+            val sin = kotlin.math.abs(kotlin.math.sin(radians)).toFloat()
+            val drawWidth = size.width * cos + size.height * sin
+            val drawHeight = size.width * sin + size.height * cos
+            nativeCanvas.save()
+            nativeCanvas.rotate(
+                style.fourColorAngleDeg,
+                size.width / 2f,
+                size.height / 2f
+            )
             canvas.nativeCanvas.drawBitmap(
                 bitmap,
                 null,
-                RectF(0f, 0f, size.width, size.height),
+                RectF(
+                    (size.width - drawWidth) / 2f,
+                    (size.height - drawHeight) / 2f,
+                    (size.width + drawWidth) / 2f,
+                    (size.height + drawHeight) / 2f
+                ),
                 paint
             )
+            nativeCanvas.restore()
         }
     }
 }

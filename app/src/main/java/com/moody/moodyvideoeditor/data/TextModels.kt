@@ -42,6 +42,7 @@ data class TextState(
     val glowEnabled: Boolean = false,
     val glowColor: Long = 0xFF4DD0E1,
     val glowRadius: Float = 25f,           // blur radius in dp
+    val glowIntensity: Float = 1f,
 
     // Gradient
     val gradientEnabled: Boolean = false,

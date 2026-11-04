@@ -667,6 +667,7 @@ private fun MaskPropertyRow(
         mutableStateOf(formatNum(value, decimals))
     }
     var isFocused by remember { mutableStateOf(false) }
+    var sliderEditStarted by remember(prop) { mutableStateOf(false) }
 
     if (!isFocused && inputText != formatNum(value, decimals)) {
         inputText = formatNum(value, decimals)
@@ -719,8 +720,18 @@ private fun MaskPropertyRow(
         Slider(
             value = value.coerceIn(range.start, range.endInclusive),
             onValueChange = {
+                if (!sliderEditStarted) {
+                    viewModel.beginMaskEdit()
+                    sliderEditStarted = true
+                }
                 viewModel.updateMaskProperty(prop, it)
                 inputText = formatNum(it, decimals)
+            },
+            onValueChangeFinished = {
+                if (sliderEditStarted) {
+                    viewModel.endMaskEdit()
+                    sliderEditStarted = false
+                }
             },
             valueRange = range,
             modifier = Modifier.weight(1f),
@@ -779,6 +790,9 @@ private fun MaskPropertyRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .onFocusChanged { state ->
+                        if (state.isFocused && !isFocused) {
+                            viewModel.beginMaskEdit()
+                        }
                         isFocused = state.isFocused
                         if (!state.isFocused) {
                             inputText.toFloatOrNull()
@@ -787,6 +801,7 @@ private fun MaskPropertyRow(
                                     val clamped = v.coerceIn(range.start, range.endInclusive)
                                     viewModel.updateMaskProperty(prop, clamped)
                                 }
+                            viewModel.endMaskEdit()
                         }
                     }
             )

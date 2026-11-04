@@ -9,11 +9,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -35,17 +38,77 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.data.Keyframe
 import com.moody.moodyvideoeditor.data.KeyframeLibrary
 import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.utils.SpeedEngine
 import kotlin.math.abs
+
+private fun createSmoothGraphPath(points: List<Offset>): Path {
+    val path = Path()
+    if (points.isEmpty()) return path
+    path.moveTo(points.first().x, points.first().y)
+    if (points.size == 1) return path
+
+    val segmentSlopes = (0 until points.lastIndex).map { index ->
+        val dx = (points[index + 1].x - points[index].x).coerceAtLeast(0.001f)
+        (points[index + 1].y - points[index].y) / dx
+    }
+    val tangents = MutableList(points.size) { 0f }
+    tangents[0] = segmentSlopes.first()
+    tangents[tangents.lastIndex] = segmentSlopes.last()
+    for (index in 1 until points.lastIndex) {
+        val previous = segmentSlopes[index - 1]
+        val next = segmentSlopes[index]
+        tangents[index] = if (previous * next <= 0f) {
+            0f
+        } else {
+            2f * previous * next / (previous + next)
+        }
+    }
+
+    for (index in segmentSlopes.indices) {
+        val slope = segmentSlopes[index]
+        if (abs(slope) < 0.0001f) {
+            tangents[index] = 0f
+            tangents[index + 1] = 0f
+        } else {
+            val alpha = tangents[index] / slope
+            val beta = tangents[index + 1] / slope
+            val magnitude = alpha * alpha + beta * beta
+            if (magnitude > 9f) {
+                val factor = 3f / kotlin.math.sqrt(magnitude)
+                tangents[index] = factor * alpha * slope
+                tangents[index + 1] = factor * beta * slope
+            }
+        }
+    }
+
+    for (index in segmentSlopes.indices) {
+        val start = points[index]
+        val end = points[index + 1]
+        val dx = end.x - start.x
+        path.cubicTo(
+            start.x + dx / 3f,
+            start.y + tangents[index] * dx / 3f,
+            end.x - dx / 3f,
+            end.y - tangents[index + 1] * dx / 3f,
+            end.x,
+            end.y
+        )
+    }
+    return path
+}
 
 // Keyframe Graph — fullscreen, horizontal-scrollable time axis.
 // Each 1 second = 80 dp.
@@ -60,6 +123,7 @@ fun KeyframeGraphDialog(
     onDeleteKeyframe: (prop: String, time: Float) -> Unit,
     selectedKeyframe: Pair<String, Float>? = null,
     selectAllKeyframes: Boolean = false,
+    inlinePanel: Boolean = false,
     onSelectKeyframe: (prop: String, time: Float) -> Unit = { _, _ -> },
     onSetKeyframeEase: (prop: String, time: Float, ease: String) -> Unit = { _, _, _ -> },
     enableEaseEditing: Boolean = false,
@@ -77,6 +141,8 @@ fun KeyframeGraphDialog(
         "x" to Color(0xFF4F9DFF),
         "y" to Color(0xFF22C55E),
         "scale" to Color(0xFFF59E0B),
+        "scaleX" to Color(0xFFFB7185),
+        "scaleY" to Color(0xFFA78BFA),
         "rotation" to Color(0xFFEF4444),
         "anchorX" to Color(0xFF06B6D4),
         "anchorY" to Color(0xFF14B8A6),
@@ -120,40 +186,39 @@ fun KeyframeGraphDialog(
     var dragOriginalTime by remember { mutableStateOf(0f) }
     var selectedGraphKeyframe by remember { mutableStateOf<Pair<String, Float>?>(null) }
     var zoom by remember { mutableFloatStateOf(1f) }
-    var selectedProp by remember(activeProps) {
+    var selectedProp by remember(clipId, clipName) {
         mutableStateOf(
             selectedKeyframe?.first?.takeIf { it in activeProps } ?: activeProps.firstOrNull()
         )
     }
+    val visibleSelectedProp = selectedProp?.takeIf { it in activeProps }
+        ?: activeProps.firstOrNull()
     val graphDurationSec by remember(clipId, clipName) {
         mutableFloatStateOf(clipDurationSec.coerceAtLeast(0.1f))
     }
     val dragHitRadiusPx = with(LocalDensity.current) { 40.dp.toPx() }
     val activeSelection = selectedGraphKeyframe
-        ?: selectedKeyframe?.takeIf { it.first == selectedProp }
-    val visibleProps = selectedProp?.let(::listOf).orEmpty()
+        ?: selectedKeyframe?.takeIf { it.first == visibleSelectedProp }
+    val visibleProps = activeProps
     val hScroll = rememberScrollState()
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF0A0A0A))
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
+    KeyframeGraphHost(inlinePanel, onClose) {
 
             // HEADER
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF141414))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .padding(horizontal = 12.dp, vertical = if (inlinePanel) 5.dp else 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "📊 Keyframe Graph",
-                        color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold
-                    )
+                    if (!inlinePanel) {
+                        Text(
+                            "📊 Keyframe Graph",
+                            color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold
+                        )
+                    }
                     Text(
                         "${clipName.take(20)}  •  ${
                             String.format(
@@ -164,36 +229,17 @@ fun KeyframeGraphDialog(
                         color = Color(0xFF888888), fontSize = 10.sp
                     )
                 }
-                if (!readOnly && activeSelection != null) {
+                if (!inlinePanel) {
                     Box(
                         modifier = Modifier
-                            .padding(end = 8.dp)
+                            .size(36.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF4A2024))
-                            .pointerInput(activeSelection) {
-                                detectTapGestures {
-                                    onDeleteKeyframe(
-                                        activeSelection.first,
-                                        activeSelection.second
-                                    )
-                                    selectedGraphKeyframe = null
-                                }
-                            }
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                            .background(Color(0xFF222222))
+                            .pointerInput(Unit) { detectTapGestures { onClose() } },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("Delete ◆", color = Color(0xFFFF7777), fontSize = 11.sp)
+                        Text("✕", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     }
-                }
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF222222))
-                        .pointerInput(Unit) { detectTapGestures { onClose() } },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("✕", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
@@ -217,7 +263,7 @@ fun KeyframeGraphDialog(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(
-                                    if (selectedProp == prop) Color(0xFF33245C)
+                                    if (visibleSelectedProp == prop) Color(0xFF33245C)
                                     else Color(0xFF202020)
                                 )
                                 .pointerInput(prop) {
@@ -238,7 +284,7 @@ fun KeyframeGraphDialog(
                             Spacer(Modifier.width(3.dp))
                             Text(
                                 prop,
-                                color = if (selectedProp == prop) Color.White else Color(0xFFCCCCCC),
+                                color = if (visibleSelectedProp == prop) Color.White else Color(0xFFCCCCCC),
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -491,16 +537,22 @@ fun KeyframeGraphDialog(
                                 val span = (range.second - range.first)
                                     .takeIf { abs(it) > 0.001f } ?: 1f
 
-                                val path = Path()
+                                val points = ArrayList<Offset>(201)
                                 val samples = 200
                                 for (i in 0..samples) {
                                     val t = graphDurationSec * (i / samples.toFloat())
                                     val v = KeyframeStore.sample(keyframeMap, prop, t, kfs[0].value)
                                     val x = padL + (t / graphDurationSec) * plotW
                                     val y = padT + plotH * (1f - (v - range.first) / span)
-                                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                                    points.add(Offset(x, y))
                                 }
-                                drawPath(path, color, style = Stroke(width = 2.5f))
+                                clipRect(padL, padT, padL + plotW, padT + plotH) {
+                                    drawPath(
+                                        createSmoothGraphPath(points),
+                                        color,
+                                        style = Stroke(width = 2.5f)
+                                    )
+                                }
 
                                 kfs.forEach { kf ->
                                     val x = padL + (kf.time / graphDurationSec) * plotW
@@ -555,10 +607,9 @@ fun KeyframeGraphDialog(
 
                             // TIME LABELS
                             // (Canvas can't draw text; skip)
-                        }
-                    }
                     }
                 }
+            }
             }
 
             val selectedFrame = activeSelection?.let { (prop, time) ->
@@ -617,6 +668,38 @@ fun KeyframeGraphDialog(
                     .background(Color(0xFF141414))
                     .padding(horizontal = 12.dp, vertical = 8.dp)
             )
+        }
+    }
+}
+
+@Composable
+private fun KeyframeGraphHost(
+    inlinePanel: Boolean,
+    onClose: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    if (inlinePanel) {
+        FeaturePanel(title = "📊 Keyframe Graph", onClose = onClose) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 560.dp)
+                    .fillMaxHeight(),
+                content = content
+            )
+        }
+    } else {
+        Dialog(
+            onDismissRequest = onClose,
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF0A0A0A))
+            ) {
+                Column(modifier = Modifier.fillMaxSize(), content = content)
+            }
         }
     }
 }

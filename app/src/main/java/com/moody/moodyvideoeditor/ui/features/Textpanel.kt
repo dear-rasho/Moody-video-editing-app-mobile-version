@@ -249,9 +249,13 @@ fun TextPanel(
                 enabled = currentText.glowEnabled,
                 color = currentText.glowColor,
                 radius = currentText.glowRadius,
+                intensity = currentText.glowIntensity,
                 onEnabled = { onTextChanged(currentText.copy(glowEnabled = it)) },
                 onColor = { onTextChanged(currentText.copy(glowColor = it)) },
                 onRadius = { onTextChanged(currentText.copy(glowRadius = it)) },
+                onIntensity = {
+                    onTextChanged(currentText.copy(glowIntensity = it.coerceIn(0f, 5f)))
+                },
                 onBack = { subView = "options" }
             )
 
@@ -792,14 +796,17 @@ private fun GlowSub(
     enabled: Boolean,
     color: Long,
     radius: Float,
+    intensity: Float,
     onEnabled: (Boolean) -> Unit,
     onColor: (Long) -> Unit,
     onRadius: (Float) -> Unit,
+    onIntensity: (Float) -> Unit,
     onBack: () -> Unit
 ) {
     val latestOnEnabled by rememberUpdatedState(onEnabled)
     val latestOnColor by rememberUpdatedState(onColor)
     val latestOnRadius by rememberUpdatedState(onRadius)
+    val latestOnIntensity by rememberUpdatedState(onIntensity)
 
     var radiusText by remember { mutableStateOf(String.format("%.0f", radius)) }
     var isFocused by remember { mutableStateOf(false) }
@@ -900,38 +907,35 @@ private fun GlowSub(
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf(
-                15f to "Soft",
-                40f to "Normal",
-                100f to "Strong",
-                250f to "Extreme"
-            ).forEach { (presetVal, presetLabel) ->
-                val isActive = kotlin.math.abs(radius - presetVal) < 8f
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(30.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(
-                            if (isActive) Color(0xFF7C3AED)
-                            else Color(0xFF181818)
-                        )
-                        .clickable {
-                            latestOnRadius(presetVal)
-                            radiusText = String.format("%.0f", presetVal)
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        presetLabel,
-                        color = Color.White,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
+            Text(
+                "Intensity",
+                color = Color(0xFF888888),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.width(60.dp)
+            )
+            Slider(
+                value = intensity.coerceIn(0f, 5f),
+                onValueChange = { latestOnIntensity(it) },
+                valueRange = 0f..5f,
+                modifier = Modifier.weight(1f),
+                colors = SliderDefaults.colors(
+                    thumbColor = Color(0xFF7C3AED),
+                    activeTrackColor = Color(0xFF7C3AED),
+                    inactiveTrackColor = Color(0xFF303030)
+                )
+            )
+            Text(
+                String.format("%.1f", intensity),
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.width(32.dp),
+                textAlign = TextAlign.End
+            )
         }
 
         ColorPickerField(
@@ -941,7 +945,7 @@ private fun GlowSub(
         )
 
         Text(
-            "💡 Radius 0-500. Higher = bigger bloom. Try Extreme (250) for epic neon.",
+            "Radius controls glow spread; intensity controls brightness independently.",
             color = Color(0xFF666666),
             fontSize = 9.sp,
             modifier = Modifier.padding(start = 4.dp)

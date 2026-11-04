@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.moody.moodyvideoeditor.data.settings.AppSettings
 import com.moody.moodyvideoeditor.data.settings.SettingsRepository
+import com.moody.moodyvideoeditor.data.settings.SettingsDefaults
 import com.moody.moodyvideoeditor.utils.LocaleHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -71,6 +72,14 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun setAutoSaveEnabled(v: Boolean) = updateDraft { copy(autoSaveEnabled = v) }
     fun setAutoSaveIntervalSec(v: Int) = updateDraft { copy(autoSaveIntervalSec = v) }
     fun setProxyModeEnabled(v: Boolean) = updateDraft { copy(proxyModeEnabled = v) }
+    fun setPreviewPlaybackQuality(v: String) = updateDraft {
+        copy(
+            previewPlaybackQuality = when (v) {
+                "Low", "Medium", "High" -> v
+                else -> SettingsDefaults.PREVIEW_PLAYBACK_QUALITY
+            }
+        )
+    }
     fun setExportSoundEnabled(v: Boolean) = updateDraft { copy(exportSoundEnabled = v) }
 
     fun setAppLanguage(v: String) = updateDraft { copy(appLanguage = v) }

@@ -98,12 +98,14 @@ object EffectsEngine {
     fun getEffectsAbove(
         clips: List<EditorClip>,
         timeMs: Long,
-        videoTrackIdx: Int
+        videoTrackIdx: Int,
+        hiddenVisualTracks: Set<Int> = emptySet()
     ): List<EditorClip> {
         return clips
             .filter {
                 it.isEffectClip &&
                         it.trackIndex > videoTrackIdx &&
+                        it.trackIndex !in hiddenVisualTracks &&
                         timeMs >= it.timelineStartMs &&
                         timeMs < it.timelineEndMs
             }

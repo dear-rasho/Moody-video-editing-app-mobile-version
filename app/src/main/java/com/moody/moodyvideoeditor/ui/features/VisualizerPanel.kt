@@ -109,17 +109,6 @@ fun VisualizerPanel(
     //  MAIN VIEW
     // ═══════════════════════════════════════════════════════════
 
-    val infiniteTransition = rememberInfiniteTransition(label = "vizClock")
-    val clockSec by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 10f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 10000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "clockSec"
-    )
-
     FeaturePanel(title = "🎵 Visualizer", onClose = onClose) {
         Column(
             modifier = Modifier
@@ -192,7 +181,6 @@ fun VisualizerPanel(
             SectionLabel("Visualizers")
             PresetPicker(
                 current = current,
-                clockSec = clockSec,
                 onPick = { preset ->
                     onStateChanged(current.copy(preset = preset))
                 }
@@ -690,7 +678,6 @@ fun VisualizerPanel(
 @Composable
 private fun PresetPicker(
     current: VisualizerState,
-    clockSec: Float,
     onPick: (VisualizerPreset) -> Unit
 ) {
     var activeCategory by remember { mutableStateOf("spectrum") }
@@ -747,7 +734,6 @@ private fun PresetPicker(
                 VisualizerPreviewCard(
                     preset = preset,
                     isSelected = current.preset == preset,
-                    clockSec = clockSec,
                     onTap = { onPick(preset) }
                 )
             }
@@ -764,9 +750,24 @@ private fun PresetPicker(
 private fun VisualizerPreviewCard(
     preset: VisualizerPreset,
     isSelected: Boolean,
-    clockSec: Float,
     onTap: () -> Unit
 ) {
+    val clockSec = if (isSelected) {
+        val infiniteTransition = rememberInfiniteTransition(label = "vizPreview_${preset.key}")
+        val animatedClock by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 10f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 10000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "clockSec"
+        )
+        animatedClock
+    } else {
+        0f
+    }
+
     val previewState = remember(preset) {
         VisualizerState(
             preset = preset,

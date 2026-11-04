@@ -23,6 +23,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -53,6 +54,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -86,12 +88,15 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -149,12 +154,14 @@ import com.moody.moodyvideoeditor.utils.applyTransparentCrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 import com.moody.moodyvideoeditor.utils.ChromaKeyHelper
+import com.moody.moodyvideoeditor.utils.AdjustmentPixelEngine
 import kotlinx.coroutines.delay
 private const val HSL_SHARPEN_SHADER = """
 uniform shader input;
@@ -169,6 +176,8 @@ uniform float uPurples;
 uniform float uMagentas;
 uniform float uSkinTones;
 uniform float uSharpen;
+uniform float uNoise;
+uniform float uVignette;
 
 float3 rgb2hsv(float3 c) {
     float4 K = float4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
@@ -220,6 +229,23 @@ half4 main(float2 fragCoord) {
             0.0,
             1.0
         );
+    }
+    if (uNoise > 0.001) {
+        float noiseValue = fract(
+            sin(dot(floor(fragCoord), float2(12.9898, 78.233))) * 43758.5453
+        );
+        result = clamp(result + (noiseValue - 0.5) * uNoise * 0.2, 0.0, 1.0);
+    }
+    if (abs(uVignette) > 0.001 && uResolution.x > 0.0 && uResolution.y > 0.0) {
+        float2 uv = fragCoord / uResolution;
+        float radius = length((uv - float2(0.5, 0.5)) * 1.41421356);
+        float edge = smoothstep(0.35, 0.98, radius);
+        if (uVignette < 0.0) {
+            result *= 1.0 - edge * abs(uVignette) * 0.95;
+        } else {
+            result += (1.0 - result) * edge * uVignette * 0.5;
+        }
+        result = clamp(result, 0.0, 1.0);
     }
     return half4(result * pixel.a, pixel.a);
 }
@@ -377,6 +403,7 @@ fun PreviewCanvas(
     onVisualizerChanged: (String, VisualizerState) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
+    val hapticFeedback = LocalHapticFeedback.current
 
     val activeClips = clips.filter {
         !it.isAudio && !it.isAdjustmentClip && !it.isEffectClip &&
@@ -385,7 +412,7 @@ fun PreviewCanvas(
                 !hiddenVisualTracks.contains(it.trackIndex)
     }.sortedWith(compareBy({ it.trackIndex }, { it.timelineStartMs }))
 
-    val activeTransitionClip = remember(currentPosMs, clips) {
+    val activeTransitionClip = remember(currentPosMs, clips, hiddenVisualTracks) {
         clips.filter { c ->
             c.isVisualClip && !hiddenVisualTracks.contains(c.trackIndex) &&
                     c.transition != null && c.transition.isActive &&
@@ -413,6 +440,16 @@ fun PreviewCanvas(
             activeClips
         }
     }
+    val latestGestureClips = rememberUpdatedState(clips)
+    val latestGesturePositionMs = rememberUpdatedState(currentPosMs)
+    val latestSelectedClipId = rememberUpdatedState(selectedClipId)
+    val latestMultiSelectedIds = rememberUpdatedState(multiSelectedIds)
+    val latestOnGroupGestureStart = rememberUpdatedState(onGroupGestureStart)
+    val latestOnGroupGestureEnd = rememberUpdatedState(onGroupGestureEnd)
+    val latestOnGroupGesture = rememberUpdatedState(onGroupGesture)
+    val latestOnClipSelected = rememberUpdatedState(onClipSelected)
+    val latestOnEditText = rememberUpdatedState(onEditText)
+    var lastSelectedTextTapMs by remember { mutableLongStateOf(0L) }
 
     val topVideoClip = activeClips.filter { it.isVisualClip && !it.type.startsWith("image/") }
         .maxByOrNull { it.trackIndex }
@@ -564,7 +601,12 @@ fun PreviewCanvas(
                 !hiddenVisualTracks.contains(it.trackIndex)
     }.sortedBy { it.trackIndex }
 
-    val activeEffects = EffectsEngine.getEffectsAbove(clips, currentPosMs, videoTrackIdx)
+    val activeEffects = EffectsEngine.getEffectsAbove(
+        clips,
+        currentPosMs,
+        videoTrackIdx,
+        hiddenVisualTracks
+    )
     val timeSec = currentPosMs / 1000f
 
     val motionFrames = activeEffects.mapNotNull { clip ->
@@ -758,47 +800,6 @@ fun PreviewCanvas(
 
     val opacityAlpha = EffectsEngine.opacityAlpha(combinedFilter)
 
-    val adjustmentEffectModifier = remember(
-        activeAdjustment?.reds,
-        activeAdjustment?.oranges,
-        activeAdjustment?.yellows,
-        activeAdjustment?.greens,
-        activeAdjustment?.cyans,
-        activeAdjustment?.blues,
-        activeAdjustment?.purples,
-        activeAdjustment?.magentas,
-        activeAdjustment?.skinTones,
-        activeAdjustment?.sharpen
-    ) {
-        val adj = activeAdjustment
-        val needsShader =
-            adj != null && (adj.reds != 0f || adj.oranges != 0f || adj.yellows != 0f || adj.greens != 0f || adj.cyans != 0f || adj.blues != 0f || adj.purples != 0f || adj.magentas != 0f || adj.skinTones != 0f || adj.sharpen > 0f)
-        if (needsShader && Build.VERSION.SDK_INT >= 33) {
-            try {
-                val shader = android.graphics.RuntimeShader(HSL_SHARPEN_SHADER)
-                shader.setFloatUniform("uReds", (adj!!.reds / 50f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uOranges", (adj.oranges / 50f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uYellows", (adj.yellows / 50f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uGreens", (adj.greens / 50f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uCyans", (adj.cyans / 50f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uBlues", (adj.blues / 50f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uPurples", (adj.purples / 50f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uMagentas", (adj.magentas / 50f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uSkinTones", (adj.skinTones / 50f).coerceIn(-5f, 5f))
-                shader.setFloatUniform("uSharpen", (adj.sharpen / 25f).coerceIn(0f, 2f))
-                Modifier.graphicsLayer {
-                    shader.setFloatUniform("uResolution", size.width, size.height)
-                    renderEffect =
-                        android.graphics.RenderEffect.createRuntimeShaderEffect(shader, "input")
-                            .asComposeRenderEffect()
-
-                }
-            } catch (t: Throwable) {
-                Modifier
-            }
-        } else Modifier
-    }
-
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -834,7 +835,192 @@ fun PreviewCanvas(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-            ) {
+                    .pointerInput(isMaskPenMode, isMaskHandMode) {
+                        if (isMaskPenMode || isMaskHandMode) return@pointerInput
+                        awaitEachGesture {
+                            val down = awaitFirstDown(
+                                requireUnconsumed = false,
+                                pass = PointerEventPass.Initial
+                            )
+                            val canvasWidth = size.width.toFloat().coerceAtLeast(1f)
+                            val canvasHeight = size.height.toFloat().coerceAtLeast(1f)
+                            val activeGestureClips = latestGestureClips.value.filter {
+                                !it.isAudio &&
+                                        latestGesturePositionMs.value >= it.timelineStartMs &&
+                                        latestGesturePositionMs.value < it.timelineEndMs
+                            }
+                            val textUnderPointer = activeGestureClips
+                                .asReversed()
+                                .filter { it.isTextClip }
+                                .filter { textClip ->
+                                    isClipVisibleAtCanvasPoint(
+                                        textClip,
+                                        down.position,
+                                        canvasWidth,
+                                        canvasHeight,
+                                        latestGesturePositionMs.value,
+                                        topVideoClip?.id
+                                    )
+                                }
+                                .firstOrNull { textClip ->
+                                    activeGestureClips
+                                        .filter {
+                                            it.isColorMatteClip &&
+                                                    it.trackIndex > textClip.trackIndex
+                                        }
+                                        .none { matte ->
+                                            isClipVisibleAtCanvasPoint(
+                                                matte,
+                                                down.position,
+                                                canvasWidth,
+                                                canvasHeight,
+                                                latestGesturePositionMs.value,
+                                                topVideoClip?.id
+                                            )
+                                        }
+                                }
+                            val currentSelectedClipId = latestSelectedClipId.value
+                            val visibleTargetUnderPointer = if (textUnderPointer == null) {
+                                activeGestureClips
+                                    .asReversed()
+                                    .firstOrNull { candidate ->
+                                        isClipVisibleAtCanvasPoint(
+                                            candidate,
+                                            down.position,
+                                            canvasWidth,
+                                            canvasHeight,
+                                            latestGesturePositionMs.value,
+                                            topVideoClip?.id
+                                        )
+                                    }
+                            } else null
+                            val target = textUnderPointer ?: visibleTargetUnderPointer
+                            if (target == null) {
+                                return@awaitEachGesture
+                            }
+                            val canMoveOnCanvas = target.isTextClip ||
+                                    target.isVisualClip || target.isColorMatteClip
+                            if (!canMoveOnCanvas) {
+                                if (target.id != currentSelectedClipId) {
+                                    latestOnClipSelected.value(target.id)
+                                }
+                                return@awaitEachGesture
+                            }
+                            var latestDown = down
+                            var canceledBeforeLongPress = false
+                            withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val change = event.changes.firstOrNull {
+                                        it.id == down.id
+                                    }
+                                    if (change == null || !change.pressed) {
+                                        canceledBeforeLongPress = true
+                                        break
+                                    }
+                                    latestDown = change
+                                    val delta = change.position - down.position
+                                    if (delta.x * delta.x + delta.y * delta.y >
+                                        viewConfiguration.touchSlop * viewConfiguration.touchSlop
+                                    ) {
+                                        canceledBeforeLongPress = true
+                                        break
+                                    }
+                                }
+                            }
+                            val longPress = latestDown.takeIf {
+                                !canceledBeforeLongPress && it.pressed
+                            }
+                            if (longPress == null) {
+                                if (target.id != currentSelectedClipId) {
+                                    latestOnClipSelected.value(target.id)
+                                }
+                                return@awaitEachGesture
+                            }
+                            longPress.consume()
+                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+
+                            val localTimeSec = KeyframeStore.clipLocalTimeSeconds(
+                                latestGesturePositionMs.value,
+                                target.timelineStartMs,
+                                target.durationMs
+                            )
+                            val base = TransformApplier.resolveLive(target, localTimeSec)
+                            var panX = 0f
+                            var panY = 0f
+                            var zoom = 1f
+                            var rotation = 0f
+                            var lastDistance = 0f
+                            var lastAngle = 0f
+                            var hadMultiplePointers = false
+                            var moved = false
+                            var continueGesture = true
+                            down.consume()
+                            if (target.id != currentSelectedClipId) {
+                                latestOnClipSelected.value(target.id)
+                            }
+                            latestOnGroupGestureStart.value()
+
+                            try {
+                                while (continueGesture) {
+                                    val event = awaitPointerEvent()
+                                    val pressed = event.changes.filter { it.pressed }
+                                    if (pressed.isEmpty()) {
+                                        continueGesture = false
+                                        continue
+                                    }
+                                    if (pressed.size == 1) {
+                                        val change = pressed.first()
+                                        val delta = change.position - change.previousPosition
+                                        panX += delta.x
+                                        panY += delta.y
+                                        moved = moved || panX * panX + panY * panY > 25f
+                                        change.consume()
+                                    } else {
+                                        val first = pressed[0]
+                                        val second = pressed[1]
+                                        val delta = first.position - second.position
+                                        val distance = kotlin.math.sqrt(delta.x * delta.x + delta.y * delta.y)
+                                        val angle = kotlin.math.atan2(delta.y, delta.x)
+                                        if (hadMultiplePointers && lastDistance > 1f) {
+                                            zoom *= distance / lastDistance
+                                            rotation += Math.toDegrees(
+                                                normalizeAngle(angle - lastAngle).toDouble()
+                                            ).toFloat()
+                                            moved = true
+                                        }
+                                        lastDistance = distance
+                                        lastAngle = angle
+                                        hadMultiplePointers = true
+                                        pressed.forEach { it.consume() }
+                                    }
+
+                                    if (moved) {
+                                        latestOnGroupGesture.value(
+                                            target.id,
+                                            (base.x + panX / canvasWidth * 100f).coerceIn(-100f, 200f),
+                                            (base.y + panY / canvasHeight * 100f).coerceIn(-100f, 200f),
+                                            (base.scale * zoom).coerceIn(10f, 500f),
+                                            base.rotation + rotation
+                                        )
+                                    }
+                                }
+                            } finally {
+                                latestOnGroupGestureEnd.value()
+                            }
+
+                            if (!moved && target.isTextClip) {
+                                val now = android.os.SystemClock.uptimeMillis()
+                                if (now - lastSelectedTextTapMs < 350L) {
+                                    latestOnEditText.value(target.id)
+                                    lastSelectedTextTapMs = 0L
+                                } else {
+                                    lastSelectedTextTapMs = now
+                                }
+                            }
+                        }
+                    }
+                ) {
                 layerRenderClips.forEach { clip ->
                     val clipLocalTimeSec = KeyframeStore.clipLocalTimeSeconds(
                         currentPosMs, clip.timelineStartMs, clip.durationMs
@@ -868,6 +1054,83 @@ fun PreviewCanvas(
                     when {
                     clip.isVisualClip && !clip.type.startsWith("image/") -> {
                         if (clip.id != topVideoClip?.id) return@forEach
+                        val videoPixelAdjustment = remember(clip.adjustments, activeAdjustment) {
+                            AdjustmentPixelEngine.mergePreviewAdjustments(
+                                clip.adjustments,
+                                activeAdjustment
+                            )
+                        }
+                        val adjustmentEffectModifier = remember(videoPixelAdjustment) {
+                            val adj = videoPixelAdjustment
+                            val needsShader = adj.reds != 0f || adj.oranges != 0f ||
+                                    adj.yellows != 0f || adj.greens != 0f || adj.cyans != 0f ||
+                                    adj.blues != 0f || adj.purples != 0f || adj.magentas != 0f ||
+                                    adj.skinTones != 0f || adj.sharpen > 0f ||
+                                    clip.adjustments.noise > 0f ||
+                                    clip.adjustments.vignette != 0f
+                            if (needsShader && Build.VERSION.SDK_INT >= 33) {
+                                try {
+                                    val shader = android.graphics.RuntimeShader(HSL_SHARPEN_SHADER)
+                                    shader.setFloatUniform(
+                                        "uReds",
+                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.reds)
+                                    )
+                                    shader.setFloatUniform(
+                                        "uOranges",
+                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.oranges)
+                                    )
+                                    shader.setFloatUniform(
+                                        "uYellows",
+                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.yellows)
+                                    )
+                                    shader.setFloatUniform(
+                                        "uGreens",
+                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.greens)
+                                    )
+                                    shader.setFloatUniform(
+                                        "uCyans",
+                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.cyans)
+                                    )
+                                    shader.setFloatUniform(
+                                        "uBlues",
+                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.blues)
+                                    )
+                                    shader.setFloatUniform(
+                                        "uPurples",
+                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.purples)
+                                    )
+                                    shader.setFloatUniform(
+                                        "uMagentas",
+                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.magentas)
+                                    )
+                                    shader.setFloatUniform(
+                                        "uSkinTones",
+                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.skinTones)
+                                    )
+                                    shader.setFloatUniform("uSharpen", (adj.sharpen / 25f).coerceIn(0f, 2f))
+                                    shader.setFloatUniform(
+                                        "uNoise",
+                                        (clip.adjustments.noise / 100f).coerceIn(0f, 1f)
+                                    )
+                                    shader.setFloatUniform(
+                                        "uVignette",
+                                        (clip.adjustments.vignette / 100f).coerceIn(-1f, 1f)
+                                    )
+                                    Modifier.graphicsLayer {
+                                        shader.setFloatUniform("uResolution", size.width, size.height)
+                                        renderEffect =
+                                            android.graphics.RenderEffect.createRuntimeShaderEffect(
+                                                shader,
+                                                "input"
+                                            ).asComposeRenderEffect()
+                                    }
+                                } catch (t: Throwable) {
+                                    android.util.Log.e("PreviewCanvas", "Adjustment shader creation failed", t)
+                                    Modifier
+                                }
+                            } else Modifier
+                        }
+
                         val videoLocalSec =
                             ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
                         val videoTransform2 = TransformApplier.resolveLive(clip, videoLocalSec)
@@ -933,37 +1196,6 @@ fun PreviewCanvas(
                             videoWheelMatrix,
                             useExactVideoColorWheels
                         )
-                        val useNativeSurface =
-                            videoColorMatrix == null &&
-                                    videoWheelNative == null &&
-                                    clip.adjustments.isDefault &&
-                                    clip.filters.isDefault &&
-                                    clip.colorWheel.isDefault &&
-                                    activeAdjustment == null &&
-                                    activeColorWheels.isEmpty() &&
-                                    activeFilterLayer == null &&
-                                    activeEffects.isEmpty() &&
-                                    previewEffectState == null &&
-                                    previewFilters == null &&
-                                    videoBlurDp <= 0.5f &&
-                                    !clip.layerShadow.enabled &&
-                                    !clip.chromaKey.isActive &&
-                                    !maskAtClipTime(clip, currentPosMs).isActive &&
-                                    opacityAlpha >= 1f &&
-                                    layerOpacityAlpha >= 0.999f &&
-                                    clip.keyframes[KeyframeLibrary.LAYER_OPACITY].isNullOrEmpty() &&
-                                    clip.filters.opacity >= 100f &&
-                                    clip.blendMode.equals("normal", ignoreCase = true) &&
-                                    blendOpacityFactor(clip) >= 1f &&
-                                    rotation == 0 &&
-                                    videoTransform2.isIdentity() &&
-                                    combinedMotion == EffectsEngine.MotionFrame() &&
-                                    activeTransitionClip == null &&
-                                    !TransformApplier.hasAnimatedTransform(clip) &&
-                                    activeClips.none { it.id != clip.id && it.isVisualClip } &&
-                                    activeClips.none { it.isSpotlightClip } &&
-                                    allOverlays.isEmpty()
-
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
                             Box(
                                 modifier = Modifier
@@ -1009,9 +1241,9 @@ fun PreviewCanvas(
                                         translationY =
                                             posTy + combinedMotion.ty + transT.ty
                                         scaleX =
-                                            (videoTransform2.scale / 100f) * combinedMotion.scale * transT.scaleX
+                                            (videoTransform2.scaleX / 100f) * combinedMotion.scale * transT.scaleX
                                         scaleY =
-                                            (videoTransform2.scale / 100f) * combinedMotion.scale * transT.scaleY
+                                            (videoTransform2.scaleY / 100f) * combinedMotion.scale * transT.scaleY
                                         rotationZ =
                                             videoTransform2.rotation + combinedMotion.rotation + transT.rotZ
                                         transformOrigin = TransformOrigin(
@@ -1029,6 +1261,82 @@ fun PreviewCanvas(
                                             )?.asComposeRenderEffect()
                                         }
                                         this.clip = !clip.layerShadow.enabled
+                                    }
+                                    .pointerInput(clip.id) {
+                                        awaitEachGesture {
+                                            val down = awaitFirstDown(requireUnconsumed = true)
+                                            val longPress = awaitLongPressOrCancellation(down.id)
+                                                ?: return@awaitEachGesture
+                                            longPress.consume()
+                                            hapticFeedback.performHapticFeedback(
+                                                HapticFeedbackType.LongPress
+                                            )
+                                            if (clip.id != latestSelectedClipId.value &&
+                                                clip.id !in latestMultiSelectedIds.value
+                                            ) {
+                                                latestOnClipSelected.value(clip.id)
+                                            }
+                                            latestOnGroupGestureStart.value()
+                                            val baseX = videoTransform2.x
+                                            val baseY = videoTransform2.y
+                                            val baseScale = videoTransform2.scale
+                                            val baseRotation = videoTransform2.rotation
+                                            var panX = 0f
+                                            var panY = 0f
+                                            var zoom = 1f
+                                            var rotation = 0f
+                                            var lastDistance = 0f
+                                            var lastAngle = 0f
+                                            var hadMultiplePointers = false
+                                            var continueGesture = true
+                                            while (continueGesture) {
+                                                val event = awaitPointerEvent()
+                                                val pressed = event.changes.filter { it.pressed }
+                                                if (pressed.isEmpty()) {
+                                                    continueGesture = false
+                                                } else if (pressed.size == 1) {
+                                                    val change = pressed.first()
+                                                    val delta = change.position - change.previousPosition
+                                                    panX += delta.x
+                                                    panY += delta.y
+                                                    change.consume()
+                                                } else {
+                                                    val first = pressed[0]
+                                                    val second = pressed[1]
+                                                    val delta = first.position - second.position
+                                                    val distance = kotlin.math.sqrt(
+                                                        delta.x * delta.x + delta.y * delta.y
+                                                    )
+                                                    val angle = kotlin.math.atan2(delta.y, delta.x)
+                                                    if (hadMultiplePointers && lastDistance > 1f) {
+                                                        zoom *= distance / lastDistance
+                                                        rotation += Math.toDegrees(
+                                                            normalizeAngle(angle - lastAngle).toDouble()
+                                                        ).toFloat()
+                                                    }
+                                                    lastDistance = distance
+                                                    lastAngle = angle
+                                                    hadMultiplePointers = true
+                                                    first.consume()
+                                                    second.consume()
+                                                }
+
+                                                val newX = (
+                                                        baseX + panX / size.width.coerceAtLeast(1) * 100f
+                                                        ).coerceIn(0f, 100f)
+                                                val newY = (
+                                                        baseY + panY / size.height.coerceAtLeast(1) * 100f
+                                                        ).coerceIn(0f, 100f)
+                                                latestOnGroupGesture.value(
+                                                    clip.id,
+                                                    newX,
+                                                    newY,
+                                                    (baseScale * zoom).coerceIn(10f, 500f),
+                                                    baseRotation + rotation
+                                                )
+                                            }
+                                            latestOnGroupGestureEnd.value()
+                                        }
                                     }
                             ) {
                                 Box(
@@ -1121,62 +1429,42 @@ fun PreviewCanvas(
                                         }
 
                                     } else {
-                                        if (useNativeSurface) {
-                                            AndroidView(
-                                                factory = { ctx ->
-                                                    LayoutInflater.from(ctx).inflate(
-                                                        com.moody.moodyvideoeditor.R.layout.view_player_surface,
-                                                        null
-                                                    ) as PlayerView
-                                                },
-                                                update = { view ->
-                                                    view.player = exoPlayer
-                                                    view.resizeMode =
-                                                        AspectRatioFrameLayout.RESIZE_MODE_FILL
-                                                    view.rotation = rotation.toFloat()
-                                                    view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                                                },
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                        } else {
-                                            AndroidView(
-                                                factory = { ctx ->
-                                                    LayoutInflater.from(ctx).inflate(
-                                                        com.moody.moodyvideoeditor.R.layout.view_player,
-                                                        null
-                                                    ) as PlayerView
-                                                },
-                                                update = { view ->
-                                                    view.player = exoPlayer
-                                                    view.resizeMode =
-                                                        AspectRatioFrameLayout.RESIZE_MODE_FILL
-                                                    view.rotation = rotation.toFloat()
-                                                    view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                        AndroidView(
+                                            factory = { ctx ->
+                                                LayoutInflater.from(ctx).inflate(
+                                                    com.moody.moodyvideoeditor.R.layout.view_player,
+                                                    null
+                                                ) as PlayerView
+                                            },
+                                            update = { view ->
+                                                view.player = exoPlayer
+                                                view.resizeMode =
+                                                    AspectRatioFrameLayout.RESIZE_MODE_FILL
+                                                view.rotation = rotation.toFloat()
+                                                view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
 
-                                                    val sv = view.videoSurfaceView
-                                                    if (sv is TextureView) {
-                                                        if (videoColorMatrix != null) {
-                                                            val paint = Paint().apply {
-                                                                colorFilter =
-                                                                    android.graphics.ColorMatrixColorFilter(
-                                                                        videoColorMatrix
-                                                                    )
-                                                            }
-                                                            sv.setLayerType(
-                                                                View.LAYER_TYPE_HARDWARE,
-                                                                paint
-                                                            )
-                                                        } else {
-                                                            sv.setLayerType(View.LAYER_TYPE_NONE, null)
+                                                val sv = view.videoSurfaceView
+                                                if (sv is TextureView) {
+                                                    if (videoColorMatrix != null) {
+                                                        val paint = Paint().apply {
+                                                            colorFilter =
+                                                                android.graphics.ColorMatrixColorFilter(
+                                                                    videoColorMatrix
+                                                                )
                                                         }
-
-                                                        sv.isOpaque =
-                                                            videoWheelNative == null
+                                                        sv.setLayerType(
+                                                            View.LAYER_TYPE_HARDWARE,
+                                                            paint
+                                                        )
+                                                    } else {
+                                                        sv.setLayerType(View.LAYER_TYPE_NONE, null)
                                                     }
-                                                },
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                    }
+
+                                                    sv.isOpaque = videoWheelNative == null
+                                                }
+                                            },
+                                            modifier = Modifier.fillMaxSize()
+                                        )
                                 }
                                 }
                                 if (clip.id == selectedClipId) {
@@ -1231,22 +1519,15 @@ fun PreviewCanvas(
                                 )
                             }
 
-                        val adjForImage = activeAdjustment ?: clip.adjustments
+                        val adjForImage = remember(clip.adjustments, activeAdjustment) {
+                            AdjustmentPixelEngine.mergePreviewAdjustments(
+                                clip.adjustments,
+                                activeAdjustment
+                            )
+                        }
                         val needsCpuAdj =
-                            ImageAdjustmentProcessor.hasSharpenOrColorChannels(adjForImage)
-                        val adjKey = remember(
-                            adjForImage.reds,
-                            adjForImage.oranges,
-                            adjForImage.yellows,
-                            adjForImage.greens,
-                            adjForImage.cyans,
-                            adjForImage.blues,
-                            adjForImage.purples,
-                            adjForImage.magentas,
-                            adjForImage.skinTones,
-                            adjForImage.sharpen
-                        ) { "${adjForImage.reds}_${adjForImage.oranges}_${adjForImage.yellows}_${adjForImage.greens}_${adjForImage.cyans}_${adjForImage.blues}_${adjForImage.purples}_${adjForImage.magentas}_${adjForImage.skinTones}_${adjForImage.sharpen}" }
-
+                            ImageAdjustmentProcessor.hasSharpenOrColorChannels(adjForImage) ||
+                                    ImageAdjustmentProcessor.hasNoiseOrVignette(clip.adjustments)
                         var loadedBitmap by remember(clip.uri) {
                             mutableStateOf<android.graphics.Bitmap?>(
                                 null
@@ -1268,7 +1549,7 @@ fun PreviewCanvas(
                                 }
                             }
                         }
-                        LaunchedEffect(loadedBitmap, adjKey, needsCpuAdj) {
+                        LaunchedEffect(loadedBitmap, adjForImage, clip.adjustments, needsCpuAdj) {
                             val src = loadedBitmap ?: return@LaunchedEffect
                             if (!needsCpuAdj) {
                                 processedImageBitmap = src.asImageBitmap(); return@LaunchedEffect
@@ -1277,7 +1558,8 @@ fun PreviewCanvas(
                             processedImageBitmap = withContext(Dispatchers.IO) {
                                 ImageAdjustmentProcessor.process(
                                     src,
-                                    adjForImage
+                                    adjForImage,
+                                    clip.adjustments
                                 ).asImageBitmap()
                             }
                         }
@@ -1324,9 +1606,9 @@ fun PreviewCanvas(
                                         translationY =
                                             posTy + combinedMotion.ty + transT.ty
                                         scaleX =
-                                            (imgTransform.scale / 100f) * combinedMotion.scale * transT.scaleX
+                                            (imgTransform.scaleX / 100f) * combinedMotion.scale * transT.scaleX
                                         scaleY =
-                                            (imgTransform.scale / 100f) * combinedMotion.scale * transT.scaleY
+                                            (imgTransform.scaleY / 100f) * combinedMotion.scale * transT.scaleY
                                         rotationZ =
                                             imgTransform.rotation + combinedMotion.rotation + transT.rotZ
                                         transformOrigin = TransformOrigin(
@@ -1351,10 +1633,21 @@ fun PreviewCanvas(
                                             shape = RoundedCornerShape(4.dp)
                                         ) else Modifier
                                     )
-                                    .pointerInput(clip.id, isSelected, isMulti) {
+                                    .pointerInput(clip.id) {
                                         awaitEachGesture {
-                                            awaitFirstDown(requireUnconsumed = true)
-                                            onGroupGestureStart()
+                                            val down = awaitFirstDown(requireUnconsumed = true)
+                                            val longPress = awaitLongPressOrCancellation(down.id)
+                                                ?: return@awaitEachGesture
+                                            longPress.consume()
+                                            hapticFeedback.performHapticFeedback(
+                                                HapticFeedbackType.LongPress
+                                            )
+                                            if (clip.id != latestSelectedClipId.value &&
+                                                clip.id !in latestMultiSelectedIds.value
+                                            ) {
+                                                latestOnClipSelected.value(clip.id)
+                                            }
+                                            latestOnGroupGestureStart.value()
                                             val baseX = imgTransform.x;
                                             val baseY = imgTransform.y
                                             val baseScale = imgTransform.scale;
@@ -1366,7 +1659,6 @@ fun PreviewCanvas(
                                             var lastDist = 0f;
                                             var lastAngle = 0f;
                                             var hasMulti = false
-                                            if (!isSelected && !isMulti) onClipSelected(clip.id)
                                             var continueGesture = true
                                             while (continueGesture) {
                                                 val event = awaitPointerEvent()
@@ -1408,7 +1700,7 @@ fun PreviewCanvas(
                                                     val newScale =
                                                         (baseScale * accumZoom).coerceIn(10f, 500f)
                                                     val newRot = baseRot + accumRot
-                                                    onGroupGesture(
+                                                    latestOnGroupGesture.value(
                                                         clip.id,
                                                         newX,
                                                         newY,
@@ -1417,7 +1709,7 @@ fun PreviewCanvas(
                                                     )
                                                 }
                                             }
-                                            onGroupGestureEnd()
+                                            latestOnGroupGestureEnd.value()
                                         }
                                     }
                                     .pointerInput(clip.id, isMulti) {
@@ -1647,9 +1939,9 @@ fun PreviewCanvas(
                                         translationX = posTx + combinedMotion.tx
                                         translationY = posTy + combinedMotion.ty
                                         scaleX =
-                                            (matteTransform.scale / 100f) * combinedMotion.scale
+                                            (matteTransform.scaleX / 100f) * combinedMotion.scale
                                         scaleY =
-                                            (matteTransform.scale / 100f) * combinedMotion.scale
+                                            (matteTransform.scaleY / 100f) * combinedMotion.scale
                                         rotationZ =
                                             matteTransform.rotation + combinedMotion.rotation
                                         transformOrigin = TransformOrigin(
@@ -1667,7 +1959,52 @@ fun PreviewCanvas(
                                     )
                                     .pointerInput(clip.id, isSel, isMulti) {
                                         awaitEachGesture {
-                                            awaitFirstDown(requireUnconsumed = true)
+                                            val down = awaitFirstDown(requireUnconsumed = true)
+                                            val mask = maskAtClipTime(clip, currentPosMs)
+                                            val canvasWidth = size.width.toFloat()
+                                            val canvasHeight = size.height.toFloat()
+                                            val maskPath = buildMaskPathCompose(
+                                                mask, canvasWidth, canvasHeight
+                                            )
+                                            val canvasPoint = transformedPointToCanvas(
+                                                down.position,
+                                                canvasWidth,
+                                                canvasHeight,
+                                                matteTransform,
+                                                combinedMotion.scale,
+                                                combinedMotion.rotation,
+                                                combinedMotion.tx,
+                                                combinedMotion.ty
+                                            )
+                                            if (!isMulti && mask.isInverted &&
+                                                maskPath?.let { pathContainsPoint(it, canvasPoint) } == true
+                                            ) {
+                                                val underlyingClip = layerRenderClips
+                                                    .takeWhile { it.id != clip.id }
+                                                    .asReversed()
+                                                    .sortedByDescending { it.isTextClip }
+                                                    .firstOrNull { candidate ->
+                                                        isClipVisibleAtCanvasPoint(
+                                                            candidate,
+                                                            canvasPoint,
+                                                            canvasWidth,
+                                                            canvasHeight,
+                                                            currentPosMs,
+                                                            topVideoClip?.id
+                                                        )
+                                                    }
+                                                onClipSelected(underlyingClip?.id ?: clip.id)
+                                                return@awaitEachGesture
+                                            }
+                                            val longPress = awaitLongPressOrCancellation(down.id)
+                                            if (longPress == null) {
+                                                if (!isSel) onClipSelected(clip.id)
+                                                return@awaitEachGesture
+                                            }
+                                            longPress.consume()
+                                            hapticFeedback.performHapticFeedback(
+                                                HapticFeedbackType.LongPress
+                                            )
                                             onGroupGestureStart()
                                             val baseX = matteTransform.x;
                                             val baseY = matteTransform.y
@@ -1744,9 +2081,6 @@ fun PreviewCanvas(
                                             }
                                             onGroupGestureEnd()
                                         }
-                                    }
-                                    .pointerInput(clip.id, isMulti) {
-                                        detectTapGestures { if (!isMulti) onClipSelected(clip.id) }
                                     }
                             ) {
                                 Box(
@@ -2429,6 +2763,249 @@ private fun maskAtClipTime(clip: EditorClip, currentPosMs: Long): MaskState {
     return MaskEngine.sampleAt(clip.mask, localTimeSec)
 }
 
+private fun transformedPointToCanvas(
+    point: Offset,
+    width: Float,
+    height: Float,
+    transform: com.moody.moodyvideoeditor.utils.TransformValues,
+    additionalScale: Float = 1f,
+    additionalRotation: Float = 0f,
+    additionalTranslationX: Float = 0f,
+    additionalTranslationY: Float = 0f
+): Offset {
+    val originX = width * transform.anchorX / 100f
+    val originY = height * transform.anchorY / 100f
+    val scaleX = transform.scaleX / 100f * additionalScale
+    val scaleY = transform.scaleY / 100f * additionalScale
+    val rotation = Math.toRadians(
+        (transform.rotation + additionalRotation).toDouble()
+    )
+    val dx = (point.x - originX) * scaleX
+    val dy = (point.y - originY) * scaleY
+    return Offset(
+        originX + (transform.x - 50f) / 100f * width + additionalTranslationX +
+                (dx * kotlin.math.cos(rotation) - dy * kotlin.math.sin(rotation)).toFloat(),
+        originY + (transform.y - 50f) / 100f * height + additionalTranslationY +
+                (dx * kotlin.math.sin(rotation) + dy * kotlin.math.cos(rotation)).toFloat()
+    )
+}
+
+private fun pathContainsPoint(path: Path, point: Offset): Boolean {
+    val androidPath = path.asAndroidPath()
+    val bounds = android.graphics.RectF()
+    androidPath.computeBounds(bounds, true)
+    val clip = android.graphics.Region(
+        kotlin.math.floor(bounds.left).toInt(),
+        kotlin.math.floor(bounds.top).toInt(),
+        kotlin.math.ceil(bounds.right).toInt(),
+        kotlin.math.ceil(bounds.bottom).toInt()
+    )
+    val region = android.graphics.Region()
+    region.setPath(androidPath, clip)
+    return region.contains(point.x.toInt(), point.y.toInt())
+}
+
+private fun isPointInInvertedMatte(
+    clip: EditorClip,
+    point: Offset,
+    width: Float,
+    height: Float,
+    currentPosMs: Long
+): Boolean {
+    val mask = maskAtClipTime(clip, currentPosMs)
+    if (!mask.isActive || !mask.isInverted ||
+        (mask.type == MaskType.CUSTOM && !mask.hasCustomPath)
+    ) return false
+
+    val localTimeSec = KeyframeStore.clipLocalTimeSeconds(
+        currentPosMs, clip.timelineStartMs, clip.durationMs
+    )
+    val transform = TransformApplier.resolveLive(clip, localTimeSec)
+    val pivotX = width * transform.anchorX / 100f
+    val pivotY = height * transform.anchorY / 100f
+    val scaleX = (transform.scaleX / 100f).takeIf { kotlin.math.abs(it) > 0.001f }
+        ?: return false
+    val scaleY = (transform.scaleY / 100f).takeIf { kotlin.math.abs(it) > 0.001f }
+        ?: return false
+    val offsetX = (transform.x - 50f) / 100f * width
+    val offsetY = (transform.y - 50f) / 100f * height
+    val rotation = Math.toRadians(transform.rotation.toDouble())
+    val screenX = point.x - pivotX - offsetX
+    val screenY = point.y - pivotY - offsetY
+    val localPoint = Offset(
+        pivotX + (screenX * kotlin.math.cos(rotation) +
+                screenY * kotlin.math.sin(rotation)).toFloat() / scaleX,
+        pivotY + (-screenX * kotlin.math.sin(rotation) +
+                screenY * kotlin.math.cos(rotation)).toFloat() / scaleY
+    )
+    val maskPath = buildMaskPathCompose(mask, width, height) ?: return false
+    return pathContainsPoint(maskPath, localPoint)
+}
+
+private fun isClipVisibleAtCanvasPoint(
+    clip: EditorClip,
+    point: Offset,
+    width: Float,
+    height: Float,
+    currentPosMs: Long,
+    topVideoClipId: String?
+): Boolean {
+    if (clip.layerOpacity <= 0f || clip.filters.opacity <= 0f) return false
+    if (clip.isVisualClip && !clip.type.startsWith("image/") &&
+        clip.id != topVideoClipId
+    ) return false
+    if (clip.isTextClip && clip.textState?.content.isNullOrBlank()) return false
+
+    val localTimeSec = KeyframeStore.clipLocalTimeSeconds(
+        currentPosMs, clip.timelineStartMs, clip.durationMs
+    )
+    val transform = TransformApplier.resolveLive(clip, localTimeSec)
+    val localPoint: Offset
+    val insideContent: Boolean
+    if (clip.isTextClip && clip.textState != null) {
+        val text = clip.textState
+        val sampledFontSize = KeyframeStore.sample(
+            clip.keyframes,
+            "text.size",
+            localTimeSec,
+            text.fontSize.toFloat()
+        ).coerceIn(0f, 200f)
+        val sampledLetterSpacing = KeyframeStore.sample(
+            clip.keyframes,
+            "text.letterSpacing",
+            localTimeSec,
+            text.letterSpacing
+        ).coerceIn(-200f, 300f)
+        val displayContent = when {
+            !text.animation.equals("none", ignoreCase = true) ->
+                com.moody.moodyvideoeditor.utils.CaptionPresetLibrary.visibleText(
+                    text.content,
+                    text.animation,
+                    (localTimeSec / text.animationDuration.coerceAtLeast(0.1f))
+                        .coerceIn(0f, 1f)
+                )
+            else -> com.moody.moodyvideoeditor.utils.CaptionPresetLibrary.visibleText(
+                text.content,
+                text.captionPresetAnimation,
+                (localTimeSec / text.captionPresetAnimationDuration.coerceAtLeast(0.1f))
+                    .coerceIn(0f, 1f)
+            )
+        }
+        if (displayContent.isEmpty()) return false
+
+        val referenceDimension = minOf(width, height)
+        val typeface = TextRenderContract.androidTypefaceFor(
+            text.fontFamily,
+            text.fontWeight == "bold",
+            text.fontStyle == "italic"
+        )
+        val fontSize = TextRenderContract.fittedFontSizePx(
+            displayContent,
+            sampledFontSize,
+            width,
+            height,
+            text.maxWidth,
+            typeface
+        )
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.typeface = typeface
+            textSize = fontSize
+        }
+        val lines = displayContent.split('\n')
+        val textWidth = (lines.maxOfOrNull { paint.measureText(it) } ?: 0f)
+            .coerceAtLeast(8f)
+        val fontMetrics = paint.fontMetrics
+        val lineCount = lines.size.coerceAtLeast(1)
+        val textHeight = (
+                (fontMetrics.descent - fontMetrics.ascent) +
+                        (lineCount - 1) * fontSize * text.lineHeight
+                ).coerceAtLeast(8f)
+        val outerWidth = textWidth + if (text.backgroundEnabled) {
+            text.backgroundPaddingX * 2f
+        } else 4f
+        val outerHeight = textHeight + if (text.backgroundEnabled) {
+            text.backgroundPaddingY * 2f
+        } else 4f
+        val alignmentOffsetX = when (text.alignment) {
+            "left" -> -(width - outerWidth) / 2f
+            "right" -> (width - outerWidth) / 2f
+            else -> 0f
+        }
+        val pivotX = width / 2f
+        val pivotY = height / 2f
+        val offsetX = (transform.x - 50f) / 100f * referenceDimension +
+                alignmentOffsetX
+        val offsetY = (transform.y - 50f) / 100f * referenceDimension
+        val scaleX = (transform.scaleX / 100f).takeIf { kotlin.math.abs(it) > 0.001f }
+            ?: return false
+        val scaleY = (transform.scaleY / 100f).takeIf { kotlin.math.abs(it) > 0.001f }
+            ?: return false
+        val rotation = Math.toRadians(transform.rotation.toDouble())
+        val screenX = point.x - pivotX - offsetX
+        val screenY = point.y - pivotY - offsetY
+        localPoint = Offset(
+            pivotX + (screenX * kotlin.math.cos(rotation) +
+                    screenY * kotlin.math.sin(rotation)).toFloat() / scaleX,
+            pivotY + (-screenX * kotlin.math.sin(rotation) +
+                    screenY * kotlin.math.cos(rotation)).toFloat() / scaleY
+        )
+        val letterSpacingPx = TextRenderContract.clampLetterSpacingPx(
+            displayContent,
+            fontSize,
+            typeface,
+            TextScaler.letterSpacing(
+                base = sampledLetterSpacing,
+                canvasWidthPx = referenceDimension
+            )
+        )
+        paint.letterSpacing = letterSpacingPx / fontSize.coerceAtLeast(1f)
+        val lineHeightPx = TextScaler.lineHeight(
+            TextRenderContract.scaledFontSize(
+                sampledFontSize,
+                width,
+                height
+            ),
+            text.lineHeight
+        )
+        val lineStep = maxOf(lineHeightPx, fontMetrics.descent - fontMetrics.ascent)
+        insideContent =
+            kotlin.math.abs(localPoint.x - pivotX) <= outerWidth / 2f &&
+                    kotlin.math.abs(localPoint.y - pivotY) <= outerHeight / 2f
+    } else {
+        val pivotX = width * transform.anchorX / 100f
+        val pivotY = height * transform.anchorY / 100f
+        val scaleX = (transform.scaleX / 100f).takeIf { kotlin.math.abs(it) > 0.001f }
+            ?: return false
+        val scaleY = (transform.scaleY / 100f).takeIf { kotlin.math.abs(it) > 0.001f }
+            ?: return false
+        val offsetX = (transform.x - 50f) / 100f * width
+        val offsetY = (transform.y - 50f) / 100f * height
+        val rotation = Math.toRadians(transform.rotation.toDouble())
+        val screenX = point.x - pivotX - offsetX
+        val screenY = point.y - pivotY - offsetY
+        localPoint = Offset(
+            pivotX + (screenX * kotlin.math.cos(rotation) +
+                    screenY * kotlin.math.sin(rotation)).toFloat() / scaleX,
+            pivotY + (-screenX * kotlin.math.sin(rotation) +
+                    screenY * kotlin.math.cos(rotation)).toFloat() / scaleY
+        )
+        val left = width * transform.cropL.coerceIn(0f, 100f) / 100f
+        val right = width * (1f - transform.cropR.coerceIn(0f, 100f) / 100f)
+        val top = height * transform.cropT.coerceIn(0f, 100f) / 100f
+        val bottom = height * (1f - transform.cropB.coerceIn(0f, 100f) / 100f)
+        insideContent = localPoint.x in left..right && localPoint.y in top..bottom
+    }
+    if (!insideContent) return false
+
+    val mask = maskAtClipTime(clip, currentPosMs)
+    if (!mask.isActive || (mask.type == MaskType.CUSTOM && !mask.hasCustomPath)) {
+        return true
+    }
+    val insideMask = buildMaskPathCompose(mask, width, height)
+        ?.let { pathContainsPoint(it, localPoint) } ?: return true
+    return if (mask.isInverted) !insideMask else insideMask
+}
+
 private fun incomingTransitionMaskModifier(
     clip: EditorClip,
     activeTransitionClip: EditorClip?,
@@ -2813,7 +3390,9 @@ private fun MaskPenOverlay(
                         }
                         if (closeTarget >= 0) {
                             selectedPointIndex = closeTarget
+                            onGestureStart()
                             onClosePath()
+                            onGestureEnd()
                             down.consume()
                             return@awaitEachGesture
                         }
@@ -2848,9 +3427,15 @@ private fun MaskPenOverlay(
                     } else if (hitAnchor >= 0) {
                         selectedPointIndex = hitAnchor; draggingAnchor = hitAnchor; down.consume()
                     } else if (!isClosed) {
-                        selectedPointIndex = pts.size; onTapAddPoint(downX, downY); down.consume()
+                        selectedPointIndex = pts.size
+                        onGestureStart()
+                        onTapAddPoint(downX, downY)
+                        onGestureEnd()
+                        down.consume()
                     }
 
+                    val isDraggingMaskPoint = hitHandle != null || hitAnchor >= 0
+                    if (isDraggingMaskPoint) onGestureStart()
                     var continueGesture = true
                     while (continueGesture) {
                         val event = awaitPointerEvent();
@@ -2880,6 +3465,7 @@ private fun MaskPenOverlay(
                             }
                         }
                     }
+                    if (isDraggingMaskPoint) onGestureEnd()
                 }
             }
             .pointerInput(pts.size) {
@@ -2894,7 +3480,10 @@ private fun MaskPenOverlay(
                             if (d < hitRadiusPx && foundIndex == -1) foundIndex = i
                         }
                         if (foundIndex >= 0) {
-                            onTogglePoint(foundIndex); selectedPointIndex = foundIndex
+                            onGestureStart()
+                            onTogglePoint(foundIndex)
+                            onGestureEnd()
+                            selectedPointIndex = foundIndex
                         }
                     }
                 })
@@ -3252,6 +3841,7 @@ private fun InteractiveTextOverlay(
     onDeleteLayer: () -> Unit,
 ) {
     if (textState.content.isBlank() || textState.fontSize <= 0) return
+    val hapticFeedback = LocalHapticFeedback.current
     val localTimeSec = ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
     val textureScale = KeyframeStore.sample(
         clip.keyframes, "textTexture.scale", localTimeSec, textState.textureScale
@@ -3362,8 +3952,8 @@ private fun InteractiveTextOverlay(
         }
     }
     val sampled = TransformApplier.resolveLive(clip, localTimeSec)
-    val clampedX = sampled.x.coerceIn(-50f, 150f);
-    val clampedY = sampled.y.coerceIn(-50f, 150f)
+    val clampedX = sampled.x.coerceIn(-100f, 200f);
+    val clampedY = sampled.y.coerceIn(-100f, 200f)
     val animDur = textState.animationDuration.coerceAtLeast(0.1f);
     val progress = (localTimeSec / animDur).coerceIn(0f, 1f)
     val presetProgress = (
@@ -3570,9 +4160,10 @@ private fun InteractiveTextOverlay(
                 }
             }
     } else Modifier
-    val scaleFactor = sampled.scale / 100f;
-    val handleW = (outerWidthDp * scaleFactor).coerceAtLeast(1f).dp
-    val handleH = (outerHeightDp * scaleFactor).coerceAtLeast(1f).dp
+    val handleScaleX = sampled.scaleX / 100f
+    val handleScaleY = sampled.scaleY / 100f
+    val handleW = (outerWidthDp * handleScaleX).coerceAtLeast(1f).dp
+    val handleH = (outerHeightDp * handleScaleY).coerceAtLeast(1f).dp
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Box(
@@ -3587,8 +4178,8 @@ private fun InteractiveTextOverlay(
                     }
                     translationX = posTx + alignmentOffsetX + frame.translateX
                     translationY = posTy + frame.translateY
-                    scaleX = (sampled.scale / 100f) * frame.scaleX; scaleY =
-                    (sampled.scale / 100f) * frame.scaleY
+                    scaleX = (sampled.scaleX / 100f) * frame.scaleX; scaleY =
+                    (sampled.scaleY / 100f) * frame.scaleY
                     rotationZ = sampled.rotation + frame.rotationZ; rotationX =
                     frame.rotationX; rotationY = frame.rotationY
                     cameraDistance = 16f * density.density; alpha =
@@ -3607,6 +4198,14 @@ private fun InteractiveTextOverlay(
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         if (down.isConsumed) return@awaitEachGesture
+                        down.consume()
+                        val longPress = awaitLongPressOrCancellation(down.id)
+                        if (longPress == null) {
+                            if (!isMulti) onSelect()
+                            return@awaitEachGesture
+                        }
+                        longPress.consume()
+                        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
                         isDragging = true; onGroupGestureStart()
                         val baseX = currentSampled.x;
                         val baseY = currentSampled.y;
@@ -3660,8 +4259,8 @@ private fun InteractiveTextOverlay(
                                 }
                                 val rawX = baseX + accumPanX / canvasWpx * 100f;
                                 val rawY = baseY + accumPanY / canvasHpx * 100f
-                                val cx = rawX.coerceIn(-50f, 150f);
-                                val cy = rawY.coerceIn(-50f, 150f)
+                                val cx = rawX.coerceIn(-100f, 200f);
+                                val cy = rawY.coerceIn(-100f, 200f)
                                 val newScale = (baseScale * accumZoom).coerceIn(10f, 500f);
                                 val newRot = baseRot + accumRot
                                 if (isMulti) onGroupGesture(
@@ -3723,7 +4322,8 @@ private fun InteractiveTextOverlay(
                                     textSizePx * layer.fontScale; textAlign =
                                     glowAlign; this.typeface = textTypeface; this.letterSpacing =
                                     letterSpacingEm; alpha =
-                                    (layer.alpha * 255).toInt().coerceIn(0, 255); maskFilter =
+                                    (layer.alpha * textState.glowIntensity.coerceIn(0f, 5f) * 255)
+                                        .toInt().coerceIn(0, 255); maskFilter =
                                     android.graphics.BlurMaskFilter(
                                         (glowRadiusPx * layer.blurScale).coerceIn(
                                             1f,

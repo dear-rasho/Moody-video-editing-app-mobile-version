@@ -176,12 +176,20 @@ fun Timeline(
     }
 
 // 🆕 Use locked timeline duration
-    val totalMs = state.timelineDurationMs
+    val totalMs = remember(state.clips, state.timelineLockedMs) {
+        state.timelineDurationMs
+    }
     val totalSec = totalMs / 1000f
 
     val pps = TimelineZoom.ppsForSlider(slider, totalSec, viewportContentWidthDp)
     val contentWidthDp: Dp = (totalSec * pps).dp
     val contentWidthPx = with(density) { contentWidthDp.toPx() }
+    val visualTracks = remember(state.clips, state.visualLayerCount) {
+        state.timelineVisualList()
+    }
+    val audioTracks = remember(state.clips, state.audioLayerCount) {
+        state.timelineAudioList()
+    }
 
     LaunchedEffect(hScroll.isScrollInProgress) {
         if (hScroll.isScrollInProgress) {
@@ -331,7 +339,9 @@ fun Timeline(
                     val stepSec = TimelineRuler.pickStepSec(
                         zoom = (pps / DP_PER_SECOND).coerceAtLeast(0.01f)
                     )
-                    val marks = TimelineRuler.marks(totalMs, stepSec)
+                    val marks = remember(totalMs, stepSec) {
+                        TimelineRuler.marks(totalMs, stepSec)
+                    }
 
                     marks.forEach { timeMs ->
                         val frac = timeMs.toFloat() / totalMs.toFloat()
@@ -460,7 +470,7 @@ fun Timeline(
 
                     VisualTrackRow(
                         trackIndex = i,
-                        clips = state.clipsOf(i, false),
+                        clips = visualTracks.getOrElse(i) { emptyList() },
                         allClips = state.clips,
                         totalMs = totalMs,
                         contentWidthDp = contentWidthDp,
@@ -550,7 +560,7 @@ fun Timeline(
 
                     AudioTrackRow(
                         trackIndex = i,
-                        clips = state.clipsOf(i, true),
+                        clips = audioTracks.getOrElse(i) { emptyList() },
                         allClips = state.clips,
                         totalMs = totalMs,
                         contentWidthDp = contentWidthDp,
@@ -1790,6 +1800,7 @@ private fun TrimHandleLeft(
     val latestPxPerMs = rememberUpdatedState(pxPerMs)
     val latestTotalMs = rememberUpdatedState(totalMs)
     val latestContentWidthPx = rememberUpdatedState(contentWidthPx)
+    val latestHandleContentStartPx = rememberUpdatedState(handleContentStartPx)
     val latestOnTrimLeft = rememberUpdatedState(onTrimLeft)
     val latestOnTrimCommit = rememberUpdatedState(onTrimCommit)
     val latestOnSnapGuideUpdate = rememberUpdatedState(onSnapGuideUpdate)
@@ -1808,7 +1819,8 @@ private fun TrimHandleLeft(
                 var autoScrollJob: Job? = null
 
                 fun updateAutoScroll(change: androidx.compose.ui.input.pointer.PointerInputChange) {
-                    pointerScreenX = handleContentStartPx + change.position.x - hScroll.value
+                    pointerScreenX =
+                        latestHandleContentStartPx.value + change.position.x - hScroll.value
                     val edgeSize = 40f
                     autoScrollDirection = when {
                         pointerScreenX < edgeSize -> -1
@@ -1963,6 +1975,7 @@ private fun TrimHandleRight(
     val latestPxPerMs = rememberUpdatedState(pxPerMs)
     val latestTotalMs = rememberUpdatedState(totalMs)
     val latestContentWidthPx = rememberUpdatedState(contentWidthPx)
+    val latestHandleContentStartPx = rememberUpdatedState(handleContentStartPx)
     val latestOnTrimRight = rememberUpdatedState(onTrimRight)
     val latestOnTrimCommit = rememberUpdatedState(onTrimCommit)
     val latestOnSnapGuideUpdate = rememberUpdatedState(onSnapGuideUpdate)
@@ -1980,7 +1993,8 @@ private fun TrimHandleRight(
                 var autoScrollJob: Job? = null
 
                 fun updateAutoScroll(change: androidx.compose.ui.input.pointer.PointerInputChange) {
-                    val pointerScreenX = handleContentStartPx + change.position.x - hScroll.value
+                    val pointerScreenX =
+                        latestHandleContentStartPx.value + change.position.x - hScroll.value
                     val edgeSize = 40f
                     autoScrollDirection = when {
                         pointerScreenX < edgeSize -> -1

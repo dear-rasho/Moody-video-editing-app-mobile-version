@@ -320,10 +320,27 @@ object KeyframeStore {
         base: TransformValues
     ): TransformValues {
         if (!hasAnyKeyframes(map)) return base
+        val scale = sample(map, "scale", time, base.scale)
+        val scaleXTrack = map["scaleX"].orEmpty()
+        val scaleYTrack = map["scaleY"].orEmpty()
         return TransformValues(
             x = sample(map, "x", time, base.x),
             y = sample(map, "y", time, base.y),
-            scale = sample(map, "scale", time, base.scale),
+            scale = scale,
+            scaleX = if (scaleXTrack.isNotEmpty()) {
+                sample(map, "scaleX", time, base.scaleX)
+            } else if (abs(base.scale) > 0.001f) {
+                scale * base.scaleX / base.scale
+            } else {
+                base.scaleX
+            },
+            scaleY = if (scaleYTrack.isNotEmpty()) {
+                sample(map, "scaleY", time, base.scaleY)
+            } else if (abs(base.scale) > 0.001f) {
+                scale * base.scaleY / base.scale
+            } else {
+                base.scaleY
+            },
             rotation = sample(map, "rotation", time, base.rotation),
             anchorX = sample(map, "anchorX", time, base.anchorX),
             anchorY = sample(map, "anchorY", time, base.anchorY),

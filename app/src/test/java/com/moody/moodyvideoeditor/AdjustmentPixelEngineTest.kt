@@ -9,6 +9,19 @@ import org.junit.Test
 class AdjustmentPixelEngineTest {
 
     @Test
+    fun previewAdjustmentCombinesClipAndAdjustmentLayerPixelControls() {
+        val merged = AdjustmentPixelEngine.mergePreviewAdjustments(
+            AdjustmentData(reds = 20f, sharpen = 5f, brightness = 10f),
+            AdjustmentData(reds = 15f, blues = -10f, sharpen = 7f, brightness = 30f)
+        )
+
+        assertEquals(35f, merged.reds, 0f)
+        assertEquals(-10f, merged.blues, 0f)
+        assertEquals(12f, merged.sharpen, 0f)
+        assertEquals(10f, merged.brightness, 0f)
+    }
+
+    @Test
     fun colorChannelAdjustmentMatchesPreviewShaderHueResponse() {
         val adjusted = AdjustmentPixelEngine.applyColorChannels(
             204f,
@@ -35,6 +48,20 @@ class AdjustmentPixelEngineTest {
         assertTrue(adjusted.first - input.first > 35f)
         assertTrue(input.second - adjusted.second > 15f)
         assertTrue(input.third - adjusted.third > 8f)
+    }
+
+    @Test
+    fun smallColorChannelAdjustmentProducesVisibleChange() {
+        val input = Triple(204f, 51f, 26f)
+        val adjusted = AdjustmentPixelEngine.applyColorChannels(
+            input.first,
+            input.second,
+            input.third,
+            AdjustmentData(reds = 1f)
+        )
+
+        assertTrue(adjusted.first - input.first >= 3f)
+        assertTrue(input.second - adjusted.second >= 1f)
     }
 
     @Test

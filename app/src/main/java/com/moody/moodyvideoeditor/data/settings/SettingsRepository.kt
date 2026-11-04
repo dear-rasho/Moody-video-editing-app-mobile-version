@@ -14,6 +14,7 @@ private val WATERMARK_POSITIONS = setOf(
     "bottom_left",
     "bottom_right"
 )
+private val PREVIEW_PLAYBACK_QUALITIES = setOf("Low", "Medium", "High")
 
 // ═══════════════════════════════════════════════════════════════
 //  SETTINGS REPOSITORY
@@ -79,6 +80,9 @@ class SettingsRepository(private val context: Context) {
                     ?: SettingsDefaults.AUTO_SAVE_INTERVAL_SEC,
                 proxyModeEnabled = prefs[SettingsKeys.PROXY_MODE_ENABLED]
                     ?: SettingsDefaults.PROXY_MODE_ENABLED,
+                previewPlaybackQuality = prefs[SettingsKeys.PREVIEW_PLAYBACK_QUALITY]
+                    ?.takeIf { it in PREVIEW_PLAYBACK_QUALITIES }
+                    ?: SettingsDefaults.PREVIEW_PLAYBACK_QUALITY,
                 exportSoundEnabled = prefs[SettingsKeys.EXPORT_SOUND_ENABLED]
                     ?: SettingsDefaults.EXPORT_SOUND_ENABLED,
 
@@ -124,6 +128,9 @@ class SettingsRepository(private val context: Context) {
             prefs[SettingsKeys.AUTO_SAVE_ENABLED] = settings.autoSaveEnabled
             prefs[SettingsKeys.AUTO_SAVE_INTERVAL_SEC] = settings.autoSaveIntervalSec
             prefs[SettingsKeys.PROXY_MODE_ENABLED] = settings.proxyModeEnabled
+            prefs[SettingsKeys.PREVIEW_PLAYBACK_QUALITY] =
+                settings.previewPlaybackQuality.takeIf { it in PREVIEW_PLAYBACK_QUALITIES }
+                    ?: SettingsDefaults.PREVIEW_PLAYBACK_QUALITY
             prefs[SettingsKeys.EXPORT_SOUND_ENABLED] = settings.exportSoundEnabled
 
             // Tab 4
@@ -149,6 +156,14 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setLanguage(language: String) {
         context.settingsDataStore.edit { it[SettingsKeys.APP_LANGUAGE] = language }
+    }
+
+    suspend fun setPreviewPlaybackQuality(quality: String) {
+        val validatedQuality = quality.takeIf { it in PREVIEW_PLAYBACK_QUALITIES }
+            ?: throw IllegalArgumentException("Unsupported preview quality: $quality")
+        context.settingsDataStore.edit {
+            it[SettingsKeys.PREVIEW_PLAYBACK_QUALITY] = validatedQuality
+        }
     }
 
     // ─────────────────────────────────────────────────────────

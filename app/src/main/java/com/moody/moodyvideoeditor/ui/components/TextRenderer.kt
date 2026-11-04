@@ -99,9 +99,13 @@ fun TextOverlay(
             contentAlignment = Alignment.Center
         ) {
             if (text.glowEnabled && text.glowRadius > 0f) {
+                val glowIntensity = text.glowIntensity.coerceIn(0f, 5f)
+                val baseGlowColor = Color(text.glowColor)
                 Text(
                     text = text.content,
-                    color = Color(text.glowColor).copy(alpha = 0.32f),
+                    color = baseGlowColor.copy(
+                        alpha = (baseGlowColor.alpha * 0.32f * glowIntensity).coerceIn(0f, 1f)
+                    ),
                     fontSize = text.fontSize.sp,
                     fontWeight = fontWeight,
                     fontStyle = fontStyle,
@@ -109,7 +113,9 @@ fun TextOverlay(
                     textAlign = textAlignment,
                     style = TextStyle(
                         shadow = Shadow(
-                            color = Color(text.glowColor),
+                            color = baseGlowColor.copy(
+                                alpha = (baseGlowColor.alpha * glowIntensity).coerceIn(0f, 1f)
+                            ),
                             offset = Offset.Zero,
                             blurRadius = text.glowRadius
                         )

@@ -8,6 +8,28 @@ import kotlin.math.roundToInt
 
 object AdjustmentPixelEngine {
 
+    fun normalizedColorChannelStrength(value: Float): Float =
+        (value / 10f).coerceIn(-5f, 5f)
+
+    fun mergePreviewAdjustments(
+        clipAdjustment: AdjustmentData,
+        layerAdjustment: AdjustmentData?
+    ): AdjustmentData {
+        if (layerAdjustment == null) return clipAdjustment
+        return clipAdjustment.copy(
+            sharpen = clipAdjustment.sharpen + layerAdjustment.sharpen,
+            reds = clipAdjustment.reds + layerAdjustment.reds,
+            oranges = clipAdjustment.oranges + layerAdjustment.oranges,
+            yellows = clipAdjustment.yellows + layerAdjustment.yellows,
+            greens = clipAdjustment.greens + layerAdjustment.greens,
+            cyans = clipAdjustment.cyans + layerAdjustment.cyans,
+            blues = clipAdjustment.blues + layerAdjustment.blues,
+            purples = clipAdjustment.purples + layerAdjustment.purples,
+            magentas = clipAdjustment.magentas + layerAdjustment.magentas,
+            skinTones = clipAdjustment.skinTones + layerAdjustment.skinTones
+        )
+    }
+
     fun applySharpen(
         pixels: IntArray,
         width: Int,
@@ -125,7 +147,7 @@ object AdjustmentPixelEngine {
         }
 
         fun amount(value: Float, target: Float, range: Float): Float {
-            val normalized = (value / 50f).coerceIn(-5f, 5f)
+            val normalized = normalizedColorChannelStrength(value)
             val hueWeight = weight(target, range)
             return if (abs(normalized) > 0.001f && hueWeight > 0.001f) {
                 normalized * hueWeight
@@ -239,7 +261,7 @@ object AdjustmentPixelEngine {
             }
         }
 
-        val skinTones = (adjustment.skinTones / 50f).coerceIn(-5f, 5f)
+        val skinTones = normalizedColorChannelStrength(adjustment.skinTones)
         if (skinTones != 0f) {
             val skinWeight = weight(0.069f, 0.055f)
             r = (r + skinTones * skinWeight * 30f).coerceIn(0f, 255f)

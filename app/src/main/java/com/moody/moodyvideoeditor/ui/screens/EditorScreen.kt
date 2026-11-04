@@ -11,6 +11,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +28,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -40,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -81,6 +85,7 @@ import com.moody.moodyvideoeditor.ui.features.AdjustmentsPanel
 import com.moody.moodyvideoeditor.ui.features.AnimationsPanel
 import com.moody.moodyvideoeditor.ui.features.AspectRatioPanel
 import com.moody.moodyvideoeditor.ui.features.AudioPanel
+import com.moody.moodyvideoeditor.ui.features.AudioRecordingPanel
 import com.moody.moodyvideoeditor.ui.features.AutoCaptionsPanel
 import com.moody.moodyvideoeditor.ui.features.BeatsPanel
 import com.moody.moodyvideoeditor.ui.features.BlendModePanel
@@ -120,6 +125,7 @@ import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.utils.PromptEngine
 import com.moody.moodyvideoeditor.utils.PromptExecutor
 import com.moody.moodyvideoeditor.utils.SettingsConsumer
+import com.moody.moodyvideoeditor.data.settings.SettingsRepository
 import com.moody.moodyvideoeditor.utils.SpeedEngine
 import com.moody.moodyvideoeditor.utils.TransformApplier
 import com.moody.moodyvideoeditor.utils.TransformValues
@@ -155,8 +161,11 @@ fun EditorScreen(
     viewModel: EditorViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
+    val totalDurationMs = remember(state.clips) { state.totalDurationMs }
+    val latestTotalDurationMs by rememberUpdatedState(totalDurationMs)
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val settingsRepository = remember(context) { SettingsRepository(context.applicationContext) }
 
     val exportState by viewModel.exportState.collectAsState()
 
@@ -195,6 +204,9 @@ fun EditorScreen(
     }
 
     val settings by SettingsConsumer.current.collectAsState()
+    var previewPlaybackQuality by remember(settings.previewPlaybackQuality) {
+        mutableStateOf(settings.previewPlaybackQuality)
+    }
 
     LaunchedEffect(
         projectId,
@@ -309,6 +321,7 @@ fun EditorScreen(
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
     }
+    var loadedVideoClipId by remember(exoPlayer) { mutableStateOf<String?>(null) }
 
     val audioExoPlayer = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = false }
@@ -319,6 +332,20 @@ fun EditorScreen(
             exoPlayer.release()
             audioExoPlayer.release()
         }
+    }
+
+    LaunchedEffect(previewPlaybackQuality) {
+        val (maxWidth, maxHeight, maxFrameRate) = when (previewPlaybackQuality) {
+            "Low" -> Triple(640, 640, 24)
+            "Medium" -> Triple(1280, 1280, 30)
+            else -> Triple(Int.MAX_VALUE, Int.MAX_VALUE, Int.MAX_VALUE)
+        }
+        exoPlayer.trackSelectionParameters =
+            exoPlayer.trackSelectionParameters
+                .buildUpon()
+                .setMaxVideoSize(maxWidth, maxHeight)
+                .setMaxVideoFrameRate(maxFrameRate)
+                .build()
     }
 
     LaunchedEffect(activePanel) {
@@ -476,30 +503,24 @@ fun EditorScreen(
     // ═══════════════════════════════════════════════════════════
 
     LaunchedEffect(
-        state.currentPosMs,
+        activeVideoClip?.id,
+        activeVideoClip?.uri,
+        state.currentPosMs.takeIf { !isPlaybackActive },
         state.clips,
-        state.hiddenVisualTracks,
         isPlaybackActive
     ) {
         val playheadMs = state.currentPosMs
-        val activeClip = state.clips
-            .filter {
-                it.isVisualClip &&
-                        !it.type.startsWith("image/") &&
-                        playheadMs >= it.timelineStartMs &&
-                        playheadMs < it.timelineEndMs &&
-                        !state.hiddenVisualTracks.contains(it.trackIndex)
-            }
-            .maxByOrNull { it.trackIndex }
+        val activeClip = activeVideoClip
 
         if (activeClip == null) {
+            loadedVideoClipId = null
             exoPlayer.pause()
             return@LaunchedEffect
         }
 
         val currentUri = exoPlayer.currentMediaItem?.localConfiguration?.uri
 
-        if (currentUri != activeClip.uri) {
+        if (currentUri != activeClip.uri || loadedVideoClipId != activeClip.id) {
             val mediaItem = MediaItem.Builder()
                 .setUri(activeClip.uri)
                 .setClippingConfiguration(
@@ -512,6 +533,7 @@ fun EditorScreen(
 
             exoPlayer.setMediaItem(mediaItem)
             exoPlayer.prepare()
+            loadedVideoClipId = activeClip.id
         }
 
         val playheadOffset = (playheadMs - activeClip.timelineStartMs)
@@ -549,7 +571,8 @@ fun EditorScreen(
     // ═══════════════════════════════════════════════════════════
 
     LaunchedEffect(
-        state.currentPosMs,
+        activeAudioClip?.id,
+        state.currentPosMs.takeIf { !isPlaybackActive },
         state.clips,
         state.mutedAudioTracks,
         isPlaybackActive
@@ -611,7 +634,7 @@ fun EditorScreen(
     //  PLAYHEAD TICKER
     // ═══════════════════════════════════════════════════════════
 
-    LaunchedEffect(isPlaybackActive) {
+    LaunchedEffect(isPlaybackActive, previewPlaybackQuality) {
         if (!isPlaybackActive) {
             try {
                 audioExoPlayer.pause()
@@ -619,23 +642,82 @@ fun EditorScreen(
             }
             return@LaunchedEffect
         }
-        var lastWallMs = System.currentTimeMillis()
+        val previewFrameIntervalMs = when (previewPlaybackQuality) {
+            "Low" -> 67L
+            "High" -> 33L
+            else -> 42L
+        }
+        var playbackStartFrameNanos = 0L
+        var lastUpdateFrameNanos = 0L
+        var currentFrameNanos = 0L
+        var nextUpdateMs = previewFrameIntervalMs
         while (isPlaybackActive) {
-            val now = System.currentTimeMillis()
-            val wallDelta = now - lastWallMs
-            lastWallMs = now
+            val elapsedMs = withFrameNanos { frameTimeNanos ->
+                currentFrameNanos = frameTimeNanos
+                if (playbackStartFrameNanos == 0L) {
+                    playbackStartFrameNanos = frameTimeNanos
+                    lastUpdateFrameNanos = frameTimeNanos
+                }
+                (frameTimeNanos - playbackStartFrameNanos) / 1_000_000L
+            }
+            if (elapsedMs < nextUpdateMs) continue
+            nextUpdateMs = elapsedMs + previewFrameIntervalMs
+            val wallDeltaMs = (currentFrameNanos - lastUpdateFrameNanos) / 1_000_000L
+            lastUpdateFrameNanos = currentFrameNanos
+
             val s = viewModel.state.value
-            val totalDur = s.totalDurationMs.coerceAtLeast(1000L)
-            val next = s.currentPosMs + wallDelta
+            val totalDur = latestTotalDurationMs.coerceAtLeast(1000L)
+            val next = s.currentPosMs + wallDeltaMs
             if (next >= totalDur) {
                 viewModel.setCurrentPos(totalDur)
                 isPlaybackActive = false
                 exoPlayer.pause()
                 audioExoPlayer.pause()
             } else {
+                var activeVideo: EditorClip? = null
+                var activeAudio: EditorClip? = null
+                s.clips.forEach { clip ->
+                    if (next < clip.timelineStartMs || next >= clip.timelineEndMs) return@forEach
+                    if (clip.isVisualClip &&
+                        !clip.type.startsWith("image/") &&
+                        !s.hiddenVisualTracks.contains(clip.trackIndex) &&
+                        clip.trackIndex > (activeVideo?.trackIndex ?: Int.MIN_VALUE)
+                    ) {
+                        activeVideo = clip
+                    }
+                    if (clip.isAudio &&
+                        !clip.isAudioEffectClip &&
+                        clip.uri.toString().isNotBlank() &&
+                        clip.uri != Uri.EMPTY &&
+                        !s.mutedAudioTracks.contains(clip.trackIndex) &&
+                        clip.trackIndex > (activeAudio?.trackIndex ?: Int.MIN_VALUE)
+                    ) {
+                        activeAudio = clip
+                    }
+                }
+                activeVideo?.let { clip ->
+                    val offset = (next - clip.timelineStartMs)
+                        .coerceIn(0L, clip.durationMs)
+                    val targetSpeed = SpeedEngine.clampForExoPlayer(
+                        SpeedEngine.playbackSpeedAt(clip, offset)
+                    )
+                    if (abs(exoPlayer.playbackParameters.speed - targetSpeed) > 0.01f) {
+                        exoPlayer.setPlaybackSpeed(targetSpeed)
+                    }
+                }
+
+                activeAudio?.let { clip ->
+                    val offset = (next - clip.timelineStartMs)
+                        .coerceIn(0L, clip.durationMs)
+                    val targetSpeed = SpeedEngine.clampForExoPlayer(
+                        SpeedEngine.playbackSpeedAt(clip, offset)
+                    )
+                    if (abs(audioExoPlayer.playbackParameters.speed - targetSpeed) > 0.01f) {
+                        audioExoPlayer.setPlaybackSpeed(targetSpeed)
+                    }
+                }
                 viewModel.setCurrentPos(next)
             }
-            delay(40)
         }
     }
 
@@ -1071,8 +1153,7 @@ fun EditorScreen(
 
             "text" -> TextPanel(
                 currentText = viewModel.getSelectedTextState(),
-                hasTextClipSelected = selected?.isTextClip == true ||
-                        state.multiSelectedIds.isNotEmpty(),
+                hasTextClipSelected = selected?.isTextClip == true,
                 startInEdit = openTextEditor,
                 keyframesEnabled = selected?.isTextClip == true,
                 keyframeMap = selected?.keyframes.orEmpty(),
@@ -1658,6 +1739,19 @@ fun EditorScreen(
                 onClose = { activePanel = null }
             )
 
+            "record_audio" -> AudioRecordingPanel(
+                onRecorded = { uri, name, durationMs ->
+                    viewModel.addClipSmart(
+                        uri = uri,
+                        name = name,
+                        durationMs = durationMs,
+                        mediaType = "audio/mp4",
+                        hasAudioTrack = true
+                    )
+                },
+                onClose = { activePanel = null }
+            )
+
             "soundfx" -> selected?.takeIf { it.isSoundFxClip }?.let { soundFxClip ->
                 SoundFxPanel(
                     current = soundFxClip.soundFx,
@@ -1888,7 +1982,7 @@ fun EditorScreen(
             "manual_captions" -> ManualCaptionsPanel(
                 statusMessage = captionStatus,
                 onAddManual = { input, grouping, wordsPerLayer, wordsPerLine, presetId, highlightColor ->
-                    val videoDurationMs = viewModel.state.value.totalDurationMs
+                    val videoDurationMs = totalDurationMs
                     val parsed = ManualCaptionParser.parse(input, videoDurationMs)
                     if (parsed.isEmpty()) {
                         captionStatus = "❌ No valid captions — check format"
@@ -2212,7 +2306,8 @@ fun EditorScreen(
                     }
 
                     sel.type.startsWith("image/") ||
-                            sel.type.startsWith("video/") -> {
+                            sel.type.startsWith("video/") ||
+                            sel.type.startsWith("audio/") -> {
 
                         val mediaPicker = rememberLauncherForActivityResult(
                             contract = ActivityResultContracts.OpenDocument()
@@ -2281,9 +2376,12 @@ fun EditorScreen(
                                             .background(Color(0xFF4F9DFF))
                                             .pointerInput(Unit) {
                                                 detectTapGestures {
-                                                    mediaPicker.launch(
-                                                        arrayOf("image/*", "video/*")
-                                                    )
+                                                    val mediaType = when {
+                                                        sel.type.startsWith("image/") -> "image/*"
+                                                        sel.type.startsWith("audio/") -> "audio/*"
+                                                        else -> "video/*"
+                                                    }
+                                                    mediaPicker.launch(arrayOf(mediaType))
                                                 }
                                             },
                                         contentAlignment = Alignment.Center
@@ -2478,8 +2576,8 @@ fun EditorScreen(
                     previewEffectState = state.previewEffectState,
                     isMaskPenMode = isMaskPenMode,
                     isMaskHandMode = isMaskHandMode,
-                    onMaskGestureStart = { viewModel.beginGroupGesture() },
-                    onMaskGestureEnd = { viewModel.endGroupGesture() },
+                    onMaskGestureStart = { viewModel.beginMaskEdit() },
+                    onMaskGestureEnd = { viewModel.endMaskEdit() },
                     onMaskPointAdd = { x, y -> viewModel.addMaskPoint(x, y) },
                     onMaskAnchorMove = { index, x, y ->
                         viewModel.moveMaskAnchor(index, x, y)
@@ -2560,7 +2658,7 @@ fun EditorScreen(
                 canRedo = state.canRedo,
                 seekStepSeconds = settings.playheadSeekStepSeconds,
                 onSeekBy = { offsetMs ->
-                    val totalDuration = state.totalDurationMs.coerceAtLeast(0L)
+                    val totalDuration = totalDurationMs.coerceAtLeast(0L)
                     viewModel.setCurrentPos(
                         (state.currentPosMs + offsetMs).coerceIn(0L, totalDuration)
                     )
@@ -2572,7 +2670,7 @@ fun EditorScreen(
                         audioExoPlayer.pause()
                     } else {
                         if (state.clips.isNotEmpty()) {
-                            val totalDur = state.totalDurationMs
+                            val totalDur = totalDurationMs
                             if (state.currentPosMs >= totalDur) {
                                 viewModel.setCurrentPos(0L)
                             }
@@ -2615,7 +2713,24 @@ fun EditorScreen(
                 },
                 hasVideo = state.clips.isNotEmpty(),
                 currentPosMs = state.currentPosMs,
-                totalDurationMs = state.totalDurationMs
+                totalDurationMs = totalDurationMs,
+                previewQuality = previewPlaybackQuality,
+                onRecordAudio = { activePanel = "record_audio" },
+                onPreviewQualityChange = { quality ->
+                    previewPlaybackQuality = quality
+                    coroutineScope.launch {
+                        try {
+                            settingsRepository.setPreviewPlaybackQuality(quality)
+                        } catch (error: Exception) {
+                            Log.e("EditorScreen", "Unable to save preview quality", error)
+                            android.widget.Toast.makeText(
+                                context,
+                                "Could not save preview quality",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }
             )
 
             // ═══════════════════════════════════════════════════════════
@@ -2663,7 +2778,7 @@ fun EditorScreen(
                     state.currentPosMs < (sel.timelineEndMs - EditorClip.MIN_DURATION_MS)
                 } ?: false,
                 zoomSlider = state.timelineZoom,
-                totalSec = state.totalDurationMs / 1000f,
+                totalSec = totalDurationMs / 1000f,
                 viewportContentWidthDp = 320f,
                 onZoomChange = { viewModel.setTimelineZoom(it) }
             )
@@ -2760,10 +2875,10 @@ fun EditorScreen(
             isExporting = exportState.isExporting,
             exportProgress = exportState.progress,
             exportMessage = exportState.message,
-            timelineDurationMs = state.totalDurationMs,
+            timelineDurationMs = totalDurationMs,
             aspectRatio = state.aspectRatio,
             startMs = exportStartMs,
-            endMs = if (exportEndMs > 0L) exportEndMs else state.totalDurationMs,
+            endMs = if (exportEndMs > 0L) exportEndMs else totalDurationMs,
             useCustomRange = useCustomRange,
             onUseCustomRangeChange = { useCustomRange = it },
             onStartChange = { exportStartMs = it },
@@ -2777,7 +2892,7 @@ fun EditorScreen(
                 }
                 val startMs = if (config.useCustomRange) config.startMs else 0L
                 val endMs = if (config.useCustomRange) config.endMs
-                else state.totalDurationMs
+                else totalDurationMs
 
                 val bundle = ExportUiStateBundle(
                     fileName = config.fileName,
@@ -2796,7 +2911,7 @@ fun EditorScreen(
                     folderUri = config.customFolderUri,
                     startMs = startMs,
                     endMs = endMs,
-                    totalDurationMs = state.totalDurationMs,
+                    totalDurationMs = totalDurationMs,
                     clips = clipsForExport
                 )
 

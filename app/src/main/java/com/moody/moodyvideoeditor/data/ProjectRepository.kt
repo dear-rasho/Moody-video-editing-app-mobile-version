@@ -157,7 +157,7 @@ object ProjectRepository {
     //  INTERNAL — STATE SERIALIZATION
 
 
-    private fun editorStateToJson(s: EditorState): JSONObject = JSONObject().apply {
+    fun editorStateToJson(s: EditorState): JSONObject = JSONObject().apply {
         val arr = JSONArray()
         s.clips.forEach { arr.put(clipToJson(it)) }
         put("clips", arr)
@@ -180,7 +180,7 @@ object ProjectRepository {
         put("timelineZoom", s.timelineZoom.toDouble())
     }
 
-    private fun editorStateFromJson(o: JSONObject): EditorState {
+    fun editorStateFromJson(o: JSONObject): EditorState {
         val clips = mutableListOf<EditorClip>()
         val arr = o.optJSONArray("clips") ?: JSONArray()
         for (i in 0 until arr.length()) {
@@ -230,6 +230,8 @@ object ProjectRepository {
         put("speed", c.speed.toDouble())
         put("volume", c.volume.toDouble())
         put("scale", c.scale.toDouble())
+        put("scaleX", c.scaleX.toDouble())
+        put("scaleY", c.scaleY.toDouble())
         put("rotation", c.rotation.toDouble())
         put("offsetX", c.offsetX.toDouble())
         put("offsetY", c.offsetY.toDouble())
@@ -243,6 +245,7 @@ object ProjectRepository {
         put("linkedId", c.linkedId ?: JSONObject.NULL)
         put("linkGroupId", c.linkGroupId ?: JSONObject.NULL)
         put("isMuted", c.isMuted)
+        put("effectKeys", JSONArray(c.effectKeys))
         put("blendMode", c.blendMode)
         put("blendOpacity", c.blendOpacity.toDouble())
         put("layerOpacity", c.layerOpacity.toDouble())
@@ -311,6 +314,8 @@ object ProjectRepository {
             speed = o.optDouble("speed", 1.0).toFloat(),
             volume = o.optDouble("volume", 1.0).toFloat(),
             scale = o.optDouble("scale", 1.0).toFloat(),
+            scaleX = o.optDouble("scaleX", 1.0).toFloat(),
+            scaleY = o.optDouble("scaleY", 1.0).toFloat(),
             rotation = o.optDouble("rotation", 0.0).toFloat(),
             offsetX = o.optDouble("offsetX", 0.0).toFloat(),
             offsetY = o.optDouble("offsetY", 0.0).toFloat(),
@@ -326,6 +331,9 @@ object ProjectRepository {
             linkGroupId = if (o.isNull("linkGroupId")) null
             else o.optString("linkGroupId", null),
             isMuted = o.optBoolean("isMuted", false),
+            effectKeys = o.optJSONArray("effectKeys")?.let { keys ->
+                (0 until keys.length()).mapNotNull { keys.optString(it).takeIf(String::isNotBlank) }
+            } ?: emptyList(),
             blendMode = o.optString("blendMode", "normal"),
             blendOpacity = o.optDouble("blendOpacity", 100.0).toFloat(),
             layerOpacity = o.optDouble("layerOpacity", 100.0).toFloat(),
@@ -953,6 +961,7 @@ object ProjectRepository {
         put("glowEnabled", t.glowEnabled)
         put("glowColor", t.glowColor)
         put("glowRadius", t.glowRadius.toDouble())
+        put("glowIntensity", t.glowIntensity.toDouble())
         put("gradientEnabled", t.gradientEnabled)
         put("gradientColor1", t.gradientColor1)
         put("gradientColor2", t.gradientColor2)
@@ -1036,6 +1045,7 @@ object ProjectRepository {
             glowEnabled = o.optBoolean("glowEnabled", false),
             glowColor = o.optLong("glowColor", 0xFF4DD0E1L),
             glowRadius = o.optDouble("glowRadius", 25.0).toFloat(),
+            glowIntensity = o.optDouble("glowIntensity", 1.0).toFloat().coerceIn(0f, 5f),
             gradientEnabled = o.optBoolean("gradientEnabled", false),
             gradientColor1 = o.optLong("gradientColor1", 0xFFFF0066L),
             gradientColor2 = o.optLong("gradientColor2", 0xFF0066FFL),
@@ -1351,6 +1361,7 @@ object ProjectRepository {
         put("topRight", s.topRight)
         put("bottomLeft", s.bottomLeft)
         put("bottomRight", s.bottomRight)
+        put("fourColorAngleDeg", s.fourColorAngleDeg.toDouble())
     }
 
     private fun matteStyleFromJson(o: JSONObject?): ColorMatteStyle {
@@ -1365,7 +1376,8 @@ object ProjectRepository {
                 topLeft = o.optLong("topLeft", 0xFFFF0000L),
                 topRight = o.optLong("topRight", 0xFF00FF00L),
                 bottomLeft = o.optLong("bottomLeft", 0xFF0000FFL),
-                bottomRight = o.optLong("bottomRight", 0xFFFFCC00L)
+                bottomRight = o.optLong("bottomRight", 0xFFFFCC00L),
+                fourColorAngleDeg = o.optDouble("fourColorAngleDeg", 0.0).toFloat()
             )
         } catch (_: Exception) {
             ColorMatteStyle()

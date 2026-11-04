@@ -75,6 +75,28 @@ class KeyframeStoreTest {
     }
 
     @Test
+    fun setKeyframeAddsKeyBetweenExistingKeysAndPreservesExistingEase() {
+        val keyframes = mapOf(
+            "x" to listOf(
+                Keyframe(time = 0f, value = 50f, ease = "easeIn"),
+                Keyframe(time = 2f, value = 70f)
+            )
+        )
+
+        val updated = KeyframeStore.setKeyframe(keyframes, "x", 1f, 90f)
+        val updatedAtExistingKey = KeyframeStore.setKeyframe(updated, "x", 0.04f, 60f)
+
+        assertEquals(
+            listOf(
+                Keyframe(time = 0f, value = 60f, ease = "easeIn"),
+                Keyframe(time = 1f, value = 90f),
+                Keyframe(time = 2f, value = 70f)
+            ),
+            updatedAtExistingKey["x"]
+        )
+    }
+
+    @Test
     fun textStylePropertiesAreAnimatableAndInterpolate() {
         val map = mapOf(
             KeyframeLibrary.TEXT_SIZE to listOf(

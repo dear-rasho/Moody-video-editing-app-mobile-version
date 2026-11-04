@@ -25,7 +25,8 @@ data class ColorMatteStyle(
     val topLeft: Long = 0xFFFF0000,
     val topRight: Long = 0xFF00FF00,
     val bottomLeft: Long = 0xFF0000FF,
-    val bottomRight: Long = 0xFFFFCC00
+    val bottomRight: Long = 0xFFFFCC00,
+    val fourColorAngleDeg: Float = 0f
 )
 
 object ColorMatteDefaults {

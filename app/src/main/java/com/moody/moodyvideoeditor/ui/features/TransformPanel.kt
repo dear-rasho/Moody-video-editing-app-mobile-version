@@ -1,6 +1,7 @@
 package com.moody.moodyvideoeditor.ui.features
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +20,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -66,6 +69,7 @@ fun TransformPanel(
     onClose: () -> Unit
 ) {
     var showGraph by remember { mutableStateOf(false) }
+    var uniformScale by remember(clipId) { mutableStateOf(true) }
     val focusManager = LocalFocusManager.current
 
     if (showGraph) {
@@ -131,11 +135,59 @@ fun TransformPanel(
                     onChanged = { onPropertyChanged("y", it) },
                     onToggleKf = { onToggleKeyframe("y") })
 
-                SectionLabel("Scale")
-                PropRow(
-                    "Scale %", "scale", base.scale, 1f, keyframeMap, currentTimeSec,
-                    onChanged = { onPropertyChanged("scale", it) },
-                    onToggleKf = { onToggleKeyframe("scale") })
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(24.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable {
+                            val enableUniformScale = !uniformScale
+                            uniformScale = enableUniformScale
+                            if (enableUniformScale) {
+                                onPropertyChanged("scale", (base.scaleX + base.scaleY) / 2f)
+                            }
+                        }
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(15.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(
+                                if (uniformScale) Color(0xFF4F9DFF)
+                                else Color(0xFF181818)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (uniformScale) {
+                            Text("✓", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Text(
+                        "Uniform Scale",
+                        color = Color(0xFFCCCCCC),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                if (uniformScale) {
+                    val uniformValue = (base.scaleX + base.scaleY) / 2f
+                    PropRow(
+                        "Scale %", "scale", uniformValue, 1f, keyframeMap, currentTimeSec,
+                        onChanged = { onPropertyChanged("scale", it) },
+                        onToggleKf = { onToggleKeyframe("scale") })
+                } else {
+                    PropRow(
+                        "Width %", "scaleX", base.scaleX, 1f, keyframeMap, currentTimeSec,
+                        onChanged = { onPropertyChanged("scaleX", it) },
+                        onToggleKf = { onToggleKeyframe("scaleX") })
+                    PropRow(
+                        "Height %", "scaleY", base.scaleY, 1f, keyframeMap, currentTimeSec,
+                        onChanged = { onPropertyChanged("scaleY", it) },
+                        onToggleKf = { onToggleKeyframe("scaleY") })
+                }
 
                 SectionLabel("Rotation")
                 PropRow(
@@ -236,8 +288,15 @@ private fun PropRow(
     onChanged: (Float) -> Unit,
     onToggleKf: () -> Unit
 ) {
+    val focusManager = LocalFocusManager.current
     val hasKfAtTime = KeyframeStore.hasKeyframeAt(keyframeMap, propKey, currentTimeSec)
     val hasAnyKf = KeyframeStore.getKeyframes(keyframeMap, propKey).isNotEmpty()
+    val valueRange = when (propKey) {
+        "x", "y", "anchorX", "anchorY" -> -100f..200f
+        "scale", "scaleX", "scaleY" -> 10f..500f
+        "rotation" -> -360f..360f
+        else -> -100f..200f
+    }
 
     var inputText by remember(value) { mutableStateOf(formatNum(value)) }
     var pendingText by remember(value) { mutableStateOf("") }
@@ -247,105 +306,97 @@ private fun PropRow(
         inputText = formatNum(value)
     }
 
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(6.dp))
             .background(Color(0xFF181818))
-            .padding(horizontal = 3.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+            .padding(horizontal = 3.dp, vertical = 2.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(22.dp)
-                .clip(RoundedCornerShape(5.dp))
-                .background(
-                    when {
-                        hasKfAtTime -> Color(0xFF4F9DFF).copy(alpha = 0.25f)
-                        hasAnyKf -> Color(0xFF4F9DFF).copy(alpha = 0.10f)
-                        else -> Color.Transparent
-                    }
-                )
-                .pointerInput(propKey) { detectTapGestures { onToggleKf() } },
-            contentAlignment = Alignment.Center
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(
+                        when {
+                            hasKfAtTime -> Color(0xFF4F9DFF).copy(alpha = 0.25f)
+                            hasAnyKf -> Color(0xFF4F9DFF).copy(alpha = 0.10f)
+                            else -> Color.Transparent
+                        }
+                    )
+                    .clickable {
+                        focusManager.clearFocus()
+                        onToggleKf()
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "◆",
+                    color = when {
+                        hasKfAtTime -> Color(0xFF4F9DFF)
+                        hasAnyKf -> Color.White
+                        else -> Color.White.copy(alpha = 0.65f)
+                    },
+                    fontSize = 12.sp, fontWeight = FontWeight.Bold
+                )
+            }
+
             Text(
-                "◆",
-                color = when {
-                    hasKfAtTime -> Color(0xFF4F9DFF)
-                    hasAnyKf -> Color.White
-                    else -> Color.White.copy(alpha = 0.65f)
-                },
-                fontSize = 12.sp, fontWeight = FontWeight.Bold
+                label, color = Color(0xFFCCCCCC), fontSize = 10.sp,
+                fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.width(52.dp)
             )
-        }
 
-        Text(
-            label, color = Color(0xFFCCCCCC), fontSize = 10.sp,
-            fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.width(52.dp)
-        )
-
-        Box(
-            modifier = Modifier
-                .size(24.dp)
-                .clip(RoundedCornerShape(5.dp))
-                .background(Color(0xFF2A1414))
-                .pointerInput(propKey) {
-                    detectTapGestures {
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(Color(0xFF2A1414))
+                    .clickable {
+                        focusManager.clearFocus()
                         val nv = value - step
                         inputText = formatNum(nv)
                         onChanged(nv)
-                    }
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Text("−", color = Color(0xFFFF6B6B), fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("−", color = Color(0xFFFF6B6B), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
 
-        Box(
-            modifier = Modifier
-                .width(68.dp)
-                .height(26.dp)
-                .clip(RoundedCornerShape(5.dp))
-                .background(Color(0xFF0F0F0F))
-                .padding(horizontal = 6.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            BasicTextField(
-                value = inputText,
-                onValueChange = { newText ->
-                    val filtered = newText.filter { it.isDigit() || it == '-' || it == '.' }
-                    inputText = filtered
-                    pendingText = filtered
-                },
-                singleLine = true,
-                textStyle = TextStyle(
-                    color = Color(0xFF4F9DFF),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
-                ),
-                cursorBrush = SolidColor(Color(0xFF4F9DFF)),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Done
-                ),
-                keyboardActions = KeyboardActions(
-                    onDone = {
-                        val parsed = pendingText.toFloatOrNull()
-                        if (parsed != null && parsed.isFinite()) {
-                            inputText = formatNum(parsed)
-                            onChanged(parsed)
-                        }
-                        pendingText = ""
-                    }
-                ),
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .onFocusChanged { focusState ->
-                        hasFocus = focusState.isFocused
-                        if (!focusState.isFocused && pendingText.isNotEmpty()) {
+                    .width(68.dp)
+                    .height(26.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(Color(0xFF0F0F0F))
+                    .padding(horizontal = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                BasicTextField(
+                    value = inputText,
+                    onValueChange = { newText ->
+                        val filtered = newText.filter { it.isDigit() || it == '-' || it == '.' }
+                        inputText = filtered
+                        pendingText = filtered
+                    },
+                    singleLine = true,
+                    textStyle = TextStyle(
+                        color = Color(0xFF4F9DFF),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    ),
+                    cursorBrush = SolidColor(Color(0xFF4F9DFF)),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Text,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
                             val parsed = pendingText.toFloatOrNull()
                             if (parsed != null && parsed.isFinite()) {
                                 inputText = formatNum(parsed)
@@ -353,26 +404,60 @@ private fun PropRow(
                             }
                             pendingText = ""
                         }
-                    }
-            )
-        }
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { focusState ->
+                            hasFocus = focusState.isFocused
+                            if (!focusState.isFocused && pendingText.isNotEmpty()) {
+                                val parsed = pendingText.toFloatOrNull()
+                                if (parsed != null && parsed.isFinite()) {
+                                    inputText = formatNum(parsed)
+                                    onChanged(parsed)
+                                }
+                                pendingText = ""
+                            }
+                        }
+                )
+            }
 
-        Box(
-            modifier = Modifier
-                .size(24.dp)
-                .clip(RoundedCornerShape(5.dp))
-                .background(Color(0xFF0F2A1A))
-                .pointerInput(propKey) {
-                    detectTapGestures {
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(Color(0xFF0F2A1A))
+                    .clickable {
+                        focusManager.clearFocus()
                         val nv = value + step
                         inputText = formatNum(nv)
                         onChanged(nv)
-                    }
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Text("+", color = Color(0xFF22C55E), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("+", color = Color(0xFF22C55E), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
         }
+
+        Slider(
+            value = value.coerceIn(valueRange),
+            onValueChange = { newValue ->
+                val steppedValue = (kotlin.math.round(newValue / step) * step)
+                    .coerceIn(valueRange)
+                inputText = formatNum(steppedValue)
+                pendingText = ""
+                onChanged(steppedValue)
+            },
+            valueRange = valueRange,
+            onValueChangeFinished = { focusManager.clearFocus() },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(24.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = Color(0xFF4F9DFF),
+                activeTrackColor = Color(0xFF4F9DFF),
+                inactiveTrackColor = Color(0xFF383838)
+            )
+        )
     }
 }
 

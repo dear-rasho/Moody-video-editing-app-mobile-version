@@ -216,7 +216,7 @@ data class MaskState(
 
 object MaskAnimatableProps {
 
-    const val POSITION_LIMIT = 10f
+    const val POSITION_LIMIT = 3f
     val positionRange: ClosedFloatingPointRange<Float> = -POSITION_LIMIT..POSITION_LIMIT
 
     // All animatable properties across all mask types

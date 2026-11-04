@@ -355,19 +355,13 @@ private fun SpeedRampGraph(
     onEditStart: () -> Unit,
     onEditEnd: () -> Unit
 ) {
-    val duration by remember(graphKey) {
-        mutableFloatStateOf(durationSec.coerceAtLeast(0.1f))
-    }
+    val duration = durationSec.coerceAtLeast(0.1f)
     val sorted = keyframes.sortedBy { it.time }
     val latestSorted by rememberUpdatedState(sorted)
     var selectedTime by remember(graphKey) { mutableStateOf<Float?>(null) }
     var dragTime by remember { mutableFloatStateOf(-1f) }
-    val selectedGraphTime by remember(graphKey, playheadTimeSec) {
-        mutableStateOf(
-            sorted.minByOrNull { abs(it.time - playheadTimeSec) }
-                ?.takeIf { abs(it.time - playheadTimeSec) < 0.1f }?.time
-        )
-    }
+    val selectedGraphTime = sorted.minByOrNull { abs(it.time - playheadTimeSec) }
+        ?.takeIf { abs(it.time - playheadTimeSec) < 0.1f }?.time
     val hitRadiusPx = with(LocalDensity.current) { 40.dp.toPx() }
 
     BoxWithConstraints(

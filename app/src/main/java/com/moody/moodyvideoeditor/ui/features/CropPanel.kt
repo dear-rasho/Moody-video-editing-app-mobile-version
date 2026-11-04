@@ -19,6 +19,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -182,15 +184,19 @@ private fun CropPropRow(
         if (!isFocused) textValue = "%.0f".format(percentValue)
     }
 
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(6.dp))
             .background(Color(0xFF181818))
             .padding(horizontal = 6.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
         Box(
             modifier = Modifier
                 .size(24.dp)
@@ -296,6 +302,25 @@ private fun CropPropRow(
                 )
             }
         }
+        }
+
+        Slider(
+            value = percentValue,
+            onValueChange = { value ->
+                val percent = value.coerceIn(0f, 100f)
+                textValue = "%.0f".format(percent)
+                onChanged(percent / 100f)
+            },
+            valueRange = 0f..100f,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(28.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = Color(0xFF4F9DFF),
+                activeTrackColor = Color(0xFF4F9DFF),
+                inactiveTrackColor = Color(0xFF383838)
+            )
+        )
     }
 }
 

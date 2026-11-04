@@ -28,7 +28,7 @@ object KeyframeLibrary {
     // Mirrors js/workspace/keyframeStore.js ANIMATABLE_PROPS
     val ANIMATABLE_PROPS = listOf(
         "x", "y",
-        "scale", "rotation",
+        "scale", "scaleX", "scaleY", "rotation",
         "anchorX", "anchorY",
         TEXT_SIZE, TEXT_LETTER_SPACING, TEXT_OPACITY, LAYER_OPACITY,
         SPEED,

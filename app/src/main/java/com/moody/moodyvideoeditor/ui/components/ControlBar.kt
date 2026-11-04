@@ -24,7 +24,13 @@ import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,7 +63,10 @@ fun ControlBar(
     onDuplicate: () -> Unit = {},
     hasVideo: Boolean = true,
     currentPosMs: Long = 0L,
-    totalDurationMs: Long = 0L
+    totalDurationMs: Long = 0L,
+    previewQuality: String = "High",
+    onPreviewQualityChange: (String) -> Unit = {},
+    onRecordAudio: () -> Unit = {}
 ) {
     Box(
         modifier = Modifier
@@ -82,6 +91,16 @@ fun ControlBar(
                     "Play or pause",
                     tint = if (hasVideo) Color(0xFF7C3AED) else Color(0xFF444444)
                 )
+            }
+            PreviewQualityButton(
+                quality = previewQuality,
+                onQualityChange = onPreviewQualityChange
+            )
+            IconButton(
+                onClick = onRecordAudio,
+                modifier = Modifier.size(26.dp)
+            ) {
+                Text("🎙️", fontSize = 14.sp, maxLines = 1)
             }
             PillButton(
                 "-${seekStepSeconds}s",
@@ -152,16 +171,48 @@ fun ControlBar(
 }
 
 @Composable
+private fun PreviewQualityButton(
+    quality: String,
+    onQualityChange: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box {
+        PillButton(
+            text = quality,
+            onClick = { expanded = true },
+            horizontalPadding = 6.dp,
+            height = 26.dp
+        )
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            listOf("Low", "Medium", "High").forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    onClick = {
+                        expanded = false
+                        onQualityChange(option)
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun PillButton(
     text: String,
     onClick: () -> Unit,
     enabled: Boolean = true,
     highlight: Color = Color.White,
-    horizontalPadding: androidx.compose.ui.unit.Dp = 10.dp
+    horizontalPadding: androidx.compose.ui.unit.Dp = 10.dp,
+    height: androidx.compose.ui.unit.Dp = 32.dp
 ) {
     Box(
         modifier = Modifier
-            .height(32.dp)
+            .height(height)
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF1A1A1A))
             .pointerInput(text, enabled) {

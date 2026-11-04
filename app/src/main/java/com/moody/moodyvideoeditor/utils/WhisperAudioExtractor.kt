@@ -6,9 +6,15 @@ import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.Locale
+import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -157,64 +163,88 @@ object WhisperAudioExtractor {
         }
 
         val inputFile = copyToCache(context, uri) ?: return@withContext false
-        val outputFile = File(context.cacheDir, "whisper_chunk_${System.currentTimeMillis()}.pcm")
+        val inputIsTemporary = uri.scheme != "file"
+        val outputFile = File(context.cacheDir, "whisper_audio_${UUID.randomUUID()}.pcm")
         val chunkRanges = buildChunkRanges(sourceDurationMs, chunkDurationMs)
         val chunkCount = chunkRanges.size
+        val coroutineContext = currentCoroutineContext()
 
         try {
-            chunkRanges.forEachIndexed { chunkIndex, (chunkStartMs, chunkLengthMs) ->
-                val absoluteStartMs = sourceStartMs + chunkStartMs
-                val cmd = "-y " +
-                        "-ss ${String.format(Locale.US, "%.3f", absoluteStartMs / 1000.0)} " +
-                        "-i \"${inputFile.absolutePath}\" " +
-                        "-t ${String.format(Locale.US, "%.3f", chunkLengthMs / 1000.0)} " +
-                        "-vn -ar $TARGET_SAMPLE_RATE -ac 1 -f f32le " +
-                        "-acodec pcm_f32le \"${outputFile.absolutePath}\""
-                val session = FFmpegKit.execute(cmd)
-                if (!ReturnCode.isSuccess(session.returnCode)) {
-                    Log.e(TAG, "Chunk extraction failed: ${session.allLogsAsString}")
-                    return@withContext false
-                }
-                if (!outputFile.exists() || outputFile.length() == 0L) {
-                    Log.e(TAG, "PCM chunk output is empty at ${chunkStartMs}ms")
-                    return@withContext false
-                }
+            coroutineContext.ensureActive()
+            val session = FFmpegKit.executeWithArguments(
+                arrayOf(
+                    "-nostdin",
+                    "-y",
+                    "-ss", (sourceStartMs / 1000.0).toString(),
+                    "-i", inputFile.absolutePath,
+                    "-t", (sourceDurationMs / 1000.0).toString(),
+                    "-vn",
+                    "-ar", TARGET_SAMPLE_RATE.toString(),
+                    "-ac", "1",
+                    "-f", "f32le",
+                    "-acodec", "pcm_f32le",
+                    outputFile.absolutePath
+                )
+            )
+            if (!ReturnCode.isSuccess(session.returnCode)) {
+                Log.e(TAG, "Audio extraction failed: ${session.allLogsAsString}")
+                return@withContext false
+            }
+            if (!outputFile.exists() || outputFile.length() < PCM_BYTES_PER_SAMPLE) {
+                Log.e(TAG, "Extracted PCM output is empty")
+                return@withContext false
+            }
 
-                val bytes = outputFile.readBytes()
-                val pcm = FloatArray(bytes.size / PCM_BYTES_PER_SAMPLE)
-                java.nio.ByteBuffer.wrap(bytes)
-                    .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                    .asFloatBuffer()
-                    .get(pcm)
-                outputFile.delete()
-                onChunk(chunkIndex, chunkCount, chunkStartMs, pcm)
+            RandomAccessFile(outputFile, "r").use { pcmFile ->
+                val totalSamples = pcmFile.length() / PCM_BYTES_PER_SAMPLE
+                var samplesRead = 0L
+
+                chunkRanges.forEachIndexed { chunkIndex, (chunkStartMs, chunkLengthMs) ->
+                    coroutineContext.ensureActive()
+                    val expectedSamples =
+                        (chunkLengthMs * TARGET_SAMPLE_RATE + 500L) / 1000L
+                    val sampleCount = minOf(expectedSamples, totalSamples - samplesRead)
+                    if (sampleCount <= 0L) {
+                        Log.e(TAG, "PCM ended before chunk ${chunkIndex + 1}")
+                        return@withContext false
+                    }
+
+                    val bytes = ByteArray((sampleCount * PCM_BYTES_PER_SAMPLE).toInt())
+                    pcmFile.readFully(bytes)
+                    val pcm = FloatArray(sampleCount.toInt())
+                    ByteBuffer.wrap(bytes)
+                        .order(ByteOrder.LITTLE_ENDIAN)
+                        .asFloatBuffer()
+                        .get(pcm)
+                    samplesRead += sampleCount
+                    onChunk(chunkIndex, chunkCount, chunkStartMs, pcm)
+                }
             }
             true
         } finally {
-            inputFile.delete()
+            if (inputIsTemporary) inputFile.delete()
             outputFile.delete()
         }
     }
 
     private fun copyToCache(context: Context, uri: Uri): File? {
+        if (uri.scheme == "file") {
+            return uri.path?.let(::File)?.takeIf { it.isFile && it.canRead() }
+        }
+
+        val file = File(context.cacheDir, "whisper_input_${UUID.randomUUID()}")
         return try {
-            val ext = when {
-                uri.toString().endsWith(".mp4") -> "mp4"
-                uri.toString().endsWith(".mov") -> "mov"
-                uri.toString().endsWith(".mp3") -> "mp3"
-                uri.toString().endsWith(".wav") -> "wav"
-                uri.toString().endsWith(".m4a") -> "m4a"
-                else -> "mp4"
-            }
-            val file = File(
-                context.cacheDir,
-                "whisper_input_${System.currentTimeMillis()}.$ext"
-            )
             context.contentResolver.openInputStream(uri)?.use { input ->
-                file.outputStream().use { output -> input.copyTo(output) }
+                file.outputStream().buffered(128 * 1024).use { output ->
+                    input.copyTo(output, bufferSize = 128 * 1024)
+                }
             }
-            if (file.exists() && file.length() > 0) file else null
+            if (file.exists() && file.length() > 0) file else {
+                file.delete()
+                null
+            }
         } catch (t: Throwable) {
+            file.delete()
             Log.e(TAG, "copyToCache failed", t)
             null
         }

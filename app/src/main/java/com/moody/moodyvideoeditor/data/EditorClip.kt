@@ -17,6 +17,8 @@ data class EditorClip(
     val speed: Float = 1.0f,
     val volume: Float = 1.0f,
     val scale: Float = 1.0f,
+    val scaleX: Float = 1.0f,
+    val scaleY: Float = 1.0f,
     val rotation: Float = 0f,
     val offsetX: Float = 0f,
     val offsetY: Float = 0f,
@@ -244,24 +246,26 @@ data class EditorState(
 
     fun timelineVisualList(): List<List<EditorClip>> {
         if (visualLayerCount <= 0) return emptyList()
-        val result = MutableList(visualLayerCount) { emptyList<EditorClip>() }
-        clips.filter { !it.isAudio }.forEach { c ->
+        val result = MutableList(visualLayerCount) { mutableListOf<EditorClip>() }
+        clips.forEach { c ->
+            if (c.isAudio) return@forEach
             if (c.trackIndex in 0 until visualLayerCount) {
-                result[c.trackIndex] = result[c.trackIndex] + c
+                result[c.trackIndex].add(c)
             }
         }
-        return result
+        return result.map { it.toList() }
     }
 
     fun timelineAudioList(): List<List<EditorClip>> {
         if (audioLayerCount <= 0) return emptyList()
-        val result = MutableList(audioLayerCount) { emptyList<EditorClip>() }
-        clips.filter { it.isAudio }.forEach { c ->
+        val result = MutableList(audioLayerCount) { mutableListOf<EditorClip>() }
+        clips.forEach { c ->
+            if (!c.isAudio) return@forEach
             if (c.trackIndex in 0 until audioLayerCount) {
-                result[c.trackIndex] = result[c.trackIndex] + c
+                result[c.trackIndex].add(c)
             }
         }
-        return result
+        return result.map { it.toList() }
     }
 
     fun audioOrVisualTracks(isAudio: Boolean): List<List<EditorClip>> =

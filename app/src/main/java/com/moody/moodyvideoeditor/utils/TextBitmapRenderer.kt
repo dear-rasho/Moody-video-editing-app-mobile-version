@@ -651,7 +651,7 @@ object TextBitmapRenderer {
         try {
             canvas.translate(pivotX + positionX, pivotY + positionY)
             canvas.rotate(transform.rotation)
-            canvas.scale(transform.scale / 100f, transform.scale / 100f)
+            canvas.scale(transform.scaleX / 100f, transform.scaleY / 100f)
             canvas.translate(-pivotX, -pivotY)
 
             val safeCrop = com.moody.moodyvideoeditor.utils.CropHelper.clampAll(
@@ -930,8 +930,8 @@ object TextBitmapRenderer {
             }
 
             // ✅ CLAMP WIDENED HERE TOO
-            val clampedX = sampled.x.coerceIn(-50f, 150f)
-            val clampedY = sampled.y.coerceIn(-50f, 150f)
+            val clampedX = sampled.x.coerceIn(-100f, 200f)
+            val clampedY = sampled.y.coerceIn(-100f, 200f)
 
             val minDim = minOf(W, H).toFloat()
             val maxLineWidth = lines.maxOfOrNull { basePaint.measureText(it) } ?: 0f
@@ -970,8 +970,8 @@ object TextBitmapRenderer {
             canvas.translate(cx + frame.translateX, cy + frame.translateY)
             canvas.rotate(sampled.rotation + frame.rotationZ)
             canvas.scale(
-                (sampled.scale / 100f) * frame.scaleX * flipScaleX,
-                (sampled.scale / 100f) * frame.scaleY * flipScaleY
+                (sampled.scaleX / 100f) * frame.scaleX * flipScaleX,
+                (sampled.scaleY / 100f) * frame.scaleY * flipScaleY
             )
 
             val alphaTotal = (st.opacity / 100f * frame.alpha).coerceIn(0f, 1f)
@@ -996,7 +996,8 @@ object TextBitmapRenderer {
                         textAlign = textDrawAlign
                         letterSpacing = basePaint.letterSpacing
                         color = glowColorInt
-                        alpha = (alphaInt * layer.alpha).toInt().coerceIn(0, 255)
+                        alpha = (alphaInt * layer.alpha * st.glowIntensity.coerceIn(0f, 5f))
+                            .toInt().coerceIn(0, 255)
                         maskFilter = BlurMaskFilter((glowR * layer.blurScale).coerceIn(2f, 100f), BlurMaskFilter.Blur.NORMAL)
                     }
                     lines.forEachIndexed { i, line ->

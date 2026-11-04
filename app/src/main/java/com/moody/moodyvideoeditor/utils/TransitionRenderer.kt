@@ -371,8 +371,8 @@ object TransitionRenderer {
 
                     this.translationX = posTx + cropTx + translationX
                     this.translationY = posTy + cropTy + translationY
-                    this.scaleX = (base.scale / 100f) * cropSx * scaleX
-                    this.scaleY = (base.scale / 100f) * cropSy * scaleY
+                    this.scaleX = (base.scaleX / 100f) * cropSx * scaleX
+                    this.scaleY = (base.scaleY / 100f) * cropSy * scaleY
                     this.rotationZ = base.rotation + rotationZ
                     this.rotationX = rotationX
                     this.rotationY = rotationY

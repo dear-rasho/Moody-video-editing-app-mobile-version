@@ -32,6 +32,7 @@ object SettingsKeys {
     val AUTO_SAVE_ENABLED = booleanPreferencesKey("auto_save_enabled")
     val AUTO_SAVE_INTERVAL_SEC = intPreferencesKey("auto_save_interval_sec")
     val PROXY_MODE_ENABLED = booleanPreferencesKey("proxy_mode_enabled")
+    val PREVIEW_PLAYBACK_QUALITY = stringPreferencesKey("preview_playback_quality")
     val EXPORT_SOUND_ENABLED = booleanPreferencesKey("export_sound_enabled")
 
     // ─── Tab 4: Language & Appearance ───
@@ -64,6 +65,7 @@ object SettingsDefaults {
     const val AUTO_SAVE_ENABLED = true
     const val AUTO_SAVE_INTERVAL_SEC = 30
     const val PROXY_MODE_ENABLED = false
+    const val PREVIEW_PLAYBACK_QUALITY = "High"
     const val EXPORT_SOUND_ENABLED = true
 
     const val APP_LANGUAGE = "en"

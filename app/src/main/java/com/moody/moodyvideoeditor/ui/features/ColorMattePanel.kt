@@ -1,6 +1,8 @@
 package com.moody.moodyvideoeditor.ui.features
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +29,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -102,13 +106,24 @@ fun ColorMattePanel(
                         .fillMaxSize()
                         .clip(RoundedCornerShape(8.dp))
                 ) {
-                    if (style.mode == ColorMatteMode.FOUR_COLOR) {
-                        FourColorMatteGradient(style, Modifier.fillMaxSize())
-                    } else {
+                    if (style.mode == ColorMatteMode.SOLID) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .background(styleToBrush(style))
+                                .background(Color(style.solidColor.toInt()))
+                        )
+                    } else {
+                        MatteAngleControl(
+                            style = style,
+                            modifier = Modifier.fillMaxSize(),
+                            onAngleChanged = { angle ->
+                                style = if (style.mode == ColorMatteMode.RAMP) {
+                                    style.copy(rampAngleDeg = angle)
+                                } else {
+                                    style.copy(fourColorAngleDeg = angle)
+                                }
+                                notifyChange()
+                            }
                         )
                     }
                     Box(
@@ -275,45 +290,17 @@ fun ColorMattePanel(
                         }
                     )
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            "Angle",
-                            color = Color(0xFF888888),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.width(64.dp)
-                        )
-                        Slider(
-                            value = style.rampAngleDeg.coerceIn(0f, 360f),
-                            onValueChange = {
-                                style = style.copy(rampAngleDeg = it)
-                                notifyChange()
-                            },
-                            valueRange = 0f..360f,
-                            modifier = Modifier.weight(1f),
-                            colors = SliderDefaults.colors(
-                                thumbColor = Color(0xFF7C3AED),
-                                activeTrackColor = Color(0xFF7C3AED),
-                                inactiveTrackColor = Color(0xFF303030)
-                            )
-                        )
-                        Text(
-                            "${style.rampAngleDeg.toInt()}°",
-                            color = Color.White,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.width(42.dp)
-                        )
-                    }
+                    Text(
+                        "Drag either color dot on the preview to set the ramp angle.",
+                        color = Color(0xFF666666),
+                        fontSize = 9.sp,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
                 }
 
                 ColorMatteMode.FOUR_COLOR -> {
                     Text(
-                        "4 Corner Colors",
+                        "4 Corner Colors — drag any dot on the preview to rotate",
                         color = Color(0xFF888888),
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
@@ -533,6 +520,143 @@ private fun ModeChip(label: String, active: Boolean, onClick: () -> Unit) {
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold
         )
+    }
+}
+
+@Composable
+private fun MatteAngleControl(
+    style: ColorMatteStyle,
+    modifier: Modifier,
+    onAngleChanged: (Float) -> Unit
+) {
+    val latestStyle by rememberUpdatedState(style)
+    var activeHandle by remember { mutableStateOf(0) }
+
+    Box(modifier = modifier) {
+        if (style.mode == ColorMatteMode.FOUR_COLOR) {
+            FourColorMatteGradient(style, Modifier.fillMaxSize())
+        }
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(style.mode) {
+                    fun handlePoints(current: ColorMatteStyle): List<Offset> {
+                        val center = Offset(size.width / 2f, size.height / 2f)
+                        if (current.mode == ColorMatteMode.RAMP) {
+                            val radians = Math.toRadians(current.rampAngleDeg.toDouble())
+                            val halfLength = kotlin.math.hypot(
+                                size.width.toDouble(),
+                                size.height.toDouble()
+                            ).toFloat() / 2f
+                            val dx = kotlin.math.cos(radians).toFloat() * halfLength
+                            val dy = kotlin.math.sin(radians).toFloat() * halfLength
+                            return listOf(
+                                Offset(center.x - dx, center.y - dy),
+                                Offset(center.x + dx, center.y + dy)
+                            )
+                        }
+
+                        val radians = Math.toRadians(current.fourColorAngleDeg.toDouble())
+                        val cos = kotlin.math.cos(radians).toFloat()
+                        val sin = kotlin.math.sin(radians).toFloat()
+                        val radius = minOf(size.width, size.height) * 0.38f
+                        val baseAngles = listOf(-135f, -45f, 135f, 45f)
+                        return baseAngles.map { baseAngle ->
+                            val angle = Math.toRadians(baseAngle.toDouble())
+                            val x = kotlin.math.cos(angle).toFloat() * radius
+                            val y = kotlin.math.sin(angle).toFloat() * radius
+                            Offset(
+                                center.x + x * cos - y * sin,
+                                center.y + x * sin + y * cos
+                            )
+                        }
+                    }
+
+                    detectDragGestures(
+                        onDragStart = { position ->
+                            val points = handlePoints(latestStyle)
+                            activeHandle = points.indices.minByOrNull {
+                                (points[it] - position).getDistance()
+                            } ?: 0
+                        },
+                        onDrag = { change, _ ->
+                            change.consume()
+                            val center = Offset(size.width / 2f, size.height / 2f)
+                            val dx = change.position.x - center.x
+                            val dy = change.position.y - center.y
+                            val pointerAngle =
+                                Math.toDegrees(kotlin.math.atan2(dy, dx).toDouble())
+                            val angle = if (latestStyle.mode == ColorMatteMode.RAMP) {
+                                pointerAngle + if (activeHandle == 0) 180.0 else 0.0
+                            } else {
+                                val baseAngles = listOf(-135.0, -45.0, 135.0, 45.0)
+                                pointerAngle - baseAngles[activeHandle.coerceIn(0, 3)]
+                            }
+                            onAngleChanged(((angle % 360.0 + 360.0) % 360.0).toFloat())
+                        }
+                    )
+                }
+        ) {
+            val center = Offset(size.width / 2f, size.height / 2f)
+            val points: List<Offset>
+            val colors: List<Color>
+            if (style.mode == ColorMatteMode.RAMP) {
+                val radians = Math.toRadians(style.rampAngleDeg.toDouble())
+                val halfLength = kotlin.math.hypot(
+                    size.width.toDouble(),
+                    size.height.toDouble()
+                ).toFloat() / 2f
+                val dx = kotlin.math.cos(radians).toFloat() * halfLength
+                val dy = kotlin.math.sin(radians).toFloat() * halfLength
+                points = listOf(
+                    Offset(center.x - dx, center.y - dy),
+                    Offset(center.x + dx, center.y + dy)
+                )
+                colors = listOf(Color(style.rampColor1.toInt()), Color(style.rampColor2.toInt()))
+            } else {
+                val radians = Math.toRadians(style.fourColorAngleDeg.toDouble())
+                val cos = kotlin.math.cos(radians).toFloat()
+                val sin = kotlin.math.sin(radians).toFloat()
+                val radius = minOf(size.width, size.height) * 0.38f
+                val baseAngles = listOf(-135f, -45f, 135f, 45f)
+                points = baseAngles.map { baseAngle ->
+                    val angle = Math.toRadians(baseAngle.toDouble())
+                    val x = kotlin.math.cos(angle).toFloat() * radius
+                    val y = kotlin.math.sin(angle).toFloat() * radius
+                    Offset(center.x + x * cos - y * sin, center.y + x * sin + y * cos)
+                }
+                colors = listOf(
+                    Color(style.topLeft.toInt()),
+                    Color(style.topRight.toInt()),
+                    Color(style.bottomLeft.toInt()),
+                    Color(style.bottomRight.toInt())
+                )
+            }
+
+            if (style.mode == ColorMatteMode.RAMP) drawRect(styleToBrush(style))
+            if (style.mode == ColorMatteMode.RAMP) {
+                drawLine(
+                    Color.White.copy(alpha = 0.75f),
+                    points[0],
+                    points[1],
+                    strokeWidth = 2.dp.toPx()
+                )
+            } else {
+                drawLine(Color.White.copy(alpha = 0.55f), points[0], points[3], strokeWidth = 1.dp.toPx())
+                drawLine(Color.White.copy(alpha = 0.55f), points[1], points[2], strokeWidth = 1.dp.toPx())
+                drawLine(Color.White.copy(alpha = 0.55f), points[0], points[1], strokeWidth = 1.dp.toPx())
+                drawLine(Color.White.copy(alpha = 0.55f), points[2], points[3], strokeWidth = 1.dp.toPx())
+            }
+            points.forEachIndexed { index, point ->
+                drawCircle(colors[index], radius = 7.dp.toPx(), center = point)
+                drawCircle(
+                    Color.White,
+                    radius = 7.dp.toPx(),
+                    center = point,
+                    style = Stroke(width = 1.5.dp.toPx())
+                )
+            }
+        }
     }
 }
 

@@ -5,6 +5,7 @@ import android.util.Log
 import com.moody.moodyvideoeditor.data.AdjustmentData
 import kotlin.math.abs
 import kotlin.math.min
+import kotlin.math.sqrt
 
 object ImageAdjustmentProcessor {
 
@@ -17,8 +18,16 @@ object ImageAdjustmentProcessor {
                 adj.purples != 0f || adj.magentas != 0f || adj.skinTones != 0f
     }
 
-    fun process(source: Bitmap, adj: AdjustmentData): Bitmap {
-        if (!hasSharpenOrColorChannels(adj)) return source
+    fun hasNoiseOrVignette(adj: AdjustmentData): Boolean {
+        return adj.noise > 0f || adj.vignette != 0f
+    }
+
+    fun process(
+        source: Bitmap,
+        adj: AdjustmentData,
+        detailAdjustment: AdjustmentData = adj
+    ): Bitmap {
+        if (!hasSharpenOrColorChannels(adj) && !hasNoiseOrVignette(detailAdjustment)) return source
         if (source.width <= 0 || source.height <= 0) return source
 
         try {
@@ -51,6 +60,8 @@ object ImageAdjustmentProcessor {
                 )
             } else pixels
 
+            applyDetails(outputPixels, w, h, detailAdjustment)
+
             val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             result.setPixels(outputPixels, 0, w, 0, 0, w, h)
 
@@ -60,6 +71,68 @@ object ImageAdjustmentProcessor {
         } catch (t: Throwable) {
             Log.e(TAG, "process failed", t)
             return source
+        }
+    }
+
+    private fun applyDetails(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        adjustment: AdjustmentData
+    ) {
+        val noise = (adjustment.noise / 100f).coerceIn(0f, 1f)
+        val vignette = (adjustment.vignette / 100f).coerceIn(-1f, 1f)
+        if (noise <= 0f && vignette == 0f) return
+
+        val centerX = width / 2f
+        val centerY = height / 2f
+        val maxRadius = sqrt(centerX * centerX + centerY * centerY).coerceAtLeast(1f)
+
+        for (y in 0 until height) {
+            val normalizedY = (y - centerY) / maxRadius
+            for (x in 0 until width) {
+                val index = y * width + x
+                val pixel = pixels[index]
+                val alpha = pixel ushr 24
+                if (alpha == 0) continue
+
+                var red = (pixel shr 16) and 0xFF
+                var green = (pixel shr 8) and 0xFF
+                var blue = pixel and 0xFF
+
+                if (noise > 0f) {
+                    var hash = index.toLong() xor -7046029254386353131L
+                    hash = (hash xor (hash ushr 13)) * 0x5BD1E995L
+                    hash = hash xor (hash ushr 15)
+                    val random = (hash and 0xFFFF).toFloat() / 65535f
+                    if (random > 0.45f - noise * 0.30f) {
+                        val gray = ((hash ushr 16) and 0xFF).toInt()
+                        val blend = (noise * 0.7f * (0.4f + random * 0.6f))
+                            .coerceIn(0f, 0.85f)
+                        red = (red + (gray - red) * blend).toInt().coerceIn(0, 255)
+                        green = (green + (gray - green) * blend).toInt().coerceIn(0, 255)
+                        blue = (blue + (gray - blue) * blend).toInt().coerceIn(0, 255)
+                    }
+                }
+
+                if (vignette != 0f) {
+                    val normalizedX = (x - centerX) / maxRadius
+                    val radius = sqrt(normalizedX * normalizedX + normalizedY * normalizedY)
+                    val edgeT = ((radius - 0.35f) / (0.98f - 0.35f)).coerceIn(0f, 1f)
+                    val edge = edgeT * edgeT * (3f - 2f * edgeT)
+                    val blend = if (vignette < 0f) {
+                        edge * abs(vignette) * 0.95f
+                    } else {
+                        edge * vignette * 0.5f
+                    }
+                    val target = if (vignette < 0f) 0f else 255f
+                    red = (red + (target - red) * blend).toInt().coerceIn(0, 255)
+                    green = (green + (target - green) * blend).toInt().coerceIn(0, 255)
+                    blue = (blue + (target - blue) * blend).toInt().coerceIn(0, 255)
+                }
+
+                pixels[index] = (alpha shl 24) or (red shl 16) or (green shl 8) or blue
+            }
         }
     }
 
@@ -75,15 +148,15 @@ object ImageAdjustmentProcessor {
     // ═══════════════════════════════════════════════════════════
 
     private fun applyColorChannels(pixels: IntArray, adj: AdjustmentData) {
-        val reds = (adj.reds / 50f).coerceIn(-5f, 5f)
-        val oranges = (adj.oranges / 50f).coerceIn(-5f, 5f)
-        val yellows = (adj.yellows / 50f).coerceIn(-5f, 5f)
-        val greens = (adj.greens / 50f).coerceIn(-5f, 5f)
-        val cyans = (adj.cyans / 50f).coerceIn(-5f, 5f)
-        val blues = (adj.blues / 50f).coerceIn(-5f, 5f)
-        val purples = (adj.purples / 50f).coerceIn(-5f, 5f)
-        val magentas = (adj.magentas / 50f).coerceIn(-5f, 5f)
-        val skinTones = (adj.skinTones / 50f).coerceIn(-5f, 5f)
+        val reds = AdjustmentPixelEngine.normalizedColorChannelStrength(adj.reds)
+        val oranges = AdjustmentPixelEngine.normalizedColorChannelStrength(adj.oranges)
+        val yellows = AdjustmentPixelEngine.normalizedColorChannelStrength(adj.yellows)
+        val greens = AdjustmentPixelEngine.normalizedColorChannelStrength(adj.greens)
+        val cyans = AdjustmentPixelEngine.normalizedColorChannelStrength(adj.cyans)
+        val blues = AdjustmentPixelEngine.normalizedColorChannelStrength(adj.blues)
+        val purples = AdjustmentPixelEngine.normalizedColorChannelStrength(adj.purples)
+        val magentas = AdjustmentPixelEngine.normalizedColorChannelStrength(adj.magentas)
+        val skinTones = AdjustmentPixelEngine.normalizedColorChannelStrength(adj.skinTones)
 
         val hsv = FloatArray(3)
 

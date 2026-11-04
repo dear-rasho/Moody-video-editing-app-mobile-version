@@ -30,6 +30,7 @@ data class AppSettings(
     val autoSaveEnabled: Boolean = SettingsDefaults.AUTO_SAVE_ENABLED,
     val autoSaveIntervalSec: Int = SettingsDefaults.AUTO_SAVE_INTERVAL_SEC,
     val proxyModeEnabled: Boolean = SettingsDefaults.PROXY_MODE_ENABLED,
+    val previewPlaybackQuality: String = SettingsDefaults.PREVIEW_PLAYBACK_QUALITY,
     val exportSoundEnabled: Boolean = SettingsDefaults.EXPORT_SOUND_ENABLED,
 
     // ─── Tab 4: Language & Appearance ───

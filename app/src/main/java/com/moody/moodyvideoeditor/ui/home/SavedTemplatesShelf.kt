@@ -141,7 +141,8 @@ private fun TemplateCard(
                     ) {
                         Text("🎞️", fontSize = 26.sp)
                         Text(
-                            "${template.imageSlotCount}🖼️ · ${template.textSlotCount}📝",
+                            "${template.imageSlotCount}🖼️ · ${template.videoSlotCount}🎬 · " +
+                                    "${template.audioSlotCount}🎵 · ${template.textSlotCount}📝",
                             color = Color(0xFFA78BFA),
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold

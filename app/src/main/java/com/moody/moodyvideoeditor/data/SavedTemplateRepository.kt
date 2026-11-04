@@ -132,6 +132,8 @@ object SavedTemplateRepository {
         put("durationMs", m.durationMs)
         put("imageSlotCount", m.imageSlotCount)
         put("textSlotCount", m.textSlotCount)
+        put("videoSlotCount", m.videoSlotCount)
+        put("audioSlotCount", m.audioSlotCount)
     }
 
     private fun metaFromJson(o: JSONObject) = SavedTemplateMeta(
@@ -144,46 +146,43 @@ object SavedTemplateRepository {
         durationMs = o.optLong("durationMs", 0L),
         imageSlotCount = o.optInt("imageSlotCount", 0),
         textSlotCount = o.optInt("textSlotCount", 0),
+        videoSlotCount = o.optInt("videoSlotCount", 0),
+        audioSlotCount = o.optInt("audioSlotCount", 0),
         editorState = null
     )
 
     // ═══════════════════════════════════════════════════════════
     //  STATE SERIALIZATION (reuses ProjectRepository format)
-    //  In templates, image URIs are stored EMPTY (placeholder).
+    //  In templates, media URIs are stored EMPTY (replaceable placeholders).
     //  Text content is preserved (user will change it).
     // ═══════════════════════════════════════════════════════════
 
-    private fun stateToJson(s: EditorState): JSONObject = JSONObject().apply {
-        val arr = JSONArray()
-        s.clips.forEach { arr.put(clipToJson(it)) }
-        put("clips", arr)
-        put("visualLayerCount", s.visualLayerCount)
-        put("audioLayerCount", s.audioLayerCount)
-        put("aspectRatio", s.aspectRatio)
-        put("rotation", s.rotation)
-        put("aspectMode", s.aspectMode)
+    private fun stateToJson(s: EditorState): JSONObject {
+        val templateState = s.copy(
+            clips = s.clips.map { clip ->
+                if (clip.isVisualClip || clip.type.startsWith("audio/")) {
+                    clip.copy(uri = Uri.EMPTY)
+                } else {
+                    clip
+                }
+            },
+            currentPosMs = 0L,
+            currentIndex = 0,
+            selectedClipId = null,
+            multiSelectedIds = emptySet(),
+            isPlaying = false
+        )
+        return ProjectRepository.editorStateToJson(templateState)
     }
 
-    private fun stateFromJson(o: JSONObject): EditorState {
-        val clips = mutableListOf<EditorClip>()
-        val arr = o.optJSONArray("clips") ?: JSONArray()
-        for (i in 0 until arr.length()) {
-            val obj = arr.optJSONObject(i) ?: continue
-            val type = obj.optString("type")
-            if (type != "brush/plain" && type != "sticker/plain") {
-                clips.add(clipFromJson(obj))
-            }
-        }
-        return EditorState(
-            clips = clips,
+    private fun stateFromJson(o: JSONObject): EditorState =
+        ProjectRepository.editorStateFromJson(o).copy(
             currentPosMs = 0L,
-            visualLayerCount = o.optInt("visualLayerCount", 3),
-            audioLayerCount = o.optInt("audioLayerCount", 2),
-            aspectRatio = o.optString("aspectRatio", "16:9"),
-            rotation = o.optInt("rotation", 0),
-            aspectMode = o.optInt("aspectMode", 0)
+            currentIndex = 0,
+            selectedClipId = null,
+            multiSelectedIds = emptySet(),
+            isPlaying = false
         )
-    }
 
     private fun clipToJson(c: EditorClip): JSONObject = JSONObject().apply {
         put("id", c.id)
@@ -198,6 +197,8 @@ object SavedTemplateRepository {
         put("speed", c.speed.toDouble())
         put("volume", c.volume.toDouble())
         put("scale", c.scale.toDouble())
+        put("scaleX", c.scaleX.toDouble())
+        put("scaleY", c.scaleY.toDouble())
         put("rotation", c.rotation.toDouble())
         put("offsetX", c.offsetX.toDouble())
         put("offsetY", c.offsetY.toDouble())
@@ -262,6 +263,8 @@ object SavedTemplateRepository {
             speed = o.optDouble("speed", 1.0).toFloat(),
             volume = o.optDouble("volume", 1.0).toFloat(),
             scale = o.optDouble("scale", 1.0).toFloat(),
+            scaleX = o.optDouble("scaleX", 1.0).toFloat(),
+            scaleY = o.optDouble("scaleY", 1.0).toFloat(),
             rotation = o.optDouble("rotation", 0.0).toFloat(),
             offsetX = o.optDouble("offsetX", 0.0).toFloat(),
             offsetY = o.optDouble("offsetY", 0.0).toFloat(),
@@ -481,6 +484,9 @@ object SavedTemplateRepository {
         put("content", t.content); put("fontFamily", t.fontFamily)
         put("fontSize", t.fontSize); put("fontWeight", t.fontWeight)
         put("fontStyle", t.fontStyle); put("color", t.color)
+        put("glowEnabled", t.glowEnabled); put("glowColor", t.glowColor)
+        put("glowRadius", t.glowRadius.toDouble())
+        put("glowIntensity", t.glowIntensity.toDouble())
         put("alignment", t.alignment); put("letterSpacing", t.letterSpacing.toDouble())
         put("lineHeight", t.lineHeight.toDouble()); put("positionX", t.positionX.toDouble())
         put("positionY", t.positionY.toDouble()); put("scale", t.scale.toDouble())
@@ -509,6 +515,10 @@ object SavedTemplateRepository {
         fontWeight = o.optString("fontWeight", "normal"),
         fontStyle = o.optString("fontStyle", "normal"),
         color = o.optLong("color", 0xFFFFFFFFL),
+        glowEnabled = o.optBoolean("glowEnabled", false),
+        glowColor = o.optLong("glowColor", 0xFF4DD0E1L),
+        glowRadius = o.optDouble("glowRadius", 25.0).toFloat(),
+        glowIntensity = o.optDouble("glowIntensity", 1.0).toFloat().coerceIn(0f, 5f),
         alignment = o.optString("alignment", "center"),
         letterSpacing = o.optDouble("letterSpacing", 0.0).toFloat(),
         lineHeight = o.optDouble("lineHeight", 1.2).toFloat(),
@@ -648,6 +658,7 @@ object SavedTemplateRepository {
         put("rampAngleDeg", s.rampAngleDeg.toDouble())
         put("topLeft", s.topLeft); put("topRight", s.topRight)
         put("bottomLeft", s.bottomLeft); put("bottomRight", s.bottomRight)
+        put("fourColorAngleDeg", s.fourColorAngleDeg.toDouble())
     }
 
     private fun matteStyleFromJson(o: JSONObject?): ColorMatteStyle {
@@ -662,7 +673,8 @@ object SavedTemplateRepository {
                 topLeft = o.optLong("topLeft", 0xFFFF0000L),
                 topRight = o.optLong("topRight", 0xFF00FF00L),
                 bottomLeft = o.optLong("bottomLeft", 0xFF0000FFL),
-                bottomRight = o.optLong("bottomRight", 0xFFFFCC00L)
+                bottomRight = o.optLong("bottomRight", 0xFFFFCC00L),
+                fourColorAngleDeg = o.optDouble("fourColorAngleDeg", 0.0).toFloat()
             )
         } catch (_: Exception) { ColorMatteStyle() }
     }

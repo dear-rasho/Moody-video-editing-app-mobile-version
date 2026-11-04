@@ -11,6 +11,8 @@ data class TransformValues(
     val x: Float = 50f,
     val y: Float = 50f,
     val scale: Float = 100f,
+    val scaleX: Float = 100f,
+    val scaleY: Float = 100f,
     val rotation: Float = 0f,
     val anchorX: Float = 50f,
     val anchorY: Float = 50f,
@@ -22,7 +24,9 @@ data class TransformValues(
     fun isIdentity(): Boolean {
         val EPS = 0.01f
         return abs(x - 50f) < EPS && abs(y - 50f) < EPS &&
-                abs(scale - 100f) < EPS && abs(rotation) < EPS &&
+                abs(scale - 100f) < EPS &&
+                abs(scaleX - 100f) < EPS && abs(scaleY - 100f) < EPS &&
+                abs(rotation) < EPS &&
                 abs(anchorX - 50f) < EPS && abs(anchorY - 50f) < EPS &&
                 abs(cropL) < EPS && abs(cropR) < EPS &&
                 abs(cropT) < EPS && abs(cropB) < EPS
@@ -32,7 +36,7 @@ data class TransformValues(
 object TransformApplier {
 
     private val TRANSFORM_PROPERTIES = setOf(
-        "x", "y", "scale", "rotation", "anchorX", "anchorY",
+        "x", "y", "scale", "scaleX", "scaleY", "rotation", "anchorX", "anchorY",
         "cropL", "cropR", "cropT", "cropB"
     )
 
@@ -48,6 +52,8 @@ object TransformApplier {
             return TransformValues(
                 x = st.positionX, y = st.positionY,
                 scale = st.scale, rotation = st.rotation,
+                scaleX = st.scale * clip.scaleX,
+                scaleY = st.scale * clip.scaleY,
                 anchorX = st.anchorX, anchorY = st.anchorY,
                 cropL = clip.cropL, cropR = clip.cropR,
                 cropT = clip.cropT, cropB = clip.cropB
@@ -58,6 +64,8 @@ object TransformApplier {
             x = 50f + clip.offsetX * 100f,
             y = 50f + clip.offsetY * 100f,
             scale = clip.scale * 100f,
+            scaleX = clip.scale * clip.scaleX * 100f,
+            scaleY = clip.scale * clip.scaleY * 100f,
             rotation = clip.rotation,
             anchorX = 50f, anchorY = 50f,
             cropL = clip.cropL, cropR = clip.cropR,
@@ -84,9 +92,8 @@ object TransformApplier {
             val offsetY = (t.y - 50f) / 100f * H
             translate(originX + offsetX, originY + offsetY)
             if (t.rotation != 0f) rotate(t.rotation, Offset(originX, originY))
-            if (t.scale != 100f) {
-                val sc = t.scale / 100f
-                scale(sc, sc, Offset(originX, originY))
+            if (t.scaleX != 100f || t.scaleY != 100f) {
+                scale(t.scaleX / 100f, t.scaleY / 100f, Offset(originX, originY))
             }
         }) { }
     }

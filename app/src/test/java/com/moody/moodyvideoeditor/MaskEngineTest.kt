@@ -1,11 +1,24 @@
 package com.moody.moodyvideoeditor
 
 import com.moody.moodyvideoeditor.data.MaskPoint
+import com.moody.moodyvideoeditor.data.MaskAnimatableProps
+import com.moody.moodyvideoeditor.data.MaskState
 import com.moody.moodyvideoeditor.utils.MaskEngine
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MaskEngineTest {
+
+    @Test
+    fun maskPositionValuesClampToThreeInEitherDirection() {
+        val moved = MaskState().withValue("positionX", 8f)
+            .withValue("positionY", -8f)
+
+        assertEquals(3f, moved.positionX, 0f)
+        assertEquals(-3f, moved.positionY, 0f)
+        assertEquals(-3f..3f, MaskAnimatableProps.positionRange)
+    }
 
     @Test
     fun customMaskExpansionMovesOutwardForEitherPointWinding() {

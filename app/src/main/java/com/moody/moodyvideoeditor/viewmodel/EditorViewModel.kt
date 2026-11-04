@@ -248,7 +248,7 @@ class EditorViewModel : ViewModel() {
                 clip.isColorMatteClip || clip.isFilterLayerClip
             ) {
                 clip
-            } else if (clip.type.startsWith("image/") &&
+            } else if ((clip.isVisualClip || clip.type.startsWith("audio/")) &&
                 clip.uri.toString().isBlank()
             ) {
                 clip.copy(sourceTotalMs = Long.MAX_VALUE)
@@ -1103,23 +1103,21 @@ class EditorViewModel : ViewModel() {
 
     fun swapTracks(fromTrack: Int, toTrack: Int, isAudio: Boolean) {
         if (fromTrack == toTrack) return
-        val list = _state.value.clips.toMutableList()
-        val newTrackOf = mutableMapOf<Int, Int>()
-        if (fromTrack < toTrack) {
-            newTrackOf[fromTrack] = toTrack
-            for (t in fromTrack + 1..toTrack) newTrackOf[t] = t - 1
-        } else {
-            newTrackOf[fromTrack] = toTrack
-            for (t in toTrack until fromTrack) newTrackOf[t] = t + 1
-        }
+        val clips = _state.value.clips
+        if (clips.none { it.isAudio == isAudio && it.trackIndex == fromTrack } ||
+            clips.none { it.isAudio == isAudio && it.trackIndex == toTrack }
+        ) return
+
         pushHistory()
-        for (i in list.indices) {
-            if (list[i].isAudio != isAudio) continue
-            val old = list[i].trackIndex
-            val new = newTrackOf[old] ?: old
-            if (new != old) list[i] = list[i].copy(trackIndex = new)
+        val swappedClips = clips.map { clip ->
+            if (clip.isAudio != isAudio) return@map clip
+            when (clip.trackIndex) {
+                fromTrack -> clip.copy(trackIndex = toTrack)
+                toTrack -> clip.copy(trackIndex = fromTrack)
+                else -> clip
+            }
         }
-        _state.update { it.copy(clips = list) }
+        _state.update { it.copy(clips = swappedClips) }
         updateHistoryFlags()
     }
 
@@ -1401,6 +1399,16 @@ class EditorViewModel : ViewModel() {
         else -> clip.copy(rotation = rotation)
     }
 
+    private fun setKeyframeIfTrackExists(
+        keyframes: Map<String, List<Keyframe>>,
+        prop: String,
+        timeSec: Float,
+        value: Float
+    ): Map<String, List<Keyframe>> {
+        if (KeyframeStore.getKeyframes(keyframes, prop).isEmpty()) return keyframes
+        return KeyframeStore.setKeyframe(keyframes, prop, timeSec, value)
+    }
+
     private fun setClipTransformWithAutoKeyframes(
         clip: EditorClip,
         x: Float, y: Float, scale: Float, rotation: Float, timeSec: Float
@@ -1439,16 +1447,8 @@ class EditorViewModel : ViewModel() {
                 var updated = setClipPos(c, newX, newY)
                 if (hasAnyKf) {
                     var kf = c.keyframes
-                    kf = if (autoKeyframe) {
-                        KeyframeStore.autoKeyframeIfActive(kf, "x", currentTimeSec, newX)
-                    } else {
-                        KeyframeStore.updateKeyframeIfPresent(kf, "x", currentTimeSec, newX)
-                    }
-                    kf = if (autoKeyframe) {
-                        KeyframeStore.autoKeyframeIfActive(kf, "y", currentTimeSec, newY)
-                    } else {
-                        KeyframeStore.updateKeyframeIfPresent(kf, "y", currentTimeSec, newY)
-                    }
+                    kf = setKeyframeIfTrackExists(kf, "x", currentTimeSec, newX)
+                    kf = setKeyframeIfTrackExists(kf, "y", currentTimeSec, newY)
                     updated = updated.copy(keyframes = kf)
                 }
                 updated
@@ -1490,24 +1490,8 @@ class EditorViewModel : ViewModel() {
                 var updated = setClipRotation(setClipScale(c, newScale), newRotation)
                 if (hasAnyKf) {
                     var kf = c.keyframes
-                    kf = if (autoKeyframe) {
-                        KeyframeStore.autoKeyframeIfActive(
-                            kf, "scale", currentTimeSec, newScale
-                        )
-                    } else {
-                        KeyframeStore.updateKeyframeIfPresent(
-                            kf, "scale", currentTimeSec, newScale
-                        )
-                    }
-                    kf = if (autoKeyframe) {
-                        KeyframeStore.autoKeyframeIfActive(
-                            kf, "rotation", currentTimeSec, newRotation
-                        )
-                    } else {
-                        KeyframeStore.updateKeyframeIfPresent(
-                            kf, "rotation", currentTimeSec, newRotation
-                        )
-                    }
+                    kf = setKeyframeIfTrackExists(kf, "scale", currentTimeSec, newScale)
+                    kf = setKeyframeIfTrackExists(kf, "rotation", currentTimeSec, newRotation)
                     updated = updated.copy(keyframes = kf)
                 }
                 updated
@@ -2224,27 +2208,14 @@ class EditorViewModel : ViewModel() {
         val timeSec = KeyframeStore.clipLocalTimeSeconds(
             _state.value.currentPosMs, clip.timelineStartMs, clip.durationMs
         )
-        val speedTrack = clip.keyframes[KeyframeLibrary.SPEED].orEmpty()
         val updatedKeyframes = if (KeyframeStore.hasKeyframeAt(
                 clip.keyframes, KeyframeLibrary.SPEED, timeSec
             )
         ) {
             KeyframeStore.removeKeyframe(clip.keyframes, KeyframeLibrary.SPEED, timeSec)
         } else {
-            var keyframes = clip.keyframes
-            if (speedTrack.isEmpty()) {
-                val durationSec = clip.durationMs / 1000f
-                keyframes = KeyframeStore.setKeyframe(
-                    keyframes, KeyframeLibrary.SPEED, 0f, clip.speed
-                )
-                if (durationSec > 0.05f) {
-                    keyframes = KeyframeStore.setKeyframe(
-                        keyframes, KeyframeLibrary.SPEED, durationSec, clip.speed
-                    )
-                }
-            }
             KeyframeStore.setKeyframe(
-                keyframes,
+                clip.keyframes,
                 KeyframeLibrary.SPEED,
                 timeSec,
                 SpeedEngine.speedAt(clip, (timeSec * 1000f).toLong())
@@ -2815,6 +2786,23 @@ class EditorViewModel : ViewModel() {
         return currentMaskAtPlayhead(clip)
     }
 
+    private var maskEditBaseline: List<EditorClip>? = null
+
+    fun beginMaskEdit() {
+        if (maskEditBaseline == null) {
+            maskEditBaseline = _state.value.clips.toList()
+        }
+    }
+
+    fun endMaskEdit() {
+        val baseline = maskEditBaseline ?: return
+        if (baseline != _state.value.clips) {
+            history.push(baseline)
+        }
+        maskEditBaseline = null
+        updateHistoryFlags()
+    }
+
     private fun updateSelectedMask(transform: (MaskState, Float) -> MaskState) {
         _state.update { current ->
             val selectedId = current.selectedClipId ?: return@update current
@@ -2827,9 +2815,37 @@ class EditorViewModel : ViewModel() {
                 clip.timelineStartMs,
                 clip.durationMs
             )
+            val updatedClip = clip.copy(mask = transform(clip.mask, timeSec))
+            if (updatedClip == clip) return@update current
+            if (maskEditBaseline == null) history.push(current.clips)
             val clips = current.clips.toMutableList()
-            clips[index] = clip.copy(mask = transform(clip.mask, timeSec))
-            current.copy(clips = clips)
+            clips[index] = updatedClip
+            current.copy(
+                clips = clips,
+                canUndo = history.canUndo(),
+                canRedo = history.canRedo()
+            )
+        }
+    }
+
+    private fun updateMaskClipDirect(
+        clipId: String,
+        transform: (EditorClip) -> EditorClip
+    ) {
+        _state.update { current ->
+            val index = current.clips.indexOfFirst { it.id == clipId }
+            if (index < 0) return@update current
+            val clip = current.clips[index]
+            val updatedClip = transform(clip)
+            if (updatedClip == clip) return@update current
+            if (maskEditBaseline == null) history.push(current.clips)
+            val clips = current.clips.toMutableList()
+            clips[index] = updatedClip
+            current.copy(
+                clips = clips,
+                canUndo = history.canUndo(),
+                canRedo = history.canRedo()
+            )
         }
     }
 
@@ -2914,7 +2930,7 @@ class EditorViewModel : ViewModel() {
             customPoints = oldMask.customPoints,
             customClosed = oldMask.customClosed
         )
-        updateClipDirect(sel.id) { it.copy(mask = merged) }
+        updateMaskClipDirect(sel.id) { it.copy(mask = merged) }
     }
 
     fun addMaskKeyframe() {
@@ -2934,7 +2950,7 @@ class EditorViewModel : ViewModel() {
 
     fun clearMaskKeyframes() {
         val sel = _state.value.selectedClip ?: return
-        updateClipDirect(sel.id) {
+        updateMaskClipDirect(sel.id) {
             it.copy(
                 mask = it.mask.copy(
                     propertyKeyframes = emptyMap(),
@@ -3069,7 +3085,7 @@ class EditorViewModel : ViewModel() {
 
     fun removeMask() {
         val sel = _state.value.selectedClip ?: return
-        updateClipDirect(sel.id) { it.copy(mask = MaskState()) }
+        updateMaskClipDirect(sel.id) { it.copy(mask = MaskState()) }
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -3481,6 +3497,7 @@ class EditorViewModel : ViewModel() {
                     updateSelectedTransformBulk(sel.id, value, cr, autoKeyframe)
                     return
                 }
+                "scaleX", "scaleY" -> return
                 "rotation" -> {
                     val cs = getClipScale(sel)
                     updateSelectedTransformBulk(sel.id, cs, value, autoKeyframe)
@@ -3499,8 +3516,30 @@ class EditorViewModel : ViewModel() {
             else sel.copy(offsetY = (value - 50f) / 100f)
 
             "scale" -> if (sel.isTextClip && sel.textState != null)
-                sel.copy(textState = sel.textState.copy(scale = value))
-            else sel.copy(scale = value / 100f)
+                sel.copy(
+                    textState = sel.textState.copy(scale = value),
+                    scaleX = 1f,
+                    scaleY = 1f,
+                    keyframes = sel.keyframes - "scaleX" - "scaleY"
+                )
+            else sel.copy(
+                scale = value / 100f,
+                scaleX = 1f,
+                scaleY = 1f,
+                keyframes = sel.keyframes - "scaleX" - "scaleY"
+            )
+
+            "scaleX" -> {
+                val liveScale = TransformApplier.resolveLive(sel, currentTimeSec).scale
+                val safeScale = if (kotlin.math.abs(liveScale) > 0.001f) liveScale else 0.001f
+                sel.copy(scaleX = value / safeScale)
+            }
+
+            "scaleY" -> {
+                val liveScale = TransformApplier.resolveLive(sel, currentTimeSec).scale
+                val safeScale = if (kotlin.math.abs(liveScale) > 0.001f) liveScale else 0.001f
+                sel.copy(scaleY = value / safeScale)
+            }
 
             "rotation" -> if (sel.isTextClip && sel.textState != null)
                 sel.copy(textState = sel.textState.copy(rotation = value))
@@ -3522,20 +3561,11 @@ class EditorViewModel : ViewModel() {
             else -> sel
         }
 
-        val hasAnyKf = KeyframeStore.hasAnyKeyframes(updated.keyframes)
-        val finalClip = if (hasAnyKf) {
-            updated.copy(
-                keyframes = if (autoKeyframe) {
-                    KeyframeStore.autoKeyframeIfActive(
-                        updated.keyframes, prop, currentTimeSec, value
-                    )
-                } else {
-                    KeyframeStore.updateKeyframeIfPresent(
-                        updated.keyframes, prop, currentTimeSec, value
-                    )
-                }
+        val finalClip = updated.copy(
+            keyframes = setKeyframeIfTrackExists(
+                updated.keyframes, prop, currentTimeSec, value
             )
-        } else updated
+        )
 
         if (finalClip != sel) pushHistory()
         updateClipDirect(sel.id) { finalClip }
@@ -3630,6 +3660,8 @@ class EditorViewModel : ViewModel() {
                         "x" -> live.x
                         "y" -> live.y
                         "scale" -> live.scale
+                        "scaleX" -> live.scaleX
+                        "scaleY" -> live.scaleY
                         "rotation" -> live.rotation
                         "anchorX" -> live.anchorX
                         "anchorY" -> live.anchorY
@@ -3644,6 +3676,8 @@ class EditorViewModel : ViewModel() {
                 "x" -> live.x
                 "y" -> live.y
                 "scale" -> live.scale
+                "scaleX" -> live.scaleX
+                "scaleY" -> live.scaleY
                 "rotation" -> live.rotation
                 "anchorX" -> live.anchorX
                 "anchorY" -> live.anchorY
@@ -4397,6 +4431,8 @@ class EditorViewModel : ViewModel() {
         val imageSlots = s.clips.count {
             it.type.startsWith("image/") && !it.isTextClip
         }
+        val videoSlots = s.clips.count { it.type.startsWith("video/") }
+        val audioSlots = s.clips.count { it.type.startsWith("audio/") }
         val textSlots = s.clips.count { it.isTextClip }
 
         val meta = com.moody.moodyvideoeditor.data.SavedTemplateMeta(
@@ -4408,7 +4444,9 @@ class EditorViewModel : ViewModel() {
             clipCount = s.clips.size,
             durationMs = s.totalDurationMs,
             imageSlotCount = imageSlots,
-            textSlotCount = textSlots
+            textSlotCount = textSlots,
+            videoSlotCount = videoSlots,
+            audioSlotCount = audioSlots
         )
 
         return com.moody.moodyvideoeditor.data.SavedTemplateRepository

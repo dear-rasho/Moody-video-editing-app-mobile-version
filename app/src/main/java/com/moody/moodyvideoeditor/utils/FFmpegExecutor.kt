@@ -104,12 +104,25 @@ class FFmpegExecutor(
                     isAntiAlias = true
                     isDither = true
                 }
+                val radians = Math.toRadians(style.fourColorAngleDeg.toDouble())
+                val cos = kotlin.math.abs(kotlin.math.cos(radians)).toFloat()
+                val sin = kotlin.math.abs(kotlin.math.sin(radians)).toFloat()
+                val drawWidth = W * cos + H * sin
+                val drawHeight = W * sin + H * cos
+                canvas.save()
+                canvas.rotate(style.fourColorAngleDeg, W / 2f, H / 2f)
                 canvas.drawBitmap(
                     tiny,
                     null,
-                    android.graphics.RectF(0f, 0f, W.toFloat(), H.toFloat()),
+                    android.graphics.RectF(
+                        (W - drawWidth) / 2f,
+                        (H - drawHeight) / 2f,
+                        (W + drawWidth) / 2f,
+                        (H + drawHeight) / 2f
+                    ),
                     paint
                 )
+                canvas.restore()
                 tiny.recycle()
             }
         }
@@ -1209,6 +1222,8 @@ class FFmpegExecutor(
         if (keepTransparentPadding) filters.add("format=rgba")
 
         val scaleTrack = clip.keyframes["scale"].orEmpty()
+        val scaleXTrack = clip.keyframes["scaleX"].orEmpty()
+        val scaleYTrack = clip.keyframes["scaleY"].orEmpty()
         val hasAnimatedScale = scaleTrack
             .map { it.value }
             .distinctBy { (it * 1000f).toInt() }
@@ -1218,7 +1233,14 @@ class FFmpegExecutor(
         } else {
             clip.scale.coerceIn(0.1f, 5f)
         }
-        val hasScaleTrack = hasAnimatedScale
+        val userScaleX = if (scaleXTrack.isNotEmpty() && scaleXTrack.size == 1) {
+            scaleXTrack.first().value / 100f
+        } else userScale * clip.scaleX
+        val userScaleY = if (scaleYTrack.isNotEmpty() && scaleYTrack.size == 1) {
+            scaleYTrack.first().value / 100f
+        } else userScale * clip.scaleY
+        val hasScaleTrack = hasAnimatedScale || scaleXTrack.isNotEmpty() || scaleYTrack.isNotEmpty() ||
+                kotlin.math.abs(userScaleX - userScaleY) > 0.01f
         val offsetXpx = (clip.offsetX * targetW).toInt()
         val offsetYpx = (clip.offsetY * targetH).toInt()
         val hasOffset = offsetXpx != 0 || offsetYpx != 0
@@ -1239,8 +1261,22 @@ class FFmpegExecutor(
             // Keep the transformed image larger than the output canvas so
             // animated position can reveal parts that extend beyond its edges.
             filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
-            val scaleExpr = KeyframeStore.ffmpegExpression(clip.keyframes, "scale", clip.scale * 100f)
-            filters.add("scale=w='iw*($scaleExpr/100)':h='ih*($scaleExpr/100)':eval=frame")
+            val scaleExpr = KeyframeStore.ffmpegExpression(
+                clip.keyframes, "scale", clip.scale * 100f
+            )
+            val scaleXExpr = if (scaleXTrack.isNotEmpty()) {
+                KeyframeStore.ffmpegExpression(
+                    clip.keyframes, "scaleX", clip.scale * clip.scaleX * 100f
+                )
+            } else "($scaleExpr*${clip.scaleX})"
+            val scaleYExpr = if (scaleYTrack.isNotEmpty()) {
+                KeyframeStore.ffmpegExpression(
+                    clip.keyframes, "scaleY", clip.scale * clip.scaleY * 100f
+                )
+            } else "($scaleExpr*${clip.scaleY})"
+            filters.add(
+                "scale=w='iw*($scaleXExpr/100)':h='ih*($scaleYExpr/100)':eval=frame"
+            )
             if (preserveOverscan) {
                 filters.add(
                     "pad=${overscanSize.first}:${overscanSize.second}:" +
@@ -1257,17 +1293,20 @@ class FFmpegExecutor(
                 val padY = "max(0\\,min($targetH-ih\\,($targetH-ih)/2+$offsetYpx))"
                 filters.add("pad=$targetW:$targetH:x='$padX':y='$padY':color=$fillColor:eval=frame")
             }
-        } else if (kotlin.math.abs(userScale - 1.0f) > 0.01f) {
+        } else if (kotlin.math.abs(userScaleX - 1.0f) > 0.01f ||
+            kotlin.math.abs(userScaleY - 1.0f) > 0.01f
+        ) {
             // Static user scale
-            if (userScale > 1.0f) {
+            if (maxOf(userScaleX, userScaleY) > 1.0f) {
                 // ═══════════════════════════════════════════════════
                 //  ZOOM-IN: Fit FIRST to canvas, then scale up, then crop shifted
                 //  This ensures black bars stay outside the crop window
                 // ═══════════════════════════════════════════════════
                 filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
                 filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=$fillColor")
-                val scaleFmt = String.format(Locale.US, "%.4f", userScale)
-                filters.add("scale=iw*$scaleFmt:ih*$scaleFmt")
+                val scaleFmtX = String.format(Locale.US, "%.4f", userScaleX)
+                val scaleFmtY = String.format(Locale.US, "%.4f", userScaleY)
+                filters.add("scale=iw*$scaleFmtX:ih*$scaleFmtY")
                 if (preserveOverscan) {
                     filters.add(
                         "pad=${overscanSize.first}:${overscanSize.second}:" +
@@ -1284,8 +1323,9 @@ class FFmpegExecutor(
                 //  ZOOM-OUT: Fit, scale down, pad to canvas (no crop)
                 // ═══════════════════════════════════════════════════
                 filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
-                val scaleFmt = String.format(Locale.US, "%.4f", userScale)
-                filters.add("scale=iw*$scaleFmt:ih*$scaleFmt")
+                val scaleFmtX = String.format(Locale.US, "%.4f", userScaleX)
+                val scaleFmtY = String.format(Locale.US, "%.4f", userScaleY)
+                filters.add("scale=iw*$scaleFmtX:ih*$scaleFmtY")
                 filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=$fillColor")
             }
         } else {
@@ -1365,7 +1405,20 @@ class FFmpegExecutor(
     private fun preservesLayerOverscan(clip: EditorClip): Boolean {
         val maxKeyframedScale = clip.keyframes["scale"].orEmpty()
             .maxOfOrNull { it.value / 100f } ?: clip.scale
-        val hasOversizedScale = maxOf(clip.scale, maxKeyframedScale) > 1f
+        val maxScaleX = maxOf(
+            clip.scale * clip.scaleX,
+            clip.keyframes["scaleX"].orEmpty().maxOfOrNull { it.value / 100f } ?: 0f
+        )
+        val maxScaleY = maxOf(
+            clip.scale * clip.scaleY,
+            clip.keyframes["scaleY"].orEmpty().maxOfOrNull { it.value / 100f } ?: 0f
+        )
+        val hasOversizedScale = maxOf(
+            maxScaleX,
+            maxScaleY,
+            maxKeyframedScale * clip.scaleX,
+            maxKeyframedScale * clip.scaleY
+        ) > 1f
         val hasVisibleCrop = listOf("cropL", "cropR", "cropT", "cropB")
             .any { property ->
                 clip.keyframes[property].orEmpty().any { kotlin.math.abs(it.value) > 0.0001f }
@@ -1405,7 +1458,18 @@ class FFmpegExecutor(
     ): Pair<Int, Int> {
         val maxKeyframedScale = clip.keyframes["scale"].orEmpty()
             .maxOfOrNull { it.value / 100f } ?: clip.scale
-        val scale = maxOf(clip.scale, maxKeyframedScale).coerceIn(1f, 5f)
+        val maxScaleX = maxOf(
+            clip.scale * clip.scaleX,
+            clip.keyframes["scaleX"].orEmpty().maxOfOrNull { it.value / 100f } ?: 0f,
+            maxKeyframedScale * clip.scaleX
+        )
+        val maxScaleY = maxOf(
+            clip.scale * clip.scaleY,
+            clip.keyframes["scaleY"].orEmpty().maxOfOrNull { it.value / 100f } ?: 0f,
+            maxKeyframedScale * clip.scaleY
+        )
+        val scale = maxOf(maxScaleX, maxScaleY)
+            .coerceIn(1f, 5f)
 
         fun evenDimension(value: Float): Int {
             val roundedUp = kotlin.math.ceil(value).toInt().coerceAtLeast(2)

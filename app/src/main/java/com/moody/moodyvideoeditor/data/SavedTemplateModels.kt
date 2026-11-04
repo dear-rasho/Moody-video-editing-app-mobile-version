@@ -15,6 +15,8 @@ data class SavedTemplateMeta(
     val durationMs: Long,
     val imageSlotCount: Int,     // count of image placeholders
     val textSlotCount: Int,      // count of text placeholders
+    val videoSlotCount: Int = 0,
+    val audioSlotCount: Int = 0,
 
     // Optional: full editor state for live preview
     // Null for older templates (backward-compat) or when not needed

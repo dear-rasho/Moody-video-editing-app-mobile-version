@@ -1024,6 +1024,7 @@ fun ExportDialog(
                         }
                     }
                 }
+
             }
         }
     }
@@ -1254,6 +1255,26 @@ private fun TimeInputField(
                     }
             )
         }
+
+        Slider(
+            value = valueMs.coerceIn(0L, maxMs).toFloat(),
+            onValueChange = { value ->
+                onChange(value.toLong().coerceIn(0L, maxMs))
+            },
+            valueRange = 0f..maxMs.coerceAtLeast(1L).toFloat(),
+            enabled = enabled && maxMs > 0L,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(28.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = Color(0xFF7C3AED),
+                activeTrackColor = Color(0xFF7C3AED),
+                inactiveTrackColor = Color(0xFF303030),
+                disabledThumbColor = Color(0xFF555555),
+                disabledActiveTrackColor = Color(0xFF555555),
+                disabledInactiveTrackColor = Color(0xFF303030)
+            )
+        )
     }
 }
 

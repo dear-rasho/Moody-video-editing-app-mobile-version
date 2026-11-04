@@ -26,6 +26,7 @@ fun KeyframeEasingPanel(
         onDeleteKeyframe = onDeleteKeyframe,
         onSetKeyframeEase = onSetKeyframeEase,
         enableEaseEditing = true,
+        inlinePanel = true,
         onKeyframeEditStart = onKeyframeEditStart,
         onKeyframeEditEnd = onKeyframeEditEnd,
         onClose = onClose

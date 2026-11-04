@@ -575,6 +575,21 @@ private fun PerformanceTab(draft: AppSettings, vm: SettingsViewModel) {
 
             CardDivider()
 
+            DropdownRow(
+                label = "Preview playback quality",
+                current = draft.previewPlaybackQuality,
+                options = listOf("Low", "Medium", "High"),
+                onSelect = vm::setPreviewPlaybackQuality
+            )
+            Text(
+                "Low and Medium also limit video resolution when alternatives are available. Export quality is unchanged.",
+                color = TEXT_MUTED,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+            )
+
+            CardDivider()
+
             SwitchRow(
                 label = "Sound for export",
                 description = "Send a notification sound when export is complete",

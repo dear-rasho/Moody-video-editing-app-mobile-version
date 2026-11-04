@@ -78,6 +78,7 @@ object SettingsConsumer {
     val autoSaveEnabled: Boolean get() = _current.value.autoSaveEnabled
     val autoSaveIntervalSec: Int get() = _current.value.autoSaveIntervalSec
     val proxyModeEnabled: Boolean get() = _current.value.proxyModeEnabled
+    val previewPlaybackQuality: String get() = _current.value.previewPlaybackQuality
     val exportSoundEnabled: Boolean get() = _current.value.exportSoundEnabled
 
     // Tab 4 — Language
