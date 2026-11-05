@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
@@ -66,7 +67,8 @@ fun ControlBar(
     totalDurationMs: Long = 0L,
     previewQuality: String = "High",
     onPreviewQualityChange: (String) -> Unit = {},
-    onRecordAudio: () -> Unit = {}
+    onRecordAudio: () -> Unit = {},
+    showMediaRatioTime: Boolean = true
 ) {
     Box(
         modifier = Modifier
@@ -83,8 +85,10 @@ fun ControlBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(3.dp)
         ) {
-            PillButton("＋Media", onMediaClick, horizontalPadding = 6.dp)
-            PillButton(currentRatio, onRatioClick, horizontalPadding = 6.dp)
+            if (showMediaRatioTime) {
+                PillButton("Import", onMediaClick, horizontalPadding = 6.dp)
+                PillButton(currentRatio, onRatioClick, horizontalPadding = 6.dp)
+            }
             IconButton(onClick = onPlayPause, enabled = hasVideo, modifier = Modifier.size(32.dp)) {
                 Icon(
                     if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
@@ -100,7 +104,12 @@ fun ControlBar(
                 onClick = onRecordAudio,
                 modifier = Modifier.size(26.dp)
             ) {
-                Text("🎙️", fontSize = 14.sp, maxLines = 1)
+                Icon(
+                    Icons.Filled.Mic,
+                    contentDescription = "Record audio",
+                    tint = Color(0xFFFF5B6E),
+                    modifier = Modifier.size(18.dp)
+                )
             }
             PillButton(
                 "-${seekStepSeconds}s",
@@ -131,13 +140,15 @@ fun ControlBar(
                     modifier = Modifier.size(16.dp)
                 )
             }
-            Text(
-                "${VideoUtils.formatDuration(currentPosMs)}/${VideoUtils.formatDuration(totalDurationMs)}",
-                color = Color(0xFF888888),
-                fontSize = 8.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1
-            )
+            if (showMediaRatioTime) {
+                Text(
+                    "${VideoUtils.formatDuration(currentPosMs)}/${VideoUtils.formatDuration(totalDurationMs)}",
+                    color = Color(0xFF888888),
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
+                )
+            }
             IconButton(onClick = onMuteToggle, enabled = hasVideo, modifier = Modifier.size(26.dp)) {
                 Icon(
                     if (isMuted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
@@ -167,6 +178,46 @@ fun ControlBar(
                 )
             }
         }
+    }
+}
+
+@Composable
+fun EditorMediaRatioTimeControls(
+    onMediaClick: () -> Unit,
+    currentRatio: String,
+    onRatioClick: () -> Unit,
+    currentPosMs: Long,
+    totalDurationMs: Long
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .height(30.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF245F9E))
+                .pointerInput(Unit) { detectTapGestures { onMediaClick() } }
+                .padding(horizontal = 10.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "Import",
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+        }
+        PillButton(currentRatio, onRatioClick, horizontalPadding = 6.dp, height = 30.dp)
+        Text(
+            "${VideoUtils.formatDuration(currentPosMs)}/${VideoUtils.formatDuration(totalDurationMs)}",
+            color = Color(0xFFAAAAAA),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
     }
 }
 

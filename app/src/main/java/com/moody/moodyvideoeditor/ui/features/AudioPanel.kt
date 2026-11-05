@@ -43,7 +43,7 @@ fun AudioPanel(
     onClose: () -> Unit
 ) {
     val current = settings.clamped()
-    FeaturePanel(title = "🎚️ Audio Settings", onClose = onClose) {
+    FeaturePanel(title = "Audio Settings", onClose = onClose) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

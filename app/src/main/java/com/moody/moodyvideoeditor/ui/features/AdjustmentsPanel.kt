@@ -58,7 +58,12 @@ fun AdjustmentsPanel(
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             GroupLabel("Light")
-            AdjustmentRow("Brightness", adj.brightness) { onAdjChanged(adj.copy(brightness = it)) }
+            AdjustmentRow(
+                "Brightness",
+                adj.brightness,
+                maxSlider = 100f,
+                inputRange = -100f..100f
+            ) { onAdjChanged(adj.copy(brightness = it)) }
             AdjustmentRow("Contrast", adj.contrast) { onAdjChanged(adj.copy(contrast = it)) }
             AdjustmentRow("Exposure", adj.exposure) { onAdjChanged(adj.copy(exposure = it)) }
             AdjustmentRow("Whites", adj.whites) { onAdjChanged(adj.copy(whites = it)) }
@@ -82,16 +87,16 @@ fun AdjustmentsPanel(
             }
             AdjustmentRow("Vignette", adj.vignette, maxSlider = 50f) { onAdjChanged(adj.copy(vignette = it)) }
 
-            GroupLabel("🎨 Color Channels — slider 50 max, box unlimited")
-            AdjustmentRow("Reds", adj.reds, maxSlider = 50f) { onAdjChanged(adj.copy(reds = it)) }
-            AdjustmentRow("Oranges", adj.oranges, maxSlider = 50f) { onAdjChanged(adj.copy(oranges = it)) }
-            AdjustmentRow("Yellows", adj.yellows, maxSlider = 50f) { onAdjChanged(adj.copy(yellows = it)) }
-            AdjustmentRow("Greens", adj.greens, maxSlider = 50f) { onAdjChanged(adj.copy(greens = it)) }
-            AdjustmentRow("Cyans", adj.cyans, maxSlider = 50f) { onAdjChanged(adj.copy(cyans = it)) }
-            AdjustmentRow("Blues", adj.blues, maxSlider = 50f) { onAdjChanged(adj.copy(blues = it)) }
-            AdjustmentRow("Purples", adj.purples, maxSlider = 50f) { onAdjChanged(adj.copy(purples = it)) }
-            AdjustmentRow("Magentas", adj.magentas, maxSlider = 50f) { onAdjChanged(adj.copy(magentas = it)) }
-            AdjustmentRow("Skin Tones", adj.skinTones, maxSlider = 50f) { onAdjChanged(adj.copy(skinTones = it)) }
+            GroupLabel("🎨 Color Channels — range -100 to 100")
+            AdjustmentRow("Reds", adj.reds, maxSlider = 100f, inputRange = -100f..100f) { onAdjChanged(adj.copy(reds = it)) }
+            AdjustmentRow("Oranges", adj.oranges, maxSlider = 100f, inputRange = -100f..100f) { onAdjChanged(adj.copy(oranges = it)) }
+            AdjustmentRow("Yellows", adj.yellows, maxSlider = 100f, inputRange = -100f..100f) { onAdjChanged(adj.copy(yellows = it)) }
+            AdjustmentRow("Greens", adj.greens, maxSlider = 100f, inputRange = -100f..100f) { onAdjChanged(adj.copy(greens = it)) }
+            AdjustmentRow("Cyans", adj.cyans, maxSlider = 100f, inputRange = -100f..100f) { onAdjChanged(adj.copy(cyans = it)) }
+            AdjustmentRow("Blues", adj.blues, maxSlider = 100f, inputRange = -100f..100f) { onAdjChanged(adj.copy(blues = it)) }
+            AdjustmentRow("Purples", adj.purples, maxSlider = 100f, inputRange = -100f..100f) { onAdjChanged(adj.copy(purples = it)) }
+            AdjustmentRow("Magentas", adj.magentas, maxSlider = 100f, inputRange = -100f..100f) { onAdjChanged(adj.copy(magentas = it)) }
+            AdjustmentRow("Skin Tones", adj.skinTones, maxSlider = 100f, inputRange = -100f..100f) { onAdjChanged(adj.copy(skinTones = it)) }
         }
 
         Box(
@@ -130,19 +135,20 @@ private fun AdjustmentRow(
     value: Float,
     maxSlider: Float = 200f,
     minSlider: Float = -maxSlider,
+    inputRange: ClosedFloatingPointRange<Float>? = null,
     onChange: (Float) -> Unit
 ) {
     var sliderValue by remember(value, maxSlider, minSlider) {
         mutableFloatStateOf(value.coerceIn(minSlider, maxSlider))
     }
-    var textValue by remember {
-        mutableStateOf(formatValue(value))
+    var textValue by remember(inputRange) {
+        mutableStateOf(formatValue(inputRange?.let { value.coerceIn(it) } ?: value))
     }
     var isFocused by remember { mutableStateOf(false) }
 
     LaunchedEffect(value, isFocused) {
         if (!isFocused) {
-            textValue = formatValue(value)
+            textValue = formatValue(inputRange?.let { value.coerceIn(it) } ?: value)
         }
     }
 
@@ -192,7 +198,9 @@ private fun AdjustmentRow(
                     textValue = filtered
                     filtered.toFloatOrNull()?.let { parsed ->
                         if (parsed.isFinite()) {
-                            onChange(parsed)
+                            val applied = inputRange?.let { parsed.coerceIn(it) } ?: parsed
+                            textValue = formatValue(applied)
+                            onChange(applied)
                         }
                     }
                 },
@@ -213,7 +221,11 @@ private fun AdjustmentRow(
                         isFocused = focusState.isFocused
                         if (!focusState.isFocused) {
                             textValue.toFloatOrNull()?.let { parsed ->
-                                if (parsed.isFinite()) onChange(parsed)
+                                if (parsed.isFinite()) {
+                                    val applied = inputRange?.let { parsed.coerceIn(it) } ?: parsed
+                                    textValue = formatValue(applied)
+                                    onChange(applied)
+                                }
                             }
                         }
                     }

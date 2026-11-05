@@ -50,7 +50,7 @@ val FEATURES = listOf(
     Feature("text", "Text", "📝"),
     Feature("blend", "Blend", "◐"),
     Feature("opacity", "Opacity", "◑"),
-    Feature("captions", "Auto Cap", "🎙️"),
+    Feature("captions", "Auto Cap", "C"),
     Feature("manual_captions", "Manual Cap", "✍️"),
     Feature("animations", "Animate", "🎞️"),
     Feature("keyframe_easing", "Keyframe Ease", "📈"),
@@ -64,7 +64,7 @@ val FEATURES = listOf(
     Feature("transform", "Transform", "🔲"),
     Feature("crop", "Crop", "📐"),
     Feature("volume", "Volume", "🔊"),
-    Feature("audiofx", "Audio Settings", "🎚️"),
+    Feature("audiofx", "Audio Settings", ""),
     Feature("beats", "Beats", "🥁"),
     Feature("visualizer", "Visualizer", "🎵"),
 
@@ -121,7 +121,47 @@ private fun FeatureItem(feature: Feature, onClick: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        if (feature.key == "matte") {
+        if (feature.key == "captions") {
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(Color(0xFF294A78)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "C",
+                    color = Color(0xFFBFE4FF),
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        } else if (feature.key == "audiofx") {
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(Color(0xFF183D52)),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(modifier = Modifier.size(19.dp)) {
+                    val barWidth = size.width / 7f
+                    val heights = listOf(0.42f, 0.72f, 1f, 0.58f, 0.85f)
+                    heights.forEachIndexed { index, fraction ->
+                        val height = size.height * fraction
+                        drawRoundRect(
+                            color = Color(0xFF8DE4FF),
+                            topLeft = Offset(
+                                x = index * barWidth * 1.5f,
+                                y = (size.height - height) / 2f
+                            ),
+                            size = Size(barWidth, height),
+                            cornerRadius = CornerRadius(barWidth / 2f)
+                        )
+                    }
+                }
+            }
+        } else if (feature.key == "matte") {
             Canvas(modifier = Modifier.size(22.dp)) {
                 val gap = 1.5.dp.toPx()
                 val half = (size.width - gap) / 2f

@@ -162,11 +162,11 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 import com.moody.moodyvideoeditor.utils.ChromaKeyHelper
-import com.moody.moodyvideoeditor.utils.AdjustmentPixelEngine
+import com.moody.moodyvideoeditor.utils.AdjustmentDataMerger
 import com.moody.moodyvideoeditor.utils.AdjustmentNative
 import kotlinx.coroutines.delay
-private const val NATIVE_ADJUSTMENT_PREVIEW_MAX_DIMENSION = 720
-private const val NATIVE_ADJUSTMENT_PREVIEW_INTERVAL_MS = 50L
+private const val NATIVE_ADJUSTMENT_PREVIEW_MAX_DIMENSION = 480
+private const val NATIVE_ADJUSTMENT_PREVIEW_INTERVAL_MS = 83L
 private const val HSL_SHARPEN_SHADER = """
 uniform shader input;
 uniform float2 uResolution;
@@ -1066,18 +1066,16 @@ fun PreviewCanvas(
                     clip.isVisualClip && !clip.type.startsWith("image/") -> {
                         if (clip.id != topVideoClip?.id) return@forEach
                         val videoPixelAdjustment = remember(clip.adjustments, activeAdjustment) {
-                            AdjustmentPixelEngine.mergePreviewAdjustments(
+                            AdjustmentDataMerger.mergePreviewAdjustments(
                                 clip.adjustments,
                                 activeAdjustment
                             )
                         }
                         val needsNativePixelAdjustment =
-                            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU &&
-                                    (ImageAdjustmentProcessor.hasSharpenOrColorChannels(
-                                        videoPixelAdjustment
-                                    ) || ImageAdjustmentProcessor.hasNoiseOrVignette(
-                                        videoPixelAdjustment
-                                    ))
+                            ImageAdjustmentProcessor.hasSharpenOrColorChannels(
+                                videoPixelAdjustment
+                            ) ||
+                                    ImageAdjustmentProcessor.hasNoiseOrVignette(videoPixelAdjustment)
                         var videoTextureView by remember(clip.id) {
                             mutableStateOf<TextureView?>(null)
                         }
@@ -1091,76 +1089,7 @@ fun PreviewCanvas(
                                     ?.recycle()
                             }
                         }
-                        val adjustmentEffectModifier = remember(videoPixelAdjustment) {
-                            val adj = videoPixelAdjustment
-                            val needsShader = adj.reds != 0f || adj.oranges != 0f ||
-                                    adj.yellows != 0f || adj.greens != 0f || adj.cyans != 0f ||
-                                    adj.blues != 0f || adj.purples != 0f || adj.magentas != 0f ||
-                                    adj.skinTones != 0f || adj.sharpen > 0f ||
-                                    adj.noise > 0f ||
-                                    adj.vignette != 0f
-                            if (needsShader && Build.VERSION.SDK_INT >= 33) {
-                                try {
-                                    val shader = android.graphics.RuntimeShader(HSL_SHARPEN_SHADER)
-                                    shader.setFloatUniform(
-                                        "uReds",
-                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.reds)
-                                    )
-                                    shader.setFloatUniform(
-                                        "uOranges",
-                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.oranges)
-                                    )
-                                    shader.setFloatUniform(
-                                        "uYellows",
-                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.yellows)
-                                    )
-                                    shader.setFloatUniform(
-                                        "uGreens",
-                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.greens)
-                                    )
-                                    shader.setFloatUniform(
-                                        "uCyans",
-                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.cyans)
-                                    )
-                                    shader.setFloatUniform(
-                                        "uBlues",
-                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.blues)
-                                    )
-                                    shader.setFloatUniform(
-                                        "uPurples",
-                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.purples)
-                                    )
-                                    shader.setFloatUniform(
-                                        "uMagentas",
-                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.magentas)
-                                    )
-                                    shader.setFloatUniform(
-                                        "uSkinTones",
-                                        AdjustmentPixelEngine.normalizedColorChannelStrength(adj.skinTones)
-                                    )
-                                    shader.setFloatUniform("uSharpen", (adj.sharpen / 25f).coerceIn(0f, 2f))
-                                    shader.setFloatUniform(
-                                        "uNoise",
-                                        (clip.adjustments.noise / 100f).coerceIn(0f, 1f)
-                                    )
-                                    shader.setFloatUniform(
-                                        "uVignette",
-                                        (clip.adjustments.vignette / 100f).coerceIn(-1f, 1f)
-                                    )
-                                    Modifier.graphicsLayer {
-                                        shader.setFloatUniform("uResolution", size.width, size.height)
-                                        renderEffect =
-                                            android.graphics.RenderEffect.createRuntimeShaderEffect(
-                                                shader,
-                                                "input"
-                                            ).asComposeRenderEffect()
-                                    }
-                                } catch (t: Throwable) {
-                                    android.util.Log.e("PreviewCanvas", "Adjustment shader creation failed", t)
-                                    Modifier
-                                }
-                            } else Modifier
-                        }
+                        val adjustmentEffectModifier = Modifier
 
                         val videoLocalSec =
                             ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
@@ -1188,7 +1117,8 @@ fun PreviewCanvas(
                             }
                         }
                         val videoBounds = fittedBoundsFractions(canvasW, canvasH, videoAspect)
-                        val useExactColorWheels = Build.VERSION.SDK_INT >= 33
+                        val useExactColorWheels = Build.VERSION.SDK_INT >= 33 &&
+                                !needsNativePixelAdjustment
                         val videoWheelStates = remember(clip.colorWheel, activeColorWheels) {
                             colorWheelStatesForClip(
                                 clip,
@@ -1236,13 +1166,12 @@ fun PreviewCanvas(
                                 useExactVideoColorWheels
                             )
                         }
+                        val latestVideoPixelAdjustment = rememberUpdatedState(videoPixelAdjustment)
+                        val latestVideoColorMatrix = rememberUpdatedState(videoColorMatrix)
                         LaunchedEffect(
                             clip.id,
                             videoTextureView,
                             needsNativePixelAdjustment,
-                            videoPixelAdjustment,
-                            clip.adjustments,
-                            videoColorMatrix,
                             isPlaying,
                             if (isPlaying) null else currentPosMs
                         ) {
@@ -1251,73 +1180,85 @@ fun PreviewCanvas(
                                 cpuAdjustedVideoFrame = null
                                 return@LaunchedEffect
                             }
-                            var pausedCaptureAttempts = 0
-                            while (isPlaying || pausedCaptureAttempts < 20) {
-                                val texture = videoTextureView
-                                if (texture != null && texture.isAvailable &&
-                                    texture.width > 0 && texture.height > 0
-                                ) {
-                                    try {
-                                        val scale = minOf(
-                                            1f,
-                                            NATIVE_ADJUSTMENT_PREVIEW_MAX_DIMENSION.toFloat() /
-                                                    maxOf(texture.width, texture.height)
-                                        )
-                                        val frameWidth = (texture.width * scale)
-                                            .toInt().coerceAtLeast(1)
-                                        val frameHeight = (texture.height * scale)
-                                            .toInt().coerceAtLeast(1)
-                                        val frame = texture.getBitmap(frameWidth, frameHeight)
-                                        if (frame != null) {
-                                            val processed = withContext(Dispatchers.Default) {
-                                                if (AdjustmentNative.process(
-                                                        frame,
-                                                        videoPixelAdjustment,
-                                                        videoColorMatrix
-                                                    )
-                                                ) {
-                                                    frame
-                                                } else {
-                                                    android.util.Log.w(
-                                                        "PreviewCanvas",
-                                                        "Native adjustment failed; using pixel fallback"
-                                                    )
-                                                    ImageAdjustmentProcessor.process(
-                                                        frame,
-                                                        videoPixelAdjustment,
-                                                        videoPixelAdjustment,
-                                                        videoColorMatrix
-                                                    )
-                                                }
+                            var lastPausedAdjustmentVersion: Int? = null
+                            var reusableFrame: Bitmap? = null
+                            try {
+                                while (true) {
+                                    val adjustment = latestVideoPixelAdjustment.value
+                                    val colorMatrix = latestVideoColorMatrix.value
+                                    val adjustmentVersion =
+                                        31 * adjustment.hashCode() +
+                                                (colorMatrix?.array?.contentHashCode() ?: 0)
+                                    val texture = videoTextureView
+                                    if ((isPlaying ||
+                                                adjustmentVersion != lastPausedAdjustmentVersion) &&
+                                        texture != null && texture.isAvailable &&
+                                        texture.width > 0 && texture.height > 0
+                                    ) {
+                                        try {
+                                            val scale = minOf(
+                                                1f,
+                                                NATIVE_ADJUSTMENT_PREVIEW_MAX_DIMENSION.toFloat() /
+                                                        maxOf(texture.width, texture.height)
+                                            )
+                                            val frameWidth = (texture.width * scale)
+                                                .toInt().coerceAtLeast(1)
+                                            val frameHeight = (texture.height * scale)
+                                                .toInt().coerceAtLeast(1)
+                                            val reusable = reusableFrame?.takeIf {
+                                                !it.isRecycled &&
+                                                        it.width == frameWidth &&
+                                                        it.height == frameHeight
                                             }
-                                            if (processed !== frame && !frame.isRecycled) {
-                                                frame.recycle()
+                                            reusableFrame = null
+                                            val frame = if (reusable == null) {
+                                                texture.getBitmap(frameWidth, frameHeight)
+                                            } else {
+                                                texture.getBitmap(reusable) ?: reusable
                                             }
-                                            val previousFrame = cpuAdjustedVideoFrame
-                                            cpuAdjustedVideoFrame = processed
-                                            if (previousFrame != null &&
-                                                previousFrame !== processed &&
-                                                !previousFrame.isRecycled
-                                            ) {
-                                                try {
-                                                    withFrameNanos { }
-                                                } finally {
-                                                    if (!previousFrame.isRecycled) {
-                                                        previousFrame.recycle()
+                                            if (frame != null) {
+                                                val processed = withContext(Dispatchers.Default) {
+                                                    check(
+                                                        AdjustmentNative.process(
+                                                            frame,
+                                                            adjustment,
+                                                            colorMatrix
+                                                        )
+                                                    ) {
+                                                        "Native adjustment rejected video preview frame"
                                                     }
+                                                    frame
                                                 }
+                                                if (processed !== frame && !frame.isRecycled) {
+                                                    frame.recycle()
+                                                }
+                                                val previousFrame = cpuAdjustedVideoFrame
+                                                cpuAdjustedVideoFrame = processed
+                                                lastPausedAdjustmentVersion = adjustmentVersion
+                                                if (previousFrame != null &&
+                                                    previousFrame !== processed &&
+                                                    !previousFrame.isRecycled
+                                                ) {
+                                                    withFrameNanos { }
+                                                    reusableFrame = previousFrame
+                                                }
+                                            } else if (reusable != null && !reusable.isRecycled) {
+                                                reusableFrame = reusable
                                             }
+                                        } catch (error: CancellationException) {
+                                            throw error
+                                        } catch (error: Exception) {
+                                            android.util.Log.w(
+                                                "PreviewCanvas",
+                                                "Could not process video adjustment frame",
+                                                error
+                                            )
                                         }
-                                    } catch (error: Exception) {
-                                        android.util.Log.w(
-                                            "PreviewCanvas",
-                                            "Could not process video adjustment frame",
-                                            error
-                                        )
                                     }
+                                    delay(NATIVE_ADJUSTMENT_PREVIEW_INTERVAL_MS)
                                 }
-                                if (!isPlaying) pausedCaptureAttempts++
-                                delay(NATIVE_ADJUSTMENT_PREVIEW_INTERVAL_MS)
+                            } finally {
+                                reusableFrame?.takeIf { !it.isRecycled }?.recycle()
                             }
                         }
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
@@ -1659,14 +1600,14 @@ fun PreviewCanvas(
                             }
 
                         val adjForImage = remember(clip.adjustments, activeAdjustment) {
-                            AdjustmentPixelEngine.mergePreviewAdjustments(
+                            AdjustmentDataMerger.mergePreviewAdjustments(
                                 clip.adjustments,
                                 activeAdjustment
                             )
                         }
                         val needsCpuAdj =
                             ImageAdjustmentProcessor.hasSharpenOrColorChannels(adjForImage) ||
-                                    ImageAdjustmentProcessor.hasNoiseOrVignette(clip.adjustments)
+                                    ImageAdjustmentProcessor.hasNoiseOrVignette(adjForImage)
                         var loadedBitmap by remember(clip.uri) {
                             mutableStateOf<android.graphics.Bitmap?>(
                                 null
@@ -1698,7 +1639,7 @@ fun PreviewCanvas(
                                 ImageAdjustmentProcessor.process(
                                     src,
                                     adjForImage,
-                                    clip.adjustments
+                                    adjForImage
                                 ).asImageBitmap()
                             }
                         }
@@ -4677,11 +4618,61 @@ private fun BoxScope.LayerTransformHandles(
     onTransformChanged: (Float, Float) -> Unit,
     onDelete: () -> Unit
 ) {
+    val currentScale = rememberUpdatedState(scale)
+    val currentRotation = rememberUpdatedState(rotation)
+    val currentOnTransformChanged = rememberUpdatedState(onTransformChanged)
+    val currentOnGestureStart = rememberUpdatedState(onGestureStart)
+    val currentOnGestureEnd = rememberUpdatedState(onGestureEnd)
     BoxWithConstraints(
         modifier = Modifier
             .align(Alignment.Center)
             .fillMaxWidth(widthFraction.coerceIn(0.01f, 1f))
             .fillMaxHeight(heightFraction.coerceIn(0.01f, 1f))
+            .pointerInput(clipId) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    var gestureStarted = false
+                    var startDistance = 0f
+                    var startScale = currentScale.value
+                    var startRotation = currentRotation.value
+                    try {
+                        while (true) {
+                            val pressed = awaitPointerEvent().changes.filter { it.pressed }
+                            if (pressed.size < 2) {
+                                if (gestureStarted) break
+                                if (pressed.isEmpty()) break
+                                continue
+                            }
+
+                            val first = pressed[0].position
+                            val second = pressed[1].position
+                            val delta = first - second
+                            val distance = kotlin.math.hypot(
+                                delta.x.toDouble(),
+                                delta.y.toDouble()
+                            ).toFloat()
+                            if (distance <= 1f) continue
+
+                            if (!gestureStarted) {
+                                gestureStarted = true
+                                startDistance = distance
+                                startScale = currentScale.value
+                                startRotation = currentRotation.value
+                                currentOnGestureStart.value()
+                            } else {
+                                currentOnTransformChanged.value(
+                                    (startScale.coerceAtLeast(1f) * distance / startDistance)
+                                        .coerceIn(1f, 500f),
+                                    startRotation
+                                )
+                            }
+                            pressed.forEach { it.consume() }
+                        }
+                    } finally {
+                        if (gestureStarted) currentOnGestureEnd.value()
+                    }
+                }
+            }
             .border(1.dp, Color(0xFF60EFFF), RoundedCornerShape(4.dp))
     ) {
         val density = LocalDensity.current;

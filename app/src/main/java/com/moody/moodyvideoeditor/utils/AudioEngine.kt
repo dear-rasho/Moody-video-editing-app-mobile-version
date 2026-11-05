@@ -283,11 +283,19 @@ object AudioEngine {
         }
         if (s.reverb > 0f) {
             val amount = s.reverb / 100f
-            filters.add("aecho=0.8:${format(0.55f * amount)}:75:${format(0.5f * amount)}")
+            filters.add(
+                "aecho=0.8:0.55:37|71|113|173|251|347|461:" +
+                        listOf(0.48f, 0.36f, 0.27f, 0.20f, 0.14f, 0.09f, 0.05f)
+                            .joinToString("|") { format(it * amount) }
+            )
         }
         if (s.studioReverb > 0f) {
             val amount = s.studioReverb / 100f
-            filters.add("aecho=0.85:${format(0.45f * amount)}:24:${format(0.35f * amount)}")
+            filters.add(
+                "aecho=0.85:0.5:19|37|58|83|111:" +
+                        listOf(0.42f, 0.30f, 0.21f, 0.14f, 0.08f)
+                            .joinToString("|") { format(it * amount) }
+            )
         }
         return filters
     }
@@ -301,12 +309,13 @@ object AudioEngine {
         outputLabel: String
     ): String {
         if (!clip.isAudio || clip.isAudioEffectClip) return inputLabel
+        val timelineClip = clips.firstOrNull { it.id == clip.id } ?: clip
         val layers = clips.filter { layer ->
             layer.isAudioFxClip &&
-                    layer.trackIndex > clip.trackIndex &&
+                    layer.trackIndex > timelineClip.trackIndex &&
                     layer.timelineEndMs > rangeStartMs &&
-                    layer.timelineStartMs < clip.timelineEndMs &&
-                    clip.timelineStartMs < layer.timelineEndMs &&
+                    layer.timelineStartMs < timelineClip.timelineEndMs &&
+                    timelineClip.timelineStartMs < layer.timelineEndMs &&
                     audioAdjustmentFilters(layer.audioAdjustments).isNotEmpty()
         }.sortedWith(compareBy<EditorClip>({ it.trackIndex }, { it.timelineStartMs }))
         if (layers.isEmpty()) return inputLabel
@@ -333,10 +342,10 @@ object AudioEngine {
                 "[$dryLabel]volume=0:enable='$interval'[$dryOut]"
             )
             val wetFilters = audioAdjustmentFilters(layer.audioAdjustments).toMutableList()
-            wetFilters.add("volume=0:enable='not($interval)'")
+            wetFilters.add(0, "volume=0:enable='not($interval)'")
             filterParts.add("[$wetLabel]${wetFilters.joinToString(",")}[$wetOut]")
             filterParts.add(
-                "[$dryOut][$wetOut]amix=inputs=2:duration=first:normalize=0[$merged]"
+                "[$dryOut][$wetOut]amix=inputs=2:duration=longest:normalize=0[$merged]"
             )
             currentLabel = merged
         }

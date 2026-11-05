@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.moody.moodyvideoeditor.data.AdjustmentData
@@ -77,6 +78,7 @@ import com.moody.moodyvideoeditor.data.SpotlightState
 import com.moody.moodyvideoeditor.data.VisualizerState
 import com.moody.moodyvideoeditor.data.TransitionState
 import com.moody.moodyvideoeditor.ui.components.ControlBar
+import com.moody.moodyvideoeditor.ui.components.EditorMediaRatioTimeControls
 import com.moody.moodyvideoeditor.ui.components.EyedropperOverlay
 import com.moody.moodyvideoeditor.ui.components.FeatureShelf
 import com.moody.moodyvideoeditor.ui.components.PlaybackControls
@@ -121,6 +123,8 @@ import com.moody.moodyvideoeditor.ui.features.TrimPanel
 import com.moody.moodyvideoeditor.ui.features.VolumePanel
 import com.moody.moodyvideoeditor.ui.features.VisualizerPanel
 import com.moody.moodyvideoeditor.utils.AudioPreviewEngine
+import com.moody.moodyvideoeditor.utils.AudioSettingsAudioProcessor
+import com.moody.moodyvideoeditor.utils.AudioSettingsRenderersFactory
 import com.moody.moodyvideoeditor.utils.AudioExtractionEngine
 import com.moody.moodyvideoeditor.utils.CropEngine
 import com.moody.moodyvideoeditor.utils.KeyframeStore
@@ -320,13 +324,21 @@ fun EditorScreen(
     //  EXOPLAYERS
     // ═══════════════════════════════════════════════════════════
 
-    val exoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply { playWhenReady = false }
+    val videoAudioSettingsProcessor = remember { AudioSettingsAudioProcessor() }
+    val audioAudioSettingsProcessor = remember { AudioSettingsAudioProcessor() }
+    val exoPlayer = remember(videoAudioSettingsProcessor) {
+        ExoPlayer.Builder(
+            context,
+            AudioSettingsRenderersFactory(context, videoAudioSettingsProcessor)
+        ).build().apply { playWhenReady = false }
     }
     var loadedVideoClipId by remember(exoPlayer) { mutableStateOf<String?>(null) }
 
-    val audioExoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply { playWhenReady = false }
+    val audioExoPlayer = remember(audioAudioSettingsProcessor) {
+        ExoPlayer.Builder(
+            context,
+            AudioSettingsRenderersFactory(context, audioAudioSettingsProcessor)
+        ).build().apply { playWhenReady = false }
     }
 
     DisposableEffect(Unit) {
@@ -356,17 +368,6 @@ fun EditorScreen(
         }
         if (activePanel != "effects") {
             viewModel.clearPreviewEffect()
-        }
-
-        if (activePanel != "audiofx" && activePanel != "soundfx") {
-            AudioPreviewEngine.release()
-            try {
-                exoPlayer.playbackParameters =
-                    androidx.media3.common.PlaybackParameters(1f, 1f)
-                audioExoPlayer.playbackParameters =
-                    androidx.media3.common.PlaybackParameters(1f, 1f)
-            } catch (_: Throwable) {
-            }
         }
     }
     // ═══════════════════════════════════════════════════════════
@@ -451,6 +452,39 @@ fun EditorScreen(
             }
             .maxByOrNull { it.trackIndex }
     }
+    val activeAudioSettingsLayers = remember(
+        state.clips,
+        state.currentPosMs,
+        activeAudioClip?.id,
+        activeVideoClip?.id,
+        activeVideoHasSeparateAudio
+    ) {
+        val activeAudioTrack = activeAudioClip?.trackIndex
+        state.clips
+            .filter { layer ->
+                layer.isAudioFxClip &&
+                        (activeAudioTrack?.let { layer.trackIndex > it }
+                            ?: (activeVideoClip != null && !activeVideoHasSeparateAudio)) &&
+                        state.currentPosMs >= layer.timelineStartMs &&
+                        state.currentPosMs < layer.timelineEndMs
+            }
+            .sortedWith(compareBy({ it.trackIndex }, { it.timelineStartMs }))
+            .map { it.audioAdjustments }
+    }
+    val audioSettingsVolumeMultiplier = activeAudioSettingsLayers.fold(1f) { volume, settings ->
+        volume * (settings.volume / 100f)
+    }.coerceIn(0f, 1f)
+    val latestAudioSettingsLayers by rememberUpdatedState(activeAudioSettingsLayers)
+
+    LaunchedEffect(activeAudioClip?.id, activeAudioSettingsLayers) {
+        delay(100)
+        AudioPreviewEngine.applySettings(
+            exoPlayer,
+            audioExoPlayer,
+            activeAudioSettingsLayers,
+            listOf(videoAudioSettingsProcessor, audioAudioSettingsProcessor)
+        )
+    }
 
     val videoPlaybackVolume = when {
         state.isMuted -> 0f
@@ -458,8 +492,10 @@ fun EditorScreen(
         anyActiveAudioMuted -> 0f
         activeVideoHasSeparateAudio -> 0f
         else -> activeVideoClip?.volume ?: state.volume
-    }
-    val audioPlaybackVolume = if (state.isMuted) 0f else activeAudioClip?.volume ?: 0f
+    } * audioSettingsVolumeMultiplier
+    val audioPlaybackVolume =
+        (if (state.isMuted) 0f else activeAudioClip?.volume ?: 0f) *
+                audioSettingsVolumeMultiplier
     val latestVideoPlaybackVolume by rememberUpdatedState(videoPlaybackVolume)
     val latestAudioPlaybackVolume by rememberUpdatedState(audioPlaybackVolume)
 
@@ -470,12 +506,18 @@ fun EditorScreen(
         anyActiveAudioMuted,
         activeVideoClip?.id,
         activeVideoClip?.volume,
-        activeVideoHasSeparateAudio
+        activeVideoHasSeparateAudio,
+        audioSettingsVolumeMultiplier
     ) {
         VolumeEngine.applyToPlayer(exoPlayer, videoPlaybackVolume)
     }
 
-    LaunchedEffect(state.isMuted, activeAudioClip?.id, activeAudioClip?.volume) {
+    LaunchedEffect(
+        state.isMuted,
+        activeAudioClip?.id,
+        activeAudioClip?.volume,
+        audioSettingsVolumeMultiplier
+    ) {
         VolumeEngine.applyToPlayer(audioExoPlayer, audioPlaybackVolume)
     }
 
@@ -483,11 +525,23 @@ fun EditorScreen(
         val videoListener = object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 VolumeEngine.applyToPlayer(exoPlayer, latestVideoPlaybackVolume)
+                AudioPreviewEngine.applySettings(
+                    exoPlayer,
+                    audioExoPlayer,
+                    latestAudioSettingsLayers,
+                    listOf(videoAudioSettingsProcessor, audioAudioSettingsProcessor)
+                )
             }
         }
         val audioListener = object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 VolumeEngine.applyToPlayer(audioExoPlayer, latestAudioPlaybackVolume)
+                AudioPreviewEngine.applySettings(
+                    exoPlayer,
+                    audioExoPlayer,
+                    latestAudioSettingsLayers,
+                    listOf(videoAudioSettingsProcessor, audioAudioSettingsProcessor)
+                )
             }
         }
         exoPlayer.addListener(videoListener)
@@ -497,6 +551,17 @@ fun EditorScreen(
             audioExoPlayer.removeListener(audioListener)
             VolumeEngine.releasePlayer(exoPlayer)
             VolumeEngine.releasePlayer(audioExoPlayer)
+            AudioPreviewEngine.release()
+            videoAudioSettingsProcessor.setEffects(0f, 0f, 0f)
+            audioAudioSettingsProcessor.setEffects(0f, 0f, 0f)
+        }
+    }
+
+    LaunchedEffect(activePanel) {
+        if (activePanel == "export") {
+            isPlaybackActive = false
+            exoPlayer.pause()
+            audioExoPlayer.pause()
         }
     }
 
@@ -553,10 +618,13 @@ fun EditorScreen(
         }
 
         val targetSpeed = SpeedEngine.clampForExoPlayer(speed)
-        val currentSpeed = exoPlayer.playbackParameters.speed
-        if (abs(currentSpeed - targetSpeed) > 0.01f) {
+        val currentParameters = exoPlayer.playbackParameters
+        if (abs(currentParameters.speed - targetSpeed) > 0.01f) {
             try {
-                exoPlayer.setPlaybackSpeed(targetSpeed)
+                exoPlayer.playbackParameters = PlaybackParameters(
+                    targetSpeed,
+                    currentParameters.pitch
+                )
             } catch (_: Exception) {
             }
         }
@@ -617,10 +685,13 @@ fun EditorScreen(
         }
 
         val targetSpeed = SpeedEngine.clampForExoPlayer(speed)
-        val currentSpeed = audioExoPlayer.playbackParameters.speed
-        if (abs(currentSpeed - targetSpeed) > 0.01f) {
+        val currentParameters = audioExoPlayer.playbackParameters
+        if (abs(currentParameters.speed - targetSpeed) > 0.01f) {
             try {
-                audioExoPlayer.setPlaybackSpeed(targetSpeed)
+                audioExoPlayer.playbackParameters = PlaybackParameters(
+                    targetSpeed,
+                    currentParameters.pitch
+                )
             } catch (_: Exception) {
             }
         }
@@ -703,8 +774,10 @@ fun EditorScreen(
                     val targetSpeed = SpeedEngine.clampForExoPlayer(
                         SpeedEngine.playbackSpeedAt(clip, offset)
                     )
-                    if (abs(exoPlayer.playbackParameters.speed - targetSpeed) > 0.01f) {
-                        exoPlayer.setPlaybackSpeed(targetSpeed)
+                    val parameters = exoPlayer.playbackParameters
+                    if (abs(parameters.speed - targetSpeed) > 0.01f) {
+                        exoPlayer.playbackParameters =
+                            PlaybackParameters(targetSpeed, parameters.pitch)
                     }
                 }
 
@@ -714,8 +787,10 @@ fun EditorScreen(
                     val targetSpeed = SpeedEngine.clampForExoPlayer(
                         SpeedEngine.playbackSpeedAt(clip, offset)
                     )
-                    if (abs(audioExoPlayer.playbackParameters.speed - targetSpeed) > 0.01f) {
-                        audioExoPlayer.setPlaybackSpeed(targetSpeed)
+                    val parameters = audioExoPlayer.playbackParameters
+                    if (abs(parameters.speed - targetSpeed) > 0.01f) {
+                        audioExoPlayer.playbackParameters =
+                            PlaybackParameters(targetSpeed, parameters.pitch)
                     }
                 }
                 viewModel.setCurrentPos(next)
@@ -2512,16 +2587,28 @@ fun EditorScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.End,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    EditorMediaRatioTimeControls(
+                        onMediaClick = { showRecentMediaPicker = true },
+                        currentRatio = state.aspectRatio,
+                        onRatioClick = { activePanel = "ratio" },
+                        currentPosMs = state.currentPosMs,
+                        totalDurationMs = totalDurationMs
+                    )
                     Box(
                         modifier = Modifier
                             .height(34.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .background(Color(0xFF7C3AED))
                             .pointerInput(Unit) {
-                                detectTapGestures { activePanel = "export" }
+                                detectTapGestures {
+                                    isPlaybackActive = false
+                                    exoPlayer.pause()
+                                    audioExoPlayer.pause()
+                                    activePanel = "export"
+                                }
                             }
                             .padding(horizontal = 16.dp),
                         contentAlignment = Alignment.Center
@@ -2705,6 +2792,7 @@ fun EditorScreen(
                 hasVideo = state.clips.isNotEmpty(),
                 currentPosMs = state.currentPosMs,
                 totalDurationMs = totalDurationMs,
+                showMediaRatioTime = false,
                 previewQuality = previewPlaybackQuality,
                 onRecordAudio = { activePanel = "record_audio" },
                 onPreviewQualityChange = { quality ->
@@ -2879,7 +2967,7 @@ fun EditorScreen(
             onResetFolder = { viewModel.setExportFolderUri(null) },
             onStartExport = { config ->
                 val clipsForExport = state.clips.filter {
-                    !state.hiddenVisualTracks.contains(it.trackIndex)
+                    it.isAudio || !state.hiddenVisualTracks.contains(it.trackIndex)
                 }
                 val startMs = if (config.useCustomRange) config.startMs else 0L
                 val endMs = if (config.useCustomRange) config.endMs

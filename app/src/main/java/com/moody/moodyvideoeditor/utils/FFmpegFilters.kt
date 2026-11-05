@@ -5,7 +5,7 @@ import java.util.Locale
 
 object FFmpegFilters {
 
-    // Per-pixel adjustments use the ColorMatrixBuilder-based LUT; this handles spatial effects.
+    // Per-pixel adjustments use the native-generated LUT; this handles spatial effects.
     fun build(adj: AdjustmentData): String {
         try {
             if (adj.noise <= 0f && adj.sharpen <= 0f && adj.vignette == 0f) return ""

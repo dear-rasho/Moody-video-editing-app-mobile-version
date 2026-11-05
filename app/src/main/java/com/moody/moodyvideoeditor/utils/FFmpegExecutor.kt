@@ -309,12 +309,28 @@ class FFmpegExecutor(
                         (kotlin.math.abs(it.offsetX) > 0.001f ||
                                 kotlin.math.abs(it.offsetY) > 0.001f)
             }
+            val canExportSinglePositionKeyframesDirectly = clips.singleOrNull()?.let { clip ->
+                val hasPositionKeyframes =
+                    clip.keyframes["x"].orEmpty().isNotEmpty() ||
+                            clip.keyframes["y"].orEmpty().isNotEmpty()
+                hasPositionKeyframes &&
+                        clip.keyframes["scale"].orEmpty().isEmpty() &&
+                        clip.keyframes["scaleX"].orEmpty().isEmpty() &&
+                        clip.keyframes["scaleY"].orEmpty().isEmpty() &&
+                        clip.keyframes["rotation"].orEmpty().isEmpty() &&
+                        clip.keyframes["anchorX"].orEmpty().isEmpty() &&
+                        clip.keyframes["anchorY"].orEmpty().isEmpty() &&
+                        kotlin.math.abs(clip.rotation) < 0.001f &&
+                        clip.scale * clip.scaleX <= 1f &&
+                        clip.scale * clip.scaleY <= 1f
+            } ?: false
 
             val needsLayered = needsLayeredCrop || hasPositionedVisualClip ||
                     clips.map { it.trackIndex }
                         .distinct().size > 1 || maskSequences.isNotEmpty() || matteClips.isNotEmpty() ||
                     allExtraSequences.isNotEmpty() || adjustmentClips.isNotEmpty() ||
-                    clips.any { TransformApplier.hasAnimatedTransform(it) } ||
+                    (clips.any { TransformApplier.hasAnimatedTransform(it) } &&
+                            !canExportSinglePositionKeyframesDirectly) ||
                     clips.any { it.layerShadow.enabled }
 
             val orderedTransitionClips = clips.sortedBy { it.timelineStartMs }
@@ -1283,34 +1299,23 @@ class FFmpegExecutor(
                 }
             }
         }
-        val sampledScale = sampledTrackValues("scale", clip.scale * 100f)
-        val sampledScaleX = if (scaleXTrack.isNotEmpty()) {
-            sampledTrackValues("scaleX", clip.scale * clip.scaleX * 100f)
-        } else {
-            sampledScale.map { it * clip.scaleX }
-        }
-        val sampledScaleY = if (scaleYTrack.isNotEmpty()) {
-            sampledTrackValues("scaleY", clip.scale * clip.scaleY * 100f)
-        } else {
-            sampledScale.map { it * clip.scaleY }
-        }
         val sampledAnchorX = sampledTrackValues("anchorX", 50f)
         val sampledAnchorY = sampledTrackValues("anchorY", 50f)
         val sampledPositionX = sampledTrackValues("x", 50f + clip.offsetX * 100f)
         val sampledPositionY = sampledTrackValues("y", 50f + clip.offsetY * 100f)
-        val canUseAnimatedScaleFilter = useKeyframedTransform && hasScaleTrack &&
-                rotationTrack.all { kotlin.math.abs(it.value) < 0.001f } &&
-                kotlin.math.abs(clip.rotation) < 0.001f &&
-                sampledScaleX.all { it > 0f && it <= 500f } &&
-                sampledScaleY.all { it > 0f && it <= 500f } &&
-                sampledAnchorX.all { it in 0f..100f } &&
-                sampledAnchorY.all { it in 0f..100f } &&
+        val hasAnimatedRotation =
+            kotlin.math.abs(clip.rotation) >= 0.001f ||
+                    rotationTrack.any { kotlin.math.abs(it.value) >= 0.001f }
+        val canUseSimpleTransformFilter = useKeyframedTransform &&
+                sampledAnchorX.all { kotlin.math.abs(it - 50f) < 0.001f } &&
+                sampledAnchorY.all { kotlin.math.abs(it - 50f) < 0.001f } &&
                 (positionHandledByOverlay ||
                         (sampledPositionX.all { it in 0f..100f } &&
                                 sampledPositionY.all { it in 0f..100f })) &&
-                !hasKeyframedAnchor &&
-                (positionByOverlay || !hasKeyframedPosition) &&
-                clip.scale > 0f && clip.scaleX > 0f && clip.scaleY > 0f
+                (!hasAnimatedRotation || positionHandledByOverlay ||
+                        (sampledPositionX.all { kotlin.math.abs(it - 50f) < 0.001f } &&
+                                sampledPositionY.all { kotlin.math.abs(it - 50f) < 0.001f })) &&
+                clip.scaleX > 0f && clip.scaleY > 0f
         val offsetXpx = (clip.offsetX * targetW).toInt()
         val offsetYpx = (clip.offsetY * targetH).toInt()
         val hasOffset = offsetXpx != 0 || offsetYpx != 0
@@ -1322,7 +1327,7 @@ class FFmpegExecutor(
         //  STEP 1: Fit source into canvas (letterbox) — WITHOUT user scale
         //  Because user scale must apply to ORIGINAL clip, not letterboxed
         // ═══════════════════════════════════════════════════════════
-        if (canUseAnimatedScaleFilter) {
+        if (canUseSimpleTransformFilter) {
             val scaleExpr = KeyframeStore.ffmpegExpression(
                 clip.keyframes, "scale", clip.scale * 100f, "n/$frameRate"
             )
@@ -1382,6 +1387,26 @@ class FFmpegExecutor(
                 "pad=${overscanSize.first}:${overscanSize.second}:" +
                         "x='$padX':y='$padY':color=$fillColor:eval=frame"
             )
+            if (hasAnimatedRotation) {
+                val rotationExpr = KeyframeStore.escapeFfmpegExpression(
+                    "(${KeyframeStore.ffmpegExpression(
+                        clip.keyframes,
+                        "rotation",
+                        clip.rotation,
+                        "n/$frameRate"
+                    )}*PI/180)"
+                )
+                val outputSize = if (preserveOverscan) {
+                    val rotationCanvas =
+                        rotationCanvasSize(overscanSize.first, overscanSize.second)
+                    "ow=$rotationCanvas:oh=$rotationCanvas"
+                } else {
+                    "ow=$targetW:oh=$targetH"
+                }
+                filters.add(
+                    "rotate=angle='$rotationExpr':c=$fillColor:$outputSize"
+                )
+            }
         } else if (useKeyframedTransform) {
             val scaleExpr = KeyframeStore.ffmpegExpression(
                 clip.keyframes, "scale", clip.scale * 100f, scaleTimeExpression
@@ -4051,28 +4076,26 @@ class FFmpegExecutor(
     private fun ensureAdjustmentLut(adj: AdjustmentData): File {
         val key = MessageDigest.getInstance("SHA-256").digest(adj.toString().toByteArray(Charsets.UTF_8))
             .take(12).joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
-        val file = File(context.cacheDir, "adjustment-preview-parity-v4-$key.cube")
+        val file = File(context.cacheDir, "adjustment-preview-parity-v5-$key.cube")
         if (file.exists() && file.length() > 0L) return file
 
         val lutSize = 65
-        val lutMaxIndex = lutSize - 1
-        val colorMatrix = ColorMatrixBuilder.build(adj)
+        val lut = AdjustmentNative.buildCubeLut(adj, lutSize)
         val contents = buildString {
             appendLine("TITLE \"Moody Adjustment Preview Parity\"")
             appendLine("LUT_3D_SIZE $lutSize")
             appendLine("DOMAIN_MIN 0.0 0.0 0.0")
             appendLine("DOMAIN_MAX 1.0 1.0 1.0")
+            var index = 0
             for (b in 0 until lutSize) for (g in 0 until lutSize) for (r in 0 until lutSize) {
-                val out = AdjustmentPixelEngine.apply(
-                    r * 255f / lutMaxIndex,
-                    g * 255f / lutMaxIndex,
-                    b * 255f / lutMaxIndex,
-                    adj,
-                    colorMatrix
-                )
                 append(
                     """%.6f %.6f %.6f
-""".format(Locale.US, out.first / 255f, out.second / 255f, out.third / 255f)
+""".format(
+                        Locale.US,
+                        lut[index++] / 255f,
+                        lut[index++] / 255f,
+                        lut[index++] / 255f
+                    )
                 )
             }
         }

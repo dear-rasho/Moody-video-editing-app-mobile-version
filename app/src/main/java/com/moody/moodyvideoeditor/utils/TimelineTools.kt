@@ -4,6 +4,31 @@ import com.moody.moodyvideoeditor.data.EditorClip
 
 object TimelineTools {
 
+    fun findAudioSettingsTrack(
+        clips: List<EditorClip>,
+        audioLayerCount: Int,
+        startMs: Long,
+        durationMs: Long
+    ): Int {
+        val sourceAudioTracks = clips
+            .filter { it.isAudio && !it.isAudioEffectClip }
+            .map { it.trackIndex }
+        val firstEffectTrack = (sourceAudioTracks.maxOrNull()?.plus(1) ?: 0)
+        val endMs = startMs + durationMs
+        val freeTrack = (firstEffectTrack until audioLayerCount).firstOrNull { track ->
+            clips.none { clip ->
+                clip.isAudio &&
+                        clip.trackIndex == track &&
+                        clip.timelineStartMs < endMs &&
+                        startMs < clip.timelineEndMs
+            }
+        }
+        return freeTrack ?: maxOf(
+            audioLayerCount,
+            (clips.filter { it.isAudio }.maxOfOrNull { it.trackIndex } ?: -1) + 1
+        )
+    }
+
     fun closeGapsOnTrack(track: List<EditorClip>): List<EditorClip> {
         if (track.size < 2) return track
 

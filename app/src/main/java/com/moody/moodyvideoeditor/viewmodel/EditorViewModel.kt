@@ -3431,9 +3431,11 @@ class EditorViewModel : ViewModel() {
                 .maxOfOrNull { it.timelineEndMs } ?: 0L
         )
         val durationMs = (endMs - startMs).coerceAtLeast(500L)
-        val trackIdx = maxOf(
+        val trackIdx = TimelineTools.findAudioSettingsTrack(
+            s.clips,
             s.audioLayerCount,
-            (s.clips.filter { it.isAudio }.maxOfOrNull { it.trackIndex } ?: -1) + 1
+            startMs,
+            durationMs
         )
         val clip = EditorClip(
             id = UUID.randomUUID().toString(),
