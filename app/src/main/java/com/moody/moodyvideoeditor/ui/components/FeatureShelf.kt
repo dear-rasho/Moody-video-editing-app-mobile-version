@@ -64,7 +64,7 @@ val FEATURES = listOf(
     Feature("transform", "Transform", "🔲"),
     Feature("crop", "Crop", "📐"),
     Feature("volume", "Volume", "🔊"),
-    Feature("audiofx", "Audio FX", "🎧"),
+    Feature("audiofx", "Audio Settings", "🎚️"),
     Feature("beats", "Beats", "🥁"),
     Feature("visualizer", "Visualizer", "🎵"),
 

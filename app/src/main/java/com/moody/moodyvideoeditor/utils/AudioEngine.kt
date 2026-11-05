@@ -1,6 +1,7 @@
 package com.moody.moodyvideoeditor.utils
 
 import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.data.AudioAdjustmentSettings
 import java.util.Locale
 
 // Audio FX → FFmpeg filter chain builder.
@@ -248,6 +249,104 @@ object AudioEngine {
         }
         return currentLabel
     }
+
+    fun audioAdjustmentFilters(settings: AudioAdjustmentSettings): List<String> {
+        val s = settings.clamped()
+        val filters = mutableListOf<String>()
+        if (s.volume < 100f) filters.add("volume=${format(s.volume / 100f)}")
+        if (s.bass > 0f) filters.add(equalizer(100, s.bass))
+        if (s.mids > 0f) filters.add(equalizer(1000, s.mids))
+        if (s.treble > 0f) filters.add(equalizer(8000, s.treble))
+        if (s.vocals > 0f) filters.add(equalizer(2500, s.vocals * 0.75f))
+
+        if (s.pitch != 50f) {
+            val semitones = (s.pitch - 50f) * 0.24f
+            val rate = Math.pow(2.0, (semitones / 12f).toDouble())
+            filters.add("asetrate=${format(44100.0 * rate)}")
+            filters.add("aresample=44100")
+            filters.add("atempo=${format(1.0 / rate)}")
+        }
+
+        if (s.vocalEnhancement > 0f) {
+            val amount = s.vocalEnhancement / 100f
+            filters.add("highpass=f=80")
+            filters.add(equalizer(2800, s.vocalEnhancement * 0.45f))
+            filters.add("acompressor=threshold=${format(0.15 - amount * 0.10)}:ratio=${format(2.0 + amount * 4.0)}:attack=10:release=120:makeup=${format(1.0 + amount)}")
+        }
+        if (s.loudness > 0f) {
+            val target = (s.loudness / 100f * 24f).coerceIn(1f, 24f)
+            filters.add("dynaudnorm=f=200:g=${target.toInt().coerceAtLeast(1)}")
+        }
+        if (s.echo > 0f) {
+            val amount = s.echo / 100f
+            filters.add("aecho=0.8:${format(0.5f * amount)}:350:${format(0.55f * amount)}")
+        }
+        if (s.reverb > 0f) {
+            val amount = s.reverb / 100f
+            filters.add("aecho=0.8:${format(0.55f * amount)}:75:${format(0.5f * amount)}")
+        }
+        if (s.studioReverb > 0f) {
+            val amount = s.studioReverb / 100f
+            filters.add("aecho=0.85:${format(0.45f * amount)}:24:${format(0.35f * amount)}")
+        }
+        return filters
+    }
+
+    fun appendTimelineAudioAdjustments(
+        filterParts: MutableList<String>,
+        clip: EditorClip,
+        clips: List<EditorClip>,
+        rangeStartMs: Long,
+        inputLabel: String,
+        outputLabel: String
+    ): String {
+        if (!clip.isAudio || clip.isAudioEffectClip) return inputLabel
+        val layers = clips.filter { layer ->
+            layer.isAudioFxClip &&
+                    layer.trackIndex > clip.trackIndex &&
+                    layer.timelineEndMs > rangeStartMs &&
+                    layer.timelineStartMs < clip.timelineEndMs &&
+                    clip.timelineStartMs < layer.timelineEndMs &&
+                    audioAdjustmentFilters(layer.audioAdjustments).isNotEmpty()
+        }.sortedWith(compareBy<EditorClip>({ it.trackIndex }, { it.timelineStartMs }))
+        if (layers.isEmpty()) return inputLabel
+
+        val clipKey = clip.id.replace(Regex("[^A-Za-z0-9_]"), "_")
+        var currentLabel = inputLabel
+        layers.forEachIndexed { index, layer ->
+            val start = ((layer.timelineStartMs - rangeStartMs).coerceAtLeast(0L)) / 1000.0
+            val end = ((layer.timelineEndMs - rangeStartMs).coerceAtLeast(0L)) / 1000.0
+            if (end <= start) return@forEachIndexed
+
+            val prefix = "audset_${clipKey}_$index"
+            val dryLabel = "${prefix}_dry"
+            val wetLabel = "${prefix}_wet"
+            val dryOut = "${prefix}_dryout"
+            val wetOut = "${prefix}_wetout"
+            val merged = if (index == layers.lastIndex) outputLabel else "${prefix}_mix"
+            val startText = String.format(Locale.US, "%.4f", start)
+            val endText = String.format(Locale.US, "%.4f", end)
+            val interval = "between(t,$startText,$endText)"
+
+            filterParts.add("[$currentLabel]asplit=2[$dryLabel][$wetLabel]")
+            filterParts.add(
+                "[$dryLabel]volume=0:enable='$interval'[$dryOut]"
+            )
+            val wetFilters = audioAdjustmentFilters(layer.audioAdjustments).toMutableList()
+            wetFilters.add("volume=0:enable='not($interval)'")
+            filterParts.add("[$wetLabel]${wetFilters.joinToString(",")}[$wetOut]")
+            filterParts.add(
+                "[$dryOut][$wetOut]amix=inputs=2:duration=first:normalize=0[$merged]"
+            )
+            currentLabel = merged
+        }
+        return currentLabel
+    }
+
+    private fun equalizer(frequency: Int, amount: Float): String =
+        "equalizer=f=$frequency:width_type=o:width=2:g=${format(amount.coerceIn(0f, 12f))}"
+
+    private fun format(value: Number): String = String.format(Locale.US, "%.4f", value)
 
     fun buildSoundFxSource(fx: String, intensity: Float, layerDurationSeconds: Double): String? {
         val profile = when (fx) {

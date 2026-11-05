@@ -61,6 +61,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.moody.moodyvideoeditor.data.AdjustmentData
+import com.moody.moodyvideoeditor.data.AudioAdjustmentSettings
 import com.moody.moodyvideoeditor.data.BeatsState
 import com.moody.moodyvideoeditor.data.easingKeyframeMap
 
@@ -1065,6 +1066,9 @@ fun EditorScreen(
                 onFeatureSelected = { key ->
                     if (key == "filters") filterEditLayerId = null
                     if (key == "effects") effectEditLayerId = null
+                    if (key == "audiofx" && selected?.isAudioFxClip != true) {
+                        viewModel.createAudioSettingsLayer()
+                    }
                     if (key == "matte") {
                         matteEditLayerId = selected?.takeIf { it.isColorMatteClip }?.id
                     }
@@ -1709,24 +1713,17 @@ fun EditorScreen(
             )
 
             "audiofx" -> AudioPanel(
-                onPreviewFx = { fx, intensity ->
-                    AudioPreviewEngine.apply(
-                        exoPlayer, audioExoPlayer, fx, intensity
-                    )
-                },
-                onClearPreview = {
-                    AudioPreviewEngine.release()
-                    try {
-                        exoPlayer.playbackParameters =
-                            androidx.media3.common.PlaybackParameters(1f, 1f)
-                        audioExoPlayer.playbackParameters =
-                            androidx.media3.common.PlaybackParameters(1f, 1f)
-                    } catch (_: Throwable) {
+                settings = selected?.takeIf { it.isAudioFxClip }?.audioAdjustments
+                    ?: AudioAdjustmentSettings(),
+                trackIndex = selected?.takeIf { it.isAudioFxClip }?.trackIndex ?: -1,
+                onSettingsChanged = { settings ->
+                    selected?.takeIf { it.isAudioFxClip }?.let {
+                        viewModel.setClipAudioAdjustments(it.id, settings)
                     }
                 },
-                onApplyAudioFx = { fx, intensity ->
-                    viewModel.createAudioFxLayer(fx, intensity)
-                },
+                onEditStart = viewModel::beginAudioSettingsEdit,
+                onEditEnd = viewModel::finishAudioSettingsEdit,
+                onAddLayer = { viewModel.createAudioSettingsLayer() },
                 onClose = { activePanel = null }
             )
 
@@ -2435,6 +2432,9 @@ fun EditorScreen(
 
             else -> FeatureShelf(
                 onFeatureSelected = {
+                    if (it == "audiofx" && state.selectedClip?.isAudioFxClip != true) {
+                        viewModel.createAudioSettingsLayer()
+                    }
                     if (it == "wheel") viewModel.prepareColorWheelLayer()
                     if (it == "matte") {
                         matteEditLayerId = state.selectedClip?.takeIf {

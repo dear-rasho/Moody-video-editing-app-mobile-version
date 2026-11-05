@@ -18,6 +18,8 @@ object AdjustmentPixelEngine {
         if (layerAdjustment == null) return clipAdjustment
         return clipAdjustment.copy(
             sharpen = clipAdjustment.sharpen + layerAdjustment.sharpen,
+            noise = clipAdjustment.noise + layerAdjustment.noise,
+            vignette = clipAdjustment.vignette + layerAdjustment.vignette,
             reds = clipAdjustment.reds + layerAdjustment.reds,
             oranges = clipAdjustment.oranges + layerAdjustment.oranges,
             yellows = clipAdjustment.yellows + layerAdjustment.yellows,

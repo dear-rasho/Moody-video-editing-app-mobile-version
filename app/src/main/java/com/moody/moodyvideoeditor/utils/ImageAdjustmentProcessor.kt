@@ -1,6 +1,7 @@
 package com.moody.moodyvideoeditor.utils
 
 import android.graphics.Bitmap
+import android.graphics.ColorMatrix
 import android.util.Log
 import com.moody.moodyvideoeditor.data.AdjustmentData
 import kotlin.math.abs
@@ -25,14 +26,19 @@ object ImageAdjustmentProcessor {
     fun process(
         source: Bitmap,
         adj: AdjustmentData,
-        detailAdjustment: AdjustmentData = adj
+        detailAdjustment: AdjustmentData = adj,
+        colorMatrix: ColorMatrix? = null
     ): Bitmap {
-        if (!hasSharpenOrColorChannels(adj) && !hasNoiseOrVignette(detailAdjustment)) return source
+        if (!hasSharpenOrColorChannels(adj) && !hasNoiseOrVignette(detailAdjustment) &&
+            colorMatrix == null
+        ) return source
         if (source.width <= 0 || source.height <= 0) return source
 
+        var work: Bitmap? = null
+        var result: Bitmap? = null
         try {
             val maxDim = 1440
-            val work = if (source.width > maxDim || source.height > maxDim) {
+            val workingBitmap = if (source.width > maxDim || source.height > maxDim) {
                 val scale = maxDim.toFloat() / maxOf(source.width, source.height)
                 Bitmap.createScaledBitmap(
                     source,
@@ -41,12 +47,14 @@ object ImageAdjustmentProcessor {
                     true
                 )
             } else source
+            work = workingBitmap
 
-            val w = work.width
-            val h = work.height
+            val w = workingBitmap.width
+            val h = workingBitmap.height
             val pixels = IntArray(w * h)
-            work.getPixels(pixels, 0, w, 0, 0, w, h)
+            workingBitmap.getPixels(pixels, 0, w, 0, 0, w, h)
 
+            colorMatrix?.let { applyColorMatrix(pixels, it) }
             if (hasColorChannels(adj)) {
                 applyColorChannels(pixels, adj)
             }
@@ -62,15 +70,51 @@ object ImageAdjustmentProcessor {
 
             applyDetails(outputPixels, w, h, detailAdjustment)
 
-            val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            result.setPixels(outputPixels, 0, w, 0, 0, w, h)
+            val outputBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            result = outputBitmap
+            outputBitmap.setPixels(outputPixels, 0, w, 0, 0, w, h)
 
-            return if (work != source && (w != source.width || h != source.height)) {
-                Bitmap.createScaledBitmap(result, source.width, source.height, true)
-            } else result
+            if (workingBitmap !== source) {
+                workingBitmap.recycle()
+                work = null
+            }
+            if (w != source.width || h != source.height) {
+                val scaled = Bitmap.createScaledBitmap(
+                    outputBitmap, source.width, source.height, true
+                )
+                outputBitmap.recycle()
+                result = null
+                return scaled
+            }
+            val output = outputBitmap
+            result = null
+            return output
         } catch (t: Throwable) {
+            work?.takeIf { it !== source && !it.isRecycled }?.recycle()
+            result?.takeIf { !it.isRecycled }?.recycle()
             Log.e(TAG, "process failed", t)
             return source
+        }
+    }
+
+    private fun applyColorMatrix(pixels: IntArray, colorMatrix: ColorMatrix) {
+        val matrix = colorMatrix.array
+        for (index in pixels.indices) {
+            val pixel = pixels[index]
+            val alpha = pixel ushr 24
+            if (alpha == 0) continue
+
+            val red = ((pixel shr 16) and 0xFF).toFloat()
+            val green = ((pixel shr 8) and 0xFF).toFloat()
+            val blue = (pixel and 0xFF).toFloat()
+            val outRed = (matrix[0] * red + matrix[1] * green + matrix[2] * blue +
+                    matrix[3] * alpha + matrix[4]).toInt().coerceIn(0, 255)
+            val outGreen = (matrix[5] * red + matrix[6] * green + matrix[7] * blue +
+                    matrix[8] * alpha + matrix[9]).toInt().coerceIn(0, 255)
+            val outBlue = (matrix[10] * red + matrix[11] * green + matrix[12] * blue +
+                    matrix[13] * alpha + matrix[14]).toInt().coerceIn(0, 255)
+            pixels[index] = (alpha shl 24) or (outRed shl 16) or
+                    (outGreen shl 8) or outBlue
         }
     }
 
@@ -321,8 +365,8 @@ object ImageAdjustmentProcessor {
                 val w = hueWeight(hue, 25f, 20f, sat)
                 if (w > 0.001f) {
                     val amount = skinTones * w
-                    r = (r + amount * w * 30f).coerceIn(0f, 255f)
-                    g = (g + amount * w * 15f).coerceIn(0f, 255f)
+                    r = (r + amount * 30f).coerceIn(0f, 255f)
+                    g = (g + amount * 15f).coerceIn(0f, 255f)
                 }
             }
 

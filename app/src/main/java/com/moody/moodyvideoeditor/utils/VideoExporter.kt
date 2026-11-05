@@ -787,7 +787,15 @@ class VideoExporter(
                 chain.add("aresample=44100")
                 val label = "audio$idx"
                 filterParts.add("[$inputIdx:a]${chain.joinToString(",")}[$label]")
-                audioLabels.add("[$label]")
+                val adjustedLabel = AudioEngine.appendTimelineAudioAdjustments(
+                    filterParts,
+                    clip,
+                    allClips,
+                    rangeStart,
+                    label,
+                    "audio${idx}adjusted"
+                )
+                audioLabels.add("[$adjustedLabel]")
             }
             filterParts.add("${audioLabels.joinToString("")}amix=inputs=${audioLabels.size}:duration=longest[outa]")
         }

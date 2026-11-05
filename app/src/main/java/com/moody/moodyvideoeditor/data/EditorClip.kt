@@ -6,6 +6,37 @@ import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.utils.SpeedEngine
 import com.moody.moodyvideoeditor.utils.TimelineZoom
 
+data class AudioAdjustmentSettings(
+    val volume: Float = 100f,
+    val bass: Float = 0f,
+    val mids: Float = 0f,
+    val treble: Float = 0f,
+    val vocals: Float = 0f,
+    val echo: Float = 0f,
+    val reverb: Float = 0f,
+    val pitch: Float = 50f,
+    val loudness: Float = 0f,
+    val vocalEnhancement: Float = 0f,
+    val studioReverb: Float = 0f
+) {
+    fun clamped() = copy(
+        volume = safe(volume, 100f),
+        bass = safe(bass),
+        mids = safe(mids),
+        treble = safe(treble),
+        vocals = safe(vocals),
+        echo = safe(echo),
+        reverb = safe(reverb),
+        pitch = safe(pitch, 50f),
+        loudness = safe(loudness),
+        vocalEnhancement = safe(vocalEnhancement),
+        studioReverb = safe(studioReverb)
+    )
+
+    private fun safe(value: Float, fallback: Float = 0f) =
+        (value.takeIf { it.isFinite() } ?: fallback).coerceIn(0f, 100f)
+}
+
 data class EditorClip(
     val id: String = UUID.randomUUID().toString(),
     val uri: Uri,
@@ -43,6 +74,7 @@ data class EditorClip(
     // 🆕 PER-CLIP AUDIO EFFECTS
     val audioFx: String = "none",
     val audioFxIntensity: Float = 100f,
+    val audioAdjustments: AudioAdjustmentSettings = AudioAdjustmentSettings(),
     val soundFx: String = "none",
     val soundFxIntensity: Float = 100f,
 

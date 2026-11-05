@@ -229,7 +229,7 @@ class ExampleInstrumentedTest {
             name = "portrait",
             type = "image/png",
             sourceStartMs = 0L,
-            sourceEndMs = 1000L,
+            sourceEndMs = 5000L,
             timelineStartMs = 0L,
             scale = 0.5f
         )
@@ -250,7 +250,8 @@ class ExampleInstrumentedTest {
                 keyframes = mapOf(
                     "scale" to listOf(
                         Keyframe(0f, 50f, "easeInOut"),
-                        Keyframe(1f, 60f)
+                        Keyframe(2.5f, 80f, "easeOut"),
+                        Keyframe(5f, 60f)
                     )
                 )
             ),
@@ -259,22 +260,48 @@ class ExampleInstrumentedTest {
                 keyframes = mapOf(
                     "scale" to listOf(
                         Keyframe(0f, 50f, "easeInOut"),
-                        Keyframe(1f, 60f)
+                        Keyframe(2.5f, 80f, "easeOut"),
+                        Keyframe(5f, 60f)
                     ),
-                    "x" to listOf(Keyframe(0f, 55f), Keyframe(1f, 55f)),
-                    "y" to listOf(Keyframe(0f, 45f), Keyframe(1f, 45f)),
-                    "anchorX" to listOf(Keyframe(0f, 65f), Keyframe(1f, 65f)),
-                    "anchorY" to listOf(Keyframe(0f, 35f), Keyframe(1f, 35f))
+                    "x" to listOf(Keyframe(0f, 55f), Keyframe(5f, 55f)),
+                    "y" to listOf(Keyframe(0f, 45f), Keyframe(5f, 45f)),
+                    "anchorX" to listOf(Keyframe(0f, 65f), Keyframe(5f, 65f)),
+                    "anchorY" to listOf(Keyframe(0f, 35f), Keyframe(5f, 35f))
                 )
             )
         )
         cases.forEach { (name, testClip) ->
             @Suppress("UNCHECKED_CAST")
             val filters = filterMethod.invoke(
-                executor, testClip, 100, 180, false, false, 30
+                executor, testClip, 100, 180, true, true, 30
             ) as List<String>
-            val outputFile = File(context.cacheDir, "exported-portrait-$name-scale-test.png")
             val graph = "[0:v]${filters.joinToString(",")}[out]"
+            if (name.startsWith("animated")) {
+                assertTrue("Animated transform should use frame-evaluated scaling", filters.any {
+                    it.contains("eval=frame")
+                })
+                assertTrue("Non-rotating transform should avoid per-pixel geometry filters", filters.none {
+                    it.startsWith("perspective=") || it.startsWith("geq=")
+                })
+                val sequenceSession = FFmpegKit.executeWithArguments(
+                    arrayOf(
+                        "-v", "error",
+                        "-f", "lavfi",
+                        "-i", "color=c=black:s=100x180:r=30:d=5,format=rgba," +
+                                "drawbox=x=40:y=70:w=20:h=40:color=white:t=fill:replace=1",
+                        "-filter_complex", graph,
+                        "-map", "[out]",
+                        "-frames:v", "150",
+                        "-f", "null", "-"
+                    )
+                )
+                assertTrue(
+                    "Animated scale filter failed over a full sequence: " +
+                            sequenceSession.allLogsAsString,
+                    ReturnCode.isSuccess(sequenceSession.returnCode)
+                )
+            }
+            val outputFile = File(context.cacheDir, "exported-portrait-$name-scale-test.png")
             val session = FFmpegKit.executeWithArguments(
                 arrayOf(
                     "-v", "error",

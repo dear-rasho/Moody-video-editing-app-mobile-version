@@ -217,6 +217,20 @@ object SavedTemplateRepository {
         put("layerOpacity", c.layerOpacity.toDouble())
         put("audioFx", c.audioFx)
         put("audioFxIntensity", c.audioFxIntensity.toDouble())
+        put("audioAdjustments", JSONObject().apply {
+            val settings = c.audioAdjustments
+            put("volume", settings.volume.toDouble())
+            put("bass", settings.bass.toDouble())
+            put("mids", settings.mids.toDouble())
+            put("treble", settings.treble.toDouble())
+            put("vocals", settings.vocals.toDouble())
+            put("echo", settings.echo.toDouble())
+            put("reverb", settings.reverb.toDouble())
+            put("pitch", settings.pitch.toDouble())
+            put("loudness", settings.loudness.toDouble())
+            put("vocalEnhancement", settings.vocalEnhancement.toDouble())
+            put("studioReverb", settings.studioReverb.toDouble())
+        })
         put("soundFx", c.soundFx)
         put("soundFxIntensity", c.soundFxIntensity.toDouble())
 
@@ -284,6 +298,21 @@ object SavedTemplateRepository {
             layerOpacity = o.optDouble("layerOpacity", 100.0).toFloat(),
             audioFx = o.optString("audioFx", "none"),
             audioFxIntensity = o.optDouble("audioFxIntensity", 100.0).toFloat(),
+            audioAdjustments = o.optJSONObject("audioAdjustments")?.let { settings ->
+                AudioAdjustmentSettings(
+                    volume = settings.optDouble("volume", 100.0).toFloat(),
+                    bass = settings.optDouble("bass", 0.0).toFloat(),
+                    mids = settings.optDouble("mids", 0.0).toFloat(),
+                    treble = settings.optDouble("treble", 0.0).toFloat(),
+                    vocals = settings.optDouble("vocals", 0.0).toFloat(),
+                    echo = settings.optDouble("echo", 0.0).toFloat(),
+                    reverb = settings.optDouble("reverb", 0.0).toFloat(),
+                    pitch = settings.optDouble("pitch", 50.0).toFloat(),
+                    loudness = settings.optDouble("loudness", 0.0).toFloat(),
+                    vocalEnhancement = settings.optDouble("vocalEnhancement", 0.0).toFloat(),
+                    studioReverb = settings.optDouble("studioReverb", 0.0).toFloat()
+                ).clamped()
+            } ?: AudioAdjustmentSettings(),
             soundFx = o.optString("soundFx", "none"),
             soundFxIntensity = o.optDouble("soundFxIntensity", 100.0).toFloat(),
             adjustments = adjustmentsFromJson(o.optJSONObject("adjustments")),

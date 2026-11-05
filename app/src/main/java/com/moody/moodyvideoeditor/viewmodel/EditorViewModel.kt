@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import com.moody.moodyvideoeditor.data.AdjustmentData
+import com.moody.moodyvideoeditor.data.AudioAdjustmentSettings
 import com.moody.moodyvideoeditor.data.BeatsState
 import com.moody.moodyvideoeditor.data.ColorMatteDefaults
 import com.moody.moodyvideoeditor.data.ColorMatteMode
@@ -3411,6 +3412,55 @@ class EditorViewModel : ViewModel() {
     fun setClipAudioFxIntensity(clipId: String, intensity: Float) {
         val clamped = intensity.coerceIn(0f, 200f)
         updateClipDirect(clipId) { it.copy(audioFxIntensity = clamped) }
+    }
+
+    fun setClipAudioAdjustments(clipId: String, settings: AudioAdjustmentSettings) {
+        updateClipDirect(clipId) { it.copy(audioAdjustments = settings.clamped()) }
+    }
+
+    fun beginAudioSettingsEdit() = pushHistory()
+
+    fun finishAudioSettingsEdit() = updateHistoryFlags()
+
+    fun createAudioSettingsLayer(): EditorClip {
+        val s = _state.value
+        val startMs = s.currentPosMs.coerceAtLeast(0L)
+        val endMs = maxOf(
+            s.totalDurationMs,
+            s.clips.filter { it.isAudio && !it.isAudioEffectClip }
+                .maxOfOrNull { it.timelineEndMs } ?: 0L
+        )
+        val durationMs = (endMs - startMs).coerceAtLeast(500L)
+        val trackIdx = maxOf(
+            s.audioLayerCount,
+            (s.clips.filter { it.isAudio }.maxOfOrNull { it.trackIndex } ?: -1) + 1
+        )
+        val clip = EditorClip(
+            id = UUID.randomUUID().toString(),
+            uri = Uri.EMPTY,
+            name = "🎚️ Audio Settings",
+            type = "audiofx/plain",
+            sourceStartMs = 0L,
+            sourceEndMs = durationMs,
+            timelineStartMs = startMs,
+            trackIndex = trackIdx,
+            isAudio = true,
+            sourceTotalMs = Long.MAX_VALUE
+        )
+
+        pushHistory()
+        _state.update {
+            it.copy(
+                clips = it.clips + clip,
+                selectedClipId = clip.id,
+                selectedTrackIndex = trackIdx,
+                selectedIsAudio = true,
+                audioLayerCount = maxOf(it.audioLayerCount, trackIdx + 1),
+                multiSelectedIds = emptySet()
+            )
+        }
+        updateHistoryFlags()
+        return clip
     }
 
     fun setClipSoundFx(clipId: String, fx: String) {
