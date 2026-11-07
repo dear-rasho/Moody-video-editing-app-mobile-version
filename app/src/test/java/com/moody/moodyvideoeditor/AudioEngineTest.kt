@@ -91,6 +91,15 @@ class AudioEngineTest {
     }
 
     @Test
+    fun audioSettingsNoiseReductionProducesDenoiseFilter() {
+        val filters = AudioEngine.audioAdjustmentFilters(
+            AudioAdjustmentSettings(noiseReduction = 80f)
+        )
+
+        assertTrue(filters.any { it == "afftdn=nr=24.0000:nf=-35:tn=1:gs=5" })
+    }
+
+    @Test
     fun audioSettingsLayerProcessesLinkedVideoAudioAndKeepsReverbTail() {
         val linkedAudio = EditorClip(
             uri = Uri.EMPTY,

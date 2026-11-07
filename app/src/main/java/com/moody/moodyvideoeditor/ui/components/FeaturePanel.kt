@@ -2,17 +2,19 @@ package com.moody.moodyvideoeditor.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -24,7 +26,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.layout.height
 // Reusable container for all feature panels
 // Har panel isko wrap karega
 @Composable
@@ -54,18 +55,33 @@ fun FeaturePanel(
                 modifier = Modifier.size(24.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Filled.ArrowBack,
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Close",
                     tint = Color.White,
                     modifier = Modifier.size(16.dp)
                 )
             }
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFF202633)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = editorFeatureIcon(editorPanelIconKey(title)),
+                    contentDescription = null,
+                    tint = Color(0xFFB8C7E8),
+                    modifier = Modifier.size(13.dp)
+                )
+            }
             Text(
-                text = title,
+                text = title.replace(Regex("^[^\\p{L}\\p{N}]+\\s*"), ""),
                 color = Color.White,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f).padding(start = 5.dp),
+                maxLines = 1
             )
         }
 

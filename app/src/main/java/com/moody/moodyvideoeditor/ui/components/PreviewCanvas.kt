@@ -860,35 +860,37 @@ fun PreviewCanvas(
                                         latestGesturePositionMs.value >= it.timelineStartMs &&
                                         latestGesturePositionMs.value < it.timelineEndMs
                             }
-                            val textUnderPointer = activeGestureClips
-                                .asReversed()
-                                .filter { it.isTextClip }
-                                .filter { textClip ->
-                                    isClipVisibleAtCanvasPoint(
-                                        textClip,
-                                        down.position,
-                                        canvasWidth,
-                                        canvasHeight,
-                                        latestGesturePositionMs.value,
-                                        topVideoClip?.id
-                                    )
-                                }
+                            val visibleMatteTrackIndices by lazy {
+                                activeGestureClips
+                                    .asSequence()
+                                    .filter { it.isColorMatteClip }
+                                    .filter { matte ->
+                                        isClipVisibleAtCanvasPoint(
+                                            matte,
+                                            down.position,
+                                            canvasWidth,
+                                            canvasHeight,
+                                            latestGesturePositionMs.value,
+                                            topVideoClip?.id
+                                        )
+                                    }
+                                    .map { it.trackIndex }
+                                    .toList()
+                            }
+                            val textUnderPointer = activeGestureClips.asReversed()
                                 .firstOrNull { textClip ->
-                                    activeGestureClips
-                                        .filter {
-                                            it.isColorMatteClip &&
-                                                    it.trackIndex > textClip.trackIndex
-                                        }
-                                        .none { matte ->
+                                    textClip.isTextClip &&
                                             isClipVisibleAtCanvasPoint(
-                                                matte,
+                                                textClip,
                                                 down.position,
                                                 canvasWidth,
                                                 canvasHeight,
                                                 latestGesturePositionMs.value,
                                                 topVideoClip?.id
-                                            )
-                                        }
+                                            ) &&
+                                            visibleMatteTrackIndices.none {
+                                                it > textClip.trackIndex
+                                            }
                                 }
                             val currentSelectedClipId = latestSelectedClipId.value
                             val visibleTargetUnderPointer = if (textUnderPointer == null) {
@@ -909,17 +911,22 @@ fun PreviewCanvas(
                             if (target == null) {
                                 return@awaitEachGesture
                             }
+                            if (!target.isTextClip && target.id != currentSelectedClipId) {
+                                return@awaitEachGesture
+                            }
                             val canMoveOnCanvas = target.isTextClip ||
                                     target.isVisualClip || target.isColorMatteClip
                             if (!canMoveOnCanvas) {
-                                if (target.id != currentSelectedClipId) {
-                                    latestOnClipSelected.value(target.id)
-                                }
                                 return@awaitEachGesture
                             }
                             var latestDown = down
                             var canceledBeforeLongPress = false
-                            withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                            val holdDurationMillis = if (target.isTextClip) {
+                                600L
+                            } else {
+                                viewConfiguration.longPressTimeoutMillis
+                            }
+                            withTimeoutOrNull(holdDurationMillis) {
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
                                     val change = event.changes.firstOrNull {
@@ -943,9 +950,6 @@ fun PreviewCanvas(
                                 !canceledBeforeLongPress && it.pressed
                             }
                             if (longPress == null) {
-                                if (target.id != currentSelectedClipId) {
-                                    latestOnClipSelected.value(target.id)
-                                }
                                 return@awaitEachGesture
                             }
                             longPress.consume()
@@ -1094,26 +1098,46 @@ fun PreviewCanvas(
                         val videoLocalSec =
                             ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
                         val videoTransform2 = TransformApplier.resolveLive(clip, videoLocalSec)
-                        val videoAspect: Float = remember(clip.uri) {
-                            try {
+                        var videoAspect by remember(clip.uri) {
+                            mutableFloatStateOf(canvasW / canvasH)
+                        }
+                        LaunchedEffect(clip.uri, canvasW, canvasH) {
+                            val fallbackAspect = canvasW / canvasH
+                            videoAspect = withContext(Dispatchers.IO) {
                                 val retriever = MediaMetadataRetriever()
-                                retriever.setDataSource(context, clip.uri)
-                                val w = retriever.extractMetadata(
-                                    MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
-                                )?.toFloatOrNull() ?: 0f
-                                val h = retriever.extractMetadata(
-                                    MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
-                                )?.toFloatOrNull() ?: 0f
-                                val rot = retriever.extractMetadata(
-                                    MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION
-                                )?.toIntOrNull() ?: 0
-                                retriever.release()
-                                if (w > 0f && h > 0f) {
-                                    val raw = w / h
-                                    if (rot == 90 || rot == 270) 1f / raw else raw
-                                } else canvasW / canvasH
-                            } catch (_: Throwable) {
-                                canvasW / canvasH
+                                try {
+                                    retriever.setDataSource(context, clip.uri)
+                                    val width = retriever.extractMetadata(
+                                        MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
+                                    )?.toFloatOrNull() ?: 0f
+                                    val height = retriever.extractMetadata(
+                                        MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
+                                    )?.toFloatOrNull() ?: 0f
+                                    val rotation = retriever.extractMetadata(
+                                        MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION
+                                    )?.toIntOrNull() ?: 0
+                                    if (width > 0f && height > 0f) {
+                                        val rawAspect = width / height
+                                        if (rotation == 90 || rotation == 270) {
+                                            1f / rawAspect
+                                        } else {
+                                            rawAspect
+                                        }
+                                    } else {
+                                        fallbackAspect
+                                    }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (error: Exception) {
+                                    Log.w(
+                                        "PREVIEW",
+                                        "Unable to read video dimensions for ${clip.id}",
+                                        error
+                                    )
+                                    fallbackAspect
+                                } finally {
+                                    retriever.release()
+                                }
                             }
                         }
                         val videoBounds = fittedBoundsFractions(canvasW, canvasH, videoAspect)
@@ -1329,6 +1353,11 @@ fun PreviewCanvas(
                                     }
                                     .pointerInput(clip.id) {
                                         awaitEachGesture {
+                                            if (clip.id != latestSelectedClipId.value &&
+                                                clip.id !in latestMultiSelectedIds.value
+                                            ) {
+                                                return@awaitEachGesture
+                                            }
                                             val down = awaitFirstDown(requireUnconsumed = true)
                                             val longPress = awaitLongPressOrCancellation(down.id)
                                                 ?: return@awaitEachGesture
@@ -1336,11 +1365,6 @@ fun PreviewCanvas(
                                             hapticFeedback.performHapticFeedback(
                                                 HapticFeedbackType.LongPress
                                             )
-                                            if (clip.id != latestSelectedClipId.value &&
-                                                clip.id !in latestMultiSelectedIds.value
-                                            ) {
-                                                latestOnClipSelected.value(clip.id)
-                                            }
                                             latestOnGroupGestureStart.value()
                                             val baseX = videoTransform2.x
                                             val baseY = videoTransform2.y
@@ -1715,6 +1739,11 @@ fun PreviewCanvas(
                                     )
                                     .pointerInput(clip.id) {
                                         awaitEachGesture {
+                                            if (clip.id != latestSelectedClipId.value &&
+                                                clip.id !in latestMultiSelectedIds.value
+                                            ) {
+                                                return@awaitEachGesture
+                                            }
                                             val down = awaitFirstDown(requireUnconsumed = true)
                                             val longPress = awaitLongPressOrCancellation(down.id)
                                                 ?: return@awaitEachGesture
@@ -1722,11 +1751,6 @@ fun PreviewCanvas(
                                             hapticFeedback.performHapticFeedback(
                                                 HapticFeedbackType.LongPress
                                             )
-                                            if (clip.id != latestSelectedClipId.value &&
-                                                clip.id !in latestMultiSelectedIds.value
-                                            ) {
-                                                latestOnClipSelected.value(clip.id)
-                                            }
                                             latestOnGroupGestureStart.value()
                                             val baseX = imgTransform.x;
                                             val baseY = imgTransform.y
@@ -1791,9 +1815,6 @@ fun PreviewCanvas(
                                             }
                                             latestOnGroupGestureEnd.value()
                                         }
-                                    }
-                                    .pointerInput(clip.id, isMulti) {
-                                        detectTapGestures { if (!isMulti) onClipSelected(clip.id) }
                                     }
                             ) {
                                 val imageIntrinsicSize = processedImageBitmap?.let {
@@ -2039,6 +2060,9 @@ fun PreviewCanvas(
                                     )
                                     .pointerInput(clip.id, isSel, isMulti) {
                                         awaitEachGesture {
+                                            if (!isSel && !isMulti) {
+                                                return@awaitEachGesture
+                                            }
                                             val down = awaitFirstDown(requireUnconsumed = true)
                                             val mask = maskAtClipTime(clip, currentPosMs)
                                             val canvasWidth = size.width.toFloat()
@@ -2073,12 +2097,13 @@ fun PreviewCanvas(
                                                             topVideoClip?.id
                                                         )
                                                     }
-                                                onClipSelected(underlyingClip?.id ?: clip.id)
+                                                underlyingClip
+                                                    ?.takeIf { it.isTextClip }
+                                                    ?.let { onClipSelected(it.id) }
                                                 return@awaitEachGesture
                                             }
                                             val longPress = awaitLongPressOrCancellation(down.id)
                                             if (longPress == null) {
-                                                if (!isSel) onClipSelected(clip.id)
                                                 return@awaitEachGesture
                                             }
                                             longPress.consume()
@@ -2097,7 +2122,6 @@ fun PreviewCanvas(
                                             var lastDist = 0f;
                                             var lastAngle = 0f;
                                             var hasMulti = false
-                                            if (!isSel && !isMulti) onClipSelected(clip.id)
                                             var continueGesture = true
                                             while (continueGesture) {
                                                 val event = awaitPointerEvent()
@@ -2963,12 +2987,6 @@ private fun isClipVisibleAtCanvasPoint(
             localTimeSec,
             text.fontSize.toFloat()
         ).coerceIn(0f, 200f)
-        val sampledLetterSpacing = KeyframeStore.sample(
-            clip.keyframes,
-            "text.letterSpacing",
-            localTimeSec,
-            text.letterSpacing
-        ).coerceIn(-200f, 300f)
         val displayContent = when {
             !text.animation.equals("none", ignoreCase = true) ->
                 com.moody.moodyvideoeditor.utils.CaptionPresetLibrary.visibleText(
@@ -3042,25 +3060,6 @@ private fun isClipVisibleAtCanvasPoint(
             pivotY + (-screenX * kotlin.math.sin(rotation) +
                     screenY * kotlin.math.cos(rotation)).toFloat() / scaleY
         )
-        val letterSpacingPx = TextRenderContract.clampLetterSpacingPx(
-            displayContent,
-            fontSize,
-            typeface,
-            TextScaler.letterSpacing(
-                base = sampledLetterSpacing,
-                canvasWidthPx = referenceDimension
-            )
-        )
-        paint.letterSpacing = letterSpacingPx / fontSize.coerceAtLeast(1f)
-        val lineHeightPx = TextScaler.lineHeight(
-            TextRenderContract.scaledFontSize(
-                sampledFontSize,
-                width,
-                height
-            ),
-            text.lineHeight
-        )
-        val lineStep = maxOf(lineHeightPx, fontMetrics.descent - fontMetrics.ascent)
         insideContent =
             kotlin.math.abs(localPoint.x - pivotX) <= outerWidth / 2f &&
                     kotlin.math.abs(localPoint.y - pivotY) <= outerHeight / 2f
@@ -4292,7 +4291,31 @@ private fun InteractiveTextOverlay(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         if (down.isConsumed) return@awaitEachGesture
                         down.consume()
-                        val longPress = awaitLongPressOrCancellation(down.id)
+                        var latestDown = down
+                        var canceledBeforeHold = false
+                        withTimeoutOrNull(600L) {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                val change = event.changes.firstOrNull {
+                                    it.id == down.id
+                                }
+                                if (change == null || !change.pressed) {
+                                    canceledBeforeHold = true
+                                    break
+                                }
+                                latestDown = change
+                                val delta = change.position - down.position
+                                if (delta.x * delta.x + delta.y * delta.y >
+                                    viewConfiguration.touchSlop * viewConfiguration.touchSlop
+                                ) {
+                                    canceledBeforeHold = true
+                                    break
+                                }
+                            }
+                        }
+                        val longPress = latestDown.takeIf {
+                            !canceledBeforeHold && it.pressed
+                        }
                         if (longPress == null) {
                             if (!isMulti) onSelect()
                             return@awaitEachGesture
