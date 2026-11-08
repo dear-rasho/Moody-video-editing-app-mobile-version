@@ -30,11 +30,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -88,16 +83,7 @@ fun TransitionsPanel(
     var activeCategory by remember(current.key) {
         mutableStateOf(TransitionLibrary.find(current.key)?.category ?: "fade")
     }
-    val previewAnimation = rememberInfiniteTransition(label = "transition-previews")
-    val previewProgress by previewAnimation.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1100),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "transition-preview-progress"
-    )
+    val previewProgress = 0.5f
 
     FeaturePanel(
         title = "⇄ Transitions (${TransitionLibrary.PRESETS.size - 1})",

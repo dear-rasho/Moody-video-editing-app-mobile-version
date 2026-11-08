@@ -25,6 +25,9 @@ object ChromaKeyHelper {
         val maxDist = 441f
         val tolerance = (state.similarity / 100f) * maxDist
         val smooth = (state.smoothness / 100f) * maxDist
+        val toleranceSquared = tolerance * tolerance
+        val outerThreshold = tolerance + smooth
+        val outerThresholdSquared = outerThreshold * outerThreshold
 
         for (i in pixels.indices) {
             val c = pixels[i]
@@ -36,16 +39,17 @@ object ChromaKeyHelper {
             val b = Color.blue(c)
 
             // Calculate distance between pixel color and target color
-            val dist = kotlin.math.sqrt(
-                ((r - tR) * (r - tR) + (g - tG) * (g - tG) + (b - tB) * (b - tB)).toDouble()
-            ).toFloat()
-
-            if (dist < tolerance) {
+            val distanceSquared =
+                (r - tR) * (r - tR) +
+                        (g - tG) * (g - tG) +
+                        (b - tB) * (b - tB)
+            if (distanceSquared < toleranceSquared) {
                 // Pura match -> Remove (Transparent)
                 pixels[i] = Color.TRANSPARENT
-            } else if (dist < tolerance + smooth) {
+            } else if (smooth > 0f && distanceSquared < outerThresholdSquared) {
                 // Edge / Smooth area -> Fade out (spill)
-                val alphaFactor = (dist - tolerance) / smooth
+                val distance = kotlin.math.sqrt(distanceSquared.toDouble()).toFloat()
+                val alphaFactor = (distance - tolerance) / smooth
                 val newAlpha = (a * alphaFactor).toInt().coerceIn(0, 255)
                 pixels[i] = Color.argb(newAlpha, r, g, b)
             }

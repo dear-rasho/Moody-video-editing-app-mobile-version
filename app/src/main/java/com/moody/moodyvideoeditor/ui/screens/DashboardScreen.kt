@@ -23,9 +23,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,6 +49,9 @@ import com.moody.moodyvideoeditor.ui.home.CodeBaseShelf
 import com.moody.moodyvideoeditor.ui.home.RecentProjects
 import com.moody.moodyvideoeditor.ui.home.SavedTemplatesShelf
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun DashboardScreen(
@@ -58,10 +63,9 @@ fun DashboardScreen(
     onOpenFromSavedTemplate: (String) -> Unit
 ) {
     val context = LocalContext.current
-    var projects by remember { mutableStateOf(ProjectRepository.listProjects(context)) }
-    var savedTemplates by remember {
-        mutableStateOf(SavedTemplateRepository.listTemplates(context))
-    }
+    val coroutineScope = rememberCoroutineScope()
+    var projects by remember { mutableStateOf(emptyList<ProjectMeta>()) }
+    var savedTemplates by remember { mutableStateOf(emptyList<com.moody.moodyvideoeditor.data.SavedTemplateMeta>()) }
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
     var pendingDeleteTemplateId by remember { mutableStateOf<String?>(null) }
     var selectingProjects by remember { mutableStateOf(false) }
@@ -71,15 +75,29 @@ fun DashboardScreen(
     var confirmDeleteProjects by remember { mutableStateOf(false) }
     var confirmDeleteTemplates by remember { mutableStateOf(false) }
 
+    fun refreshLists() {
+        coroutineScope.launch {
+            val (loadedProjects, loadedTemplates) = withContext(Dispatchers.IO) {
+                ProjectRepository.listProjects(context) to
+                        SavedTemplateRepository.listTemplates(context)
+            }
+            projects = loadedProjects
+            savedTemplates = loadedTemplates
+            selectedProjectIds = selectedProjectIds intersect loadedProjects.map { it.id }.toSet()
+            selectedTemplateIds =
+                selectedTemplateIds intersect loadedTemplates.map { it.id }.toSet()
+        }
+    }
+
+    LaunchedEffect(context) {
+        refreshLists()
+    }
+
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(context, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                projects = ProjectRepository.listProjects(context)
-                savedTemplates = SavedTemplateRepository.listTemplates(context)
-                selectedProjectIds = selectedProjectIds intersect projects.map { it.id }.toSet()
-                selectedTemplateIds =
-                    selectedTemplateIds intersect savedTemplates.map { it.id }.toSet()
+                refreshLists()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -98,8 +116,16 @@ fun DashboardScreen(
             clipCount = 0,
             durationMs = 0L
         )
-        ProjectRepository.saveProject(context, meta, EditorState())
-        if (isCodeMode) onCodeEditor(id) else onNewProject(id)
+        coroutineScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                ProjectRepository.saveProject(context, meta, EditorState())
+            }
+            if (saved) {
+                if (isCodeMode) onCodeEditor(id) else onNewProject(id)
+            } else {
+                android.util.Log.e("DashboardScreen", "Failed to create project $id")
+            }
+        }
     }
 
 
@@ -286,11 +312,17 @@ fun DashboardScreen(
                         .background(Color(0xFFFF6B6B).copy(alpha = 0.2f))
                         .pointerInput(Unit) {
                             detectTapGestures {
-                                pendingDeleteId?.let { id ->
-                                    ProjectRepository.deleteProject(context, id)
-                                    projects = ProjectRepository.listProjects(context)
-                                }
+                                val id = pendingDeleteId
                                 pendingDeleteId = null
+                                id?.let { projectId ->
+                                    coroutineScope.launch {
+                                        val loadedProjects = withContext(Dispatchers.IO) {
+                                            ProjectRepository.deleteProject(context, projectId)
+                                            ProjectRepository.listProjects(context)
+                                        }
+                                        projects = loadedProjects
+                                    }
+                                }
                             }
                         }
                         .padding(horizontal = 16.dp),
@@ -344,11 +376,17 @@ fun DashboardScreen(
                         .background(Color(0xFFFF6B6B).copy(alpha = 0.2f))
                         .pointerInput(Unit) {
                             detectTapGestures {
-                                pendingDeleteTemplateId?.let { id ->
-                                    SavedTemplateRepository.delete(context, id)
-                                    savedTemplates = SavedTemplateRepository.listTemplates(context)
-                                }
+                                val id = pendingDeleteTemplateId
                                 pendingDeleteTemplateId = null
+                                id?.let { templateId ->
+                                    coroutineScope.launch {
+                                        val loadedTemplates = withContext(Dispatchers.IO) {
+                                            SavedTemplateRepository.delete(context, templateId)
+                                            SavedTemplateRepository.listTemplates(context)
+                                        }
+                                        savedTemplates = loadedTemplates
+                                    }
+                                }
                             }
                         }
                         .padding(horizontal = 16.dp),
@@ -399,11 +437,17 @@ fun DashboardScreen(
             },
             confirmButton = {
                 DialogAction("Delete", Color(0xFFFF6B6B)) {
-                    ProjectRepository.deleteProjects(context, selectedProjectIds)
-                    projects = ProjectRepository.listProjects(context)
+                    val idsToDelete = selectedProjectIds
                     selectedProjectIds = emptySet()
                     selectingProjects = false
                     confirmDeleteProjects = false
+                    coroutineScope.launch {
+                        val loadedProjects = withContext(Dispatchers.IO) {
+                            ProjectRepository.deleteProjects(context, idsToDelete)
+                            ProjectRepository.listProjects(context)
+                        }
+                        projects = loadedProjects
+                    }
                 }
             },
             dismissButton = {
@@ -434,11 +478,17 @@ fun DashboardScreen(
             },
             confirmButton = {
                 DialogAction("Delete", Color(0xFFFF6B6B)) {
-                    SavedTemplateRepository.deleteMany(context, selectedTemplateIds)
-                    savedTemplates = SavedTemplateRepository.listTemplates(context)
+                    val idsToDelete = selectedTemplateIds
                     selectedTemplateIds = emptySet()
                     selectingTemplates = false
                     confirmDeleteTemplates = false
+                    coroutineScope.launch {
+                        val loadedTemplates = withContext(Dispatchers.IO) {
+                            SavedTemplateRepository.deleteMany(context, idsToDelete)
+                            SavedTemplateRepository.listTemplates(context)
+                        }
+                        savedTemplates = loadedTemplates
+                    }
                 }
             },
             dismissButton = {

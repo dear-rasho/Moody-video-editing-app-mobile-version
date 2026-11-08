@@ -1,5 +1,6 @@
 package com.moody.moodyvideoeditor.ui.components
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -15,56 +17,64 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-data class Feature(val key: String, val label: String)
+data class Feature(val key: String, val label: String, val icon: String)
 
 val FEATURES = listOf(
-    Feature("spotlight", "Spotlight"),
-    Feature("layer_shadow", "Shadow"),
-    Feature("matte", "Matte"),
-    Feature("track_matte", "Track Matte"),
-    Feature("chromakey", "Chroma"),
-    Feature("trim", "Trim"),
-    Feature("speed", "Speed"),
-    Feature("text", "Text"),
-    Feature("blend", "Blend"),
-    Feature("opacity", "Opacity"),
-    Feature("captions", "Auto Cap"),
-    Feature("manual_captions", "Manual Cap"),
-    Feature("animations", "Animate"),
-    Feature("keyframe_easing", "Keyframe Ease"),
-    Feature("filters", "Filters"),
-    Feature("effects", "Effects"),
-    Feature("adjustments", "Adjust"),
-    Feature("wheel", "Wheels"),
-    Feature("overlays", "Overlays"),
-    Feature("transitions", "Transitions"),
-    Feature("mask", "Mask"),
-    Feature("transform", "Transform"),
-    Feature("crop", "Crop"),
-    Feature("volume", "Volume"),
-    Feature("audiofx", "Audio Settings"),
-    Feature("beats", "Beats"),
-    Feature("visualizer", "Visualizer"),
-    Feature("freeze", "Freeze"),
-    Feature("ratio", "Ratio"),
-    Feature("delete", "Delete"),
-    Feature("save_template", "Save Tpl"),
-    Feature("replace_media", "Replace"),
-    Feature("code", "Code"),
-    Feature("export", "Export")
+    Feature("spotlight", "Spotlight", "🔦"),
+    Feature("layer_shadow", "Shadow", "🌘"),
+    Feature("matte", "Matte", ""),
+    Feature("track_matte", "Track Matte", "🖼️"),
+    Feature("chromakey", "Chroma", "🟩"),
+    Feature("trim", "Trim", "✂️"),
+    Feature("speed", "Speed", "⏩"),
+    Feature("text", "Text", "📝"),
+    Feature("blend", "Blend", "◐"),
+    Feature("opacity", "Opacity", "◑"),
+    Feature("captions", "Auto Cap", "C"),
+    Feature("manual_captions", "Manual Cap", "✍️"),
+    Feature("animations", "Animate", "🎞️"),
+    Feature("keyframe_easing", "Keyframe Ease", "📈"),
+    Feature("filters", "Filters", "🎨"),
+    Feature("effects", "Effects", "✨"),
+    Feature("adjustments", "Adjust", "🎚️"),
+    Feature("wheel", "Wheels", "🎨"), // Icon text replaced by Canvas draw
+    Feature("overlays", "Overlays", "🎬"),
+    Feature("transitions", "Transitions", "⇄"),
+    Feature("mask", "Mask", "▣"),
+    Feature("transform", "Transform", "🔲"),
+    Feature("crop", "Crop", "📐"),
+    Feature("volume", "Volume", "🔊"),
+    Feature("audiofx", "Audio Settings", ""),
+    Feature("beats", "Beats", "🥁"),
+    Feature("visualizer", "Visualizer", "🎵"),
+
+    Feature("freeze", "Freeze", "❄️"),
+    Feature("ratio", "Ratio", "🖼️"),
+    Feature("delete", "Delete", "🗑"),
+    Feature("save_template", "Save Tpl", "💾"),
+    Feature("replace_media", "Replace", "🔄"),
+    Feature("code", "Code", "💻"),
+    Feature("export", "Export", "💾")
 )
 
 @Composable
@@ -111,19 +121,122 @@ private fun FeatureItem(feature: Feature, onClick: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(Color(0xFF202633)),
-            contentAlignment = Alignment.Center
-        ) {
+        if (feature.key == "captions") {
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(Color(0xFF294A78)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "C",
+                    color = Color(0xFFBFE4FF),
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        } else if (feature.key == "audiofx") {
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(Color(0xFF183D52)),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(modifier = Modifier.size(19.dp)) {
+                    val barWidth = size.width / 7f
+                    val heights = listOf(0.42f, 0.72f, 1f, 0.58f, 0.85f)
+                    heights.forEachIndexed { index, fraction ->
+                        val height = size.height * fraction
+                        drawRoundRect(
+                            color = Color(0xFF8DE4FF),
+                            topLeft = Offset(
+                                x = index * barWidth * 1.5f,
+                                y = (size.height - height) / 2f
+                            ),
+                            size = Size(barWidth, height),
+                            cornerRadius = CornerRadius(barWidth / 2f)
+                        )
+                    }
+                }
+            }
+        } else if (feature.key == "matte") {
+            Canvas(modifier = Modifier.size(22.dp)) {
+                val gap = 1.5.dp.toPx()
+                val half = (size.width - gap) / 2f
+                val cornerRadius = CornerRadius(3.dp.toPx())
+                val quadrants = listOf(
+                    Triple(Color(0xFFFF3B30), Offset.Zero, Size(half, half)),
+                    Triple(Color(0xFF34C759), Offset(half + gap, 0f), Size(half, half)),
+                    Triple(Color(0xFF007AFF), Offset(0f, half + gap), Size(half, half)),
+                    Triple(Color(0xFFFFCC00), Offset(half + gap, half + gap), Size(half, half))
+                )
+                quadrants.forEach { (color, topLeft, quadrantSize) ->
+                    drawRoundRect(
+                        color = color,
+                        topLeft = topLeft,
+                        size = quadrantSize,
+                        cornerRadius = cornerRadius
+                    )
+                }
+            }
+        } else if (feature.key == "mask") {
+            Canvas(modifier = Modifier.size(22.dp)) {
+                val stroke = Stroke(width = 1.8.dp.toPx())
+                drawRoundRect(
+                    color = Color.White,
+                    topLeft = Offset(1.dp.toPx(), 1.dp.toPx()),
+                    size = Size(20.dp.toPx(), 20.dp.toPx()),
+                    cornerRadius = CornerRadius(2.dp.toPx()),
+                    style = stroke
+                )
+                drawCircle(
+                    color = Color.White,
+                    radius = 6.dp.toPx(),
+                    center = Offset(14.dp.toPx(), 8.dp.toPx()),
+                    style = stroke
+                )
+                drawLine(
+                    color = Color.White,
+                    start = Offset(8.dp.toPx(), 14.dp.toPx()),
+                    end = Offset(17.dp.toPx(), 14.dp.toPx()),
+                    strokeWidth = stroke.width
+                )
+            }
+        } else if (feature.key == "wheel") {
+            Box(
+                modifier = Modifier.size(22.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val radius = size.minDimension / 2f
+                    val center = Offset(size.width / 2f, size.height / 2f)
+
+                    // Pure Hue Wheel (No white center, just like your image)
+                    val hueColors = listOf(
+                        Color.Red,
+                        Color.Yellow,
+                        Color.Green,
+                        Color.Cyan,
+                        Color.Blue,
+                        Color.Magenta,
+                        Color.Red
+                    )
+                    val sweep = Brush.sweepGradient(colors = hueColors, center = center)
+                    drawCircle(brush = sweep, radius = radius, center = center)
+                }
+            }
+        } else if (feature.key == "crop") {
             Icon(
-                imageVector = editorFeatureIcon(feature.key),
-                contentDescription = feature.label,
-                tint = Color(0xFFB8C7E8),
-                modifier = Modifier.size(20.dp)
+                imageVector = Icons.Filled.Crop,
+                contentDescription = "Crop",
+                tint = Color.White,
+                modifier = Modifier.size(22.dp)
             )
+        } else {
+            // Normal emojis for other features
+            Text(feature.icon, fontSize = 22.sp)
         }
         Spacer(modifier = Modifier.height(4.dp))
         Text(

@@ -13,9 +13,11 @@ import android.os.Build
 import androidx.compose.ui.graphics.asAndroidBitmap
 
 import android.util.Log
+import android.view.Surface
 import android.view.LayoutInflater
 import android.view.TextureView
 import android.view.View
+import android.view.PixelCopy
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -153,20 +155,26 @@ import com.moody.moodyvideoeditor.utils.VisualizerSpectrum
 import com.moody.moodyvideoeditor.utils.applyTransparentCrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import androidx.compose.runtime.withFrameNanos
 import java.util.UUID
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 import com.moody.moodyvideoeditor.utils.ChromaKeyHelper
+import com.moody.moodyvideoeditor.utils.applyChromaKey
 import com.moody.moodyvideoeditor.utils.AdjustmentDataMerger
 import com.moody.moodyvideoeditor.utils.AdjustmentNative
 import kotlinx.coroutines.delay
 private const val NATIVE_ADJUSTMENT_PREVIEW_MAX_DIMENSION = 480
 private const val NATIVE_ADJUSTMENT_PREVIEW_INTERVAL_MS = 83L
+private const val CHROMA_PREVIEW_MAX_DIMENSION = 480
+private const val TRANSITION_PREVIEW_MAX_DIMENSION = 960
+private const val IMAGE_PREVIEW_MAX_DIMENSION = 1440
 private const val HSL_SHARPEN_SHADER = """
 uniform shader input;
 uniform float2 uResolution;
@@ -255,6 +263,110 @@ half4 main(float2 fragCoord) {
 }
 """
 
+private suspend fun capturePreviewFrame(
+    textureView: TextureView,
+    maxDimension: Int
+): Bitmap? {
+    val surfaceTexture = textureView.surfaceTexture ?: return null
+    val sourceWidth = textureView.width
+    val sourceHeight = textureView.height
+    if (!textureView.isAvailable || sourceWidth <= 0 || sourceHeight <= 0) return null
+
+    val scale = minOf(1f, maxDimension.toFloat() / maxOf(sourceWidth, sourceHeight))
+    val bitmap = Bitmap.createBitmap(
+        (sourceWidth * scale).toInt().coerceAtLeast(1),
+        (sourceHeight * scale).toInt().coerceAtLeast(1),
+        Bitmap.Config.ARGB_8888
+    )
+    val surface = Surface(surfaceTexture)
+    return try {
+        val result = suspendCancellableCoroutine<Int> { continuation ->
+            try {
+                PixelCopy.request(
+                    surface,
+                    bitmap,
+                    { copyResult ->
+                        surface.release()
+                        if (continuation.isActive) {
+                            continuation.resume(copyResult)
+                        } else if (!bitmap.isRecycled) {
+                            bitmap.recycle()
+                        }
+                    },
+                    android.os.Handler(android.os.Looper.getMainLooper())
+                )
+            } catch (error: RuntimeException) {
+                surface.release()
+                continuation.resumeWithException(error)
+            }
+        }
+        if (result == PixelCopy.SUCCESS) bitmap else {
+            bitmap.recycle()
+            null
+        }
+    } catch (error: kotlinx.coroutines.CancellationException) {
+        throw error
+    } catch (error: Exception) {
+        if (!bitmap.isRecycled) bitmap.recycle()
+        Log.w("PreviewCanvas", "Could not capture preview frame", error)
+        null
+    }
+}
+
+private fun decodePreviewImage(context: android.content.Context, uri: Uri): Bitmap? {
+    val bounds = android.graphics.BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+    }
+    context.contentResolver.openInputStream(uri)?.use {
+        android.graphics.BitmapFactory.decodeStream(it, null, bounds)
+    }
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+    var sampleSize = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / sampleSize >
+        IMAGE_PREVIEW_MAX_DIMENSION
+    ) {
+        sampleSize *= 2
+    }
+    val options = android.graphics.BitmapFactory.Options().apply {
+        inSampleSize = sampleSize
+        inPreferredConfig = Bitmap.Config.ARGB_8888
+    }
+    return context.contentResolver.openInputStream(uri)?.use {
+        android.graphics.BitmapFactory.decodeStream(it, null, options)
+    }
+}
+
+private fun decodeTransitionVideoFrame(
+    retriever: MediaMetadataRetriever,
+    timeUs: Long,
+    sourceWidth: Int,
+    sourceHeight: Int,
+    maxDimension: Int = TRANSITION_PREVIEW_MAX_DIMENSION
+): Bitmap? {
+    val scale = minOf(
+        1f,
+        maxDimension.toFloat() / maxOf(sourceWidth, sourceHeight)
+    )
+    val targetWidth = (sourceWidth * scale).toInt().coerceAtLeast(1)
+    val targetHeight = (sourceHeight * scale).toInt().coerceAtLeast(1)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+        return retriever.getScaledFrameAtTime(
+            timeUs,
+            targetWidth,
+            targetHeight,
+            MediaMetadataRetriever.OPTION_CLOSEST
+        )
+    }
+
+    val frame = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+        ?: return null
+    if (frame.width <= targetWidth && frame.height <= targetHeight) return frame
+    return Bitmap.createScaledBitmap(frame, targetWidth, targetHeight, true).also {
+        if (it !== frame && !frame.isRecycled) frame.recycle()
+    }
+}
+
 private fun blendKeyToCompose(key: String): BlendMode = when (key.lowercase()) {
     "multiply" -> BlendMode.Multiply
     "screen" -> BlendMode.Screen
@@ -291,6 +403,17 @@ private fun scaleAfterGesture(baseScale: Float, zoomFactor: Float): Float =
     } else {
         (baseScale * zoomFactor).coerceIn(0f, 500f)
     }
+
+private data class TextGesturePreview(
+    val x: Float,
+    val y: Float,
+    val scale: Float,
+    val rotation: Float
+)
+
+private class TextGesturePreviewState {
+    var transform by mutableStateOf<TextGesturePreview?>(null)
+}
 
 private fun buildClipMatrix(
     clip: EditorClip,
@@ -406,8 +529,6 @@ fun PreviewCanvas(
     onGroupGestureStart: () -> Unit = {},
     onGroupGestureEnd: () -> Unit = {},
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit = { _, _, _, _, _ -> },
-    onTextPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
-    onTextTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onLayerPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onLayerTransformChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
     onSpotlightChanged: (String, SpotlightState) -> Unit = { _, _ -> },
@@ -460,6 +581,9 @@ fun PreviewCanvas(
     val latestOnGroupGesture = rememberUpdatedState(onGroupGesture)
     val latestOnClipSelected = rememberUpdatedState(onClipSelected)
     val latestOnEditText = rememberUpdatedState(onEditText)
+    val textGesturePreviewStates = remember {
+        mutableMapOf<String, TextGesturePreviewState>()
+    }
     var lastSelectedTextTapMs by remember { mutableLongStateOf(0L) }
 
     val topVideoClip = activeClips.filter { it.isVisualClip && !it.type.startsWith("image/") }
@@ -469,50 +593,6 @@ fun PreviewCanvas(
 
     val latestPreviewPositionMs by rememberUpdatedState(currentPosMs)
 
-    val transitionBitmapCache = remember { mutableMapOf<String, Bitmap>() }
-
-    LaunchedEffect(clips.map { it.id + "_" + (it.transition?.key ?: "none") }) {
-        withContext(Dispatchers.IO) {
-            clips.forEach { rightClip ->
-                if (rightClip.transition?.isActive == true) {
-                    val outgoing = clips.filter {
-                        it.isVisualClip && it.id != rightClip.id &&
-                                it.trackIndex == rightClip.trackIndex &&
-                                it.timelineEndMs <= rightClip.timelineStartMs + 50L
-                    }.maxByOrNull { it.timelineEndMs }
-
-                    if (outgoing != null && !transitionBitmapCache.containsKey(outgoing.id)) {
-                        val bmp = try {
-                            if (outgoing.type.startsWith("image/")) {
-                                context.contentResolver.openInputStream(outgoing.uri)
-                                    ?.use { stream ->
-                                        android.graphics.BitmapFactory.decodeStream(stream)
-                                    }
-                            } else {
-                                val retriever = android.media.MediaMetadataRetriever()
-                                retriever.setDataSource(context, outgoing.uri)
-                                val timeUs = (outgoing.sourceEndMs - 33).coerceAtLeast(0L) * 1000L
-                                val b = retriever.getFrameAtTime(
-                                    timeUs,
-                                    android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC
-                                )
-                                retriever.release()
-                                b
-                            }
-                        } catch (e: Exception) {
-                            null
-                        }
-
-                        if (bmp != null) {
-                            withContext(Dispatchers.Main) {
-                                transitionBitmapCache[outgoing.id] = bmp
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
     var outgoingBitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(
         outgoingClip?.id,
@@ -528,8 +608,7 @@ fun PreviewCanvas(
         if (oc.type.startsWith("image/")) {
             val bitmap = withContext(Dispatchers.IO) {
                 try {
-                    context.contentResolver.openInputStream(oc.uri)
-                        ?.use { stream -> android.graphics.BitmapFactory.decodeStream(stream) }
+                    decodePreviewImage(context, oc.uri)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -543,8 +622,15 @@ fun PreviewCanvas(
 
         val retriever = MediaMetadataRetriever()
         try {
-            withContext(Dispatchers.IO) {
+            val sourceSize = withContext(Dispatchers.IO) {
                 retriever.setDataSource(context, oc.uri)
+                val width = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
+                )?.toIntOrNull() ?: TRANSITION_PREVIEW_MAX_DIMENSION
+                val height = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
+                )?.toIntOrNull() ?: TRANSITION_PREVIEW_MAX_DIMENSION
+                width.coerceAtLeast(1) to height.coerceAtLeast(1)
             }
             var lastFrameTimeMs = Long.MIN_VALUE
             while (true) {
@@ -563,14 +649,23 @@ fun PreviewCanvas(
 
                 if (frameTimeMs != lastFrameTimeMs) {
                     val bitmap = withContext(Dispatchers.IO) {
-                        retriever.getFrameAtTime(
+                        decodeTransitionVideoFrame(
+                            retriever,
                             frameTimeMs * 1000L,
-                            MediaMetadataRetriever.OPTION_CLOSEST
+                            sourceSize.first,
+                            sourceSize.second
                         )
                     }
                     if (bitmap != null) {
-                        outgoingBitmap?.takeIf { !it.isRecycled }?.recycle()
+                        val previousBitmap = outgoingBitmap
                         outgoingBitmap = bitmap
+                        if (previousBitmap != null &&
+                            previousBitmap !== bitmap &&
+                            !previousBitmap.isRecycled
+                        ) {
+                            withFrameNanos { }
+                            previousBitmap.recycle()
+                        }
                     } else {
                         Log.w("TRANSITION", "No outgoing video frame at $frameTimeMs ms")
                     }
@@ -583,15 +678,15 @@ fun PreviewCanvas(
         } catch (e: Exception) {
             Log.w("TRANSITION", "Could not render outgoing transition frames", e)
         } finally {
-            retriever.release()
+            withContext(NonCancellable + Dispatchers.IO) {
+                retriever.release()
+            }
         }
     }
 
     DisposableEffect(Unit) {
         onDispose {
             outgoingBitmap?.takeIf { !it.isRecycled }?.recycle()
-            transitionBitmapCache.values.forEach { if (!it.isRecycled) it.recycle() }
-            transitionBitmapCache.clear()
         }
     }
 
@@ -860,37 +955,35 @@ fun PreviewCanvas(
                                         latestGesturePositionMs.value >= it.timelineStartMs &&
                                         latestGesturePositionMs.value < it.timelineEndMs
                             }
-                            val visibleMatteTrackIndices by lazy {
-                                activeGestureClips
-                                    .asSequence()
-                                    .filter { it.isColorMatteClip }
-                                    .filter { matte ->
-                                        isClipVisibleAtCanvasPoint(
-                                            matte,
-                                            down.position,
-                                            canvasWidth,
-                                            canvasHeight,
-                                            latestGesturePositionMs.value,
-                                            topVideoClip?.id
-                                        )
-                                    }
-                                    .map { it.trackIndex }
-                                    .toList()
-                            }
-                            val textUnderPointer = activeGestureClips.asReversed()
+                            val textUnderPointer = activeGestureClips
+                                .asReversed()
+                                .filter { it.isTextClip }
+                                .filter { textClip ->
+                                    isClipVisibleAtCanvasPoint(
+                                        textClip,
+                                        down.position,
+                                        canvasWidth,
+                                        canvasHeight,
+                                        latestGesturePositionMs.value,
+                                        topVideoClip?.id
+                                    )
+                                }
                                 .firstOrNull { textClip ->
-                                    textClip.isTextClip &&
+                                    activeGestureClips
+                                        .filter {
+                                            it.isColorMatteClip &&
+                                                    it.trackIndex > textClip.trackIndex
+                                        }
+                                        .none { matte ->
                                             isClipVisibleAtCanvasPoint(
-                                                textClip,
+                                                matte,
                                                 down.position,
                                                 canvasWidth,
                                                 canvasHeight,
                                                 latestGesturePositionMs.value,
                                                 topVideoClip?.id
-                                            ) &&
-                                            visibleMatteTrackIndices.none {
-                                                it > textClip.trackIndex
-                                            }
+                                            )
+                                        }
                                 }
                             val currentSelectedClipId = latestSelectedClipId.value
                             val visibleTargetUnderPointer = if (textUnderPointer == null) {
@@ -911,7 +1004,9 @@ fun PreviewCanvas(
                             if (target == null) {
                                 return@awaitEachGesture
                             }
-                            if (!target.isTextClip && target.id != currentSelectedClipId) {
+                            val isTargetSelected = target.id == currentSelectedClipId ||
+                                    target.id in latestMultiSelectedIds.value
+                            if (!target.isTextClip && !isTargetSelected) {
                                 return@awaitEachGesture
                             }
                             val canMoveOnCanvas = target.isTextClip ||
@@ -919,41 +1014,48 @@ fun PreviewCanvas(
                             if (!canMoveOnCanvas) {
                                 return@awaitEachGesture
                             }
-                            var latestDown = down
-                            var canceledBeforeLongPress = false
-                            val holdDurationMillis = if (target.isTextClip) {
-                                600L
+                            val longPress = if (target.isTextClip) {
+                                down
                             } else {
-                                viewConfiguration.longPressTimeoutMillis
-                            }
-                            withTimeoutOrNull(holdDurationMillis) {
-                                while (true) {
-                                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                                    val change = event.changes.firstOrNull {
-                                        it.id == down.id
-                                    }
-                                    if (change == null || !change.pressed) {
-                                        canceledBeforeLongPress = true
-                                        break
-                                    }
-                                    latestDown = change
-                                    val delta = change.position - down.position
-                                    if (delta.x * delta.x + delta.y * delta.y >
-                                        viewConfiguration.touchSlop * viewConfiguration.touchSlop
-                                    ) {
-                                        canceledBeforeLongPress = true
-                                        break
+                                var latestDown = down
+                                var canceledBeforeLongPress = false
+                                withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        val change = event.changes.firstOrNull {
+                                            it.id == down.id
+                                        }
+                                        if (change == null || !change.pressed) {
+                                            canceledBeforeLongPress = true
+                                            break
+                                        }
+                                        latestDown = change
+                                        val delta = change.position - down.position
+                                        if (delta.x * delta.x + delta.y * delta.y >
+                                            viewConfiguration.touchSlop *
+                                            viewConfiguration.touchSlop
+                                        ) {
+                                            canceledBeforeLongPress = true
+                                            break
+                                        }
                                     }
                                 }
-                            }
-                            val longPress = latestDown.takeIf {
-                                !canceledBeforeLongPress && it.pressed
+                                latestDown.takeIf {
+                                    !canceledBeforeLongPress && it.pressed
+                                }
                             }
                             if (longPress == null) {
+                                if (target.isTextClip &&
+                                    target.id != currentSelectedClipId
+                                ) {
+                                    latestOnClipSelected.value(target.id)
+                                }
                                 return@awaitEachGesture
                             }
                             longPress.consume()
-                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (!target.isTextClip) {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                            }
 
                             val localTimeSec = KeyframeStore.clipLocalTimeSeconds(
                                 latestGesturePositionMs.value,
@@ -969,9 +1071,17 @@ fun PreviewCanvas(
                             var lastAngle = 0f
                             var hadMultiplePointers = false
                             var moved = false
+                            var finalTransform = TextGesturePreview(
+                                x = base.x,
+                                y = base.y,
+                                scale = base.scale,
+                                rotation = base.rotation
+                            )
                             var continueGesture = true
                             down.consume()
-                            if (target.id != currentSelectedClipId) {
+                            if (target.isTextClip &&
+                                target.id != currentSelectedClipId
+                            ) {
                                 latestOnClipSelected.value(target.id)
                             }
                             latestOnGroupGestureStart.value()
@@ -1011,16 +1121,47 @@ fun PreviewCanvas(
                                     }
 
                                     if (moved) {
-                                        latestOnGroupGesture.value(
-                                            target.id,
-                                            (base.x + panX / canvasWidth * 100f).coerceIn(-100f, 200f),
-                                            (base.y + panY / canvasHeight * 100f).coerceIn(-100f, 200f),
-                                            scaleAfterGesture(base.scale, zoom),
-                                            base.rotation + rotation
+                                        finalTransform = TextGesturePreview(
+                                            x = (base.x + panX / canvasWidth * 100f)
+                                                .coerceIn(-100f, 200f),
+                                            y = (base.y + panY / canvasHeight * 100f)
+                                                .coerceIn(-100f, 200f),
+                                            scale = scaleAfterGesture(base.scale, zoom).let {
+                                                if (target.isTextClip) it.coerceIn(10f, 500f)
+                                                else it
+                                            },
+                                            rotation = base.rotation + rotation
                                         )
+                                        if (target.isTextClip) {
+                                            textGesturePreviewStates
+                                                .getOrPut(target.id) {
+                                                    TextGesturePreviewState()
+                                                }
+                                                .transform = finalTransform
+                                        } else {
+                                            latestOnGroupGesture.value(
+                                                target.id,
+                                                finalTransform.x,
+                                                finalTransform.y,
+                                                finalTransform.scale,
+                                                finalTransform.rotation
+                                            )
+                                        }
                                     }
                                 }
+                                if (target.isTextClip && moved) {
+                                    latestOnGroupGesture.value(
+                                        target.id,
+                                        finalTransform.x,
+                                        finalTransform.y,
+                                        finalTransform.scale,
+                                        finalTransform.rotation
+                                    )
+                                }
                             } finally {
+                                if (target.isTextClip) {
+                                    textGesturePreviewStates[target.id]?.transform = null
+                                }
                                 latestOnGroupGestureEnd.value()
                             }
 
@@ -1044,8 +1185,7 @@ fun PreviewCanvas(
                         clip.keyframes, clip.layerOpacity, clipLocalTimeSec
                     ) / 100f
                     if (activeTransitionClip != null && clip.id == outgoingClip?.id) {
-                        val transitionBitmap =
-                            outgoingBitmap ?: transitionBitmapCache[clip.id]
+                        val transitionBitmap = outgoingBitmap
                         if (transitionBitmap != null && !transitionBitmap.isRecycled) {
                             val transitionState = activeTransitionClip.transition!!
                             val progress =
@@ -1080,6 +1220,11 @@ fun PreviewCanvas(
                                 videoPixelAdjustment
                             ) ||
                                     ImageAdjustmentProcessor.hasNoiseOrVignette(videoPixelAdjustment)
+                        val videoChromaKeyModifier = remember(clip.chromaKey) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                Modifier.applyChromaKey(clip.chromaKey)
+                            } else Modifier
+                        }
                         var videoTextureView by remember(clip.id) {
                             mutableStateOf<TextureView?>(null)
                         }
@@ -1205,84 +1350,63 @@ fun PreviewCanvas(
                                 return@LaunchedEffect
                             }
                             var lastPausedAdjustmentVersion: Int? = null
-                            var reusableFrame: Bitmap? = null
-                            try {
-                                while (true) {
-                                    val adjustment = latestVideoPixelAdjustment.value
-                                    val colorMatrix = latestVideoColorMatrix.value
-                                    val adjustmentVersion =
-                                        31 * adjustment.hashCode() +
-                                                (colorMatrix?.array?.contentHashCode() ?: 0)
-                                    val texture = videoTextureView
-                                    if ((isPlaying ||
-                                                adjustmentVersion != lastPausedAdjustmentVersion) &&
-                                        texture != null && texture.isAvailable &&
-                                        texture.width > 0 && texture.height > 0
-                                    ) {
-                                        try {
-                                            val scale = minOf(
-                                                1f,
-                                                NATIVE_ADJUSTMENT_PREVIEW_MAX_DIMENSION.toFloat() /
-                                                        maxOf(texture.width, texture.height)
-                                            )
-                                            val frameWidth = (texture.width * scale)
-                                                .toInt().coerceAtLeast(1)
-                                            val frameHeight = (texture.height * scale)
-                                                .toInt().coerceAtLeast(1)
-                                            val reusable = reusableFrame?.takeIf {
-                                                !it.isRecycled &&
-                                                        it.width == frameWidth &&
-                                                        it.height == frameHeight
-                                            }
-                                            reusableFrame = null
-                                            val frame = if (reusable == null) {
-                                                texture.getBitmap(frameWidth, frameHeight)
-                                            } else {
-                                                texture.getBitmap(reusable) ?: reusable
-                                            }
-                                            if (frame != null) {
-                                                val processed = withContext(Dispatchers.Default) {
-                                                    check(
-                                                        AdjustmentNative.process(
-                                                            frame,
-                                                            adjustment,
-                                                            colorMatrix
-                                                        )
-                                                    ) {
-                                                        "Native adjustment rejected video preview frame"
-                                                    }
-                                                    frame
-                                                }
-                                                if (processed !== frame && !frame.isRecycled) {
-                                                    frame.recycle()
-                                                }
-                                                val previousFrame = cpuAdjustedVideoFrame
-                                                cpuAdjustedVideoFrame = processed
-                                                lastPausedAdjustmentVersion = adjustmentVersion
-                                                if (previousFrame != null &&
-                                                    previousFrame !== processed &&
-                                                    !previousFrame.isRecycled
+                            while (true) {
+                                val adjustment = latestVideoPixelAdjustment.value
+                                val colorMatrix = latestVideoColorMatrix.value
+                                val adjustmentVersion =
+                                    31 * adjustment.hashCode() +
+                                            (colorMatrix?.array?.contentHashCode() ?: 0)
+                                val texture = videoTextureView
+                                if ((isPlaying ||
+                                            adjustmentVersion != lastPausedAdjustmentVersion) &&
+                                    texture != null && texture.isAvailable &&
+                                    texture.width > 0 && texture.height > 0
+                                ) {
+                                    var capturedFrame: Bitmap? = null
+                                    try {
+                                        val frame = capturePreviewFrame(
+                                            texture,
+                                            NATIVE_ADJUSTMENT_PREVIEW_MAX_DIMENSION
+                                        )
+                                        capturedFrame = frame
+                                        if (frame != null) {
+                                            val processed = withContext(Dispatchers.Default) {
+                                                check(
+                                                    AdjustmentNative.process(
+                                                        frame,
+                                                        adjustment,
+                                                        colorMatrix
+                                                    )
                                                 ) {
-                                                    withFrameNanos { }
-                                                    reusableFrame = previousFrame
+                                                    "Native adjustment rejected video preview frame"
                                                 }
-                                            } else if (reusable != null && !reusable.isRecycled) {
-                                                reusableFrame = reusable
+                                                frame
                                             }
-                                        } catch (error: CancellationException) {
-                                            throw error
-                                        } catch (error: Exception) {
-                                            android.util.Log.w(
-                                                "PreviewCanvas",
-                                                "Could not process video adjustment frame",
-                                                error
-                                            )
+                                            val previousFrame = cpuAdjustedVideoFrame
+                                            cpuAdjustedVideoFrame = processed
+                                            capturedFrame = null
+                                            lastPausedAdjustmentVersion = adjustmentVersion
+                                            if (previousFrame != null &&
+                                                previousFrame !== processed &&
+                                                !previousFrame.isRecycled
+                                            ) {
+                                                withFrameNanos { }
+                                                previousFrame.recycle()
+                                            }
                                         }
+                                    } catch (error: CancellationException) {
+                                        throw error
+                                    } catch (error: Exception) {
+                                        android.util.Log.w(
+                                            "PreviewCanvas",
+                                            "Could not process video adjustment frame",
+                                            error
+                                        )
+                                    } finally {
+                                        capturedFrame?.takeIf { !it.isRecycled }?.recycle()
                                     }
-                                    delay(NATIVE_ADJUSTMENT_PREVIEW_INTERVAL_MS)
                                 }
-                            } finally {
-                                reusableFrame?.takeIf { !it.isRecycled }?.recycle()
+                                delay(NATIVE_ADJUSTMENT_PREVIEW_INTERVAL_MS)
                             }
                         }
                         MaskedClipContent(mask = maskAtClipTime(clip, currentPosMs)) {
@@ -1447,7 +1571,9 @@ fun PreviewCanvas(
                                         )
                                 ) {
                                     // 🟩 VIDEO CHROMA KEY LIVE PREVIEW
-                                    if (clip.chromaKey.isActive) {
+                                    if (clip.chromaKey.isActive &&
+                                        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                                    ) {
                                         var chromaProcessedBmp by remember(clip.id) { mutableStateOf<Bitmap?>(null) }
                                         var textureViewRef by remember(clip.id) { mutableStateOf<TextureView?>(null) }
 
@@ -1462,21 +1588,45 @@ fun PreviewCanvas(
                                             while (isPlaying || pausedCaptureAttempts < 20) {
                                                 val tv = textureViewRef
                                                 if (tv != null && tv.isAvailable && tv.width > 0) {
+                                                    var capturedFrame: Bitmap? = null
                                                     try {
-                                                        val frame = tv.bitmap
+                                                        val frame = capturePreviewFrame(
+                                                            tv,
+                                                            CHROMA_PREVIEW_MAX_DIMENSION
+                                                        )
+                                                        capturedFrame = frame
                                                         if (frame != null) {
-                                                            chromaProcessedBmp =
+                                                            val keyedFrame = withContext(Dispatchers.Default) {
                                                                 ChromaKeyHelper.applyChromaKey(
                                                                     frame,
                                                                     clip.chromaKey
                                                                 )
+                                                            }
+                                                            if (keyedFrame !== frame) {
+                                                                frame.recycle()
+                                                            }
+                                                            capturedFrame = null
+                                                            val previousFrame = chromaProcessedBmp
+                                                            chromaProcessedBmp = keyedFrame
+                                                            if (previousFrame != null &&
+                                                                previousFrame !== keyedFrame &&
+                                                                !previousFrame.isRecycled
+                                                            ) {
+                                                                withFrameNanos { }
+                                                                previousFrame.recycle()
+                                                            }
                                                         }
+                                                    } catch (cancelled: CancellationException) {
+                                                        throw cancelled
                                                     } catch (e: Exception) {
                                                         android.util.Log.w(
                                                             "ChromaKeyPreview",
                                                             "Failed to process video frame",
                                                             e
                                                         )
+                                                    } finally {
+                                                        capturedFrame?.takeIf { !it.isRecycled }
+                                                            ?.recycle()
                                                     }
                                                 }
 
@@ -1485,6 +1635,12 @@ fun PreviewCanvas(
                                                     pausedCaptureAttempts++
                                                 }
                                                 delay(100)
+                                            }
+                                        }
+                                        DisposableEffect(clip.id) {
+                                            onDispose {
+                                                chromaProcessedBmp?.takeIf { !it.isRecycled }
+                                                    ?.recycle()
                                             }
                                         }
 
@@ -1514,6 +1670,7 @@ fun PreviewCanvas(
                                                 contentDescription = null,
                                                 contentScale = ContentScale.Fit,
                                                 modifier = Modifier.fillMaxSize()
+                                                    .then(videoChromaKeyModifier)
                                             )
                                         }
 
@@ -1632,44 +1789,102 @@ fun PreviewCanvas(
                         val needsCpuAdj =
                             ImageAdjustmentProcessor.hasSharpenOrColorChannels(adjForImage) ||
                                     ImageAdjustmentProcessor.hasNoiseOrVignette(adjForImage)
+                        val imageChromaKeyModifier = remember(clip.chromaKey) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                Modifier.applyChromaKey(clip.chromaKey)
+                            } else Modifier
+                        }
                         var loadedBitmap by remember(clip.uri) {
                             mutableStateOf<android.graphics.Bitmap?>(
                                 null
                             )
                         }
                         var processedImageBitmap by remember(clip.uri) {
-                            mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(
-                                null
-                            )
+                            mutableStateOf<Bitmap?>(null)
+                        }
+                        var chromaProcessedBitmap by remember(clip.uri) {
+                            mutableStateOf<Bitmap?>(null)
                         }
 
                         LaunchedEffect(clip.uri) {
                             loadedBitmap = withContext(Dispatchers.IO) {
                                 try {
-                                    context.contentResolver.openInputStream(clip.uri)
-                                        ?.use { android.graphics.BitmapFactory.decodeStream(it) }
-                                } catch (_: Throwable) {
+                                    decodePreviewImage(context, clip.uri)
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (error: Exception) {
+                                    Log.w("PreviewCanvas", "Could not decode image ${clip.id}", error)
                                     null
                                 }
                             }
                         }
                         LaunchedEffect(loadedBitmap, adjForImage, clip.adjustments, needsCpuAdj) {
                             val src = loadedBitmap ?: return@LaunchedEffect
+                            val previous = processedImageBitmap
+                            var nextBitmap: Bitmap? = null
                             if (!needsCpuAdj) {
-                                processedImageBitmap = src.asImageBitmap(); return@LaunchedEffect
+                                nextBitmap = src
+                            } else {
+                                kotlinx.coroutines.delay(70)
+                                try {
+                                    nextBitmap = withContext(Dispatchers.Default) {
+                                        ImageAdjustmentProcessor.process(
+                                            src,
+                                            adjForImage,
+                                            adjForImage
+                                        )
+                                    }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (error: Exception) {
+                                    Log.e(
+                                        "PreviewCanvas",
+                                        "Could not process image adjustments for ${clip.id}",
+                                        error
+                                    )
+                                    nextBitmap = src
+                                }
                             }
-                            kotlinx.coroutines.delay(70)
-                            processedImageBitmap = withContext(Dispatchers.IO) {
-                                ImageAdjustmentProcessor.process(
-                                    src,
-                                    adjForImage,
-                                    adjForImage
-                                ).asImageBitmap()
+                            processedImageBitmap = nextBitmap
+                            if (previous != null && previous !== src &&
+                                previous !== nextBitmap && !previous.isRecycled
+                            ) {
+                                withContext(NonCancellable) { withFrameNanos { } }
+                                previous.recycle()
+                            }
+                        }
+                        LaunchedEffect(processedImageBitmap, clip.chromaKey) {
+                            val previous = chromaProcessedBitmap
+                            chromaProcessedBitmap = null
+                            if (previous != null && !previous.isRecycled) {
+                                withFrameNanos { }
+                                previous.recycle()
+                            }
+                            val source = processedImageBitmap
+                                ?: return@LaunchedEffect
+                            if (!clip.chromaKey.isActive ||
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                            ) {
+                                return@LaunchedEffect
+                            }
+                            var result: Bitmap? = null
+                            try {
+                                result = withContext(Dispatchers.Default) {
+                                    ChromaKeyHelper.applyChromaKey(source, clip.chromaKey)
+                                }
+                                chromaProcessedBitmap = result
+                                result = null
+                            } finally {
+                                result?.takeIf { it !== source && !it.isRecycled }?.recycle()
                             }
                         }
                         DisposableEffect(clip.uri) {
                             onDispose {
                                 loadedBitmap?.takeIf { !it.isRecycled }?.recycle()
+                                processedImageBitmap?.takeIf {
+                                    it !== loadedBitmap && !it.isRecycled
+                                }?.recycle()
+                                chromaProcessedBitmap?.takeIf { !it.isRecycled }?.recycle()
                             }
                         }
 
@@ -1816,6 +2031,11 @@ fun PreviewCanvas(
                                             latestOnGroupGestureEnd.value()
                                         }
                                     }
+                                    .pointerInput(clip.id, isSelected, isMulti) {
+                                        detectTapGestures {
+                                            if (isSelected && !isMulti) onClipSelected(clip.id)
+                                        }
+                                    }
                             ) {
                                 val imageIntrinsicSize = processedImageBitmap?.let {
                                     androidx.compose.ui.geometry.Size(
@@ -1841,12 +2061,8 @@ fun PreviewCanvas(
                                 val useExactImageWheels =
                                     useExactImageColorWheels && (imageWheelStates.isEmpty() || imageWheelNative != null)
                                 // 🟩 CHROMA KEY HELPER APPLY KARO
-                                var finalImageToRender = processedImageBitmap
-                                if (clip.chromaKey.isActive && processedImageBitmap != null) {
-                                    val bmp = processedImageBitmap!!.asAndroidBitmap()
-                                    val keyedBmp = ChromaKeyHelper.applyChromaKey(bmp, clip.chromaKey)
-                                    finalImageToRender = keyedBmp.asImageBitmap()
-                                }
+                                val finalImageToRender = chromaProcessedBitmap?.asImageBitmap()
+                                    ?: processedImageBitmap?.asImageBitmap()
 
                                 val imgColorFilter = remember(
                                     clip.filters,
@@ -1896,9 +2112,13 @@ fun PreviewCanvas(
                                             contentDescription = null,
                                             contentScale = ContentScale.Fit,
                                             colorFilter = imgColorFilter,
-                                            modifier = Modifier.fillMaxSize().graphicsLayer {
-                                                renderEffect = imageWheelNative?.asComposeRenderEffect()
-                                            }
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .then(imageChromaKeyModifier)
+                                                .graphicsLayer {
+                                                    renderEffect =
+                                                        imageWheelNative?.asComposeRenderEffect()
+                                                }
                                         )
                                     } else {
                                         val imageRequest = remember(clip.uri) {
@@ -2060,9 +2280,6 @@ fun PreviewCanvas(
                                     )
                                     .pointerInput(clip.id, isSel, isMulti) {
                                         awaitEachGesture {
-                                            if (!isSel && !isMulti) {
-                                                return@awaitEachGesture
-                                            }
                                             val down = awaitFirstDown(requireUnconsumed = true)
                                             val mask = maskAtClipTime(clip, currentPosMs)
                                             val canvasWidth = size.width.toFloat()
@@ -2100,6 +2317,9 @@ fun PreviewCanvas(
                                                 underlyingClip
                                                     ?.takeIf { it.isTextClip }
                                                     ?.let { onClipSelected(it.id) }
+                                                return@awaitEachGesture
+                                            }
+                                            if (!isSel && !isMulti) {
                                                 return@awaitEachGesture
                                             }
                                             val longPress = awaitLongPressOrCancellation(down.id)
@@ -2279,25 +2499,16 @@ fun PreviewCanvas(
                                     currentPosMs = currentPosMs,
                                     isSelected = clip.id == selectedClipId,
                                     isMulti = clip.id in multiSelectedIds,
+                                    gesturePreviewState = textGesturePreviewStates.getOrPut(
+                                        clip.id
+                                    ) {
+                                        TextGesturePreviewState()
+                                    },
                                     onSelect = { onClipSelected(clip.id) },
                                     onEditText = { onEditText(clip.id) },
                                     onGroupGestureStart = onGroupGestureStart,
                                     onGroupGestureEnd = onGroupGestureEnd,
                                     onGroupGesture = onGroupGesture,
-                                    onPositionChanged = { x, y ->
-                                        onTextPositionChanged(
-                                            clip.id,
-                                            x,
-                                            y
-                                        )
-                                    },
-                                    onTransformChanged = { s, r ->
-                                        onTextTransformChanged(
-                                            clip.id,
-                                            s,
-                                            r
-                                        )
-                                    },
                                     onDeleteLayer = { onDeleteLayer(clip.id) },
                                 )
                             }
@@ -2644,9 +2855,9 @@ fun PreviewCanvas(
                     }
                 }
                 if (adj.noise > 0f) {
-                    val intensity = (adj.noise / 100f).coerceIn(0f, 1f);
-                    val frameSeed = (currentPosMs / 100L).toInt()
-                    val noiseTile = remember(intensity, frameSeed) {
+                    val intensity = (adj.noise / 100f).coerceIn(0f, 1f)
+                    val noiseTile = remember(intensity) {
+                        val frameSeed = (intensity * 1000f).toInt()
                         val tileSize = 64
                         val pixels = IntArray(tileSize * tileSize)
                         fun hashPixel(x: Int, y: Int): Float {
@@ -2987,6 +3198,12 @@ private fun isClipVisibleAtCanvasPoint(
             localTimeSec,
             text.fontSize.toFloat()
         ).coerceIn(0f, 200f)
+        val sampledLetterSpacing = KeyframeStore.sample(
+            clip.keyframes,
+            "text.letterSpacing",
+            localTimeSec,
+            text.letterSpacing
+        ).coerceIn(-200f, 300f)
         val displayContent = when {
             !text.animation.equals("none", ignoreCase = true) ->
                 com.moody.moodyvideoeditor.utils.CaptionPresetLibrary.visibleText(
@@ -3060,6 +3277,25 @@ private fun isClipVisibleAtCanvasPoint(
             pivotY + (-screenX * kotlin.math.sin(rotation) +
                     screenY * kotlin.math.cos(rotation)).toFloat() / scaleY
         )
+        val letterSpacingPx = TextRenderContract.clampLetterSpacingPx(
+            displayContent,
+            fontSize,
+            typeface,
+            TextScaler.letterSpacing(
+                base = sampledLetterSpacing,
+                canvasWidthPx = referenceDimension
+            )
+        )
+        paint.letterSpacing = letterSpacingPx / fontSize.coerceAtLeast(1f)
+        val lineHeightPx = TextScaler.lineHeight(
+            TextRenderContract.scaledFontSize(
+                sampledFontSize,
+                width,
+                height
+            ),
+            text.lineHeight
+        )
+        val lineStep = maxOf(lineHeightPx, fontMetrics.descent - fontMetrics.ascent)
         insideContent =
             kotlin.math.abs(localPoint.x - pivotX) <= outerWidth / 2f &&
                     kotlin.math.abs(localPoint.y - pivotY) <= outerHeight / 2f
@@ -3923,17 +4159,15 @@ private fun InteractiveTextOverlay(
     currentPosMs: Long,
     isSelected: Boolean,
     isMulti: Boolean = false,
+    gesturePreviewState: TextGesturePreviewState,
     onSelect: () -> Unit,
     onEditText: () -> Unit,
     onGroupGestureStart: () -> Unit,
     onGroupGestureEnd: () -> Unit,
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit,
-    onPositionChanged: (Float, Float) -> Unit,
-    onTransformChanged: (Float, Float) -> Unit,
     onDeleteLayer: () -> Unit,
 ) {
     if (textState.content.isBlank() || textState.fontSize <= 0) return
-    val hapticFeedback = LocalHapticFeedback.current
     val localTimeSec = ((currentPosMs - clip.timelineStartMs) / 1000f).coerceAtLeast(0f)
     val textureScale = KeyframeStore.sample(
         clip.keyframes, "textTexture.scale", localTimeSec, textState.textureScale
@@ -3991,40 +4225,35 @@ private fun InteractiveTextOverlay(
             return@LaunchedEffect
         }
         try {
+            val textureVideoSize = retriever?.let {
+                withContext(Dispatchers.IO) {
+                    val width = it.extractMetadata(
+                        MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
+                    )?.toIntOrNull() ?: CHROMA_PREVIEW_MAX_DIMENSION
+                    val height = it.extractMetadata(
+                        MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
+                    )?.toIntOrNull() ?: CHROMA_PREVIEW_MAX_DIMENSION
+                    width.coerceAtLeast(1) to height.coerceAtLeast(1)
+                }
+            }
             snapshotFlow { latestTextureFrameBucket }.collectLatest { frameBucket ->
                 try {
                     val decoded = withContext(Dispatchers.IO) {
                         if (retriever != null) {
-                            retriever.getFrameAtTime(
+                            decodeTransitionVideoFrame(
+                                retriever,
                                 frameBucket * 250_000L,
-                                MediaMetadataRetriever.OPTION_CLOSEST
+                                textureVideoSize!!.first,
+                                textureVideoSize!!.second,
+                                CHROMA_PREVIEW_MAX_DIMENSION
                             )
                         } else {
-                            val input = if (textureUri.scheme == "file") {
-                                textureUri.path?.let { java.io.File(it).inputStream() }
-                            } else {
-                                context.contentResolver.openInputStream(textureUri)
-                            }
-                            input?.use {
-                                android.graphics.BitmapFactory.decodeStream(it)
-                            }
-                        }
-                    }
-                    val fitted = decoded?.let { bitmap ->
-                        val maxDimension = maxOf(bitmap.width, bitmap.height)
-                        if (maxDimension <= 2048) bitmap else {
-                            val ratio = 2048f / maxDimension
-                            Bitmap.createScaledBitmap(
-                                bitmap,
-                                (bitmap.width * ratio).toInt().coerceAtLeast(1),
-                                (bitmap.height * ratio).toInt().coerceAtLeast(1),
-                                true
-                            ).also { if (it !== bitmap) bitmap.recycle() }
+                            decodePreviewImage(context, textureUri)
                         }
                     }
                     val previous = textureBitmap
-                    textureBitmap = fitted
-                    if (previous != null && previous !== fitted && !previous.isRecycled) {
+                    textureBitmap = decoded
+                    if (previous != null && previous !== decoded && !previous.isRecycled) {
                         previous.recycle()
                     }
                 } catch (cancelled: CancellationException) {
@@ -4035,7 +4264,11 @@ private fun InteractiveTextOverlay(
                 }
             }
         } finally {
-            retriever?.release()
+            retriever?.let {
+                withContext(NonCancellable + Dispatchers.IO) {
+                    it.release()
+                }
+            }
         }
     }
     DisposableEffect(Unit) {
@@ -4044,8 +4277,21 @@ private fun InteractiveTextOverlay(
         }
     }
     val sampled = TransformApplier.resolveLive(clip, localTimeSec)
-    val clampedX = sampled.x.coerceIn(-100f, 200f);
-    val clampedY = sampled.y.coerceIn(-100f, 200f)
+    val gesturePreview = gesturePreviewState.transform
+    val renderedSampled = gesturePreview?.let { preview ->
+        val scaleRatioX = if (sampled.scale > 0.001f) sampled.scaleX / sampled.scale else 1f
+        val scaleRatioY = if (sampled.scale > 0.001f) sampled.scaleY / sampled.scale else 1f
+        sampled.copy(
+            x = preview.x,
+            y = preview.y,
+            scale = preview.scale,
+            scaleX = preview.scale * scaleRatioX,
+            scaleY = preview.scale * scaleRatioY,
+            rotation = preview.rotation
+        )
+    } ?: sampled
+    val clampedX = renderedSampled.x.coerceIn(-100f, 200f);
+    val clampedY = renderedSampled.y.coerceIn(-100f, 200f)
     val animDur = textState.animationDuration.coerceAtLeast(0.1f);
     val progress = (localTimeSec / animDur).coerceIn(0f, 1f)
     val presetProgress = (
@@ -4064,7 +4310,7 @@ private fun InteractiveTextOverlay(
         com.moody.moodyvideoeditor.utils.AnimationsEngine.Frame()
     }
     val frame = if (isDragging) rawFrame.copy(translateX = 0f, translateY = 0f) else rawFrame
-    val currentSampled by rememberUpdatedState(sampled);
+    val currentSampled by rememberUpdatedState(renderedSampled);
     val currentFrame by rememberUpdatedState(frame)
     val displayContent = if (!textState.animation.equals("none", ignoreCase = true)) {
         com.moody.moodyvideoeditor.utils.CaptionPresetLibrary.visibleText(
@@ -4252,8 +4498,8 @@ private fun InteractiveTextOverlay(
                 }
             }
     } else Modifier
-    val handleScaleX = sampled.scaleX / 100f
-    val handleScaleY = sampled.scaleY / 100f
+    val handleScaleX = renderedSampled.scaleX / 100f
+    val handleScaleY = renderedSampled.scaleY / 100f
     val handleW = (outerWidthDp * handleScaleX).coerceAtLeast(1f).dp
     val handleH = (outerHeightDp * handleScaleY).coerceAtLeast(1f).dp
 
@@ -4270,9 +4516,9 @@ private fun InteractiveTextOverlay(
                     }
                     translationX = posTx + alignmentOffsetX + frame.translateX
                     translationY = posTy + frame.translateY
-                    scaleX = (sampled.scaleX / 100f) * frame.scaleX; scaleY =
-                    (sampled.scaleY / 100f) * frame.scaleY
-                    rotationZ = sampled.rotation + frame.rotationZ; rotationX =
+                    scaleX = (renderedSampled.scaleX / 100f) * frame.scaleX; scaleY =
+                    (renderedSampled.scaleY / 100f) * frame.scaleY
+                    rotationZ = renderedSampled.rotation + frame.rotationZ; rotationX =
                     frame.rotationX; rotationY = frame.rotationY
                     cameraDistance = 16f * density.density; alpha =
                     (textState.opacity / 100f) * frame.alpha
@@ -4291,38 +4537,7 @@ private fun InteractiveTextOverlay(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         if (down.isConsumed) return@awaitEachGesture
                         down.consume()
-                        var latestDown = down
-                        var canceledBeforeHold = false
-                        withTimeoutOrNull(600L) {
-                            while (true) {
-                                val event = awaitPointerEvent(PointerEventPass.Initial)
-                                val change = event.changes.firstOrNull {
-                                    it.id == down.id
-                                }
-                                if (change == null || !change.pressed) {
-                                    canceledBeforeHold = true
-                                    break
-                                }
-                                latestDown = change
-                                val delta = change.position - down.position
-                                if (delta.x * delta.x + delta.y * delta.y >
-                                    viewConfiguration.touchSlop * viewConfiguration.touchSlop
-                                ) {
-                                    canceledBeforeHold = true
-                                    break
-                                }
-                            }
-                        }
-                        val longPress = latestDown.takeIf {
-                            !canceledBeforeHold && it.pressed
-                        }
-                        if (longPress == null) {
-                            if (!isMulti) onSelect()
-                            return@awaitEachGesture
-                        }
-                        longPress.consume()
-                        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                        isDragging = true; onGroupGestureStart()
+                        isDragging = true
                         val baseX = currentSampled.x;
                         val baseY = currentSampled.y;
                         val baseScale = currentSampled.scale;
@@ -4337,61 +4552,84 @@ private fun InteractiveTextOverlay(
                         var hasMultiGesture = false;
                         var hasMoved = false
                         var continueGesture = true
-                        while (continueGesture) {
-                            val event = awaitPointerEvent();
-                            val pressed = event.changes.filter { it.pressed }
-                            if (pressed.isEmpty()) {
-                                isDragging = false; continueGesture = false
-                            } else {
+                        onGroupGestureStart()
+                        try {
+                            while (continueGesture) {
+                                val event = awaitPointerEvent()
+                                val pressed = event.changes.filter { it.pressed }
+                                if (pressed.isEmpty()) {
+                                    continueGesture = false
+                                    continue
+                                }
                                 if (pressed.size == 1) {
-                                    val ch = pressed.first();
-                                    val pan = ch.position - ch.previousPosition
+                                    val change = pressed.first()
+                                    val pan = change.position - change.previousPosition
                                     val rotation =
-                                        Math.toRadians((baseRot + baseFrame.rotationZ).toDouble());
-                                    val scaleX = (baseScale / 100f) * baseFrame.scaleX;
+                                        Math.toRadians((baseRot + baseFrame.rotationZ).toDouble())
+                                    val scaleX = (baseScale / 100f) * baseFrame.scaleX
                                     val scaleY = (baseScale / 100f) * baseFrame.scaleY
-                                    accumPanX += (pan.x * scaleX * kotlin.math.cos(rotation) - pan.y * scaleY * kotlin.math.sin(
-                                        rotation
-                                    )).toFloat()
-                                    accumPanY += (pan.x * scaleX * kotlin.math.sin(rotation) + pan.y * scaleY * kotlin.math.cos(
-                                        rotation
-                                    )).toFloat()
-                                    if (kotlin.math.abs(accumPanX) > 5f || kotlin.math.abs(accumPanY) > 5f) hasMoved =
-                                        true
-                                    ch.consume()
+                                    accumPanX += (
+                                            pan.x * scaleX * kotlin.math.cos(rotation) -
+                                                    pan.y * scaleY * kotlin.math.sin(rotation)
+                                            ).toFloat()
+                                    accumPanY += (
+                                            pan.x * scaleX * kotlin.math.sin(rotation) +
+                                                    pan.y * scaleY * kotlin.math.cos(rotation)
+                                            ).toFloat()
+                                    hasMoved = hasMoved ||
+                                            kotlin.math.abs(accumPanX) > 5f ||
+                                            kotlin.math.abs(accumPanY) > 5f
+                                    change.consume()
                                 } else if (pressed.size >= 2) {
-                                    val c1 = pressed[0];
-                                    val c2 = pressed[1];
-                                    val d = c1.position - c2.position
-                                    val dist = kotlin.math.sqrt(d.x * d.x + d.y * d.y);
-                                    val angle = kotlin.math.atan2(d.y, d.x)
+                                    val first = pressed[0]
+                                    val second = pressed[1]
+                                    val delta = first.position - second.position
+                                    val distance = kotlin.math.sqrt(
+                                        delta.x * delta.x + delta.y * delta.y
+                                    )
+                                    val angle = kotlin.math.atan2(delta.y, delta.x)
                                     if (hasMultiGesture && lastDist > 1f) {
-                                        accumZoom *= dist / lastDist; accumRot += Math.toDegrees(
+                                        accumZoom *= distance / lastDist
+                                        accumRot += Math.toDegrees(
                                             normalizeAngle(angle - lastAngle).toDouble()
                                         ).toFloat()
+                                        hasMoved = true
                                     }
-                                    lastDist = dist; lastAngle = angle; hasMultiGesture =
-                                        true; c1.consume(); c2.consume(); hasMoved = true
+                                    lastDist = distance
+                                    lastAngle = angle
+                                    hasMultiGesture = true
+                                    pressed.forEach { it.consume() }
                                 }
-                                val rawX = baseX + accumPanX / canvasWpx * 100f;
-                                val rawY = baseY + accumPanY / canvasHpx * 100f
-                                val cx = rawX.coerceIn(-100f, 200f);
-                                val cy = rawY.coerceIn(-100f, 200f)
-                                val newScale = scaleAfterGesture(baseScale, accumZoom);
-                                val newRot = baseRot + accumRot
-                                if (isMulti) onGroupGesture(
-                                    clip.id,
-                                    cx,
-                                    cy,
-                                    newScale,
-                                    newRot
-                                ) else {
-                                    onPositionChanged(cx, cy); onTransformChanged(newScale, newRot)
+
+                                if (hasMoved) {
+                                    gesturePreviewState.transform = TextGesturePreview(
+                                        x = (baseX + accumPanX / canvasWpx * 100f)
+                                            .coerceIn(-100f, 200f),
+                                        y = (baseY + accumPanY / canvasHpx * 100f)
+                                            .coerceIn(-100f, 200f),
+                                        scale = scaleAfterGesture(baseScale, accumZoom)
+                                            .coerceIn(10f, 500f),
+                                        rotation = baseRot + accumRot
+                                    )
                                 }
                             }
+                            val preview = gesturePreviewState.transform
+                            if (hasMoved && preview != null) {
+                                onGroupGesture(
+                                    clip.id,
+                                    preview.x,
+                                    preview.y,
+                                    preview.scale,
+                                    preview.rotation
+                                )
+                            } else if (!isMulti) {
+                                onSelect()
+                            }
+                        } finally {
+                            gesturePreviewState.transform = null
+                            isDragging = false
+                            onGroupGestureEnd()
                         }
-                        if (!hasMoved && !isMulti) onSelect()
-                        onGroupGestureEnd(); isDragging = false
                     }
                 },
             contentAlignment = Alignment.Center
@@ -4579,20 +4817,40 @@ private fun InteractiveTextOverlay(
                     val posTx = (clampedX - 50f) / 100f * refPx;
                     val posTy = (clampedY - 50f) / 100f * refPx; translationX =
                     posTx + frame.translateX; translationY = posTy + frame.translateY; rotationZ =
-                    sampled.rotation + frame.rotationZ
+                    renderedSampled.rotation + frame.rotationZ
                 }
                 .width(handleW.coerceAtLeast(8.dp))
                 .height(handleH.coerceAtLeast(8.dp))) {
                 LayerTransformHandles(
                     clipId = clip.id,
-                    scale = sampled.scale,
-                    rotation = sampled.rotation,
-                    positionX = sampled.x,
-                    positionY = sampled.y,
-                    onPositionChanged = onPositionChanged,
+                    scale = renderedSampled.scale,
+                    rotation = renderedSampled.rotation,
+                    positionX = renderedSampled.x,
+                    positionY = renderedSampled.y,
+                    onPositionChanged = { _, _ -> },
                     onGestureStart = onGroupGestureStart,
-                    onGestureEnd = onGroupGestureEnd,
-                    onTransformChanged = onTransformChanged,
+                    onGestureEnd = {
+                        gesturePreviewState.transform?.let { preview ->
+                            onGroupGesture(
+                                clip.id,
+                                preview.x,
+                                preview.y,
+                                preview.scale,
+                                preview.rotation
+                            )
+                        }
+                        gesturePreviewState.transform = null
+                        onGroupGestureEnd()
+                    },
+                    onTransformChanged = { scale, rotation ->
+                        gesturePreviewState.transform = TextGesturePreview(
+                            x = currentSampled.x,
+                            y = currentSampled.y,
+                            scale = scale,
+                            rotation = rotation
+                        )
+                    },
+                    minimumScale = 10f,
                     onDelete = onDeleteLayer
                 )
                 if (!isMulti) {
@@ -4639,6 +4897,7 @@ private fun BoxScope.LayerTransformHandles(
     onGestureStart: () -> Unit,
     onGestureEnd: () -> Unit,
     onTransformChanged: (Float, Float) -> Unit,
+    minimumScale: Float = 1f,
     onDelete: () -> Unit
 ) {
     val currentScale = rememberUpdatedState(scale)
@@ -4685,7 +4944,7 @@ private fun BoxScope.LayerTransformHandles(
                             } else {
                                 currentOnTransformChanged.value(
                                     (startScale.coerceAtLeast(1f) * distance / startDistance)
-                                        .coerceIn(1f, 500f),
+                                        .coerceIn(minimumScale, 500f),
                                     startRotation
                                 )
                             }
@@ -4740,31 +4999,12 @@ private fun BoxScope.LayerTransformHandles(
             onTransformChanged = onTransformChanged,
             onDelete = onDelete
         )
-        TransformHandle(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .offset(x = 7.dp, y = 7.dp),
-            clipId = clipId,
-            corner = TransformHandleCorner.Scale,
-            boundsWidthPx = boundsWidthPx,
-            boundsHeightPx = boundsHeightPx,
-            handleSizePx = handleSizePx,
-            scale = scale,
-            rotation = rotation,
-            positionX = positionX,
-            positionY = positionY,
-            onPositionChanged = onPositionChanged,
-            onGestureStart = onGestureStart,
-            onGestureEnd = onGestureEnd,
-            onTransformChanged = onTransformChanged,
-            onDelete = onDelete
-        )
     }
 }
 
 private val LAYER_CONTROL_HANDLE_SIZE = 14.dp
 
-private enum class TransformHandleCorner { Delete, Rotate, Scale }
+private enum class TransformHandleCorner { Delete, Rotate }
 
 @Composable
 private fun TransformHandle(
@@ -4799,7 +5039,7 @@ private fun TransformHandle(
             .clip(CircleShape)
             .background(
                 when (corner) {
-                    TransformHandleCorner.Delete -> Color(0xFFE5484D); TransformHandleCorner.Rotate, TransformHandleCorner.Scale -> Color(
+                    TransformHandleCorner.Delete -> Color(0xFFE5484D); TransformHandleCorner.Rotate -> Color(
                     0xFF171A22
                 )
                 }
@@ -4808,24 +5048,18 @@ private fun TransformHandle(
             .pointerInput(clipId, corner) {
                 when (corner) {
                     TransformHandleCorner.Delete -> detectTapGestures { currentOnDelete.value() }
-                    TransformHandleCorner.Rotate, TransformHandleCorner.Scale -> awaitEachGesture {
+                    TransformHandleCorner.Rotate -> awaitEachGesture {
                         val down =
                             awaitFirstDown(requireUnconsumed = false); down.consume(); currentOnGestureStart.value()
                         val startBoundsW = currentBoundsWidth;
                         val startBoundsH = currentBoundsHeight
-                        val handleCenterX =
-                            if (corner == TransformHandleCorner.Scale) startBoundsW else 0f
-                        val handleCenterY =
-                            if (corner == TransformHandleCorner.Scale || corner == TransformHandleCorner.Rotate) startBoundsH else 0f
+                        val handleCenterX = 0f
+                        val handleCenterY = startBoundsH
                         val startX =
                             handleCenterX + (down.position.x - handleSizePx / 2f) - startBoundsW / 2f
                         val startY =
                             handleCenterY + (down.position.y - handleSizePx / 2f) - startBoundsH / 2f
-                        val startDistance =
-                            kotlin.math.hypot(startX.toDouble(), startY.toDouble()).toFloat()
-                                .coerceAtLeast(1f)
                         val startAngle = kotlin.math.atan2(startY, startX);
-                        val startScale = currentScale.value;
                         val startRotation = currentRotation.value
                         var previousAngle = startAngle;
                         var accumulatedRotation = 0f;
@@ -4839,23 +5073,11 @@ private fun TransformHandle(
                                 change.position - change.previousPosition; dragX += delta.x; dragY += delta.y; change.consume()
                             val currentX = startX + dragX;
                             val currentY = startY + dragY
-                            val currentDistance =
-                                kotlin.math.hypot(currentX.toDouble(), currentY.toDouble())
-                                    .toFloat()
                             val currentAngle = kotlin.math.atan2(currentY, currentX)
                             accumulatedRotation += normalizeAngle(currentAngle - previousAngle); previousAngle =
                                 currentAngle
-                            if (corner == TransformHandleCorner.Scale) {
-                                val signedScaleFactor =
-                                    (currentX * startX + currentY * startY) /
-                                            (startDistance * startDistance)
-                                currentOnTransformChanged.value(
-                                    scaleAfterGesture(startScale, signedScaleFactor),
-                                    startRotation
-                                )
-                            }
-                            else currentOnTransformChanged.value(
-                                startScale,
+                            currentOnTransformChanged.value(
+                                currentScale.value,
                                 startRotation + Math.toDegrees(accumulatedRotation.toDouble())
                                     .toFloat()
                             )
@@ -4868,7 +5090,7 @@ private fun TransformHandle(
     ) {
         Text(
             text = when (corner) {
-                TransformHandleCorner.Delete -> "×"; TransformHandleCorner.Rotate -> "⟳"; TransformHandleCorner.Scale -> "⤢"
+                TransformHandleCorner.Delete -> "×"; TransformHandleCorner.Rotate -> "⟳"
             }, color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold
         )
     }
@@ -4915,6 +5137,8 @@ fun EyedropperOverlay(
 
     LaunchedEffect(active, window) {
         if (!active || window == null) return@LaunchedEffect
+        var captureBitmap: Bitmap? = null
+        var pixelCopyOwnsBitmap = false
         try {
             val decor = window.decorView
             // Pura screen capture karo (taaki touch coordinates match karein)
@@ -4923,18 +5147,33 @@ fun EyedropperOverlay(
                 decor.height.coerceAtLeast(1),
                 Bitmap.Config.ARGB_8888
             )
+            captureBitmap = bmp
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val latch = CountDownLatch(1)
-                android.view.PixelCopy.request(
-                    window, bmp,
-                    {
-                        bitmapsLoaded = true
-                        latch.countDown()
-                    },
-                    android.os.Handler(android.os.Looper.getMainLooper())
-                )
-                latch.await(1, TimeUnit.SECONDS)
+                val copyResult = suspendCancellableCoroutine<Int> { continuation ->
+                    pixelCopyOwnsBitmap = true
+                    try {
+                        PixelCopy.request(
+                            window,
+                            bmp,
+                            { result ->
+                                pixelCopyOwnsBitmap = false
+                                if (continuation.isActive) {
+                                    continuation.resume(result)
+                                } else if (!bmp.isRecycled) {
+                                    bmp.recycle()
+                                }
+                            },
+                            android.os.Handler(android.os.Looper.getMainLooper())
+                        )
+                    } catch (error: RuntimeException) {
+                        pixelCopyOwnsBitmap = false
+                        continuation.resumeWithException(error)
+                    }
+                }
+                check(copyResult == PixelCopy.SUCCESS) {
+                    "PixelCopy failed with result $copyResult"
+                }
             } else {
                 decor.isDrawingCacheEnabled = true
                 decor.buildDrawingCache()
@@ -4947,7 +5186,15 @@ fun EyedropperOverlay(
                 bitmapsLoaded = true
             }
             screenBitmap = bmp
+            captureBitmap = null
+            bitmapsLoaded = true
+        } catch (cancelled: CancellationException) {
+            if (!pixelCopyOwnsBitmap) {
+                captureBitmap?.takeIf { !it.isRecycled }?.recycle()
+            }
+            throw cancelled
         } catch (t: Throwable) {
+            captureBitmap?.takeIf { !it.isRecycled }?.recycle()
             Log.e("Eyedropper", "Failed to capture screen", t)
         }
     }
@@ -5087,13 +5334,17 @@ fun EyedropperOverlay(
                 val srcH = loupeDiameterPx.toInt().coerceAtMost(bmp.height - srcY)
 
                 if (srcW > 0 && srcH > 0) {
-                    val cropped = Bitmap.createBitmap(bmp, srcX, srcY, srcW, srcH)
-                    Image(
-                        bitmap = cropped.asImageBitmap(),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    Canvas(Modifier.fillMaxSize()) {
+                        drawImage(
+                            image = bmp.asImageBitmap(),
+                            srcOffset = IntOffset(srcX, srcY),
+                            srcSize = IntSize(srcW, srcH),
+                            dstSize = IntSize(
+                                size.width.toInt().coerceAtLeast(1),
+                                size.height.toInt().coerceAtLeast(1)
+                            )
+                        )
+                    }
                 }
 
                 // Center crosshair dot

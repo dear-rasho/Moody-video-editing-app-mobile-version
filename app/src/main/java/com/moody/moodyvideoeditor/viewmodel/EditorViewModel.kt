@@ -60,9 +60,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.lifecycle.viewModelScope
 import java.util.UUID
@@ -181,8 +181,8 @@ class EditorViewModel : ViewModel() {
 
     suspend fun saveCurrentProject(context: Context): Boolean {
         val id = currentProjectId ?: return false
-        val projectName = currentProjectName
         val s = _state.value
+        val projectName = currentProjectName
         return projectSaveMutex.withLock {
             withContext(Dispatchers.IO) {
                 val now = System.currentTimeMillis()
@@ -216,20 +216,24 @@ class EditorViewModel : ViewModel() {
     }
 
     suspend fun loadProject(context: Context, projectId: String): Boolean {
-        val result = withContext(Dispatchers.IO) {
+        val projectData = withContext(Dispatchers.IO) {
             val loaded = com.moody.moodyvideoeditor.data.ProjectRepository
                 .loadProject(context, projectId) ?: return@withContext null
-            val fixedClips = loaded.clips.map { clip ->
-                if (clip.isTextClip || clip.type.startsWith("image/")) {
-                    clip.copy(sourceTotalMs = Long.MAX_VALUE)
-                } else clip
-            }
             val meta = com.moody.moodyvideoeditor.data.ProjectRepository
                 .listProjects(context)
                 .firstOrNull { it.id == projectId }
-            loaded.copy(clips = fixedClips) to meta
+            loaded to meta
         } ?: return false
-        val (fixedState, meta) = result
+        val (loaded, meta) = projectData
+
+        val fixedClips = loaded.clips.map { clip ->
+            if (clip.isTextClip ||
+                clip.type.startsWith("image/")
+            ) {
+                clip.copy(sourceTotalMs = Long.MAX_VALUE)
+            } else clip
+        }
+        val fixedState = loaded.copy(clips = fixedClips)
 
         currentProjectId = projectId
         currentProjectName = meta?.name ?: "Untitled"
@@ -252,24 +256,26 @@ class EditorViewModel : ViewModel() {
     // ═══════════════════════════════════════════════════════════
 
     suspend fun loadFromTemplate(context: Context, templateId: String): Boolean {
-        val fixedState = withContext(Dispatchers.IO) {
-            val loaded = com.moody.moodyvideoeditor.data.SavedTemplateRepository
-                .load(context, templateId) ?: return@withContext null
-            val fixedClips = loaded.clips.map { clip ->
-                if (clip.isTextClip ||
-                    clip.isEffectClip || clip.isAdjustmentClip ||
-                    clip.isOverlayClip ||
-                    clip.isColorMatteClip || clip.isFilterLayerClip
-                ) {
-                    clip
-                } else if ((clip.isVisualClip || clip.type.startsWith("audio/")) &&
-                    clip.uri.toString().isBlank()
-                ) {
-                    clip.copy(sourceTotalMs = Long.MAX_VALUE)
-                } else clip
-            }
-            loaded.copy(clips = fixedClips)
+        val loaded = withContext(Dispatchers.IO) {
+            com.moody.moodyvideoeditor.data.SavedTemplateRepository
+                .load(context, templateId)
         } ?: return false
+
+        val fixedClips = loaded.clips.map { clip ->
+            if (clip.isTextClip ||
+                clip.isEffectClip || clip.isAdjustmentClip ||
+                clip.isOverlayClip ||
+                clip.isColorMatteClip || clip.isFilterLayerClip
+            ) {
+                clip
+            } else if ((clip.isVisualClip || clip.type.startsWith("audio/")) &&
+                clip.uri.toString().isBlank()
+            ) {
+                clip.copy(sourceTotalMs = Long.MAX_VALUE)
+            } else clip
+        }
+
+        val fixedState = loaded.copy(clips = fixedClips)
 
         history.clear()
         _state.value = fixedState

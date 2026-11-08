@@ -2574,7 +2574,7 @@ fun EditorScreen(
                     Text(
                         "Editor",
                         color = Color.White,
-                        fontSize = 14.sp,
+                        fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f)
                     )
@@ -2584,6 +2584,7 @@ fun EditorScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     EditorMediaRatioTimeControls(
@@ -2593,24 +2594,33 @@ fun EditorScreen(
                         currentPosMs = state.currentPosMs,
                         totalDurationMs = totalDurationMs
                     )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Box(
+                        modifier = Modifier
+                            .height(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF7C3AED))
+                            .pointerInput(Unit) {
+                                detectTapGestures {
+                                    isPlaybackActive = false
+                                    exoPlayer.pause()
+                                    audioExoPlayer.pause()
+                                    activePanel = "export"
+                                }
+                            }
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        EditorActionButton("Export", highlight = true) {
-                            isPlaybackActive = false
-                            exoPlayer.pause()
-                            audioExoPlayer.pause()
-                            activePanel = "export"
-                        }
-                        EditorActionButton("Backward Select") {
-                            viewModel.selectBackward()
-                        }
-                        EditorActionButton("Forward Select") {
-                            viewModel.selectForward()
-                        }
-                        EditorActionButton("Select All") {
-                            viewModel.selectAllClips()
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Text("💾", fontSize = 13.sp)
+                            Text(
+                                "Export",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
@@ -2656,9 +2666,7 @@ fun EditorScreen(
                     onMaskStateChanged = { viewModel.updateMask(it) },
                     onClosePath = { viewModel.setMaskClosed(true) },
                     onClipSelected = { clipId ->
-                        state.clips.firstOrNull { it.id == clipId }
-                            ?.takeIf { it.isTextClip }
-                            ?.let(::handleLayerTap)
+                        state.clips.firstOrNull { it.id == clipId }?.let(::handleLayerTap)
                     },
                     onEditText = { clipId ->
                         state.clips.firstOrNull { it.id == clipId }?.let { clip ->
@@ -2676,36 +2684,19 @@ fun EditorScreen(
                     onGroupGestureStart = { viewModel.beginGroupGesture() },
                     onGroupGestureEnd = { viewModel.endGroupGesture() },
                     onGroupGesture = { clipId: String, x: Float, y: Float, scale: Float, rot: Float ->
-                        val clip = state.clips.firstOrNull { it.id == clipId }
-                        if (clip?.isTextClip == true || state.selectedClipId == clipId) {
-                            viewModel.applyGroupTransform(clipId, x, y, scale, rot)
-                        }
-                    },
-                    onTextPositionChanged = { clipId: String, x: Float, y: Float ->
-                        viewModel.updateTextPositionDirect(clipId, x, y)
-                    },
-                    onTextTransformChanged = { clipId: String, s: Float, r: Float ->
-                        viewModel.updateSelectedTransformBulk(clipId, s, r)
+                        viewModel.applyGroupTransform(clipId, x, y, scale, rot)
                     },
                     onLayerPositionChanged = { clipId: String, x: Float, y: Float ->
-                        if (state.selectedClipId == clipId) {
-                            viewModel.updateSelectedPositionBulk(clipId, x, y)
-                        }
+                        viewModel.updateSelectedPositionBulk(clipId, x, y)
                     },
                     onLayerTransformChanged = { clipId: String, s: Float, r: Float ->
-                        if (state.selectedClipId == clipId) {
-                            viewModel.updateSelectedTransformBulk(clipId, s, r)
-                        }
+                        viewModel.updateSelectedTransformBulk(clipId, s, r)
                     },
                     onSpotlightChanged = { clipId, spotlight ->
-                        if (state.selectedClipId == clipId) {
-                            viewModel.updateSpotlight(clipId, spotlight)
-                        }
+                        viewModel.updateSpotlight(clipId, spotlight)
                     },
                     onVisualizerChanged = { clipId, visualizer ->
-                        if (state.selectedClipId == clipId) {
-                            viewModel.updateVisualizerClip(clipId, visualizer)
-                        }
+                        viewModel.updateVisualizerClip(clipId, visualizer)
                     },
                 )
 
@@ -2825,6 +2816,9 @@ fun EditorScreen(
                 canPaste = state.clipboardAction == "paste",
                 onAddVisualLayer = { viewModel.addVisualLayer() },
                 onAddAudioLayer = { viewModel.addAudioLayer() },
+                onSelectBackward = { viewModel.selectBackward() },
+                onSelectForward = { viewModel.selectForward() },
+                onSelectAll = { viewModel.selectAllClips() },
                 onSelectAllTrack = { viewModel.selectAllOnCurrentTrack() },
                 onDeselectAll = { viewModel.deselectAll() },
                 onLink = { viewModel.linkSelectedClips() },
@@ -3095,31 +3089,6 @@ fun EditorScreen(
             },
             containerColor = Color(0xFF1A1A1A),
             shape = RoundedCornerShape(16.dp)
-        )
-    }
-}
-
-@Composable
-private fun EditorActionButton(
-    text: String,
-    highlight: Boolean = false,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .height(20.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(if (highlight) Color(0xFF7C3AED) else Color(0xFF181818))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 3.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = text,
-            color = Color.White,
-            fontSize = 8.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1
         )
     }
 }

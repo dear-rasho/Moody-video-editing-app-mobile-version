@@ -31,6 +31,9 @@ import com.moody.moodyvideoeditor.utils.TimelineZoom
 fun PlaybackControls(
     hasVideo: Boolean,
     // Tools
+    onSelectBackward: () -> Unit = {},
+    onSelectForward: () -> Unit = {},
+    onSelectAll: () -> Unit = {},
     onSelectAllTrack: () -> Unit = {},
     onDeselectAll: () -> Unit = {},
     onLink: () -> Unit = {},
@@ -82,6 +85,9 @@ fun PlaybackControls(
             SmallBtn("][ Split", enabled = canSplit, highlight = canSplit) { onSplit() }
             SmallBtn("[ Trim L", enabled = canTrimLeft, highlight = canTrimLeft) { onTrimLeft() }
             SmallBtn("] Trim R", enabled = canTrimRight, highlight = canTrimRight) { onTrimRight() }
+            SmallBtn("⏪ Back") { onSelectBackward() }
+            SmallBtn("⏩ Fwd") { onSelectForward() }
+            SmallBtn("☑ All") { onSelectAll() }
             SmallBtn("▤ Track") { onSelectAllTrack() }
             SmallBtn("☐ None") { onDeselectAll() }
             if (isLinked) {

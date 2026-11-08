@@ -1,6 +1,7 @@
 package com.moody.moodyvideoeditor
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -16,6 +17,9 @@ import com.moody.moodyvideoeditor.ui.screens.EditorScreen
 import com.moody.moodyvideoeditor.ui.screens.HelpGuideScreen
 import com.moody.moodyvideoeditor.ui.screens.SettingsScreen
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 object AppRoutes {
     const val DASHBOARD = "dashboard"
@@ -33,6 +37,7 @@ object AppRoutes {
 @Composable
 fun AppNavigation(navController: NavHostController = rememberNavController()) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     NavHost(
         navController = navController,
@@ -67,10 +72,21 @@ fun AppNavigation(navController: NavHostController = rememberNavController()) {
                         clipCount = 0,
                         durationMs = 0L
                     )
-                    ProjectRepository.saveProject(context, meta, EditorState())
-                    navController.navigate(
-                        AppRoutes.editorWithSavedTemplate(projectId, templateId)
-                    )
+                    coroutineScope.launch {
+                        val saved = withContext(Dispatchers.IO) {
+                            ProjectRepository.saveProject(context, meta, EditorState())
+                        }
+                        if (saved) {
+                            navController.navigate(
+                                AppRoutes.editorWithSavedTemplate(projectId, templateId)
+                            )
+                        } else {
+                            android.util.Log.e(
+                                "AppNavigation",
+                                "Failed to create project from template $projectId"
+                            )
+                        }
+                    }
                 }
             )
         }
