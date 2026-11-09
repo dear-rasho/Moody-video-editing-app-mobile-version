@@ -318,10 +318,19 @@ object AudioEngine {
                     timelineClip.timelineStartMs < layer.timelineEndMs &&
                     audioAdjustmentFilters(layer.audioAdjustments).isNotEmpty()
         }.sortedWith(compareBy<EditorClip>({ it.trackIndex }, { it.timelineStartMs }))
-        if (layers.isEmpty()) return inputLabel
 
         val clipKey = clip.id.replace(Regex("[^A-Za-z0-9_]"), "_")
         var currentLabel = inputLabel
+        val clipFilters = audioAdjustmentFilters(clip.audioAdjustments)
+        if (clipFilters.isNotEmpty()) {
+            val adjustedClipLabel = "audset_${clipKey}_clip"
+            filterParts.add(
+                "[$currentLabel]${clipFilters.joinToString(",")}[$adjustedClipLabel]"
+            )
+            currentLabel = adjustedClipLabel
+        }
+        if (layers.isEmpty()) return currentLabel
+
         layers.forEachIndexed { index, layer ->
             val start = ((layer.timelineStartMs - rangeStartMs).coerceAtLeast(0L)) / 1000.0
             val end = ((layer.timelineEndMs - rangeStartMs).coerceAtLeast(0L)) / 1000.0

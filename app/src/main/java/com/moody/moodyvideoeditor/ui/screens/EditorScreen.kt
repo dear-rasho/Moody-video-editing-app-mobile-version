@@ -21,7 +21,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -51,6 +54,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -87,7 +91,6 @@ import com.moody.moodyvideoeditor.ui.components.Timeline
 import com.moody.moodyvideoeditor.ui.components.TimelineToolbar
 import com.moody.moodyvideoeditor.ui.features.AdjustmentsPanel
 import com.moody.moodyvideoeditor.ui.features.AnimationsPanel
-import com.moody.moodyvideoeditor.ui.features.AspectRatioPanel
 import com.moody.moodyvideoeditor.ui.features.AudioPanel
 import com.moody.moodyvideoeditor.ui.features.AudioRecordingPanel
 import com.moody.moodyvideoeditor.ui.features.AutoCaptionsPanel
@@ -449,37 +452,70 @@ fun EditorScreen(
             }
             .maxByOrNull { it.trackIndex }
     }
-    val activeAudioSettingsLayers = remember(
+    val activeVideoAudioSettings = remember(
         state.clips,
         state.currentPosMs,
-        activeAudioClip?.id,
         activeVideoClip?.id,
         activeVideoHasSeparateAudio
     ) {
-        val activeAudioTrack = activeAudioClip?.trackIndex
-        state.clips
+        val legacyLayers = state.clips
             .filter { layer ->
                 layer.isAudioFxClip &&
-                        (activeAudioTrack?.let { layer.trackIndex > it }
-                            ?: (activeVideoClip != null && !activeVideoHasSeparateAudio)) &&
+                        activeVideoClip != null &&
+                        !activeVideoHasSeparateAudio &&
+                        layer.trackIndex > activeVideoClip.trackIndex &&
                         state.currentPosMs >= layer.timelineStartMs &&
                         state.currentPosMs < layer.timelineEndMs
             }
             .sortedWith(compareBy({ it.trackIndex }, { it.timelineStartMs }))
             .map { it.audioAdjustments }
+        val clipSettings = activeVideoClip
+            ?.takeIf { !activeVideoHasSeparateAudio }
+            ?.audioAdjustments
+            ?.let(::listOf)
+            .orEmpty()
+        clipSettings + legacyLayers
     }
-    val audioSettingsVolumeMultiplier = activeAudioSettingsLayers.fold(1f) { volume, settings ->
+    val activeAudioAudioSettings = remember(
+        state.clips,
+        state.currentPosMs,
+        activeAudioClip?.id
+    ) {
+        val legacyLayers = activeAudioClip?.let { source ->
+            state.clips
+                .filter { layer ->
+                    layer.isAudioFxClip &&
+                            layer.trackIndex > source.trackIndex &&
+                            state.currentPosMs >= layer.timelineStartMs &&
+                            state.currentPosMs < layer.timelineEndMs
+                }
+                .sortedWith(compareBy({ it.trackIndex }, { it.timelineStartMs }))
+                .map { it.audioAdjustments }
+        }.orEmpty()
+        listOfNotNull(activeAudioClip?.audioAdjustments) + legacyLayers
+    }
+    val videoAudioSettingsVolumeMultiplier =
+        activeVideoAudioSettings.fold(1f) { volume, settings ->
+            volume * (settings.volume / 100f)
+        }.coerceIn(0f, 1f)
+    val audioAudioSettingsVolumeMultiplier =
+        activeAudioAudioSettings.fold(1f) { volume, settings ->
         volume * (settings.volume / 100f)
     }.coerceIn(0f, 1f)
-    val latestAudioSettingsLayers by rememberUpdatedState(activeAudioSettingsLayers)
+    val latestVideoAudioSettings by rememberUpdatedState(activeVideoAudioSettings)
+    val latestAudioAudioSettings by rememberUpdatedState(activeAudioAudioSettings)
 
-    LaunchedEffect(activeAudioClip?.id, activeAudioSettingsLayers) {
+    LaunchedEffect(activeAudioClip?.id, activeVideoClip?.id, activeVideoAudioSettings,
+        activeAudioAudioSettings
+    ) {
         delay(100)
         AudioPreviewEngine.applySettings(
             exoPlayer,
             audioExoPlayer,
-            activeAudioSettingsLayers,
-            listOf(videoAudioSettingsProcessor, audioAudioSettingsProcessor)
+            activeVideoAudioSettings,
+            activeAudioAudioSettings,
+            videoAudioSettingsProcessor,
+            audioAudioSettingsProcessor
         )
     }
 
@@ -489,10 +525,10 @@ fun EditorScreen(
         anyActiveAudioMuted -> 0f
         activeVideoHasSeparateAudio -> 0f
         else -> activeVideoClip?.volume ?: state.volume
-    } * audioSettingsVolumeMultiplier
+    } * videoAudioSettingsVolumeMultiplier
     val audioPlaybackVolume =
         (if (state.isMuted) 0f else activeAudioClip?.volume ?: 0f) *
-                audioSettingsVolumeMultiplier
+                audioAudioSettingsVolumeMultiplier
     val latestVideoPlaybackVolume by rememberUpdatedState(videoPlaybackVolume)
     val latestAudioPlaybackVolume by rememberUpdatedState(audioPlaybackVolume)
 
@@ -504,7 +540,7 @@ fun EditorScreen(
         activeVideoClip?.id,
         activeVideoClip?.volume,
         activeVideoHasSeparateAudio,
-        audioSettingsVolumeMultiplier
+        videoAudioSettingsVolumeMultiplier
     ) {
         VolumeEngine.applyToPlayer(exoPlayer, videoPlaybackVolume)
     }
@@ -513,7 +549,7 @@ fun EditorScreen(
         state.isMuted,
         activeAudioClip?.id,
         activeAudioClip?.volume,
-        audioSettingsVolumeMultiplier
+        audioAudioSettingsVolumeMultiplier
     ) {
         VolumeEngine.applyToPlayer(audioExoPlayer, audioPlaybackVolume)
     }
@@ -525,8 +561,10 @@ fun EditorScreen(
                 AudioPreviewEngine.applySettings(
                     exoPlayer,
                     audioExoPlayer,
-                    latestAudioSettingsLayers,
-                    listOf(videoAudioSettingsProcessor, audioAudioSettingsProcessor)
+                    latestVideoAudioSettings,
+                    latestAudioAudioSettings,
+                    videoAudioSettingsProcessor,
+                    audioAudioSettingsProcessor
                 )
             }
         }
@@ -536,8 +574,10 @@ fun EditorScreen(
                 AudioPreviewEngine.applySettings(
                     exoPlayer,
                     audioExoPlayer,
-                    latestAudioSettingsLayers,
-                    listOf(videoAudioSettingsProcessor, audioAudioSettingsProcessor)
+                    latestVideoAudioSettings,
+                    latestAudioAudioSettings,
+                    videoAudioSettingsProcessor,
+                    audioAudioSettingsProcessor
                 )
             }
         }
@@ -1132,15 +1172,16 @@ fun EditorScreen(
     @Composable
     fun EditorPanelHost() {
         val selected = state.selectedClip
+        val audioSettingsTarget = selected?.takeIf {
+            (it.isAudio && !it.isSoundFxClip) || it.type.startsWith("video/") ||
+                    it.isAudioFxClip
+        }
 
         when (activePanel) {
             null -> FeatureShelf(
                 onFeatureSelected = { key ->
                     if (key == "filters") filterEditLayerId = null
                     if (key == "effects") effectEditLayerId = null
-                    if (key == "audiofx" && selected?.isAudioFxClip != true) {
-                        viewModel.createAudioSettingsLayer()
-                    }
                     if (key == "matte") {
                         matteEditLayerId = selected?.takeIf { it.isColorMatteClip }?.id
                     }
@@ -1785,17 +1826,16 @@ fun EditorScreen(
             )
 
             "audiofx" -> AudioPanel(
-                settings = selected?.takeIf { it.isAudioFxClip }?.audioAdjustments
+                settings = audioSettingsTarget?.audioAdjustments
                     ?: AudioAdjustmentSettings(),
-                trackIndex = selected?.takeIf { it.isAudioFxClip }?.trackIndex ?: -1,
+                targetName = audioSettingsTarget?.name,
                 onSettingsChanged = { settings ->
-                    selected?.takeIf { it.isAudioFxClip }?.let {
+                    audioSettingsTarget?.let {
                         viewModel.setClipAudioAdjustments(it.id, settings)
                     }
                 },
                 onEditStart = viewModel::beginAudioSettingsEdit,
                 onEditEnd = viewModel::finishAudioSettingsEdit,
-                onAddLayer = { viewModel.createAudioSettingsLayer() },
                 onClose = { activePanel = null }
             )
 
@@ -1879,14 +1919,6 @@ fun EditorScreen(
                     onClose = { activePanel = null }
                 )
             }
-
-            "ratio" -> AspectRatioPanel(
-                currentRatio = state.aspectRatio,
-                onRatioSelected = { key ->
-                    viewModel.updateRatio(RatioLibrary.find(key))
-                },
-                onClose = { activePanel = null }
-            )
 
             "freeze" -> FreezePanel(
                 hasClipSelected = selected?.let {
@@ -2504,9 +2536,6 @@ fun EditorScreen(
 
             else -> FeatureShelf(
                 onFeatureSelected = {
-                    if (it == "audiofx" && state.selectedClip?.isAudioFxClip != true) {
-                        viewModel.createAudioSettingsLayer()
-                    }
                     if (it == "wheel") viewModel.prepareColorWheelLayer()
                     if (it == "matte") {
                         matteEditLayerId = state.selectedClip?.takeIf {
@@ -2520,17 +2549,10 @@ fun EditorScreen(
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  RESPONSIVE PREVIEW HEIGHT — screen size ke hisaab se
-    // ═══════════════════════════════════════════════════════════
-
+    val isTextKeyboardOpen = activePanel == "text" &&
+            WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val configuration = LocalConfiguration.current
     val screenHeightDp = configuration.screenHeightDp
-    val previewHeight = when {
-        screenHeightDp < 640 -> 150.dp
-        screenHeightDp < 800 -> 212.dp
-        else -> 242.dp
-    }
     val timelineHeight = when {
         screenHeightDp < 640 -> 170.dp
         screenHeightDp < 800 -> 200.dp
@@ -2590,7 +2612,9 @@ fun EditorScreen(
                     EditorMediaRatioTimeControls(
                         onMediaClick = { showRecentMediaPicker = true },
                         currentRatio = state.aspectRatio,
-                        onRatioClick = { activePanel = "ratio" },
+                        onRatioSelected = { key ->
+                            viewModel.updateRatio(RatioLibrary.find(key))
+                        },
                         currentPosMs = state.currentPosMs,
                         totalDurationMs = totalDurationMs
                     )
@@ -2627,12 +2651,13 @@ fun EditorScreen(
             }
 
             // ═══════════════════════════════════════════════════════════
-            //  2. PREVIEW (fixed responsive height)
+            //  2. PREVIEW (uses available space above the editor controls)
             // ═══════════════════════════════════════════════════════════
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(previewHeight)
+                    .weight(1f)
+                    .heightIn(min = 120.dp)
                     .background(Color(0xFF0A0A0A))
             ) {
                 PreviewCanvas(
@@ -2718,10 +2743,12 @@ fun EditorScreen(
             // ═══════════════════════════════════════════════════════════
             //  3. CONTROL BAR — media, playback, undo and redo
             // ═══════════════════════════════════════════════════════════
-            ControlBar(
+            if (!isTextKeyboardOpen) ControlBar(
                 onMediaClick = { showRecentMediaPicker = true },
                 currentRatio = state.aspectRatio,
-                onRatioClick = { activePanel = "ratio" },
+                onRatioSelected = { key ->
+                    viewModel.updateRatio(RatioLibrary.find(key))
+                },
                 isPlaying = isPlaybackActive,
                 canUndo = state.canUndo,
                 canRedo = state.canRedo,
@@ -2806,7 +2833,7 @@ fun EditorScreen(
             // ═══════════════════════════════════════════════════════════
             //  4. EDITING TOOLS — one horizontally scrollable row
             // ═══════════════════════════════════════════════════════════
-            PlaybackControls(
+            if (!isTextKeyboardOpen) PlaybackControls(
                 hasVideo = state.clips.isNotEmpty(),
                 onCopy = { viewModel.copySelectedClips() },
                 onCut = { viewModel.cutSelectedClips() },
@@ -2856,12 +2883,13 @@ fun EditorScreen(
             // ═══════════════════════════════════════════════════════════
             //  5. TIMELINE (responsive fixed height)
             // ═══════════════════════════════════════════════════════════
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(visibleTimelineHeight)
-            ) {
-                Timeline(
+            if (!isTextKeyboardOpen) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(visibleTimelineHeight)
+                ) {
+                    Timeline(
                     state = state,
                     onClipTapped = { clip ->
                         handleLayerTap(clip)
@@ -2919,7 +2947,8 @@ fun EditorScreen(
                     onEmptyAreaTapped = {
                         viewModel.clearAllSelection()
                     }
-                )
+                    )
+                }
             }
 
             // ═══════════════════════════════════════════════════════════
@@ -2928,8 +2957,17 @@ fun EditorScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
+                    .then(
+                        if (activePanel == null) {
+                            Modifier.wrapContentHeight()
+                        } else if (isTextKeyboardOpen) {
+                            Modifier.height(170.dp)
+                        } else {
+                            Modifier.weight(1f)
+                        }
+                    )
                     .heightIn(min = 90.dp)
+                    .background(Color(0xFF0A0A0A))
             ) {
                 EditorPanelHost()
             }

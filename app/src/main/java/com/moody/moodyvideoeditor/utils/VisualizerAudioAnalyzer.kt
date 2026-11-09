@@ -6,6 +6,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import android.util.Log
+import com.moody.moodyvideoeditor.data.AudioAdjustmentSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -21,7 +22,15 @@ data class VisualizerSpectrum(
 ) {
     val frameCount: Int get() = values.size / bandCount
 
-    fun bandsAt(sourceTimeMs: Long): FloatArray {
+    fun bandsAt(
+        sourceTimeMs: Long,
+        audioSettings: AudioAdjustmentSettings = AudioAdjustmentSettings()
+    ): FloatArray = bandsAt(sourceTimeMs, adjustmentFor(audioSettings))
+
+    fun bandsAt(sourceTimeMs: Long, adjustment: FloatArray): FloatArray {
+        require(adjustment.size == bandCount) {
+            "Expected $bandCount band adjustments, got ${adjustment.size}"
+        }
         if (frameCount == 0) return FloatArray(bandCount)
         val frame = (sourceTimeMs.coerceAtLeast(0L) * sampleRate /
                 (hopSize * 1000.0)).coerceIn(0.0, (frameCount - 1).toDouble())
@@ -32,9 +41,47 @@ data class VisualizerSpectrum(
         val start = before * bandCount
         val next = after * bandCount
         for (i in 0 until bandCount) {
-            result[i] = values[start + i] * (1f - fraction) + values[next + i] * fraction
+            result[i] = (
+                    values[start + i] * (1f - fraction) +
+                            values[next + i] * fraction +
+                            adjustment[i]
+                    ).coerceIn(0f, 1f)
         }
         return result
+    }
+
+    fun adjustmentFor(audioSettings: AudioAdjustmentSettings): FloatArray {
+        val settings = audioSettings.clamped()
+        val volumeGain = if (settings.volume > 0f) {
+            20f * kotlin.math.log10(settings.volume / 100f) / 72f
+        } else {
+            -1f
+        }
+        val gains = arrayOf(
+            100f to settings.bass,
+            1_000f to settings.mids,
+            2_500f to settings.vocals,
+            8_000f to settings.treble
+        )
+        val maxBin = FFT_SIZE / 2f
+        val logarithmicRange = kotlin.math.ln(maxBin + 1f)
+        return FloatArray(bandCount) { index ->
+            val centerBin = kotlin.math.exp(
+                logarithmicRange * (index + 0.5f) / bandCount
+            )
+            val centerHz = centerBin * sampleRate / FFT_SIZE
+            gains.fold(volumeGain) { gainDb, (frequency, amount) ->
+                if (amount <= 0f) {
+                    gainDb
+                } else {
+                    val octaveDistance = kotlin.math.ln(centerHz / frequency) /
+                            kotlin.math.ln(2f)
+                    val normalizedDistance = octaveDistance / 1.25f
+                    val weight = kotlin.math.exp(-0.5f * normalizedDistance * normalizedDistance)
+                    gainDb + amount * 0.12f * weight / 72f
+                }
+            }
+        }
     }
 
     companion object {

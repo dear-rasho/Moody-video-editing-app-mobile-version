@@ -169,7 +169,9 @@ import com.moody.moodyvideoeditor.utils.ChromaKeyHelper
 import com.moody.moodyvideoeditor.utils.applyChromaKey
 import com.moody.moodyvideoeditor.utils.AdjustmentDataMerger
 import com.moody.moodyvideoeditor.utils.AdjustmentNative
+import com.moody.moodyvideoeditor.utils.SettingsConsumer
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 private const val NATIVE_ADJUSTMENT_PREVIEW_MAX_DIMENSION = 480
 private const val NATIVE_ADJUSTMENT_PREVIEW_INTERVAL_MS = 83L
 private const val CHROMA_PREVIEW_MAX_DIMENSION = 480
@@ -404,6 +406,42 @@ private fun scaleAfterGesture(baseScale: Float, zoomFactor: Float): Float =
         (baseScale * zoomFactor).coerceIn(0f, 500f)
     }
 
+private data class RotationSnap(
+    val degrees: Float,
+    val snappedDegrees: Float?
+)
+
+private fun snapRotation(
+    degrees: Float,
+    activeSnap: Float?,
+    lockUntilMs: Long,
+    nowMs: Long
+): RotationSnap {
+    val nearest = (degrees / 90f).roundToInt() * 90f
+    val distance = kotlin.math.abs(
+        Math.toDegrees(
+            normalizeAngle(Math.toRadians((degrees - nearest).toDouble()).toFloat()).toDouble()
+        ).toFloat()
+    )
+    if (activeSnap != null && nowMs < lockUntilMs) {
+        return RotationSnap(activeSnap, activeSnap)
+    }
+    if (activeSnap == nearest && distance <= 7f) {
+        return RotationSnap(nearest, nearest)
+    }
+    return if (distance <= 3.5f) {
+        RotationSnap(nearest, nearest)
+    } else {
+        RotationSnap(degrees, null)
+    }
+}
+
+private fun rotationLabel(degrees: Float): String {
+    val normalized = ((degrees % 360f) + 360f) % 360f
+    val shown = if (normalized < 0.5f && degrees > 0.5f) 360f else normalized
+    return "${shown.roundToInt()}°"
+}
+
 private data class TextGesturePreview(
     val x: Float,
     val y: Float,
@@ -536,6 +574,9 @@ fun PreviewCanvas(
 ) {
     val context = LocalContext.current
     val hapticFeedback = LocalHapticFeedback.current
+    var showCenterVerticalGuide by remember { mutableStateOf(false) }
+    var showCenterHorizontalGuide by remember { mutableStateOf(false) }
+    var canvasRotationReadout by remember { mutableStateOf<Float?>(null) }
 
     val activeClips = clips.filter {
         !it.isAudio && !it.isAdjustmentClip && !it.isEffectClip &&
@@ -1006,6 +1047,16 @@ fun PreviewCanvas(
                             }
                             val isTargetSelected = target.id == currentSelectedClipId ||
                                     target.id in latestMultiSelectedIds.value
+                            if (target.isTextClip && !isTargetSelected) {
+                                down.consume()
+                                latestOnClipSelected.value(target.id)
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    event.changes.forEach { it.consume() }
+                                    if (event.changes.none { it.pressed }) break
+                                }
+                                return@awaitEachGesture
+                            }
                             if (!target.isTextClip && !isTargetSelected) {
                                 return@awaitEachGesture
                             }
@@ -1071,6 +1122,12 @@ fun PreviewCanvas(
                             var lastAngle = 0f
                             var hadMultiplePointers = false
                             var moved = false
+                            var snappedRotation: Float? = null
+                            var rotationSnapLockUntilMs = 0L
+                            var wasCenterSnappedX = false
+                            var wasCenterSnappedY = false
+                            var centerSnapLockUntilX = 0L
+                            var centerSnapLockUntilY = 0L
                             var finalTransform = TextGesturePreview(
                                 x = base.x,
                                 y = base.y,
@@ -1096,12 +1153,20 @@ fun PreviewCanvas(
                                     }
                                     if (pressed.size == 1) {
                                         val change = pressed.first()
-                                        val delta = change.position - change.previousPosition
-                                        panX += delta.x
-                                        panY += delta.y
-                                        moved = moved || panX * panX + panY * panY > 25f
+                                        if (!hadMultiplePointers) {
+                                            val delta =
+                                                change.position - change.previousPosition
+                                            panX += delta.x
+                                            panY += delta.y
+                                            moved = moved ||
+                                                    panX * panX + panY * panY > 25f
+                                        }
                                         change.consume()
                                     } else {
+                                        if (!hadMultiplePointers) {
+                                            panX = 0f
+                                            panY = 0f
+                                        }
                                         val first = pressed[0]
                                         val second = pressed[1]
                                         val delta = first.position - second.position
@@ -1109,9 +1174,30 @@ fun PreviewCanvas(
                                         val angle = kotlin.math.atan2(delta.y, delta.x)
                                         if (hadMultiplePointers && lastDistance > 1f) {
                                             zoom *= distance / lastDistance
-                                            rotation += Math.toDegrees(
+                                            val rawRotation = rotation + Math.toDegrees(
                                                 normalizeAngle(angle - lastAngle).toDouble()
                                             ).toFloat()
+                                            val rotationSnap = snapRotation(
+                                                base.rotation + rawRotation,
+                                                snappedRotation,
+                                                rotationSnapLockUntilMs,
+                                                android.os.SystemClock.uptimeMillis()
+                                            )
+                                            rotation = rotationSnap.degrees - base.rotation
+                                            if (rotationSnap.snappedDegrees != null &&
+                                                rotationSnap.snappedDegrees != snappedRotation
+                                            ) {
+                                                if (SettingsConsumer.hapticFeedback) {
+                                                    hapticFeedback.performHapticFeedback(
+                                                        HapticFeedbackType.TextHandleMove
+                                                    )
+                                                }
+                                                rotationSnapLockUntilMs =
+                                                    android.os.SystemClock.uptimeMillis() + 100L
+                                            } else if (rotationSnap.snappedDegrees == null) {
+                                                rotationSnapLockUntilMs = 0L
+                                            }
+                                            snappedRotation = rotationSnap.snappedDegrees
                                             moved = true
                                         }
                                         lastDistance = distance
@@ -1121,17 +1207,61 @@ fun PreviewCanvas(
                                     }
 
                                     if (moved) {
+                                        val rawX = base.x + panX / canvasWidth * 100f
+                                        val rawY = base.y + panY / canvasHeight * 100f
+                                        val nowMs = android.os.SystemClock.uptimeMillis()
+                                        val centerSnapX = if (
+                                            wasCenterSnappedX && nowMs < centerSnapLockUntilX
+                                        ) {
+                                            true
+                                        } else {
+                                            kotlin.math.abs(rawX - 50f) <= 1.5f
+                                        }
+                                        val centerSnapY = if (
+                                            wasCenterSnappedY && nowMs < centerSnapLockUntilY
+                                        ) {
+                                            true
+                                        } else {
+                                            kotlin.math.abs(rawY - 50f) <= 1.5f
+                                        }
+                                        if ((centerSnapX && !wasCenterSnappedX ||
+                                                    centerSnapY && !wasCenterSnappedY) &&
+                                            SettingsConsumer.hapticFeedback
+                                        ) {
+                                            hapticFeedback.performHapticFeedback(
+                                                HapticFeedbackType.TextHandleMove
+                                            )
+                                        }
+                                        if (centerSnapX && !wasCenterSnappedX) {
+                                            centerSnapLockUntilX = nowMs + 100L
+                                        } else if (!centerSnapX) {
+                                            centerSnapLockUntilX = 0L
+                                        }
+                                        if (centerSnapY && !wasCenterSnappedY) {
+                                            centerSnapLockUntilY = nowMs + 100L
+                                        } else if (!centerSnapY) {
+                                            centerSnapLockUntilY = 0L
+                                        }
+                                        showCenterVerticalGuide = centerSnapX
+                                        showCenterHorizontalGuide = centerSnapY
+                                        wasCenterSnappedX = centerSnapX
+                                        wasCenterSnappedY = centerSnapY
                                         finalTransform = TextGesturePreview(
-                                            x = (base.x + panX / canvasWidth * 100f)
+                                            x = (if (centerSnapX) 50f else rawX)
                                                 .coerceIn(-100f, 200f),
-                                            y = (base.y + panY / canvasHeight * 100f)
+                                            y = (if (centerSnapY) 50f else rawY)
                                                 .coerceIn(-100f, 200f),
-                                            scale = scaleAfterGesture(base.scale, zoom).let {
-                                                if (target.isTextClip) it.coerceIn(10f, 500f)
-                                                else it
-                                            },
+                                            scale = scaleAfterGesture(base.scale, zoom)
+                                                .coerceIn(10f, 500f),
                                             rotation = base.rotation + rotation
                                         )
+                                        canvasRotationReadout = if (
+                                            kotlin.math.abs(rotation) > 0.5f
+                                        ) {
+                                            finalTransform.rotation
+                                        } else {
+                                            null
+                                        }
                                         if (target.isTextClip) {
                                             textGesturePreviewStates
                                                 .getOrPut(target.id) {
@@ -1159,6 +1289,9 @@ fun PreviewCanvas(
                                     )
                                 }
                             } finally {
+                                showCenterVerticalGuide = false
+                                showCenterHorizontalGuide = false
+                                canvasRotationReadout = null
                                 if (target.isTextClip) {
                                     textGesturePreviewStates[target.id]?.transform = null
                                 }
@@ -2519,6 +2652,49 @@ fun PreviewCanvas(
 
                 }
             }
+            }
+
+            if (showCenterVerticalGuide || showCenterHorizontalGuide ||
+                canvasRotationReadout != null
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    if (showCenterVerticalGuide || showCenterHorizontalGuide) {
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val guideColor = Color(0xFF60EFFF)
+                            val strokeWidth = 1.dp.toPx()
+                            if (showCenterVerticalGuide) {
+                                drawLine(
+                                    color = guideColor,
+                                    start = Offset(size.width / 2f, 0f),
+                                    end = Offset(size.width / 2f, size.height),
+                                    strokeWidth = strokeWidth
+                                )
+                            }
+                            if (showCenterHorizontalGuide) {
+                                drawLine(
+                                    color = guideColor,
+                                    start = Offset(0f, size.height / 2f),
+                                    end = Offset(size.width, size.height / 2f),
+                                    strokeWidth = strokeWidth
+                                )
+                            }
+                        }
+                    }
+                    canvasRotationReadout?.let { degrees ->
+                        Text(
+                            text = rotationLabel(degrees),
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 8.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(0xDD111318))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
             }
 
             if (allOverlays.isNotEmpty()) {
@@ -4563,24 +4739,30 @@ private fun InteractiveTextOverlay(
                                 }
                                 if (pressed.size == 1) {
                                     val change = pressed.first()
-                                    val pan = change.position - change.previousPosition
-                                    val rotation =
-                                        Math.toRadians((baseRot + baseFrame.rotationZ).toDouble())
-                                    val scaleX = (baseScale / 100f) * baseFrame.scaleX
-                                    val scaleY = (baseScale / 100f) * baseFrame.scaleY
-                                    accumPanX += (
-                                            pan.x * scaleX * kotlin.math.cos(rotation) -
-                                                    pan.y * scaleY * kotlin.math.sin(rotation)
-                                            ).toFloat()
-                                    accumPanY += (
-                                            pan.x * scaleX * kotlin.math.sin(rotation) +
-                                                    pan.y * scaleY * kotlin.math.cos(rotation)
-                                            ).toFloat()
-                                    hasMoved = hasMoved ||
-                                            kotlin.math.abs(accumPanX) > 5f ||
-                                            kotlin.math.abs(accumPanY) > 5f
+                                    if (!hasMultiGesture) {
+                                        val pan = change.position - change.previousPosition
+                                        val rotation =
+                                            Math.toRadians((baseRot + baseFrame.rotationZ).toDouble())
+                                        val scaleX = (baseScale / 100f) * baseFrame.scaleX
+                                        val scaleY = (baseScale / 100f) * baseFrame.scaleY
+                                        accumPanX += (
+                                                pan.x * scaleX * kotlin.math.cos(rotation) -
+                                                        pan.y * scaleY * kotlin.math.sin(rotation)
+                                                ).toFloat()
+                                        accumPanY += (
+                                                pan.x * scaleX * kotlin.math.sin(rotation) +
+                                                        pan.y * scaleY * kotlin.math.cos(rotation)
+                                                ).toFloat()
+                                        hasMoved = hasMoved ||
+                                                kotlin.math.abs(accumPanX) > 5f ||
+                                                kotlin.math.abs(accumPanY) > 5f
+                                    }
                                     change.consume()
                                 } else if (pressed.size >= 2) {
+                                    if (!hasMultiGesture) {
+                                        accumPanX = 0f
+                                        accumPanY = 0f
+                                    }
                                     val first = pressed[0]
                                     val second = pressed[1]
                                     val delta = first.position - second.position
@@ -4897,7 +5079,7 @@ private fun BoxScope.LayerTransformHandles(
     onGestureStart: () -> Unit,
     onGestureEnd: () -> Unit,
     onTransformChanged: (Float, Float) -> Unit,
-    minimumScale: Float = 1f,
+    minimumScale: Float = 10f,
     onDelete: () -> Unit
 ) {
     val currentScale = rememberUpdatedState(scale)
@@ -4905,6 +5087,24 @@ private fun BoxScope.LayerTransformHandles(
     val currentOnTransformChanged = rememberUpdatedState(onTransformChanged)
     val currentOnGestureStart = rememberUpdatedState(onGestureStart)
     val currentOnGestureEnd = rememberUpdatedState(onGestureEnd)
+    val hapticFeedback = LocalHapticFeedback.current
+    var rotationReadout by remember(clipId) { mutableStateOf<Float?>(null) }
+    var gestureStartRotation by remember(clipId) { mutableFloatStateOf(rotation) }
+    val startGesture = {
+        gestureStartRotation = currentRotation.value
+        rotationReadout = null
+        currentOnGestureStart.value()
+    }
+    val reportTransform: (Float, Float) -> Unit = { newScale, newRotation ->
+        rotationReadout = newRotation.takeIf {
+            kotlin.math.abs(it - gestureStartRotation) > 0.5f
+        }
+        currentOnTransformChanged.value(newScale, newRotation)
+    }
+    val finishGesture = {
+        rotationReadout = null
+        currentOnGestureEnd.value()
+    }
     BoxWithConstraints(
         modifier = Modifier
             .align(Alignment.Center)
@@ -4915,8 +5115,11 @@ private fun BoxScope.LayerTransformHandles(
                     awaitFirstDown(requireUnconsumed = false)
                     var gestureStarted = false
                     var startDistance = 0f
+                    var startAngle = 0f
                     var startScale = currentScale.value
                     var startRotation = currentRotation.value
+                    var activeRotationSnap: Float? = null
+                    var rotationSnapLockUntilMs = 0L
                     try {
                         while (true) {
                             val pressed = awaitPointerEvent().changes.filter { it.pressed }
@@ -4940,18 +5143,44 @@ private fun BoxScope.LayerTransformHandles(
                                 startDistance = distance
                                 startScale = currentScale.value
                                 startRotation = currentRotation.value
-                                currentOnGestureStart.value()
+                                startAngle = kotlin.math.atan2(delta.y, delta.x)
+                                startGesture()
                             } else {
-                                currentOnTransformChanged.value(
-                                    (startScale.coerceAtLeast(1f) * distance / startDistance)
+                                val angle = kotlin.math.atan2(delta.y, delta.x)
+                                val rawRotation = startRotation + Math.toDegrees(
+                                    normalizeAngle(angle - startAngle).toDouble()
+                                ).toFloat()
+                                val snap = snapRotation(
+                                    rawRotation,
+                                    activeRotationSnap,
+                                    rotationSnapLockUntilMs,
+                                    android.os.SystemClock.uptimeMillis()
+                                )
+                                if (snap.snappedDegrees != null &&
+                                    snap.snappedDegrees != activeRotationSnap
+                                ) {
+                                    if (SettingsConsumer.hapticFeedback) {
+                                        hapticFeedback.performHapticFeedback(
+                                            HapticFeedbackType.TextHandleMove
+                                        )
+                                    }
+                                    rotationSnapLockUntilMs =
+                                        android.os.SystemClock.uptimeMillis() + 100L
+                                } else if (snap.snappedDegrees == null) {
+                                    rotationSnapLockUntilMs = 0L
+                                }
+                                activeRotationSnap = snap.snappedDegrees
+                                reportTransform(
+                                    (startScale.coerceAtLeast(minimumScale) *
+                                            distance / startDistance)
                                         .coerceIn(minimumScale, 500f),
-                                    startRotation
+                                    snap.degrees
                                 )
                             }
                             pressed.forEach { it.consume() }
                         }
                     } finally {
-                        if (gestureStarted) currentOnGestureEnd.value()
+                        if (gestureStarted) finishGesture()
                     }
                 }
             }
@@ -4975,9 +5204,30 @@ private fun BoxScope.LayerTransformHandles(
             positionX = positionX,
             positionY = positionY,
             onPositionChanged = onPositionChanged,
-            onGestureStart = onGestureStart,
-            onGestureEnd = onGestureEnd,
-            onTransformChanged = onTransformChanged,
+            onGestureStart = startGesture,
+            onGestureEnd = finishGesture,
+            onTransformChanged = reportTransform,
+            minimumScale = minimumScale,
+            onDelete = onDelete
+        )
+        TransformHandle(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .offset(x = 7.dp, y = 7.dp),
+            clipId = clipId,
+            corner = TransformHandleCorner.Scale,
+            boundsWidthPx = boundsWidthPx,
+            boundsHeightPx = boundsHeightPx,
+            handleSizePx = handleSizePx,
+            scale = scale,
+            rotation = rotation,
+            positionX = positionX,
+            positionY = positionY,
+            onPositionChanged = onPositionChanged,
+            onGestureStart = startGesture,
+            onGestureEnd = finishGesture,
+            onTransformChanged = reportTransform,
+            minimumScale = minimumScale,
             onDelete = onDelete
         )
         TransformHandle(
@@ -4994,17 +5244,31 @@ private fun BoxScope.LayerTransformHandles(
             positionX = positionX,
             positionY = positionY,
             onPositionChanged = onPositionChanged,
-            onGestureStart = onGestureStart,
-            onGestureEnd = onGestureEnd,
-            onTransformChanged = onTransformChanged,
+            onGestureStart = startGesture,
+            onGestureEnd = finishGesture,
+            onTransformChanged = reportTransform,
+            minimumScale = minimumScale,
             onDelete = onDelete
         )
+        rotationReadout?.let { degrees ->
+            Text(
+                text = rotationLabel(degrees),
+                color = Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xDD111318))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+        }
     }
 }
 
 private val LAYER_CONTROL_HANDLE_SIZE = 14.dp
 
-private enum class TransformHandleCorner { Delete, Rotate }
+private enum class TransformHandleCorner { Delete, Scale, Rotate }
 
 @Composable
 private fun TransformHandle(
@@ -5022,6 +5286,7 @@ private fun TransformHandle(
     onGestureStart: () -> Unit,
     onGestureEnd: () -> Unit,
     onTransformChanged: (Float, Float) -> Unit,
+    minimumScale: Float,
     onDelete: () -> Unit
 ) {
     val currentScale = rememberUpdatedState(scale);
@@ -5030,6 +5295,7 @@ private fun TransformHandle(
     val currentOnGestureStart = rememberUpdatedState(onGestureStart);
     val currentOnGestureEnd = rememberUpdatedState(onGestureEnd);
     val currentOnDelete = rememberUpdatedState(onDelete)
+    val hapticFeedback = LocalHapticFeedback.current
     val currentBoundsWidth by rememberUpdatedState(boundsWidthPx);
     val currentBoundsHeight by rememberUpdatedState(boundsHeightPx)
 
@@ -5039,18 +5305,58 @@ private fun TransformHandle(
             .clip(CircleShape)
             .background(
                 when (corner) {
-                    TransformHandleCorner.Delete -> Color(0xFFE5484D); TransformHandleCorner.Rotate -> Color(
-                    0xFF171A22
-                )
+                    TransformHandleCorner.Delete -> Color(0xFFE5484D)
+                    TransformHandleCorner.Scale,
+                    TransformHandleCorner.Rotate -> Color(0xFF171A22)
                 }
             )
             .border(1.dp, Color(0xFF60EFFF), CircleShape)
-            .pointerInput(clipId, corner) {
+            .pointerInput(clipId, corner, minimumScale) {
                 when (corner) {
                     TransformHandleCorner.Delete -> detectTapGestures { currentOnDelete.value() }
+                    TransformHandleCorner.Scale -> awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        val centerX = currentBoundsWidth
+                        val centerY = 0f
+                        val startX = centerX + down.position.x - handleSizePx / 2f -
+                                currentBoundsWidth / 2f
+                        val startY = centerY + down.position.y - handleSizePx / 2f -
+                                currentBoundsHeight / 2f
+                        val startDistance = kotlin.math.hypot(
+                            startX.toDouble(),
+                            startY.toDouble()
+                        ).toFloat().coerceAtLeast(1f)
+                        val startScale = currentScale.value
+                        val startRotation = currentRotation.value
+                        currentOnGestureStart.value()
+                        try {
+                            while (true) {
+                                val change = awaitPointerEvent().changes.firstOrNull()
+                                if (change == null || !change.pressed) break
+                                change.consume()
+                                val x = centerX + change.position.x - handleSizePx / 2f -
+                                        currentBoundsWidth / 2f
+                                val y = centerY + change.position.y - handleSizePx / 2f -
+                                        currentBoundsHeight / 2f
+                                val distance = kotlin.math.hypot(
+                                    x.toDouble(),
+                                    y.toDouble()
+                                ).toFloat()
+                                currentOnTransformChanged.value(
+                                    (startScale.coerceAtLeast(minimumScale) *
+                                            distance / startDistance)
+                                        .coerceIn(minimumScale, 500f),
+                                    startRotation
+                                )
+                            }
+                        } finally {
+                            currentOnGestureEnd.value()
+                        }
+                    }
                     TransformHandleCorner.Rotate -> awaitEachGesture {
-                        val down =
-                            awaitFirstDown(requireUnconsumed = false); down.consume(); currentOnGestureStart.value()
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
                         val startBoundsW = currentBoundsWidth;
                         val startBoundsH = currentBoundsHeight
                         val handleCenterX = 0f
@@ -5063,26 +5369,56 @@ private fun TransformHandle(
                         val startRotation = currentRotation.value
                         var previousAngle = startAngle;
                         var accumulatedRotation = 0f;
+                        var activeRotationSnap: Float? = null
+                        var rotationSnapLockUntilMs = 0L
                         var dragX = 0f;
                         var dragY = 0f
-                        do {
-                            val event = awaitPointerEvent();
-                            val change = event.changes.firstOrNull()
-                            if (change == null || !change.pressed) break
-                            val delta =
-                                change.position - change.previousPosition; dragX += delta.x; dragY += delta.y; change.consume()
-                            val currentX = startX + dragX;
-                            val currentY = startY + dragY
-                            val currentAngle = kotlin.math.atan2(currentY, currentX)
-                            accumulatedRotation += normalizeAngle(currentAngle - previousAngle); previousAngle =
-                                currentAngle
-                            currentOnTransformChanged.value(
-                                currentScale.value,
-                                startRotation + Math.toDegrees(accumulatedRotation.toDouble())
-                                    .toFloat()
-                            )
-                        } while (true)
-                        currentOnGestureEnd.value()
+                        currentOnGestureStart.value()
+                        try {
+                            while (true) {
+                                val change = awaitPointerEvent().changes.firstOrNull()
+                                if (change == null || !change.pressed) break
+                                val delta = change.position - change.previousPosition
+                                dragX += delta.x
+                                dragY += delta.y
+                                change.consume()
+                                val currentX = startX + dragX
+                                val currentY = startY + dragY
+                                val currentAngle = kotlin.math.atan2(currentY, currentX)
+                                accumulatedRotation += normalizeAngle(
+                                    currentAngle - previousAngle
+                                )
+                                previousAngle = currentAngle
+                                val rawRotation = startRotation +
+                                        Math.toDegrees(accumulatedRotation.toDouble()).toFloat()
+                                val snap = snapRotation(
+                                    rawRotation,
+                                    activeRotationSnap,
+                                    rotationSnapLockUntilMs,
+                                    android.os.SystemClock.uptimeMillis()
+                                )
+                                if (snap.snappedDegrees != null &&
+                                    snap.snappedDegrees != activeRotationSnap
+                                ) {
+                                    if (SettingsConsumer.hapticFeedback) {
+                                        hapticFeedback.performHapticFeedback(
+                                            HapticFeedbackType.TextHandleMove
+                                        )
+                                    }
+                                    rotationSnapLockUntilMs =
+                                        android.os.SystemClock.uptimeMillis() + 100L
+                                } else if (snap.snappedDegrees == null) {
+                                    rotationSnapLockUntilMs = 0L
+                                }
+                                activeRotationSnap = snap.snappedDegrees
+                                currentOnTransformChanged.value(
+                                    currentScale.value,
+                                    snap.degrees
+                                )
+                            }
+                        } finally {
+                            currentOnGestureEnd.value()
+                        }
                     }
                 }
             },
@@ -5090,7 +5426,9 @@ private fun TransformHandle(
     ) {
         Text(
             text = when (corner) {
-                TransformHandleCorner.Delete -> "×"; TransformHandleCorner.Rotate -> "⟳"
+                TransformHandleCorner.Delete -> "×"
+                TransformHandleCorner.Scale -> "↗"
+                TransformHandleCorner.Rotate -> "⟳"
             }, color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold
         )
     }

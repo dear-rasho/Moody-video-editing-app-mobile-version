@@ -63,32 +63,45 @@ object AudioPreviewEngine {
     fun applySettings(
         exoPlayer: ExoPlayer,
         audioExoPlayer: ExoPlayer,
-        layers: List<AudioAdjustmentSettings>,
-        processors: List<AudioSettingsAudioProcessor>
+        videoSettings: List<AudioAdjustmentSettings>,
+        audioSettings: List<AudioAdjustmentSettings>,
+        videoProcessor: AudioSettingsAudioProcessor,
+        audioProcessor: AudioSettingsAudioProcessor
     ) {
         release()
-        val settings = layers.map { it.clamped() }
-        val echoAmount = settings.maxOfOrNull { it.echo }?.div(100f) ?: 0f
-        val reverbAmount = settings.maxOfOrNull { it.reverb }?.div(100f) ?: 0f
-        val studioReverbAmount =
-            settings.maxOfOrNull { it.studioReverb }?.div(100f) ?: 0f
-        processors.forEach {
-            it.setEffects(echoAmount, reverbAmount, studioReverbAmount)
-        }
-        val pitch = pitchFor(settings)
-        setPitch(exoPlayer, pitch)
-        setPitch(audioExoPlayer, pitch)
-        if (settings.isEmpty()) return
+        val video = videoSettings.map { it.clamped() }
+        val audio = audioSettings.map { it.clamped() }
+        videoProcessor.setEffects(
+            video.maxOfOrNull { it.echo }?.div(100f) ?: 0f,
+            video.maxOfOrNull { it.reverb }?.div(100f) ?: 0f,
+            video.maxOfOrNull { it.studioReverb }?.div(100f) ?: 0f
+        )
+        audioProcessor.setEffects(
+            audio.maxOfOrNull { it.echo }?.div(100f) ?: 0f,
+            audio.maxOfOrNull { it.reverb }?.div(100f) ?: 0f,
+            audio.maxOfOrNull { it.studioReverb }?.div(100f) ?: 0f
+        )
+        setPitch(exoPlayer, pitchFor(video))
+        setPitch(audioExoPlayer, pitchFor(audio))
+        if (video.isEmpty() && audio.isEmpty()) return
 
-        val settingsKey = "audio-settings:${settings.hashCode()}"
+        val settingsKey = "audio-settings:${video.hashCode()}:${audio.hashCode()}"
         currentFx = settingsKey
-        applySettingsWithRetry(exoPlayer, audioExoPlayer, settings, settingsKey, attempt = 0)
+        applySettingsWithRetry(
+            exoPlayer,
+            audioExoPlayer,
+            video,
+            audio,
+            settingsKey,
+            attempt = 0
+        )
     }
 
     private fun applySettingsWithRetry(
         exoPlayer: ExoPlayer,
         audioExoPlayer: ExoPlayer,
-        settings: List<AudioAdjustmentSettings>,
+        videoSettings: List<AudioAdjustmentSettings>,
+        audioSettings: List<AudioAdjustmentSettings>,
         settingsKey: String,
         attempt: Int
     ) {
@@ -109,7 +122,12 @@ object AudioPreviewEngine {
             if (attempt < 25) {
                 val retry = Runnable {
                     applySettingsWithRetry(
-                        exoPlayer, audioExoPlayer, settings, settingsKey, attempt + 1
+                        exoPlayer,
+                        audioExoPlayer,
+                        videoSettings,
+                        audioSettings,
+                        settingsKey,
+                        attempt + 1
                     )
                 }
                 retryRunnable = retry
@@ -120,8 +138,10 @@ object AudioPreviewEngine {
             return
         }
 
-        if (sidVideo > 0) applySettingsToSession(sidVideo, settings)
-        if (sidAudio > 0 && sidAudio != sidVideo) applySettingsToSession(sidAudio, settings)
+        if (sidVideo > 0) applySettingsToSession(sidVideo, videoSettings)
+        if (sidAudio > 0 && sidAudio != sidVideo) {
+            applySettingsToSession(sidAudio, audioSettings)
+        }
     }
 
     private fun applySettingsToSession(

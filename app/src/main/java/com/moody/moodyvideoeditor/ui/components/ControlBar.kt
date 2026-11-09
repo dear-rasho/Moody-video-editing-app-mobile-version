@@ -40,13 +40,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.moody.moodyvideoeditor.data.RatioLibrary
 import com.moody.moodyvideoeditor.utils.VideoUtils
 
 @Composable
 fun ControlBar(
     onMediaClick: () -> Unit,
     currentRatio: String = "16:9",
-    onRatioClick: () -> Unit = {},
+    onRatioSelected: (String) -> Unit = {},
     isPlaying: Boolean = false,
     canUndo: Boolean = false,
     canRedo: Boolean = false,
@@ -87,7 +88,7 @@ fun ControlBar(
         ) {
             if (showMediaRatioTime) {
                 PillButton("Import", onMediaClick, horizontalPadding = 6.dp)
-                PillButton(currentRatio, onRatioClick, horizontalPadding = 6.dp)
+                RatioDropdownButton(currentRatio, onRatioSelected)
             }
             IconButton(onClick = onPlayPause, enabled = hasVideo, modifier = Modifier.size(32.dp)) {
                 Icon(
@@ -185,7 +186,7 @@ fun ControlBar(
 fun EditorMediaRatioTimeControls(
     onMediaClick: () -> Unit,
     currentRatio: String,
-    onRatioClick: () -> Unit,
+    onRatioSelected: (String) -> Unit,
     currentPosMs: Long,
     totalDurationMs: Long
 ) {
@@ -210,7 +211,10 @@ fun EditorMediaRatioTimeControls(
                 maxLines = 1
             )
         }
-        PillButton(currentRatio, onRatioClick, horizontalPadding = 6.dp, height = 30.dp)
+        RatioDropdownButton(
+            currentRatio = currentRatio,
+            onRatioSelected = onRatioSelected
+        )
         Text(
             "${VideoUtils.formatDuration(currentPosMs)}/${VideoUtils.formatDuration(totalDurationMs)}",
             color = Color(0xFFAAAAAA),
@@ -218,6 +222,41 @@ fun EditorMediaRatioTimeControls(
             fontWeight = FontWeight.Bold,
             maxLines = 1
         )
+    }
+}
+
+@Composable
+private fun RatioDropdownButton(
+    currentRatio: String,
+    onRatioSelected: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box {
+        PillButton(
+            text = currentRatio,
+            onClick = { expanded = true },
+            horizontalPadding = 6.dp,
+            height = 30.dp
+        )
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            RatioLibrary.OPTIONS.forEach { ratio ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = if (ratio.key == currentRatio) "✓  ${ratio.key}" else ratio.key
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        onRatioSelected(ratio.key)
+                    }
+                )
+            }
+        }
     }
 }
 

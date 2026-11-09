@@ -35,15 +35,25 @@ import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 @Composable
 fun AudioPanel(
     settings: AudioAdjustmentSettings,
-    trackIndex: Int,
+    targetName: String?,
     onSettingsChanged: (AudioAdjustmentSettings) -> Unit,
     onEditStart: () -> Unit,
     onEditEnd: () -> Unit,
-    onAddLayer: () -> Unit,
     onClose: () -> Unit
 ) {
     val current = settings.clamped()
     FeaturePanel(title = "Audio Settings", onClose = onClose) {
+        if (targetName == null) {
+            Text(
+                "Select an audio or video layer to adjust its sound.",
+                color = Color(0xFF888888),
+                fontSize = 11.sp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp)
+            )
+            return@FeaturePanel
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -52,7 +62,7 @@ fun AudioPanel(
             verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             Text(
-                "Affects audio tracks A1-A$trackIndex above this layer.",
+                "Adjusting: $targetName",
                 color = Color(0xFF888888),
                 fontSize = 10.sp,
                 modifier = Modifier.padding(start = 4.dp, bottom = 5.dp)
@@ -90,24 +100,6 @@ fun AudioPanel(
             }
             AudioSlider("Vocal enhancement", current.vocalEnhancement, onEditStart, onEditEnd) {
                 onSettingsChanged(current.copy(vocalEnhancement = it))
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-                    .height(38.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF241842))
-                    .pointerInput(Unit) { detectTapGestures { onAddLayer() } },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "＋ Add another Audio Settings layer",
-                    color = Color(0xFFC4B5FD),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
-                )
             }
         }
     }

@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import com.moody.moodyvideoeditor.data.AudioAdjustmentSettings
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.VisualizerState
 import com.moody.moodyvideoeditor.utils.VisualizerAudioAnalyzer
@@ -166,8 +167,13 @@ fun VisualizerOverlay(
         val speed = audio.speed.coerceAtLeast(0.01f)
         (audio.sourceStartMs + (timelineOffset * speed).toLong())
     }
-    val audioBands = remember(audioSpectrum, relativeMs) {
-        audioSpectrum?.bandsAt(relativeMs)
+    val audioBandAdjustment = remember(audioSpectrum, linkedAudio?.audioAdjustments) {
+        audioSpectrum?.adjustmentFor(
+            linkedAudio?.audioAdjustments ?: AudioAdjustmentSettings()
+        )
+    }
+    val audioBands = remember(audioSpectrum, relativeMs, audioBandAdjustment) {
+        audioBandAdjustment?.let { audioSpectrum?.bandsAt(relativeMs, it) }
     }
 
 
