@@ -565,6 +565,7 @@ fun PreviewCanvas(
     onEditText: (String) -> Unit = {},
     onDeleteLayer: (String) -> Unit = {},
     onGroupGestureStart: () -> Unit = {},
+    onSingleClipGestureStart: (String) -> Unit = {},
     onGroupGestureEnd: () -> Unit = {},
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit = { _, _, _, _, _ -> },
     onLayerPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
@@ -618,6 +619,7 @@ fun PreviewCanvas(
     val latestSelectedClipId = rememberUpdatedState(selectedClipId)
     val latestMultiSelectedIds = rememberUpdatedState(multiSelectedIds)
     val latestOnGroupGestureStart = rememberUpdatedState(onGroupGestureStart)
+    val latestOnSingleClipGestureStart = rememberUpdatedState(onSingleClipGestureStart)
     val latestOnGroupGestureEnd = rememberUpdatedState(onGroupGestureEnd)
     val latestOnGroupGesture = rememberUpdatedState(onGroupGesture)
     val latestOnClipSelected = rememberUpdatedState(onClipSelected)
@@ -1141,7 +1143,11 @@ fun PreviewCanvas(
                             ) {
                                 latestOnClipSelected.value(target.id)
                             }
-                            latestOnGroupGestureStart.value()
+                            if (target.isTextClip) {
+                                latestOnSingleClipGestureStart.value(target.id)
+                            } else {
+                                latestOnGroupGestureStart.value()
+                            }
 
                             try {
                                 while (continueGesture) {
@@ -2640,6 +2646,7 @@ fun PreviewCanvas(
                                     onSelect = { onClipSelected(clip.id) },
                                     onEditText = { onEditText(clip.id) },
                                     onGroupGestureStart = onGroupGestureStart,
+                                    onSingleClipGestureStart = onSingleClipGestureStart,
                                     onGroupGestureEnd = onGroupGestureEnd,
                                     onGroupGesture = onGroupGesture,
                                     onDeleteLayer = { onDeleteLayer(clip.id) },
@@ -4339,6 +4346,7 @@ private fun InteractiveTextOverlay(
     onSelect: () -> Unit,
     onEditText: () -> Unit,
     onGroupGestureStart: () -> Unit,
+    onSingleClipGestureStart: (String) -> Unit,
     onGroupGestureEnd: () -> Unit,
     onGroupGesture: (String, Float, Float, Float, Float) -> Unit,
     onDeleteLayer: () -> Unit,
@@ -4708,7 +4716,8 @@ private fun InteractiveTextOverlay(
                         BlurredEdgeTreatment.Unbounded
                     ) else Modifier
                 )
-                .pointerInput(clip.id, canvasW, canvasH) {
+                .pointerInput(clip.id, canvasW, canvasH, isSelected) {
+                    if (!isSelected) return@pointerInput
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         if (down.isConsumed) return@awaitEachGesture
@@ -4728,7 +4737,7 @@ private fun InteractiveTextOverlay(
                         var hasMultiGesture = false;
                         var hasMoved = false
                         var continueGesture = true
-                        onGroupGestureStart()
+                        onSingleClipGestureStart(clip.id)
                         try {
                             while (continueGesture) {
                                 val event = awaitPointerEvent()

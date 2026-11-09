@@ -985,7 +985,7 @@ object ProjectRepository {
         put("fontStyle", t.fontStyle)
         put("color", t.color)
         put("strokeEnabled", t.strokeEnabled)
-        put("strokeWidth", t.strokeWidth.toDouble())
+        put("strokeWidth", t.boundedStrokeWidth.toDouble())
         put("strokeColor", t.strokeColor)
         put("glowEnabled", t.glowEnabled)
         put("glowColor", t.glowColor)
@@ -1069,7 +1069,8 @@ object ProjectRepository {
             fontStyle = o.optString("fontStyle", "normal"),
             color = o.optLong("color", 0xFFFFFFFFL),
             strokeEnabled = o.optBoolean("strokeEnabled", false),
-            strokeWidth = o.optDouble("strokeWidth", 0.0).toFloat(),
+            strokeWidth = o.optDouble("strokeWidth", 0.0).toFloat()
+                .coerceIn(0f, TextState.MAX_STROKE_WIDTH),
             strokeColor = o.optLong("strokeColor", 0xFF000000L),
             glowEnabled = o.optBoolean("glowEnabled", false),
             glowColor = o.optLong("glowColor", 0xFF4DD0E1L),

@@ -93,6 +93,7 @@ class ExportService : Service() {
     private var activeExporter: VideoExporter? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var lastNotificationUpdate = 0L
+    private var lastProgressLogUpdate = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -220,6 +221,13 @@ class ExportService : Service() {
                 ExportStateHolder.updateProgress(p, msg, phase)
 
                 val now = System.currentTimeMillis()
+                if (now - lastProgressLogUpdate >= 5_000L) {
+                    lastProgressLogUpdate = now
+                    Log.i(
+                        "EXPORT_PROGRESS",
+                        "progress=${(p * 100).toInt()}% phase=$phase message=$msg"
+                    )
+                }
                 if (now - lastNotificationUpdate > 800) {
                     lastNotificationUpdate = now
                     updateNotification(msg, (p * 100).toInt())

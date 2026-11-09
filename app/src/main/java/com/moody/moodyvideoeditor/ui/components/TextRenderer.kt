@@ -48,7 +48,7 @@ fun TextOverlay(
     val family = FontLibrary.familyFor(text.fontFamily)
     val solidColor = Color(text.color)
     val density = LocalDensity.current
-    val outlineWidthPx = with(density) { text.strokeWidth.dp.toPx() }
+    val outlineWidthPx = with(density) { text.boundedStrokeWidth.dp.toPx() }
     val textAlignment = when (text.alignment) {
         "left" -> TextAlign.Left
         "right" -> TextAlign.Right
@@ -122,7 +122,7 @@ fun TextOverlay(
                     )
                 )
             }
-            if (text.strokeEnabled && text.strokeWidth > 0f) {
+            if (text.strokeEnabled && text.boundedStrokeWidth > 0f) {
                 Text(
                     text = text.content,
                     color = Color(text.strokeColor),

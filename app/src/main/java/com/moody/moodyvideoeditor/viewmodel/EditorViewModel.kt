@@ -410,12 +410,22 @@ class EditorViewModel : ViewModel() {
 
     fun beginGroupGesture() {
         val s = _state.value
-        groupGestureHistoryBaseline = s.clips.toList()
         val ids: Set<String> = if (s.multiSelectedIds.isNotEmpty()) {
             s.multiSelectedIds
         } else {
             setOfNotNull(s.selectedClipId)
         }
+        beginGestureForClips(s, ids)
+    }
+
+    fun beginSingleClipGesture(clipId: String) {
+        val s = _state.value
+        if (s.clips.none { it.id == clipId }) return
+        beginGestureForClips(s, setOf(clipId))
+    }
+
+    private fun beginGestureForClips(s: EditorState, ids: Set<String>) {
+        groupGestureHistoryBaseline = s.clips.toList()
         val map = mutableMapOf<String, ClipSnapshot>()
         s.clips.forEach { c ->
             if (c.id in ids) {
@@ -1182,7 +1192,8 @@ class EditorViewModel : ViewModel() {
                 clips = list,
                 selectedClipId = finalClip.id,
                 selectedTrackIndex = trackIdx,
-                selectedIsAudio = false
+                selectedIsAudio = false,
+                multiSelectedIds = emptySet()
             )
         }
         return finalClip
@@ -2353,7 +2364,8 @@ class EditorViewModel : ViewModel() {
                 visualLayerCount = visualLayerCount,
                 selectedClipId = selectedClip.id,
                 selectedTrackIndex = selectedClip.trackIndex,
-                selectedIsAudio = false
+                selectedIsAudio = false,
+                multiSelectedIds = emptySet()
             )
         }
         updateHistoryFlags()
@@ -2654,7 +2666,11 @@ class EditorViewModel : ViewModel() {
         fontStyle = if (updated.fontStyle != base.fontStyle) updated.fontStyle else fontStyle,
         color = if (updated.color != base.color) updated.color else color,
         strokeEnabled = if (updated.strokeEnabled != base.strokeEnabled) updated.strokeEnabled else strokeEnabled,
-        strokeWidth = if (updated.strokeWidth != base.strokeWidth) updated.strokeWidth else strokeWidth,
+        strokeWidth = (if (updated.strokeWidth != base.strokeWidth) {
+            updated.boundedStrokeWidth
+        } else {
+            strokeWidth
+        }).takeIf { it.isFinite() }?.coerceIn(0f, TextState.MAX_STROKE_WIDTH) ?: 0f,
         strokeColor = if (updated.strokeColor != base.strokeColor) updated.strokeColor else strokeColor,
         glowEnabled = if (updated.glowEnabled != base.glowEnabled) updated.glowEnabled else glowEnabled,
         glowColor = if (updated.glowColor != base.glowColor) updated.glowColor else glowColor,

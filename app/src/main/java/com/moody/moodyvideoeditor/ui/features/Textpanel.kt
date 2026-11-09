@@ -237,10 +237,12 @@ fun TextPanel(
 
             "stroke" -> StrokeSub(
                 enabled = currentText.strokeEnabled,
-                width = currentText.strokeWidth,
+                width = currentText.boundedStrokeWidth,
                 color = currentText.strokeColor,
                 onEnabled = { onTextChanged(currentText.copy(strokeEnabled = it)) },
-                onWidth = { onTextChanged(currentText.copy(strokeWidth = it)) },
+                onWidth = {
+                    onTextChanged(currentText.copy(strokeWidth = it.coerceIn(0f, TextState.MAX_STROKE_WIDTH)))
+                },
                 onColor = { onTextChanged(currentText.copy(strokeColor = it)) },
                 onBack = { subView = "options" }
             )
@@ -778,7 +780,7 @@ private fun StrokeSub(
     ) {
         BackHeader("Stroke / Outline", onBack)
         ToggleRow("Enabled", enabled, onEnabled)
-        SliderRow("Width", width, 0f..20f, onWidth)
+        SliderRow("Width", width.coerceIn(0f, TextState.MAX_STROKE_WIDTH), 0f..TextState.MAX_STROKE_WIDTH, onWidth)
         ColorPickerField(
             label = "Color",
             colorLong = color,

@@ -114,6 +114,9 @@ data class TextState(
     // Segments (mixed typography)
     val segments: List<TextSegment> = emptyList()
 ) {
+    val boundedStrokeWidth: Float
+        get() = strokeWidth.takeIf { it.isFinite() }
+            ?.coerceIn(0f, MAX_STROKE_WIDTH) ?: 0f
 
     // ═══════════════════════════════════════════════════════════
     //  SEGMENT HELPERS
@@ -166,7 +169,9 @@ data class TextState(
     val isDefault: Boolean
         get() = this == TextState()
 
-    companion object
+    companion object {
+        const val MAX_STROKE_WIDTH = 10f
+    }
 }
 
 // Text clip on timeline — mirrors JS text clip structure.

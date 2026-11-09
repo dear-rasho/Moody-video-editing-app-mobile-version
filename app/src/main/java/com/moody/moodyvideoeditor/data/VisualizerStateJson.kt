@@ -138,7 +138,7 @@ private fun TextState.toJson() = JSONObject().apply {
     put("fontStyle", fontStyle)
     put("color", color)
     put("strokeEnabled", strokeEnabled)
-    put("strokeWidth", strokeWidth.toDouble())
+    put("strokeWidth", boundedStrokeWidth.toDouble())
     put("strokeColor", strokeColor)
     put("glowEnabled", glowEnabled)
     put("glowColor", glowColor)
@@ -236,7 +236,8 @@ private fun TextState.Companion.fromJson(json: JSONObject): TextState {
         fontStyle = json.optString("fontStyle", default.fontStyle),
         color = json.optLong("color", default.color),
         strokeEnabled = json.optBoolean("strokeEnabled", default.strokeEnabled),
-        strokeWidth = json.float("strokeWidth", default.strokeWidth),
+        strokeWidth = json.float("strokeWidth", default.strokeWidth)
+            .coerceIn(0f, TextState.MAX_STROKE_WIDTH),
         strokeColor = json.optLong("strokeColor", default.strokeColor),
         glowEnabled = json.optBoolean("glowEnabled", default.glowEnabled),
         glowColor = json.optLong("glowColor", default.glowColor),

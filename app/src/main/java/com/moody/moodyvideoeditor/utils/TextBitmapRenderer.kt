@@ -1172,7 +1172,7 @@ object TextBitmapRenderer {
                 }
             }
 
-            if (st.strokeEnabled && st.strokeWidth > 0f) {
+            if (st.strokeEnabled && st.boundedStrokeWidth > 0f) {
                 val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     this.typeface = typeface
                     this.textSize = fontSize
@@ -1181,7 +1181,7 @@ object TextBitmapRenderer {
                     shader = null
                     color = st.strokeColor.toInt()
                     style = Paint.Style.STROKE
-                    strokeWidth = (st.strokeWidth * scale * 2f).coerceIn(1f, 60f)
+                    strokeWidth = (st.boundedStrokeWidth * scale * 2f).coerceIn(1f, 60f)
                     strokeJoin = Paint.Join.ROUND
                     strokeCap = Paint.Cap.ROUND
                     alpha = alphaInt

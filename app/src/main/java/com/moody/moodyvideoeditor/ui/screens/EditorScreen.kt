@@ -2707,6 +2707,9 @@ fun EditorScreen(
                         }
                     },
                     onGroupGestureStart = { viewModel.beginGroupGesture() },
+                    onSingleClipGestureStart = { clipId ->
+                        viewModel.beginSingleClipGesture(clipId)
+                    },
                     onGroupGestureEnd = { viewModel.endGroupGesture() },
                     onGroupGesture = { clipId: String, x: Float, y: Float, scale: Float, rot: Float ->
                         viewModel.applyGroupTransform(clipId, x, y, scale, rot)

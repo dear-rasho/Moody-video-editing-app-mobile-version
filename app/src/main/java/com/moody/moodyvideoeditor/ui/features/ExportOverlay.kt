@@ -125,15 +125,18 @@ private fun ExportingDialog(
     )
 
     // Live remaining time calculation
+    var elapsedSec by remember { mutableLongStateOf(0L) }
     var remainingSec by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(state.progress, state.startedAtMs) {
+    LaunchedEffect(state.progress, state.startedAtMs, state.isExporting) {
         while (state.isExporting) {
-            val s = state
-            if (s.progress > 0.01f && s.startedAtMs > 0L) {
-                val elapsed = System.currentTimeMillis() - s.startedAtMs
-                val totalEstimate = (elapsed / s.progress).toLong()
-                val remaining = (totalEstimate - elapsed).coerceAtLeast(0L)
-                remainingSec = remaining / 1000
+            if (state.startedAtMs > 0L) {
+                val elapsed = (System.currentTimeMillis() - state.startedAtMs)
+                    .coerceAtLeast(0L)
+                elapsedSec = elapsed / 1000
+                if (state.progress > 0.01f) {
+                    val totalEstimate = (elapsed / state.progress).toLong()
+                    remainingSec = ((totalEstimate - elapsed).coerceAtLeast(0L)) / 1000
+                }
             }
             delay(500)
         }
@@ -232,10 +235,17 @@ private fun ExportingDialog(
                 )
             }
 
-            // Remaining time
-            if (remainingSec > 0) {
+            if (elapsedSec > 0L) {
                 Text(
-                    text = "About $remainingSec seconds remaining",
+                    text = buildString {
+                        append("Elapsed ")
+                        append(formatExportDuration(elapsedSec))
+                        if (remainingSec > 0L) {
+                            append("  •  Approx. ")
+                            append(formatExportDuration(remainingSec))
+                            append(" remaining")
+                        }
+                    },
                     color = Color(0xFF666666),
                     fontSize = 11.sp
                 )
@@ -549,6 +559,11 @@ private fun ErrorDialog(
     }
 }
 
+private fun formatExportDuration(totalSeconds: Long): String {
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return "%02d:%02d".format(minutes, seconds)
+}
 
 // Helper: opens the exported file with system viewer
 private fun openExportedFile(context: Context, uriString: String) {
