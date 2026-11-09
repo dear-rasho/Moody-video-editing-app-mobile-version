@@ -465,7 +465,7 @@ class ExportService : Service() {
                     "MoodyExport::WakeLock"
                 )
                 wakeLock?.setReferenceCounted(false)
-                wakeLock?.acquire(30 * 60 * 1000L)
+                wakeLock?.acquire()
             }
         } catch (t: Throwable) {
             Log.e(TAG, "acquireWakeLock failed", t)
@@ -487,6 +487,7 @@ class ExportService : Service() {
         try {
             serviceScope.launch {
                 kotlinx.coroutines.delay(1000)
+                releaseWakeLock()
                 try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                         stopForeground(STOP_FOREGROUND_REMOVE)

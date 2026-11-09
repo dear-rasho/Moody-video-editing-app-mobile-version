@@ -1,12 +1,12 @@
 package com.moody.moodyvideoeditor.utils
 
-import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegSession
@@ -28,6 +28,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 
 private data class LayeredRenderItem(
     val trackIndex: Int,
@@ -139,40 +140,33 @@ class FFmpegExecutor(
         bitrateKbps: Int,
         targetW: Int,
         targetH: Int,
+        fps: Int,
         encoderThreads: Int = 0
     ): List<String> {
-        return listOf(
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-tune", "fastdecode",
-            "-b:v", "${bitrateKbps}k",
-            "-s:v", "${targetW}x${targetH}",
-            "-aspect", "$targetW:$targetH",
-            "-pix_fmt", "yuv420p",
-            "-color_range", "tv",
-            "-colorspace", "bt709",
-            "-color_primaries", "bt709",
-            "-color_trc", "bt709",
-            "-threads", encoderThreads.toString()
-        )
+        val codecArguments = VideoEncoderPolicy.codecArguments(targetW, targetH, fps)
+        return buildList {
+            addAll(codecArguments)
+            addAll(
+                listOf(
+                    "-b:v", "${bitrateKbps}k",
+                    "-s:v", "${targetW}x${targetH}",
+                    "-aspect", "$targetW:$targetH",
+                    "-pix_fmt", "yuv420p",
+                    "-color_range", "tv",
+                    "-colorspace", "bt709",
+                    "-color_primaries", "bt709",
+                    "-color_trc", "bt709"
+                )
+            )
+            if (codecArguments.getOrNull(1) == "libx264") {
+                add("-threads")
+                add(encoderThreads.toString())
+            }
+        }
     }
 
-    private fun recommendedFfmpegThreads(targetW: Int, targetH: Int): Int {
-        val cpuLimit = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
-        val pixelCount = targetW.toLong() * targetH
-        val resolutionLimit = when {
-            pixelCount >= 3840L * 2160L -> 2
-            pixelCount >= 2560L * 1440L -> 3
-            else -> 6
-        }
-        val memoryClassMb = context.getSystemService(ActivityManager::class.java)?.memoryClass ?: 256
-        val memoryLimit = when {
-            memoryClassMb <= 192 -> 1
-            memoryClassMb <= 256 -> 2
-            memoryClassMb <= 384 -> 4
-            else -> 6
-        }
-        return minOf(cpuLimit, resolutionLimit, memoryLimit).coerceAtLeast(1)
+    private fun recommendedFfmpegThreads(): Int {
+        return Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
     }
 
     suspend fun export(
@@ -233,7 +227,9 @@ class FFmpegExecutor(
                         shouldCancel = { isCancelled }
                     )
                 } catch (e: Exception) {
-                    emptyList()
+                    if (e is CancellationException) throw e
+                    Log.e("FFMPEG", "Lightning effect rendering failed", e)
+                    throw IllegalStateException("Lightning effect rendering failed", e)
                 }
             } else emptyList()
 
@@ -247,7 +243,9 @@ class FFmpegExecutor(
                         shouldCancel = { isCancelled }
                     )
                 } catch (e: Exception) {
-                    emptyList()
+                    if (e is CancellationException) throw e
+                    Log.e("FFMPEG", "Particle effect rendering failed", e)
+                    throw IllegalStateException("Particle effect rendering failed", e)
                 }
             } else emptyList()
 
@@ -261,7 +259,9 @@ class FFmpegExecutor(
                         shouldCancel = { isCancelled }
                     )
                 } catch (e: Exception) {
-                    emptyList()
+                    if (e is CancellationException) throw e
+                    Log.e("FFMPEG", "Fire effect rendering failed", e)
+                    throw IllegalStateException("Fire effect rendering failed", e)
                 }
             } else emptyList()
 
@@ -275,7 +275,9 @@ class FFmpegExecutor(
                         shouldCancel = { isCancelled }
                     )
                 } catch (e: Exception) {
-                    emptyList()
+                    if (e is CancellationException) throw e
+                    Log.e("FFMPEG", "Dust effect rendering failed", e)
+                    throw IllegalStateException("Dust effect rendering failed", e)
                 }
             } else emptyList()
 
@@ -295,8 +297,9 @@ class FFmpegExecutor(
                         shouldCancel = { isCancelled }
                     )
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     Log.e("FFMPEG", "Crop alpha render failed", e)
-                    emptyList()
+                    throw IllegalStateException("Crop alpha rendering failed", e)
                 }
             } else emptyList()
 
@@ -1222,9 +1225,14 @@ class FFmpegExecutor(
         inputLabel: String,
         targetW: Int,
         targetH: Int,
-        fps: Int
+        fps: Int,
+        inputAlreadyTargetSized: Boolean = false
     ): String {
-        filterParts.add("[$inputLabel]scale=$targetW:$targetH:flags=lanczos,setsar=1[exportv]")
+        if (inputAlreadyTargetSized) {
+            filterParts.add("[$inputLabel]setsar=1[exportv]")
+        } else {
+            filterParts.add("[$inputLabel]scale=$targetW:$targetH:flags=lanczos,setsar=1[exportv]")
+        }
         return WatermarkHelper.addWatermarkToFilter(
             context, args, filterParts, "exportv", targetW, targetH, fps
         )
@@ -2662,7 +2670,7 @@ class FFmpegExecutor(
             args.addAll(
                 listOf(
                     "-filter_complex_threads",
-                    recommendedFfmpegThreads(targetW, targetH).toString(),
+                    recommendedFfmpegThreads().toString(),
                     "-filter_complex",
                     filterParts.joinToString(";"),
                     "-map",
@@ -2673,7 +2681,7 @@ class FFmpegExecutor(
                     durationSec.toString()
                 )
             )
-            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH))
+            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH, fps))
             args.addAll(
                 listOf(
                     "-r",
@@ -2775,7 +2783,13 @@ class FFmpegExecutor(
             filterParts.add("[0:v]${baseVf.joinToString(",")}[base]")
             val outVLabel = buildOverlayChain(filterParts, sequences, seqStartIdx, "base")
             val finalVideoLabel = enforceOutputDimensions(
-                args, filterParts, outVLabel, targetW, targetH, fps
+                args,
+                filterParts,
+                outVLabel,
+                targetW,
+                targetH,
+                fps,
+                inputAlreadyTargetSized = true
             )
 
             val af = mutableListOf<String>()
@@ -2804,7 +2818,7 @@ class FFmpegExecutor(
                     totalDurSec.toString()
                 )
             )
-            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH))
+            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH, fps))
             args.addAll(
                 listOf(
                     "-r",
@@ -2910,7 +2924,13 @@ class FFmpegExecutor(
             filterParts.add("[0:v]${baseVf.joinToString(",")}[base]")
             val outVLabel = buildOverlayChain(filterParts, sequences, seqStartIdx, "base")
             val finalVideoLabel = enforceOutputDimensions(
-                args, filterParts, outVLabel, targetW, targetH, fps
+                args,
+                filterParts,
+                outVLabel,
+                targetW,
+                targetH,
+                fps,
+                inputAlreadyTargetSized = true
             )
 
             val af = mutableListOf<String>()
@@ -2950,7 +2970,7 @@ class FFmpegExecutor(
                     totalDurSec.toString()
                 )
             )
-            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH))
+            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH, fps))
             args.addAll(
                 listOf(
                     "-r",
@@ -3319,7 +3339,7 @@ class FFmpegExecutor(
             args.addAll(
                 listOf(
                     "-filter_complex_threads",
-                    recommendedFfmpegThreads(targetW, targetH).toString(),
+                    recommendedFfmpegThreads().toString(),
                     "-filter_complex",
                     filterParts.joinToString(";"),
                     "-map",
@@ -3335,7 +3355,8 @@ class FFmpegExecutor(
                     bitrateKbps,
                     targetW,
                     targetH,
-                    recommendedFfmpegThreads(targetW, targetH)
+                    fps,
+                    recommendedFfmpegThreads()
                 )
             )
             args.addAll(
@@ -3476,7 +3497,7 @@ class FFmpegExecutor(
                     totalDurSec.toString()
                 )
             )
-            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH))
+            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH, fps))
             args.addAll(
                 listOf(
                     "-r",
@@ -3871,11 +3892,69 @@ class FFmpegExecutor(
                 }
             }
 
-            val session = FFmpegKit.executeWithArgumentsAsync(
+            val executionArgs = if (args.contains("-filter_complex_threads")) {
+                argsArray
+            } else {
+                arrayOf(
+                    "-filter_complex_threads",
+                    Runtime.getRuntime().availableProcessors().coerceAtLeast(1).toString(),
+                    *argsArray
+                )
+            }
+            submitVideoSession(
+                executionArgs,
+                outputFile,
+                expectedDurationMs,
+                allowSoftwareFallback = true
+            )
+        } catch (e: Throwable) {
+            cleanupMaskSequences(); onError("Execute error: ${e.message}")
+        }
+    }
+
+    private fun submitVideoSession(
+        argsArray: Array<String>,
+        outputFile: File,
+        expectedDurationMs: Long,
+        allowSoftwareFallback: Boolean
+    ) {
+        val startedAtMs = SystemClock.elapsedRealtime()
+        val processedMediaMs = AtomicLong(0L)
+        val session = FFmpegKit.executeWithArgumentsAsync(
                 argsArray,
                 { s ->
                     try {
+                        val wallMs =
+                            (SystemClock.elapsedRealtime() - startedAtMs).coerceAtLeast(1L)
+                        val mediaMs = processedMediaMs.get()
+                        Log.i(
+                            "FFMPEG_PERF",
+                            "Video session: result=${s.returnCode}, wallMs=$wallMs, " +
+                                    "mediaMs=$mediaMs, " +
+                                    "realtimeFactor=${mediaMs / wallMs.toDouble()}"
+                        )
                         Log.e("FFMPEG_RESULT", "Return code: ${s.returnCode}")
+                        val output = s.allLogsAsString ?: ""
+                        if (!isCancelled &&
+                            allowSoftwareFallback &&
+                            !ReturnCode.isSuccess(s.returnCode) &&
+                            !ReturnCode.isCancel(s.returnCode) &&
+                            VideoEncoderPolicy.shouldFallbackToSoftware(output)
+                        ) {
+                            val fallbackArgs = VideoEncoderPolicy.softwareFallbackArguments(
+                                argsArray.toList()
+                            )
+                            if (fallbackArgs != null) {
+                                Log.w("FFMPEG", "Hardware video encoder failed; retrying with libx264")
+                                submitVideoSession(
+                                    fallbackArgs.toTypedArray(),
+                                    outputFile,
+                                    expectedDurationMs,
+                                    allowSoftwareFallback = false
+                                )
+                                return@executeWithArgumentsAsync
+                            }
+                        }
                         if (ReturnCode.isSuccess(s.returnCode)) {
                             if (outputFile.exists()) {
                                 cleanupMaskSequences(); onSuccess(outputFile)
@@ -3885,7 +3964,6 @@ class FFmpegExecutor(
                         } else if (ReturnCode.isCancel(s.returnCode)) {
                             cleanupMaskSequences(); onError("Export cancelled")
                         } else {
-                            val output = s.allLogsAsString ?: ""
                             Log.e("FFMPEG_FAILED", "=== FFmpeg logs ===")
                             Log.e("FFMPEG_FAILED", output)
                             cleanupMaskSequences()
@@ -3907,10 +3985,11 @@ class FFmpegExecutor(
                 },
                 { stats ->
                     try {
-                        val t = stats.time
+                        val t = stats.time.toLong()
+                        processedMediaMs.set(t.coerceAtLeast(0L))
                         if (t > 0L) {
                             onProgress(
-                                (t.toDouble() / expectedDurationMs.coerceAtLeast(1L))
+                                (t.toDouble() / expectedDurationMs.coerceAtLeast(1L).toDouble())
                                     .coerceIn(0.0, 0.95)
                                     .toFloat()
                             )
@@ -3919,10 +3998,7 @@ class FFmpegExecutor(
                     }
                 }
             )
-            currentSession = session
-        } catch (e: Throwable) {
-            cleanupMaskSequences(); onError("Execute error: ${e.message}")
-        }
+        currentSession = session
     }
 
     fun cancel() {

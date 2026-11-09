@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.util.Log
@@ -16,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 
 enum class ExportMode {
     VIDEO,
@@ -702,6 +704,12 @@ class VideoExporter(
         val durSec = (durationMs / 1000.0).coerceAtLeast(0.5)
 
         val args = mutableListOf<String>()
+        args.addAll(
+            listOf(
+                "-filter_complex_threads",
+                Runtime.getRuntime().availableProcessors().coerceAtLeast(1).toString()
+            )
+        )
         args.add("-y")
         args.add("-f"); args.add("lavfi")
         args.add("-t"); args.add(durSec.toString())
@@ -815,33 +823,86 @@ class VideoExporter(
         // Audio map karte waqt ? ka use karo taaki agar audio na ho to error na aaye
         args.add("-map"); args.add("[$finalAudioLabel]?")
 
-        args.addAll(listOf(
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-tune", "fastdecode",
-            "-b:v", "${bitrateKbps}k",
-            "-pix_fmt", "yuv420p",
-            "-r", fps.toString(),
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-movflags", "+faststart",
-            "-threads", "0",
-            "-t", durSec.toString(),
-            outputFile.absolutePath
-        ))
+        val codecArguments = VideoEncoderPolicy.codecArguments(targetW, targetH, fps)
+        args.addAll(codecArguments)
+        args.addAll(
+            listOf(
+                "-b:v", "${bitrateKbps}k",
+                "-pix_fmt", "yuv420p",
+                "-r", fps.toString(),
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-movflags", "+faststart"
+            )
+        )
+        if (codecArguments.getOrNull(1) == "libx264") {
+            args.addAll(listOf("-threads", "0"))
+        }
+        args.addAll(listOf("-t", durSec.toString(), outputFile.absolutePath))
         try {
-            val argsArray = args.toTypedArray()
-            val session = FFmpegKit.executeWithArgumentsAsync(
-                argsArray,
+            submitVideoSession(
+                args = args,
+                outputFile = outputFile,
+                durationMs = durationMs,
+                customFolderUri = customFolderUri,
+                sequences = allSequences,
+                allowSoftwareFallback = true
+            )
+        } catch (e: Exception) {
+            cleanupSequences(allSequences)
+            Log.e("EXPORT", "FFmpeg export failed", e)
+            onError("FFmpeg error: ${e.message}")
+        }
+    }
+
+    private fun submitVideoSession(
+        args: List<String>,
+        outputFile: File,
+        durationMs: Long,
+        customFolderUri: String?,
+        sequences: List<TextOverlaySequence>,
+        allowSoftwareFallback: Boolean
+    ) {
+        val startedAtMs = SystemClock.elapsedRealtime()
+        val processedMediaMs = AtomicLong(0L)
+        val session = FFmpegKit.executeWithArgumentsAsync(
+                args.toTypedArray(),
                 { s ->
+                    val wallMs =
+                        (SystemClock.elapsedRealtime() - startedAtMs).coerceAtLeast(1L)
+                    val mediaMs = processedMediaMs.get()
+                    Log.i(
+                        "EXPORT_PERF",
+                        "Video session: result=${s.returnCode}, wallMs=$wallMs, " +
+                                "mediaMs=$mediaMs, " +
+                                "realtimeFactor=${mediaMs / wallMs.toDouble()}"
+                    )
                     if (isCancelled) {
-                        cleanupSequences(allSequences); onCancelled()
+                        cleanupSequences(sequences); onCancelled()
                     } else if (ReturnCode.isSuccess(s.returnCode)) {
-                        completeExport(outputFile, customFolderUri, allSequences)
+                        completeExport(outputFile, customFolderUri, sequences)
                     } else {
                         val logs = s.allLogsAsString ?: "Unknown error"
+                        if (allowSoftwareFallback &&
+                            VideoEncoderPolicy.shouldFallbackToSoftware(logs)
+                        ) {
+                            val fallbackArgs =
+                                VideoEncoderPolicy.softwareFallbackArguments(args)
+                            if (fallbackArgs != null) {
+                                Log.w("EXPORT", "Hardware video encoder failed; retrying with libx264")
+                                submitVideoSession(
+                                    args = fallbackArgs,
+                                    outputFile = outputFile,
+                                    durationMs = durationMs,
+                                    customFolderUri = customFolderUri,
+                                    sequences = sequences,
+                                    allowSoftwareFallback = false
+                                )
+                                return@executeWithArgumentsAsync
+                            }
+                        }
                         Log.e("EXPORT", "FFmpeg failed: ${logs.takeLast(5000)}")
-                        cleanupSequences(allSequences)
+                        cleanupSequences(sequences)
                         onError("Export failed:\n${logs.takeLast(1500)}")
                     }
                 },
@@ -850,6 +911,7 @@ class VideoExporter(
                     if (!isCancelled) {
                         try {
                             val t = stats.time; if (t > 0) {
+                                processedMediaMs.set(t.toLong())
                                 val p = ((t / (durationMs.toDouble() * 1.2)).coerceIn(
                                     0.0,
                                     0.95
@@ -861,11 +923,6 @@ class VideoExporter(
                 }
             )
             sessionId = session.sessionId
-        } catch (e: Exception) {
-            cleanupSequences(allSequences)
-            Log.e("EXPORT", "FFmpeg export failed", e)
-            onError("FFmpeg error: ${e.message}")
-        }
     }
 
     private fun createOutputFile(fileName: String, format: String): File {

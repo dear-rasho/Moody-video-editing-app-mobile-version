@@ -15,6 +15,7 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
@@ -139,6 +140,7 @@ object TextBitmapRenderer {
         if (textClips.isEmpty() && imageClips.isEmpty() && overlayClips.isEmpty()) {
             return@withContext emptyList()
         }
+        val renderStartedAtMs = SystemClock.elapsedRealtime()
         require(W > 0 && H > 0) { "Render dimensions must be positive" }
         require(fps > 0) { "Frame rate must be positive" }
         require(totalDurationMs > 0L) { "Render duration must be positive" }
@@ -168,7 +170,6 @@ object TextBitmapRenderer {
                         imageClips.map { it.trackIndex } +
                         overlayClips.map { it.trackIndex }
                 ).minOrNull() ?: 0
-
         val imageBitmaps = mutableMapOf<String, Bitmap>()
         val textTextureBitmaps = mutableMapOf<String, Bitmap>()
 
@@ -209,8 +210,82 @@ object TextBitmapRenderer {
                 }
             }
 
-            val totalChunks = (totalFrames + CHUNK_SIZE - 1) / CHUNK_SIZE
             val completedCounter = AtomicInteger(0)
+            val onFrameDone = {
+                val done = completedCounter.incrementAndGet()
+                onProgress(done.toFloat() / totalFrames.toFloat())
+            }
+
+            if (canRenderAsStaticTimeline(
+                    textClips = sortedTextClips,
+                    imageClips = sortedImageClips,
+                    overlayClips = sortedOverlayClips
+                )
+            ) {
+                val boundaries = buildList {
+                    add(0)
+                    add(totalFrames)
+                    (sortedTextClips + sortedImageClips).forEach { clip ->
+                        add(frameAtOrAfter(clip.timelineStartMs, fps, totalFrames))
+                        add(frameAtOrAfter(clip.timelineEndMs, fps, totalFrames))
+                    }
+                }.distinct().sorted()
+                val sequences = mutableListOf<TextOverlaySequence>()
+
+                boundaries.zipWithNext().forEachIndexed { index, (startFrame, endFrame) ->
+                    currentCoroutineContext().ensureActive()
+                    if (shouldCancel()) throw CancellationException("Text rendering cancelled")
+                    val frameCount = endFrame - startFrame
+                    if (frameCount <= 0) return@forEachIndexed
+
+                    val timelineMs = (startFrame.toLong() * 1000L) / fps
+                    val hasVisibleClip = analyzeFrame(
+                        timelineMs,
+                        sortedTextClips,
+                        sortedImageClips,
+                        emptyList()
+                    ).needsRender
+                    if (!hasVisibleClip) {
+                        repeat(frameCount) { onFrameDone() }
+                        return@forEachIndexed
+                    }
+
+                    sequences += renderChunk(
+                        workingDirectory = workingDirectory,
+                        chunkIdx = index,
+                        startFrame = startFrame,
+                        chunkSize = frameCount,
+                        singleStaticSequence = true,
+                        totalFrames = totalFrames,
+                        fps = fps,
+                        W = W,
+                        H = H,
+                        context = context,
+                        layerClips = sortedTextClips,
+                        imageClips = sortedImageClips,
+                        overlayClips = emptyList(),
+                        imageBitmaps = imageBitmaps,
+                        textTextureBitmaps = textTextureBitmaps,
+                        emptyBytes = emptyBytes,
+                        renderTrackIndex = renderTrackIndex,
+                        shouldCancel = shouldCancel,
+                        imageFormat = imageFormat,
+                        jpegQuality = jpegQuality,
+                        onFrameDone = onFrameDone
+                    )
+                }
+                val orderedSequences = sequences.sortedBy { it.startSec }
+                logRenderPerformance(
+                    startedAtMs = renderStartedAtMs,
+                    sequences = orderedSequences,
+                    totalFrames = totalFrames,
+                    width = W,
+                    height = H
+                )
+                return@withContext orderedSequences
+            }
+
+            val totalChunks = (totalFrames + CHUNK_SIZE - 1) / CHUNK_SIZE
             val nextChunk = AtomicInteger(0)
             val pixelCount = W.toLong() * H
             val parallelChunkLimit = when {
@@ -233,7 +308,9 @@ object TextBitmapRenderer {
                             results[chunkIdx] = renderChunk(
                                 workingDirectory = workingDirectory,
                                 chunkIdx = chunkIdx,
+                                startFrame = chunkIdx * CHUNK_SIZE,
                                 chunkSize = CHUNK_SIZE,
+                                singleStaticSequence = false,
                                 totalFrames = totalFrames,
                                 fps = fps,
                                 W = W, H = H,
@@ -248,17 +325,22 @@ object TextBitmapRenderer {
                                 shouldCancel = shouldCancel,
                                 imageFormat = imageFormat,
                                 jpegQuality = jpegQuality,
-                                onFrameDone = {
-                                    val done = completedCounter.incrementAndGet()
-                                    onProgress(done.toFloat() / totalFrames.toFloat())
-                                }
+                                onFrameDone = onFrameDone
                             )
                         }
                     }
                 }.awaitAll()
                 results.mapNotNull { it }
             }
-            sequences.sortedBy { it.startSec }
+            val orderedSequences = sequences.sortedBy { it.startSec }
+            logRenderPerformance(
+                startedAtMs = renderStartedAtMs,
+                sequences = orderedSequences,
+                totalFrames = totalFrames,
+                width = W,
+                height = H
+            )
+            orderedSequences
         } catch (e: Throwable) {
             workingDirectory.deleteRecursively()
             throw e
@@ -272,10 +354,54 @@ object TextBitmapRenderer {
         }
     }
 
+    private fun logRenderPerformance(
+        startedAtMs: Long,
+        sequences: List<TextOverlaySequence>,
+        totalFrames: Int,
+        width: Int,
+        height: Int
+    ) {
+        Log.i(
+            TAG,
+            "Overlay render: ${width}x$height, timelineFrames=$totalFrames, " +
+                    "imageFrames=${sequences.sumOf { it.frameCount }}, " +
+                    "sequences=${sequences.size}, " +
+                    "elapsedMs=${SystemClock.elapsedRealtime() - startedAtMs}"
+        )
+    }
+
+    private fun canRenderAsStaticTimeline(
+        textClips: List<EditorClip>,
+        imageClips: List<EditorClip>,
+        overlayClips: List<EditorClip>
+    ): Boolean {
+        if (overlayClips.isNotEmpty()) return false
+        val clips = textClips + imageClips
+        if (clips.isEmpty()) return false
+
+        return clips.all { clip ->
+            clip.keyframes.isEmpty() &&
+                    !clip.mask.hasKeyframes &&
+                    (clip.textState?.let { state ->
+                        state.animation.equals("none", ignoreCase = true) &&
+                                state.captionPresetAnimation.equals("none", ignoreCase = true) &&
+                                !CaptionPresetLibrary.hasMovingHighlight(state.captionPresetId) &&
+                                state.textureUri == null
+                    } ?: true)
+        }
+    }
+
+    private fun frameAtOrAfter(timeMs: Long, fps: Int, totalFrames: Int): Int =
+        kotlin.math.ceil(timeMs.coerceAtLeast(0L) * fps / 1000.0)
+            .toInt()
+            .coerceIn(0, totalFrames)
+
     private suspend fun renderChunk(
         workingDirectory: File,
         chunkIdx: Int,
+        startFrame: Int,
         chunkSize: Int,
+        singleStaticSequence: Boolean,
         totalFrames: Int,
         fps: Int,
         W: Int, H: Int,
@@ -293,9 +419,20 @@ object TextBitmapRenderer {
         onFrameDone: () -> Unit
     ): TextOverlaySequence {
 
-        val chunkStart = chunkIdx * chunkSize
+        val chunkStart = startFrame
         val chunkEnd = (chunkStart + chunkSize).coerceAtMost(totalFrames)
         val chunkFrames = chunkEnd - chunkStart
+        val analysisFrameCount = if (singleStaticSequence) 1 else chunkFrames
+        val frameAnalyses = (0 until analysisFrameCount).map { frame ->
+            currentCoroutineContext().ensureActive()
+            if (shouldCancel()) throw CancellationException("Text rendering cancelled")
+            val timelineMs = ((chunkStart + frame).toLong() * 1000L) / fps
+            analyzeFrame(timelineMs, layerClips, imageClips, overlayClips)
+        }
+        val firstAnalysis = frameAnalyses.first()
+        val staticChunk = singleStaticSequence || frameAnalyses.all {
+            !it.anyAnimated && it.visibleKey == firstAnalysis.visibleKey
+        }
 
         val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
@@ -340,17 +477,18 @@ object TextBitmapRenderer {
                 val globalFrame = chunkStart + i
                 val timelineMs = (globalFrame.toLong() * 1000L) / fps
 
+                if (staticChunk && i > 0) {
+                    onFrameDone()
+                    continue
+                }
+
                 val targetFile = File(
                     workingDirectory,
-                    "combined_${chunkIdx}_f%05d.$ext".format(i + 1)
+                    if (staticChunk) "combined_${chunkIdx}_static.$ext"
+                    else "combined_${chunkIdx}_f%05d.$ext".format(i + 1)
                 )
 
-                val analysis = analyzeFrame(
-                    timelineMs = timelineMs,
-                    textClips = layerClips,
-                    imageClips = imageClips,
-                    overlayClips = overlayClips
-                )
+                val analysis = frameAnalyses[i]
 
                 when {
                     !analysis.needsRender -> {
@@ -479,20 +617,25 @@ object TextBitmapRenderer {
             videoTextureRetrievers.values.forEach { it.release() }
         }
 
-        val pattern = File(workingDirectory, "combined_${chunkIdx}_f%05d.$ext").absolutePath
+        val pattern = if (staticChunk) {
+            File(workingDirectory, "combined_${chunkIdx}_static.$ext").absolutePath
+        } else {
+            File(workingDirectory, "combined_${chunkIdx}_f%05d.$ext").absolutePath
+        }
         val startSec = chunkStart.toDouble() / fps.toDouble()
         val endSec = chunkEnd.toDouble() / fps.toDouble()
 
         return TextOverlaySequence(
             pattern = pattern,
-            frameCount = chunkFrames,
+            frameCount = if (staticChunk) 1 else chunkFrames,
             fps = fps,
             startNumber = 1,
             startSec = startSec,
             endSec = endSec,
             trackIndex = renderTrackIndex,
             workingDirectory = workingDirectory,
-            imageFormat = imageFormat
+            imageFormat = imageFormat,
+            isStaticImage = staticChunk
         )
     }
 
