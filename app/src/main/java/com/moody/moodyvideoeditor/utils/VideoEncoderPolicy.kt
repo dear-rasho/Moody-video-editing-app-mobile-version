@@ -10,9 +10,20 @@ internal object VideoEncoderPolicy {
     private const val SOFTWARE_ENCODER = "libx264"
 
     fun codecArguments(width: Int, height: Int, fps: Int): List<String> {
-        return if (hasHardwareAvcEncoder(width, height, fps)) {
+        val hardwareEncoder = findHardwareAvcEncoder(width, height, fps)
+        return if (hardwareEncoder != null) {
+            Log.i(
+                "EXPORT_ENCODER",
+                "Using Android H.264 hardware encoder ($hardwareEncoder) " +
+                        "via h264_mediacodec for ${width}x$height@$fps"
+            )
             listOf("-c:v", HARDWARE_ENCODER)
         } else {
+            Log.i(
+                "EXPORT_ENCODER",
+                "No compatible Android H.264 hardware encoder for " +
+                        "${width}x$height@$fps; using libx264 ultrafast"
+            )
             listOf(
                 "-c:v", SOFTWARE_ENCODER,
                 "-preset", "ultrafast",
@@ -47,9 +58,9 @@ internal object VideoEncoderPolicy {
                 "failed to configure encoder" in message
     }
 
-    private fun hasHardwareAvcEncoder(width: Int, height: Int, fps: Int): Boolean {
+    private fun findHardwareAvcEncoder(width: Int, height: Int, fps: Int): String? {
         return try {
-            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { codec ->
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { codec ->
                 if (!codec.isEncoder ||
                     codec.supportedTypes.none { it.equals("video/avc", ignoreCase = true) }
                 ) {
@@ -71,10 +82,10 @@ internal object VideoEncoderPolicy {
                         fps.toDouble()
                     ) == true
                 }
-            }
+            }?.name
         } catch (error: Exception) {
             Log.w(TAG, "Hardware H.264 encoder unavailable; using software encoding", error)
-            false
+            null
         }
     }
 }

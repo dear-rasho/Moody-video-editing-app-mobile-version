@@ -96,6 +96,10 @@ class EditorViewModel : ViewModel() {
     // ═══════════════════════════════════════════════════════════
 
     fun startExport(context: Context, config: ExportUiStateBundle) {
+        if (ExportStateHolder.state.value.isExporting) {
+            android.util.Log.w("EditorViewModel", "Export already running; ignoring duplicate request")
+            return
+        }
         try {
             ExportStateHolder.reset()
 

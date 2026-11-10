@@ -67,8 +67,8 @@ class AudioEngineTest {
             AudioAdjustmentSettings(reverb = 100f, studioReverb = 100f)
         )
 
-        assertTrue(filters.any { it.contains("aecho=0.8:0.55:37|71|113|173|251|347|461:") })
-        assertTrue(filters.any { it.contains("aecho=0.85:0.5:19|37|58|83|111:") })
+        assertTrue(filters.any { it.contains("aecho=0.8000:0.55:37|71|113|173|251|347|461:") })
+        assertTrue(filters.any { it.contains("aecho=0.8000:0.5:19|37|58|83|111:") })
     }
 
     @Test
@@ -87,7 +87,8 @@ class AudioEngineTest {
         assertTrue(filters.any { it.startsWith("equalizer=f=100:") })
         assertTrue(filters.any { it.startsWith("asetrate=") })
         assertTrue(filters.any { it.startsWith("dynaudnorm=") })
-        assertTrue(filters.any { it.startsWith("acompressor=") })
+        assertTrue(filters.any { it.startsWith("equalizer=f=2800:") })
+        assertFalse(filters.any { it.startsWith("acompressor=") })
     }
 
     @Test
@@ -135,8 +136,23 @@ class AudioEngineTest {
         )
 
         assertEquals("adjustedAudio", output)
-        assertTrue(filters.any { it.contains("aecho=0.8:0.55:37|71|113|173|251|347|461:") })
+        assertTrue(filters.any { it.contains("aecho=0.8000:0.55:37|71|113|173|251|347|461:") })
         assertTrue(filters.any { it.contains("amix=inputs=2:duration=longest:normalize=0") })
+    }
+
+    @Test
+    fun reverbDryGainMatchesPreviewIntensityAndFxPresetsKeepDrySignal() {
+        val halfIntensity = AudioEngine.audioAdjustmentFilters(
+            AudioAdjustmentSettings(echo = 50f, reverb = 50f, studioReverb = 50f)
+        )
+        assertTrue(halfIntensity.all { !it.startsWith("aecho=") || it.startsWith("aecho=0.9000:") })
+
+        listOf("echo", "reverb", "cave", "stadium").forEach { effect ->
+            assertTrue(
+                "$effect should not attenuate the dry signal",
+                AudioEngine.buildAudioFilter(effect, 100f).startsWith("aecho=1.0:")
+            )
+        }
     }
 
     @Test
@@ -221,5 +237,39 @@ class AudioEngineTest {
         assertEquals("adjustedAudio", output)
         assertTrue(filters.any { it.contains("between(t,0.0000,5.0000)") })
         assertTrue(filters.any { it.contains("aecho=") })
+    }
+
+    @Test
+    fun audioMixesDoNotAutomaticallyAttenuateOriginalAudio() {
+        val source = EditorClip(
+            uri = Uri.EMPTY,
+            name = "Audio",
+            type = "audio/mpeg",
+            sourceStartMs = 0L,
+            sourceEndMs = 4_000L,
+            timelineStartMs = 0L,
+            isAudio = true
+        )
+        val effectLayer = EditorClip(
+            uri = Uri.EMPTY,
+            name = "Audio Effect",
+            type = "audiofx/plain",
+            sourceStartMs = 0L,
+            sourceEndMs = 4_000L,
+            timelineStartMs = 0L,
+            isAudio = true,
+            audioFx = "echo"
+        )
+        val filterParts = mutableListOf<String>()
+
+        AudioEngine.appendTimelineAudioEffects(
+            filterParts,
+            listOf(source, effectLayer),
+            rangeStartMs = 0L,
+            baseLabel = "original",
+            outLabel = "output"
+        )
+
+        assertTrue(filterParts.any { it.contains("amix=inputs=2:duration=longest:normalize=0") })
     }
 }

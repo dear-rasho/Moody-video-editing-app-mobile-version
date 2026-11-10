@@ -211,11 +211,10 @@ object TextBitmapRenderer {
             }
 
             val completedCounter = AtomicInteger(0)
-            val onFrameDone = {
-                val done = completedCounter.incrementAndGet()
+            val onFramesDone: (Int) -> Unit = { frameCount ->
+                val done = completedCounter.addAndGet(frameCount)
                 onProgress(done.toFloat() / totalFrames.toFloat())
             }
-
             if (canRenderAsStaticTimeline(
                     textClips = sortedTextClips,
                     imageClips = sortedImageClips,
@@ -246,7 +245,7 @@ object TextBitmapRenderer {
                         emptyList()
                     ).needsRender
                     if (!hasVisibleClip) {
-                        repeat(frameCount) { onFrameDone() }
+                        onFramesDone(frameCount)
                         return@forEachIndexed
                     }
 
@@ -271,7 +270,7 @@ object TextBitmapRenderer {
                         shouldCancel = shouldCancel,
                         imageFormat = imageFormat,
                         jpegQuality = jpegQuality,
-                        onFrameDone = onFrameDone
+                        onFramesDone = onFramesDone
                     )
                 }
                 val orderedSequences = sequences.sortedBy { it.startSec }
@@ -325,7 +324,7 @@ object TextBitmapRenderer {
                                 shouldCancel = shouldCancel,
                                 imageFormat = imageFormat,
                                 jpegQuality = jpegQuality,
-                                onFrameDone = onFrameDone
+                                onFramesDone = onFramesDone
                             )
                         }
                     }
@@ -416,7 +415,7 @@ object TextBitmapRenderer {
         shouldCancel: () -> Boolean,
         imageFormat: String,
         jpegQuality: Int,
-        onFrameDone: () -> Unit
+        onFramesDone: (Int) -> Unit
     ): TextOverlaySequence {
 
         val chunkStart = startFrame
@@ -477,10 +476,7 @@ object TextBitmapRenderer {
                 val globalFrame = chunkStart + i
                 val timelineMs = (globalFrame.toLong() * 1000L) / fps
 
-                if (staticChunk && i > 0) {
-                    onFrameDone()
-                    continue
-                }
+                if (staticChunk && i > 0) continue
 
                 val targetFile = File(
                     workingDirectory,
@@ -609,7 +605,10 @@ object TextBitmapRenderer {
                 }
                 previousFile = targetFile
                 previousVisibleKey = analysis.visibleKey
-                onFrameDone()
+                onFramesDone(1)
+            }
+            if (staticChunk && chunkFrames > 1) {
+                onFramesDone(chunkFrames - 1)
             }
         } finally {
             bmp.recycle()

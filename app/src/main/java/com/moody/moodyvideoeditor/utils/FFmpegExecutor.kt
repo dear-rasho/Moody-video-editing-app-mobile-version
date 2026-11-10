@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
@@ -628,7 +629,10 @@ class FFmpegExecutor(
                 return
             }
 
-            filterParts.add("${audioLabels.joinToString("")}amix=inputs=${audioLabels.size}:duration=longest:dropout_transition=0[outa]")
+            filterParts.add(
+                "${audioLabels.joinToString("")}amix=inputs=${audioLabels.size}:" +
+                        "duration=longest:dropout_transition=0:normalize=0[outa]"
+            )
             val finalAudioLabel = AudioEngine.appendTimelineAudioEffects(
                 filterParts,
                 allClips,
@@ -1079,6 +1083,11 @@ class FFmpegExecutor(
 
     private fun copyUriToCache(uri: Uri, fileName: String): File? {
         return try {
+            if (uri.scheme.equals("file", ignoreCase = true)) {
+                val sourceFile = uri.path?.let(::File)
+                if (sourceFile?.isFile == true && sourceFile.canRead()) return sourceFile
+            }
+
             val mime = try {
                 context.contentResolver.getType(uri) ?: ""
             } catch (_: Throwable) {
@@ -1107,7 +1116,11 @@ class FFmpegExecutor(
             try {
                 val input = context.contentResolver.openInputStream(uri)
                     ?: throw java.io.IOException("Could not open URI")
-                input.use { tempFile.outputStream().use { output -> it.copyTo(output) } }
+                input.use {
+                    tempFile.outputStream().use { output ->
+                        it.copyTo(output, bufferSize = 256 * 1024)
+                    }
+                }
                 if (file.exists() && !file.delete()) throw java.io.IOException("Could not replace file")
                 if (!tempFile.renameTo(file)) throw java.io.IOException("Could not finalize file")
             } finally {
@@ -1238,6 +1251,52 @@ class FFmpegExecutor(
         )
     }
 
+    private fun isVideoAlreadyTargetSized(file: File, targetW: Int, targetH: Int): Boolean {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(file.absolutePath)
+            val width = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
+            )?.toIntOrNull()
+            val height = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
+            )?.toIntOrNull()
+            val rotation = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION
+            )?.toIntOrNull() ?: 0
+            width == targetW && height == targetH && rotation % 360 == 0
+        } catch (error: Exception) {
+            Log.w(
+                "FFMPEG_PERF",
+                "Could not inspect source dimensions; keeping resize filters",
+                error
+            )
+            false
+        } finally {
+            retriever.release()
+        }
+    }
+
+    private fun canSkipVideoFitScale(
+        clip: EditorClip,
+        sourceAlreadyTargetSized: Boolean,
+        transparentPadding: Boolean,
+        positionByOverlay: Boolean
+    ): Boolean = sourceAlreadyTargetSized &&
+            !transparentPadding &&
+            !positionByOverlay &&
+            kotlin.math.abs(clip.scale - 1f) < 0.001f &&
+            kotlin.math.abs(clip.scaleX - 1f) < 0.001f &&
+            kotlin.math.abs(clip.scaleY - 1f) < 0.001f &&
+            kotlin.math.abs(clip.offsetX) < 0.001f &&
+            kotlin.math.abs(clip.offsetY) < 0.001f &&
+            kotlin.math.abs(clip.rotation) < 0.001f &&
+            clip.keyframes.values.all { it.isEmpty() } &&
+            !clip.mask.isActive &&
+            !CropHelper.isCropped(clip) &&
+            clip.layerOpacity >= 100f &&
+            !clip.layerShadow.enabled
+
     /**
      * Keep animated transforms on a fixed-size canvas so FFmpeg filters can process every frame.
      */
@@ -1247,9 +1306,19 @@ class FFmpegExecutor(
         targetH: Int,
         transparentPadding: Boolean = false,
         positionByOverlay: Boolean = false,
-        frameRate: Int = 30
+        frameRate: Int = 30,
+        sourceAlreadyTargetSized: Boolean = false
     ): List<String> {
         val filters = mutableListOf<String>()
+        if (canSkipVideoFitScale(
+                clip,
+                sourceAlreadyTargetSized,
+                transparentPadding,
+                positionByOverlay
+            )
+        ) {
+            return listOf("setsar=1")
+        }
         val keepTransparentPadding = transparentPadding
         if (keepTransparentPadding) filters.add("format=rgba")
 
@@ -1973,7 +2042,10 @@ class FFmpegExecutor(
             )
             audioLabels.add("[$adjustedLabel]")
         }
-        filterParts.add("[${baseAudioLabel}]${audioLabels.joinToString("")}amix=inputs=${audioLabels.size + 1}:duration=longest[$outLabel]")
+        filterParts.add(
+            "[${baseAudioLabel}]${audioLabels.joinToString("")}" +
+                    "amix=inputs=${audioLabels.size + 1}:duration=longest:normalize=0[$outLabel]"
+        )
         return true
     }
 
@@ -2164,20 +2236,44 @@ class FFmpegExecutor(
             val durationSec = (totalDurationMs / 1000.0).coerceAtLeast(0.1)
             val orderedClips = clips.indices.map { clips[it] to localFiles[it] }
                 .sortedWith(compareBy({ it.first.trackIndex }, { it.first.timelineStartMs }))
+            val combinedSequences = sequences + extraSequences
+            val renderStaticImageOnce = isStaticImageComposition(
+                orderedClips = orderedClips,
+                allClips = allClips,
+                sequences = combinedSequences,
+                maskSequences = maskSequences,
+                colorMettes = colorMettes,
+                cropAlphaSequences = cropAlphaSequences,
+                durationSec = durationSec,
+                fps = fps
+            )
+            if (renderStaticImageOnce) {
+                Log.i(
+                    "FFMPEG_PERF",
+                    "Rendering static image composition once at ${targetW}x$targetH, " +
+                            "then encoding ${durationSec}s at 1 fps"
+                )
+            }
+            val exportFps = if (renderStaticImageOnce) 1 else fps
             val args = mutableListOf("-y")
 
             orderedClips.forEach { (clip, file) ->
-                if (isImage(clip)) args.addAll(
-                    listOf(
-                        "-loop",
-                        "1",
-                        "-framerate",
-                        fps.toString(),
-                        "-t",
-                        (clip.durationMs / 1000.0).toString()
-                    )
-                )
-                else {
+                if (isImage(clip)) {
+                    if (renderStaticImageOnce) {
+                        args.addAll(listOf("-framerate", exportFps.toString()))
+                    } else {
+                        args.addAll(
+                            listOf(
+                                "-loop",
+                                "1",
+                                "-framerate",
+                                fps.toString(),
+                                "-t",
+                                (clip.durationMs / 1000.0).toString()
+                            )
+                        )
+                    }
+                } else {
                     if (clip.sourceStartMs > 0L) args.addAll(
                         listOf(
                             "-ss",
@@ -2202,9 +2298,9 @@ class FFmpegExecutor(
                     "-f",
                     "lavfi",
                     "-t",
-                    durationSec.toString(),
+                    if (renderStaticImageOnce) "1" else durationSec.toString(),
                     "-i",
-                    "color=c=black:s=${targetW}x${targetH}:r=$fps"
+                    "color=c=black:s=${targetW}x${targetH}:r=$exportFps"
                 )
             )
             // ═══════════════════════════════════════════════════════════
@@ -2240,7 +2336,6 @@ class FFmpegExecutor(
             )
 
             // 3. Sequence inputs (text overlays)
-            val combinedSequences = sequences + extraSequences
             val sequenceStartIdx = nextInputIdx
             combinedSequences.forEach { seq ->
                 if (seq.startSec > 0.0001) {
@@ -2251,7 +2346,7 @@ class FFmpegExecutor(
                     args.addAll(
                         listOf(
                             "-loop", "1",
-                            "-framerate", seq.fps.toString(),
+                            "-framerate", if (renderStaticImageOnce) exportFps.toString() else seq.fps.toString(),
                             "-t", (seq.endSec - seq.startSec).coerceAtLeast(0.01).toString(),
                             "-i", seq.pattern
                         )
@@ -2449,10 +2544,10 @@ class FFmpegExecutor(
                                 targetH,
                                 true,
                                 positionByOverlay = !isBlendActive,
-                                frameRate = fps
+                                frameRate = exportFps
                             )
                         )
-                        filters.add("fps=$fps"); filters.add("trim=duration=$clipDurationSec"); filters.add(
+                        filters.add("fps=$exportFps"); filters.add("trim=duration=$clipDurationSec"); filters.add(
                             "setpts=PTS-STARTPTS+${startSec}/TB"
                         ); filters.add("format=rgba")
 
@@ -2617,7 +2712,14 @@ class FFmpegExecutor(
                 }
             }
 
-            filterParts.add("[$canvasLabel]format=yuv420p[outv]")
+            if (renderStaticImageOnce) {
+                filterParts.add(
+                    "[$canvasLabel]tpad=stop_mode=clone:stop_duration=$durationSec," +
+                            "format=yuv420p[outv]"
+                )
+            } else {
+                filterParts.add("[$canvasLabel]format=yuv420p[outv]")
+            }
             val audioLabels = mutableListOf<String>()
 
             audioOnlyClips.forEachIndexed { index, clip ->
@@ -2656,7 +2758,10 @@ class FFmpegExecutor(
 
             filterParts.add("[$silenceInputIdx:a]aresample=44100[silentAudio]")
             audioLabels.add("[silentAudio]")
-            filterParts.add("${audioLabels.joinToString("")}amix=inputs=${audioLabels.size}:duration=longest:dropout_transition=0[mixedAudio]")
+            filterParts.add(
+                "${audioLabels.joinToString("")}amix=inputs=${audioLabels.size}:" +
+                        "duration=longest:dropout_transition=0:normalize=0[mixedAudio]"
+            )
             val fxApplied = applyAudioEffectLayers(
                 filterParts,
                 allClips,
@@ -2666,11 +2771,18 @@ class FFmpegExecutor(
             )
             val finalAudioLabel = if (fxApplied) "finalAudio" else "mixedAudio"
 
-            val finalVideo = enforceOutputDimensions(args, filterParts, "outv", targetW, targetH, fps)
+            val finalVideo = enforceOutputDimensions(
+                args,
+                filterParts,
+                "outv",
+                targetW,
+                targetH,
+                exportFps
+            )
             args.addAll(
                 listOf(
                     "-filter_complex_threads",
-                    recommendedFfmpegThreads().toString(),
+                    (if (renderStaticImageOnce) 1 else recommendedFfmpegThreads()).toString(),
                     "-filter_complex",
                     filterParts.joinToString(";"),
                     "-map",
@@ -2681,11 +2793,11 @@ class FFmpegExecutor(
                     durationSec.toString()
                 )
             )
-            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH, fps))
+            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH, exportFps))
             args.addAll(
                 listOf(
                     "-r",
-                    fps.toString(),
+                    exportFps.toString(),
                     "-c:a",
                     "aac",
                     "-b:a",
@@ -2717,22 +2829,55 @@ class FFmpegExecutor(
     ) {
         try {
             val img = isImage(clip);
+            val sourceAlreadyTargetSized =
+                !img && isVideoAlreadyTargetSized(localFile, targetW, targetH)
+            val hasTimedVisualLayers = allClips.any { layer ->
+                layer.id != clip.id &&
+                        layer.timelineEndMs > clip.timelineStartMs &&
+                        layer.timelineStartMs < clip.timelineEndMs &&
+                        (layer.isFilterLayerClip ||
+                                (layer.trackIndex > clip.trackIndex &&
+                                        (layer.isEffectClip || layer.isAdjustmentClip)))
+            }
+            val processStaticImageOnce = img &&
+                    clip.speed == 1f &&
+                    clip.keyframes.isEmpty() &&
+                    clip.transition?.isActive != true &&
+                    !clip.layerShadow.enabled &&
+                    !hasTimedVisualLayers
             val durSec = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0).coerceAtLeast(0.1)
             val clipDurSec = (clip.durationMs / 1000.0).coerceAtLeast(0.1);
             val totalDurSec = (totalDurationMs / 1000.0).coerceAtLeast(durSec)
             val extraPadSec = (totalDurSec - clipDurSec).coerceAtLeast(0.0)
+            val composeStaticImageOnce = processStaticImageOnce &&
+                    sequences.all { sequence ->
+                        sequence.isStaticImage &&
+                                sequence.startSec <= 0.0001 &&
+                                sequence.endSec >= totalDurSec - 1.0 / fps
+                    }
+            val exportFps = if (composeStaticImageOnce) 1 else fps
+            val hasTimelineAudio = allClips.any { layer ->
+                layer.isAudio &&
+                        !layer.isAudioEffectClip &&
+                        layer.timelineEndMs > 0L &&
+                        layer.timelineStartMs < totalDurationMs
+            }
+            val hasAudioEffectLayers = allClips.any { it.isAudioEffectClip }
+            val omitSilentAudio = composeStaticImageOnce &&
+                    !hasTimelineAudio &&
+                    !hasAudioEffectLayers &&
+                    clip.audioFx == "none"
 
             val args = mutableListOf("-y")
-            if (img) args.addAll(
-                listOf(
-                    "-loop",
-                    "1",
-                    "-framerate",
-                    fps.toString(),
-                    "-t",
-                    clipDurSec.toString()
+            if (composeStaticImageOnce) {
+                args.addAll(listOf("-filter_complex_threads", "1"))
+            }
+            if (img) {
+                args.addAll(listOf("-framerate", exportFps.toString()))
+                if (!processStaticImageOnce) args.addAll(
+                    listOf("-loop", "1", "-t", clipDurSec.toString())
                 )
-            )
+            }
             else {
                 if (clip.sourceStartMs > 0) args.addAll(
                     listOf(
@@ -2749,18 +2894,20 @@ class FFmpegExecutor(
             }
             args.addAll(listOf("-i", localFile.absolutePath))
 
-            args.addAll(
-                listOf(
-                    "-f",
-                    "lavfi",
-                    "-t",
-                    totalDurSec.toString(),
-                    "-i",
-                    "anullsrc=r=44100:cl=stereo"
+            if (!omitSilentAudio) {
+                args.addAll(
+                    listOf(
+                        "-f",
+                        "lavfi",
+                        "-t",
+                        totalDurSec.toString(),
+                        "-i",
+                        "anullsrc=r=44100:cl=stereo"
+                    )
                 )
-            )
+            }
             val audioInputIdx = 1
-            val seqStartIdx = 2
+            val seqStartIdx = if (omitSilentAudio) 1 else 2
             addSequenceInputs(args, sequences)
 
             val filterParts = mutableListOf<String>()
@@ -2768,9 +2915,24 @@ class FFmpegExecutor(
             if (clip.speed != 1.0f && !img) baseVf.add("setpts=${1.0f / clip.speed}*PTS")
             baseVf.addAll(buildPerClipFilterChain(clip, allClips, fps))
             baseVf.addAll(
-                buildVisualTransformFilters(clip, targetW, targetH, frameRate = fps)
+                buildVisualTransformFilters(
+                    clip,
+                    targetW,
+                    targetH,
+                    frameRate = fps,
+                    sourceAlreadyTargetSized = sourceAlreadyTargetSized
+                )
             )
-            if (extraPadSec > 0.05) baseVf.add(
+            if (sourceAlreadyTargetSized && baseVf.none { it.startsWith("scale=") }) {
+                Log.i("FFMPEG_PERF", "Skipping redundant video fit-scale for target-sized source")
+            }
+            if (processStaticImageOnce && !composeStaticImageOnce) {
+                baseVf.add("tpad=stop_mode=clone:stop_duration=$totalDurSec")
+                Log.i(
+                    "FFMPEG_PERF",
+                    "Processing static image filters once for ${totalDurSec}s output"
+                )
+            } else if (extraPadSec > 0.05) baseVf.add(
                 "tpad=stop_mode=add:stop_duration=${
                     String.format(
                         Locale.US,
@@ -2788,50 +2950,61 @@ class FFmpegExecutor(
                 outVLabel,
                 targetW,
                 targetH,
-                fps,
+                exportFps,
                 inputAlreadyTargetSized = true
             )
-
-            val af = mutableListOf<String>()
-            if (clip.speed != 1.0f && !img) af.add("atempo=${clip.speed.coerceIn(0.5f, 2.0f)}")
-            if (clip.volume != 1.0f) af.add("volume=${clip.volume}")
-            if (clip.audioFx != "none") {
-                val fx = AudioEngine.buildAudioFilter(clip.audioFx, clip.audioFxIntensity)
-                if (fx.isNotBlank()) af.add(fx)
+            val outputVideoLabel = if (composeStaticImageOnce) {
+                filterParts.add(
+                    "[$finalVideoLabel]tpad=stop_mode=clone:stop_duration=$totalDurSec[staticExport]"
+                )
+                Log.i(
+                    "FFMPEG_PERF",
+                    "Compositing static image and overlays once for ${totalDurSec}s output " +
+                            "at $exportFps fps"
+                )
+                "staticExport"
+            } else {
+                finalVideoLabel
             }
 
-            if (af.isEmpty()) filterParts.add("[$audioInputIdx:a]aresample=44100[basea]")
-            else filterParts.add("[$audioInputIdx:a]${af.joinToString(",")},aresample=44100[basea]")
+            val afterFxLabel = if (omitSilentAudio) {
+                Log.i("FFMPEG_PERF", "Skipping synthetic audio track for silent static-image export")
+                null
+            } else {
+                val af = mutableListOf<String>()
+                if (clip.speed != 1.0f && !img) af.add("atempo=${clip.speed.coerceIn(0.5f, 2.0f)}")
+                if (clip.volume != 1.0f) af.add("volume=${clip.volume}")
+                if (clip.audioFx != "none") {
+                    val fx = AudioEngine.buildAudioFilter(clip.audioFx, clip.audioFxIntensity)
+                    if (fx.isNotBlank()) af.add(fx)
+                }
 
-            val fxApplied = applyAudioEffectLayers(filterParts, allClips, 0L, "basea", "fxa")
-            val afterFxLabel = if (fxApplied) "fxa" else "basea"
+                if (af.isEmpty()) filterParts.add("[$audioInputIdx:a]aresample=44100[basea]")
+                else filterParts.add(
+                    "[$audioInputIdx:a]${af.joinToString(",")},aresample=44100[basea]"
+                )
+
+                val fxApplied = applyAudioEffectLayers(filterParts, allClips, 0L, "basea", "fxa")
+                if (fxApplied) "fxa" else "basea"
+            }
 
             args.addAll(
-                listOf(
+                mutableListOf(
                     "-filter_complex",
                     filterParts.joinToString(";"),
                     "-map",
-                    "[$finalVideoLabel]",
-                    "-map",
-                    "[$afterFxLabel]",
+                    "[$outputVideoLabel]",
                     "-t",
                     totalDurSec.toString()
-                )
+                ).apply {
+                    if (afterFxLabel == null) add("-an")
+                    else addAll(listOf("-map", "[$afterFxLabel]"))
+                }
             )
-            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH, fps))
-            args.addAll(
-                listOf(
-                    "-r",
-                    fps.toString(),
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "128k",
-                    "-movflags",
-                    "+faststart",
-                    outputFile.absolutePath
-                )
-            )
+            args.addAll(buildFastVideoArgs(bitrateKbps, targetW, targetH, exportFps))
+            args.addAll(listOf("-r", exportFps.toString()))
+            if (afterFxLabel != null) args.addAll(listOf("-c:a", "aac", "-b:a", "128k"))
+            args.addAll(listOf("-movflags", "+faststart", outputFile.absolutePath))
             execute(args, outputFile, (totalDurSec * 1000.0).toLong())
         } catch (e: Throwable) {
             onError("Build error: ${e.message}")
@@ -2854,6 +3027,8 @@ class FFmpegExecutor(
     ) {
         try {
             val img = isImage(clip);
+            val sourceAlreadyTargetSized =
+                !img && isVideoAlreadyTargetSized(localFile, targetW, targetH)
             val sourceDurSec = ((clip.sourceEndMs - clip.sourceStartMs) / 1000.0).coerceAtLeast(0.1)
             val clipDurSec = (clip.durationMs / 1000.0).coerceAtLeast(0.1);
             val totalDurSec = (totalDurationMs / 1000.0).coerceAtLeast(clipDurSec)
@@ -2909,8 +3084,17 @@ class FFmpegExecutor(
             if (clip.speed != 1.0f && !img) baseVf.add("setpts=${1.0f / clip.speed}*PTS")
             baseVf.addAll(buildPerClipFilterChain(clip, allClips, fps))
             baseVf.addAll(
-                buildVisualTransformFilters(clip, targetW, targetH, frameRate = fps)
+                buildVisualTransformFilters(
+                    clip,
+                    targetW,
+                    targetH,
+                    frameRate = fps,
+                    sourceAlreadyTargetSized = sourceAlreadyTargetSized
+                )
             )
+            if (sourceAlreadyTargetSized && baseVf.none { it.startsWith("scale=") }) {
+                Log.i("FFMPEG_PERF", "Skipping redundant video fit-scale for target-sized source")
+            }
             if (extraPadSec > 0.05) baseVf.add(
                 "tpad=stop_mode=add:stop_duration=${
                     String.format(
@@ -3087,6 +3271,10 @@ class FFmpegExecutor(
     ) {
         try {
             val args = mutableListOf("-y")
+            val videoInputCount = clips.count { !isImage(it) }.coerceAtLeast(1)
+            val decoderThreads = (
+                    recommendedFfmpegThreads() / videoInputCount
+                    ).coerceIn(1, 4)
             clips.forEachIndexed { idx, clip ->
                 if (isImage(clip)) args.addAll(
                     listOf(
@@ -3113,7 +3301,9 @@ class FFmpegExecutor(
                         )
                     )
                 }
-                args.addAll(listOf("-threads", "1", "-i", localFiles[idx].absolutePath))
+                args.addAll(
+                    listOf("-threads", decoderThreads.toString(), "-i", localFiles[idx].absolutePath)
+                )
             }
 
             val silentIdx = mutableMapOf<Int, Int>();
@@ -3259,7 +3449,7 @@ class FFmpegExecutor(
                 buildTransparentCropFilter(matte)?.let(matteFilters::add)
                 matteFilters.addAll(
                     buildVisualTransformFilters(
-                        matte, targetW, targetH, true, true, frameRate = fps
+                        matte, targetW, targetH, true, true,                         frameRate = fps
                     )
                 )
                 matteFilters.add("setpts=PTS-STARTPTS+${startSec}/TB")
@@ -3515,6 +3705,49 @@ class FFmpegExecutor(
         } catch (e: Throwable) {
             onError("Concat export: ${e.message}")
         }
+    }
+
+    private fun isStaticImageComposition(
+        orderedClips: List<Pair<EditorClip, File>>,
+        allClips: List<EditorClip>,
+        sequences: List<TextOverlaySequence>,
+        maskSequences: List<MaskFrameSequence>,
+        colorMettes: List<EditorClip>,
+        cropAlphaSequences: List<com.moody.moodyvideoeditor.utils.CropAlphaSequence>,
+        durationSec: Double,
+        fps: Int
+    ): Boolean {
+        val clip = orderedClips.singleOrNull()?.first ?: return false
+        val durationMs = (durationSec * 1000.0).toLong()
+        val hasKeyframes = clip.keyframes.values.any { it.isNotEmpty() }
+        val adjustmentLayers = allClips.filter { it.isAdjustmentClip }
+
+        return isImage(clip) &&
+                clip.timelineStartMs <= 1L &&
+                clip.timelineEndMs >= durationMs &&
+                !hasKeyframes &&
+                clip.transition?.isActive != true &&
+                !clip.mask.isActive &&
+                !clip.layerShadow.enabled &&
+                maskSequences.isEmpty() &&
+                colorMettes.isEmpty() &&
+                cropAlphaSequences.isEmpty() &&
+                sequences.all { sequence ->
+                    sequence.isStaticImage &&
+                            sequence.startSec <= 0.0001 &&
+                            sequence.endSec >= durationSec - 1.0 / fps
+                } &&
+                allClips.none { layer ->
+                    layer.id != clip.id &&
+                            layer.timelineEndMs > clip.timelineStartMs &&
+                            layer.timelineStartMs < clip.timelineEndMs &&
+                            (layer.isEffectClip || layer.isFilterLayerClip)
+                } &&
+                adjustmentLayers.all { layer ->
+                    layer.timelineStartMs <= 1L &&
+                            layer.timelineEndMs >= durationMs &&
+                            layer.keyframes.values.none { it.isNotEmpty() }
+                }
     }
 
     private fun buildPerClipFilterChain(

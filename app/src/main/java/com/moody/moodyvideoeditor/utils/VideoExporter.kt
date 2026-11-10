@@ -33,6 +33,7 @@ class VideoExporter(
     private val onCancelled: () -> Unit = {}
 ) {
     private var ffmpeg: FFmpegExecutor? = null
+    private var nativeVideoExporter: NativeVideoExporter? = null
     private var sessionId: Long? = null
 
     @Volatile
@@ -60,6 +61,7 @@ class VideoExporter(
     ) {
         isCancelled = false
         ffmpeg = null
+        nativeVideoExporter = null
         sessionId = null
 
         Log.e("EXPORT", "=== START ===")
@@ -184,6 +186,72 @@ class VideoExporter(
 
         when {
             hasBaseVideo -> {
+                if (format.equals("mp4", ignoreCase = true) &&
+                    trimmedMatteClips.isEmpty() &&
+                    trimmedVisualClips.size == 1
+                ) {
+                    val nativeClip = trimmedVisualClips.single()
+                    val expectedAudio = nativeAudioTrackForSimpleClip(
+                        clip = nativeClip,
+                        audioClips = audioOnlyClips,
+                        allClips = clips,
+                        rangeStartMs = rangeStart,
+                        rangeEndMs = rangeEnd
+                    )
+                    if (expectedAudio != null) {
+                        val exporter = NativeVideoExporter(context) { progress ->
+                            if (!isCancelled) onProgress(0.05f + progress * 0.90f)
+                        }
+                        val includeAudio =
+                            expectedAudio.takeIf { exporter.hasAudioTrack(nativeClip.uri) == it }
+                        if (includeAudio != null) {
+                            val nativeOutput = createOutputFile(fileName, "mp4")
+                            nativeVideoExporter = exporter
+                            try {
+                                onProgress(0.02f)
+                                exporter.export(
+                                    inputUri = nativeClip.uri,
+                                    outputFile = nativeOutput,
+                                    sourceStartMs = nativeClip.sourceStartMs,
+                                    sourceEndMs = nativeClip.sourceEndMs,
+                                    width = targetW,
+                                    height = targetH,
+                                    fps = fps,
+                                    bitrateKbps = bitrateKbps,
+                                    includeAudio = includeAudio
+                                )
+                                nativeVideoExporter = null
+                                if (isCancelled) {
+                                    nativeOutput.delete()
+                                    onCancelled()
+                                    return
+                                }
+                                onProgress(0.97f)
+                                completeExport(nativeOutput, customFolderUri, emptyList())
+                                onProgress(1f)
+                                return
+                            } catch (e: CancellationException) {
+                                nativeVideoExporter = null
+                                nativeOutput.delete()
+                                if (isCancelled) {
+                                    onCancelled()
+                                    return
+                                }
+                                throw e
+                            } catch (e: Exception) {
+                                nativeVideoExporter = null
+                                nativeOutput.delete()
+                                onProgress(0.01f)
+                                Log.w(
+                                    "NATIVE_EXPORT",
+                                    "Native Media3 export failed; falling back to FFmpeg",
+                                    e
+                                )
+                            }
+                        }
+                    }
+                }
+
                 val outputFile = createOutputFile(fileName, format)
                 onProgress(0.01f)
 
@@ -484,8 +552,79 @@ class VideoExporter(
         }
     }
 
+    private fun nativeAudioTrackForSimpleClip(
+        clip: EditorClip,
+        audioClips: List<EditorClip>,
+        allClips: List<EditorClip>,
+        rangeStartMs: Long,
+        rangeEndMs: Long
+    ): Boolean? {
+        if (!clip.type.startsWith("video/") ||
+            clip.timelineStartMs > 1L ||
+            clip.timelineEndMs < rangeEndMs - rangeStartMs ||
+            clip.speed != 1f ||
+            clip.volume != 1f ||
+            clip.audioFx != "none" ||
+            clip.audioAdjustments != com.moody.moodyvideoeditor.data.AudioAdjustmentSettings() ||
+            clip.adjustments != AdjustmentData() ||
+            !clip.filters.isDefault ||
+            !clip.colorWheel.isDefault ||
+            clip.overlay.isActive ||
+            clip.keyframes.values.any { it.isNotEmpty() } ||
+            clip.transition?.isActive == true ||
+            clip.mask.isActive ||
+            CropHelper.isCropped(clip) ||
+            clip.layerShadow.enabled ||
+            clip.scale != 1f ||
+            clip.scaleX != 1f ||
+            clip.scaleY != 1f ||
+            clip.rotation != 0f ||
+            clip.offsetX != 0f ||
+            clip.offsetY != 0f ||
+            clip.layerOpacity != 100f ||
+            clip.blendMode != "normal" ||
+            clip.blendOpacity != 100f ||
+            clip.ratio != null ||
+            clip.freeze != null ||
+            clip.lightLeak != null ||
+            clip.spotlight != null ||
+            clip.visualizer != null ||
+            clip.chromaKey.isActive ||
+            clip.effectState != null ||
+            clip.textState != null ||
+            clip.soundFx != "none"
+        ) return null
+
+        val sourceAudio = audioClips.singleOrNull()
+        if (audioClips.size > 1) return null
+        if (sourceAudio != null &&
+            (clip.linkedId == null ||
+                    sourceAudio.linkedId != clip.linkedId ||
+                    sourceAudio.uri != clip.uri ||
+                    sourceAudio.timelineStartMs != clip.timelineStartMs ||
+                    sourceAudio.timelineEndMs != clip.timelineEndMs ||
+                    sourceAudio.sourceStartMs != clip.sourceStartMs ||
+                    sourceAudio.sourceEndMs != clip.sourceEndMs ||
+                    sourceAudio.speed != 1f ||
+                    sourceAudio.volume != 1f ||
+                    sourceAudio.isMuted ||
+                    sourceAudio.audioFx != "none" ||
+                    sourceAudio.audioAdjustments !=
+                    com.moody.moodyvideoeditor.data.AudioAdjustmentSettings() ||
+                    sourceAudio.soundFx != "none" ||
+                    sourceAudio.keyframes.values.any { it.isNotEmpty() })
+        ) return null
+
+        val activeIds = allClips.filter {
+            it.timelineEndMs > rangeStartMs && it.timelineStartMs < rangeEndMs
+        }.map { it.id }.toSet()
+        if (activeIds.any { it != clip.id && it != sourceAudio?.id }) return null
+        return sourceAudio != null
+    }
+
     fun cancel() {
         isCancelled = true
+        nativeVideoExporter?.cancel()
         try {
             ffmpeg?.cancel()
         } catch (_: Throwable) {
@@ -805,7 +944,10 @@ class VideoExporter(
                 )
                 audioLabels.add("[$adjustedLabel]")
             }
-            filterParts.add("${audioLabels.joinToString("")}amix=inputs=${audioLabels.size}:duration=longest[outa]")
+            filterParts.add(
+                "${audioLabels.joinToString("")}amix=inputs=${audioLabels.size}:" +
+                        "duration=longest:normalize=0[outa]"
+            )
         }
         val finalAudioLabel = AudioEngine.appendTimelineAudioEffects(
             filterParts,
@@ -1096,6 +1238,11 @@ class VideoExporter(
 
     private fun copyUriToCache(uri: Uri, fileName: String): File? {
         return try {
+            if (uri.scheme.equals("file", ignoreCase = true)) {
+                val sourceFile = uri.path?.let(::File)
+                if (sourceFile?.isFile == true && sourceFile.canRead()) return sourceFile
+            }
+
             val mime = try {
                 context.contentResolver.getType(uri) ?: ""
             } catch (_: Throwable) {
@@ -1121,7 +1268,11 @@ class VideoExporter(
             try {
                 val input = context.contentResolver.openInputStream(uri)
                     ?: throw java.io.IOException("Could not open media URI")
-                input.use { tempFile.outputStream().use { output -> it.copyTo(output) } }
+                input.use {
+                    tempFile.outputStream().use { output ->
+                        it.copyTo(output, bufferSize = 256 * 1024)
+                    }
+                }
                 if (tempFile.length() <= 0L) throw java.io.IOException("Media URI produced empty file")
                 if (file.exists() && !file.delete()) throw java.io.IOException("Could not replace cached file")
                 if (!tempFile.renameTo(file)) throw java.io.IOException("Could not finalize cached file")

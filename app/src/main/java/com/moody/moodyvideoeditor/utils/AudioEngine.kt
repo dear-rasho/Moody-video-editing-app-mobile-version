@@ -121,28 +121,28 @@ object AudioEngine {
             "robot" -> "tremolo=f=${(24f + 18f * t).coerceIn(1f, 200f)}:d=0.8,acrusher=bits=${(10f - 3f * t).toInt().coerceIn(5, 10)}:mix=${(0.25f + 0.2f * t).coerceIn(0f, 1f)}"
 
             "echo" -> buildEchoFilter(
-                (0.8f * t).coerceIn(0f, 1f),
+                1f,
                 (0.9f * t).coerceIn(0f, 1f),
                 (1000 * t).toInt().coerceAtLeast(10),
                 (0.3f * t).coerceIn(0f, 1f)
             )
 
             "reverb" -> buildEchoFilter(
-                (0.8f * t).coerceIn(0f, 1f),
+                1f,
                 (0.88f * t).coerceIn(0f, 1f),
                 60,
                 (0.4f * t).coerceIn(0f, 1f)
             )
 
             "cave" -> buildEchoFilter(
-                (0.8f * t).coerceIn(0f, 1f),
+                1f,
                 (0.88f * t).coerceIn(0f, 1f),
                 (500 * t).toInt().coerceAtLeast(10),
                 (0.5f * t).coerceIn(0f, 1f)
             )
 
             "stadium" -> buildEchoFilter(
-                0.8f * t,
+                1f,
                 0.9f * t,
                 (2000 * t).toInt().coerceAtLeast(10),
                 0.4f * t
@@ -205,7 +205,8 @@ object AudioEngine {
             currentLabel = "audioFxMixed"
             filterParts.add(
                 "${(0..activeAudioFxLayers.size).joinToString("") { "[fxn$it]" }}" +
-                        "amix=inputs=${activeAudioFxLayers.size + 1}:duration=longest[$currentLabel]"
+                        "amix=inputs=${activeAudioFxLayers.size + 1}:duration=longest:" +
+                        "normalize=0[$currentLabel]"
             )
         }
 
@@ -238,7 +239,7 @@ object AudioEngine {
             filterParts.add(
                 "[$currentLabel]${soundLabels.joinToString("")}" +
                         "amix=inputs=${soundLabels.size + 1}:duration=longest:" +
-                        "dropout_transition=0[$outLabel]"
+                        "dropout_transition=0:normalize=0[$outLabel]"
             )
             return outLabel
         }
@@ -268,10 +269,7 @@ object AudioEngine {
         }
 
         if (s.vocalEnhancement > 0f) {
-            val amount = s.vocalEnhancement / 100f
-            filters.add("highpass=f=80")
             filters.add(equalizer(2800, s.vocalEnhancement * 0.45f))
-            filters.add("acompressor=threshold=${format(0.15 - amount * 0.10)}:ratio=${format(2.0 + amount * 4.0)}:attack=10:release=120:makeup=${format(1.0 + amount)}")
         }
         if (s.loudness > 0f) {
             val target = (s.loudness / 100f * 24f).coerceIn(1f, 24f)
@@ -279,20 +277,26 @@ object AudioEngine {
         }
         if (s.echo > 0f) {
             val amount = s.echo / 100f
-            filters.add("aecho=0.8:${format(0.5f * amount)}:350:${format(0.55f * amount)}")
+            val dryGain = 1f - 0.2f * amount
+            filters.add(
+                "aecho=${format(dryGain)}:${format(0.5f * amount)}:" +
+                        "350:${format(0.55f * amount)}"
+            )
         }
         if (s.reverb > 0f) {
             val amount = s.reverb / 100f
+            val dryGain = 1f - 0.2f * amount
             filters.add(
-                "aecho=0.8:0.55:37|71|113|173|251|347|461:" +
+                "aecho=${format(dryGain)}:0.55:37|71|113|173|251|347|461:" +
                         listOf(0.48f, 0.36f, 0.27f, 0.20f, 0.14f, 0.09f, 0.05f)
                             .joinToString("|") { format(it * amount) }
             )
         }
         if (s.studioReverb > 0f) {
             val amount = s.studioReverb / 100f
+            val dryGain = 1f - 0.2f * amount
             filters.add(
-                "aecho=0.85:0.5:19|37|58|83|111:" +
+                "aecho=${format(dryGain)}:0.5:19|37|58|83|111:" +
                         listOf(0.42f, 0.30f, 0.21f, 0.14f, 0.08f)
                             .joinToString("|") { format(it * amount) }
             )

@@ -114,6 +114,7 @@ dependencies {
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.media3.common)
     implementation(libs.androidx.media3.effect)
+    implementation(libs.androidx.media3.transformer)
 
     // ═══════════════════════════════════════════════════════════
     //  COIL 2.x
