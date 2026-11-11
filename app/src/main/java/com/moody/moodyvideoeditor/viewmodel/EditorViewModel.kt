@@ -384,6 +384,7 @@ class EditorViewModel : ViewModel() {
 
     private var dragBaseline: List<EditorClip>? = null
     private var keyframeGraphBaseline: List<EditorClip>? = null
+    private var trimBaseline: List<EditorClip>? = null
 
     fun beginDrag() { dragBaseline = _state.value.clips }
 
@@ -1608,102 +1609,108 @@ class EditorViewModel : ViewModel() {
     }
 
     fun trimClipLeft(newSourceStartMs: Long) {
-        val sel = _state.value.selectedClip ?: return
-        val maxStart = (sel.sourceEndMs - EditorClip.MIN_DURATION_MS).coerceAtLeast(0L)
-        val clampedSourceStart = newSourceStartMs.coerceIn(0L, maxStart)
-        val delta = clampedSourceStart - sel.sourceStartMs
-        if (delta == 0L) return
-        updateClipDirect(sel.id) { clip ->
-            clip.copy(
-                sourceStartMs = clampedSourceStart,
-                timelineStartMs = (clip.timelineStartMs + delta).coerceAtLeast(0L)
+        val selected = _state.value.selectedClip ?: return
+        val baseline = trimBaseline ?: _state.value.clips
+        val original = baseline.firstOrNull { it.id == selected.id } ?: selected
+        val maxTimelineOffset =
+            (original.durationMs - EditorClip.MIN_DURATION_MS).coerceAtLeast(0L)
+        val maxSourceStart = SpeedEngine.sourcePositionAt(original, maxTimelineOffset)
+        val requestedStart = newSourceStartMs.coerceIn(original.sourceStartMs, maxSourceStart)
+        val timelineOffset = SpeedEngine.timelineOffsetForSourcePosition(original, requestedStart)
+            .coerceIn(0L, maxTimelineOffset)
+        val clampedSourceStart = SpeedEngine.sourcePositionAt(original, timelineOffset)
+        if (clampedSourceStart == original.sourceStartMs) return
+
+        trimBaseline = baseline
+        applyTrimFromBaseline(baseline, original) { clip ->
+            val clipOffset = timelineOffset.coerceIn(
+                0L,
+                (clip.durationMs - EditorClip.MIN_DURATION_MS).coerceAtLeast(0L)
             )
-        }
-        if (sel.linkedId != null) {
-            val linkedClips = _state.value.clips.filter {
-                it.linkedId == sel.linkedId && it.id != sel.id
-            }
-            linkedClips.forEach { linked ->
-                updateClipDirect(linked.id) { clip ->
-                    clip.copy(
-                        sourceStartMs = clampedSourceStart,
-                        timelineStartMs = (clip.timelineStartMs + delta)
-                            .coerceAtLeast(0L)
-                    )
-                }
-            }
+            clip.copy(
+                sourceStartMs = SpeedEngine.sourcePositionAt(clip, clipOffset),
+                timelineStartMs = clip.timelineStartMs + clipOffset,
+                keyframes = KeyframeStore.rebaseToTime(clip.keyframes, clipOffset),
+                mask = MaskEngine.trimToTime(clip.mask, clipOffset)
+            )
         }
     }
 
     fun trimClipRight(newSourceEndMs: Long) {
-        val sel = _state.value.selectedClip ?: return
-        val minEnd = sel.sourceStartMs + EditorClip.MIN_DURATION_MS
-        val maxEnd = if (sel.sourceTotalMs != Long.MAX_VALUE) sel.sourceTotalMs
-        else Long.MAX_VALUE
-        val clampedEnd = newSourceEndMs.coerceIn(minEnd, maxEnd)
-        if (clampedEnd == sel.sourceEndMs) return
-        updateClipDirect(sel.id) { it.copy(sourceEndMs = clampedEnd) }
-        if (sel.linkedId != null) {
-            val linkedClips = _state.value.clips.filter {
-                it.linkedId == sel.linkedId && it.id != sel.id
+        val selected = _state.value.selectedClip ?: return
+        val baseline = trimBaseline ?: _state.value.clips
+        val original = baseline.firstOrNull { it.id == selected.id } ?: selected
+        val minTimelineOffset = EditorClip.MIN_DURATION_MS
+        val sourceLimit = if (original.sourceTotalMs != Long.MAX_VALUE) {
+            maxOf(original.sourceEndMs, original.sourceTotalMs)
+        } else {
+            maxOf(original.sourceEndMs, newSourceEndMs)
+        }
+        val expandedOriginal = original.copy(sourceEndMs = sourceLimit)
+        val minSourceEnd = SpeedEngine.sourcePositionAt(
+            expandedOriginal,
+            minTimelineOffset
+        )
+        val requestedEnd = newSourceEndMs.coerceIn(
+            minSourceEnd,
+            sourceLimit
+        )
+        val timelineOffset = SpeedEngine.timelineOffsetForSourcePosition(
+            expandedOriginal,
+            requestedEnd
+        ).coerceIn(minTimelineOffset, expandedOriginal.durationMs)
+        val clampedSourceEnd = SpeedEngine.sourcePositionAt(expandedOriginal, timelineOffset)
+        if (clampedSourceEnd == original.sourceEndMs) return
+
+        trimBaseline = baseline
+        applyTrimFromBaseline(baseline, original) { clip ->
+            val clipSourceLimit = if (clip.sourceTotalMs != Long.MAX_VALUE) {
+                maxOf(clip.sourceEndMs, clip.sourceTotalMs)
+            } else {
+                maxOf(clip.sourceEndMs, clampedSourceEnd)
             }
-            linkedClips.forEach { linked ->
-                updateClipDirect(linked.id) { clip -> clip.copy(sourceEndMs = clampedEnd) }
+            val expandedClip = clip.copy(sourceEndMs = clipSourceLimit)
+            val clipOffset = timelineOffset.coerceIn(
+                EditorClip.MIN_DURATION_MS,
+                expandedClip.durationMs.coerceAtLeast(EditorClip.MIN_DURATION_MS)
+            )
+            clip.copy(sourceEndMs = SpeedEngine.sourcePositionAt(expandedClip, clipOffset))
+        }
+    }
+
+    private fun applyTrimFromBaseline(
+        baseline: List<EditorClip>,
+        original: EditorClip,
+        transform: (EditorClip) -> EditorClip
+    ) {
+        val updated = baseline.map { clip ->
+            if (clip.id == original.id ||
+                (original.linkedId != null && clip.linkedId == original.linkedId)
+            ) {
+                transform(clip)
+            } else {
+                clip
             }
         }
+        _state.update { it.copy(clips = updated) }
     }
 
     fun trimLeft() {
         val sel = _state.value.selectedClip ?: return
-        val localOffsetMs = (_state.value.currentPosMs - sel.timelineStartMs).coerceAtLeast(0L)
+        val localOffsetMs = (_state.value.currentPosMs - sel.timelineStartMs)
+            .coerceIn(0L, (sel.durationMs - EditorClip.MIN_DURATION_MS).coerceAtLeast(0L))
         if (localOffsetMs <= 0L) return
-
-        val sourceCutMs = (localOffsetMs * sel.speed).toLong()
-        val newSourceStart = sel.sourceStartMs + sourceCutMs
-        if (newSourceStart >= sel.sourceEndMs - EditorClip.MIN_DURATION_MS) return
-
-        pushHistory()
-        updateClipDirect(sel.id) {
-            it.copy(
-                sourceStartMs = newSourceStart,
-                timelineStartMs = it.timelineStartMs + localOffsetMs
-            )
-        }
-        if (sel.linkedId != null) {
-            val linkedClips = _state.value.clips.filter {
-                it.linkedId == sel.linkedId && it.id != sel.id
-            }
-            linkedClips.forEach { linked ->
-                updateClipDirect(linked.id) { clip ->
-                    clip.copy(
-                        sourceStartMs = newSourceStart,
-                        timelineStartMs = (clip.timelineStartMs + localOffsetMs).coerceAtLeast(0L)
-                    )
-                }
-            }
-        }
-        updateHistoryFlags()
+        trimClipLeft(SpeedEngine.sourcePositionAt(sel, localOffsetMs))
+        commitTrim()
     }
 
     fun trimRight() {
         val sel = _state.value.selectedClip ?: return
-        val localOffsetMs = (_state.value.currentPosMs - sel.timelineStartMs).coerceAtLeast(0L)
+        val localOffsetMs = (_state.value.currentPosMs - sel.timelineStartMs)
+            .coerceIn(EditorClip.MIN_DURATION_MS, sel.durationMs)
         if (localOffsetMs >= sel.durationMs) return
-
-        val newSourceEnd = sel.sourceStartMs + (localOffsetMs * sel.speed).toLong()
-        if (newSourceEnd <= sel.sourceStartMs + EditorClip.MIN_DURATION_MS) return
-
-        pushHistory()
-        updateClipDirect(sel.id) { it.copy(sourceEndMs = newSourceEnd) }
-        if (sel.linkedId != null) {
-            val linkedClips = _state.value.clips.filter {
-                it.linkedId == sel.linkedId && it.id != sel.id
-            }
-            linkedClips.forEach { linked ->
-                updateClipDirect(linked.id) { clip -> clip.copy(sourceEndMs = newSourceEnd) }
-            }
-        }
-        updateHistoryFlags()
+        trimClipRight(SpeedEngine.sourcePositionAt(sel, localOffsetMs))
+        commitTrim()
     }
 
     fun splitCurrentClip() {
@@ -1879,7 +1886,14 @@ class EditorViewModel : ViewModel() {
         updateHistoryFlags()
     }
 
-    fun commitTrim() = pushHistory()
+    fun commitTrim() {
+        val baseline = trimBaseline
+        if (baseline != null && baseline != _state.value.clips) {
+            history.push(baseline)
+        }
+        trimBaseline = null
+        updateHistoryFlags()
+    }
 
     fun deleteCurrentClip() {
         val sel = _state.value.selectedClip ?: return

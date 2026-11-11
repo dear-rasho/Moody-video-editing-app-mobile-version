@@ -67,6 +67,7 @@ import com.moody.moodyvideoeditor.data.EditorState
 import com.moody.moodyvideoeditor.utils.TimelineRuler
 import com.moody.moodyvideoeditor.utils.TimelineZoom
 import com.moody.moodyvideoeditor.utils.WaveformEngine
+import com.moody.moodyvideoeditor.utils.SpeedEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1836,10 +1837,16 @@ private fun TrimHandleLeft(
                                 val scrolled = hScroll.dispatchRawDelta(autoScrollDirection * 12f)
                                 if (abs(scrolled) < 0.5f) break
                                 accumX += scrolled
-                                val speed = dragClip.speed.coerceAtLeast(0.01f)
                                 val deltaMs = (accumX / latestPxPerMs.value).toLong()
-                                val trimmedStart = (startMs + (deltaMs * speed).toLong())
-                                    .coerceIn(0L, endMs - EditorClip.MIN_DURATION_MS)
+                                val timelineOffset = deltaMs.coerceIn(
+                                    0L,
+                                    (dragClip.durationMs - EditorClip.MIN_DURATION_MS)
+                                        .coerceAtLeast(0L)
+                                )
+                                val trimmedStart = SpeedEngine.sourcePositionAt(
+                                    dragClip,
+                                    timelineOffset
+                                ).coerceIn(startMs, endMs - EditorClip.MIN_DURATION_MS)
                                 latestOnTrimLeft.value(trimmedStart)
                                 activeTarget = null
                                 latestOnSnapGuideUpdate.value(-1f, null)
@@ -1862,13 +1869,14 @@ private fun TrimHandleLeft(
                         change.consume()
                         accumX += drag.x
                         val currentClip = dragClip
-                        val speed = currentClip.speed.coerceAtLeast(0.01f)
                         val dMs = (accumX / latestPxPerMs.value).toLong()
-                        val newStart = (startMs + (dMs * speed).toLong())
-                            .coerceIn(0L, endMs - EditorClip.MIN_DURATION_MS)
-
-                        val newStartTimelineMs = currentClip.timelineStartMs +
-                                ((newStart - currentClip.sourceStartMs) / speed).toLong()
+                        val maxTimelineOffset =
+                            (currentClip.durationMs - EditorClip.MIN_DURATION_MS)
+                                .coerceAtLeast(0L)
+                        val newStartOffset = dMs.coerceIn(0L, maxTimelineOffset)
+                        val newStart = SpeedEngine.sourcePositionAt(currentClip, newStartOffset)
+                            .coerceIn(startMs, endMs - EditorClip.MIN_DURATION_MS)
+                        val newStartTimelineMs = currentClip.timelineStartMs + newStartOffset
 
                         val targets = mutableListOf<SnapTarget>()
                         latestAllClips.value.filter { it.id != currentClip.id }.forEach { other ->
@@ -1909,10 +1917,13 @@ private fun TrimHandleLeft(
                         val captured = bestTarget
                         if (captured != null) {
                             activeTarget = captured
-                            val deltaMs = captured.timeMs - currentClip.timelineStartMs
-                            val finalSourceStart =
-                                currentClip.sourceStartMs + (deltaMs * speed).toLong()
-                            latestOnTrimLeft.value(finalSourceStart.coerceAtLeast(0L))
+                            val targetOffset = (captured.timeMs - currentClip.timelineStartMs)
+                                .coerceIn(0L, maxTimelineOffset)
+                            val finalSourceStart = SpeedEngine.sourcePositionAt(
+                                currentClip,
+                                targetOffset
+                            ).coerceIn(startMs, endMs - EditorClip.MIN_DURATION_MS)
+                            latestOnTrimLeft.value(finalSourceStart)
                             val guideX = (captured.timeMs.toFloat() /
                                     latestTotalMs.value.toFloat()) * latestContentWidthPx.value
                             latestOnSnapGuideUpdate.value(guideX, "Snap: ${captured.label}")
@@ -1950,6 +1961,22 @@ private fun TrimHandleLeft(
                 .background(Color(0xFFFFD166))
         )
     }
+}
+
+private fun expandClipForRightTrim(
+    clip: EditorClip,
+    requestedTimelineOffsetMs: Long
+): EditorClip {
+    val sourceEnd = if (clip.sourceTotalMs != Long.MAX_VALUE) {
+        maxOf(clip.sourceEndMs, clip.sourceTotalMs)
+    } else {
+        val extraTimelineMs =
+            (requestedTimelineOffsetMs - clip.durationMs).coerceAtLeast(0L)
+        val requiredSourceEnd = clip.sourceEndMs.toDouble() +
+                extraTimelineMs * SpeedEngine.MAX_SPEED + 1_000.0
+        requiredSourceEnd.coerceAtMost(Long.MAX_VALUE / 2.0).toLong()
+    }
+    return clip.copy(sourceEndMs = sourceEnd)
 }
 
 @Composable
@@ -2010,15 +2037,20 @@ private fun TrimHandleRight(
                                 val scrolled = hScroll.dispatchRawDelta(autoScrollDirection * 12f)
                                 if (abs(scrolled) < 0.5f) break
                                 accumX += scrolled
-                                val speed = dragClip.speed.coerceAtLeast(0.01f)
                                 val deltaMs = (accumX / latestPxPerMs.value).toLong()
-                                val maxEnd = if (dragClip.sourceTotalMs != Long.MAX_VALUE)
-                                    dragClip.sourceTotalMs else Long.MAX_VALUE
-                                val trimmedEnd = (endMs + (deltaMs * speed).toLong())
-                                    .coerceIn(
-                                        startMs + EditorClip.MIN_DURATION_MS,
-                                        maxEnd
-                                    )
+                                val requestedOffset = (dragClip.durationMs + deltaMs)
+                                    .coerceAtLeast(EditorClip.MIN_DURATION_MS)
+                                val expandedClip =
+                                    expandClipForRightTrim(dragClip, requestedOffset)
+                                val maxEnd = expandedClip.sourceEndMs
+                                val timelineOffset = requestedOffset.coerceIn(
+                                    EditorClip.MIN_DURATION_MS,
+                                    expandedClip.durationMs
+                                )
+                                val trimmedEnd = SpeedEngine.sourcePositionAt(
+                                    expandedClip,
+                                    timelineOffset
+                                ).coerceIn(startMs + EditorClip.MIN_DURATION_MS, maxEnd)
                                 latestOnTrimRight.value(trimmedEnd)
                                 activeTarget = null
                                 latestOnSnapGuideUpdate.value(-1f, null)
@@ -2041,18 +2073,20 @@ private fun TrimHandleRight(
                         change.consume()
                         accumX += drag.x
                         val currentClip = dragClip
-                        val speed = currentClip.speed.coerceAtLeast(0.01f)
                         val dMs = (accumX / latestPxPerMs.value).toLong()
-                        val maxEnd = if (currentClip.sourceTotalMs != Long.MAX_VALUE)
-                            currentClip.sourceTotalMs else Long.MAX_VALUE
-                        val newEnd = (endMs + (dMs * speed).toLong())
-                            .coerceIn(
-                                startMs + EditorClip.MIN_DURATION_MS,
-                                maxEnd
-                            )
-
-                        val newEndTimelineMs = currentClip.timelineStartMs +
-                                ((newEnd - currentClip.sourceStartMs) / speed).toLong()
+                        val requestedOffset = (currentClip.durationMs + dMs)
+                            .coerceAtLeast(EditorClip.MIN_DURATION_MS)
+                        val expandedClip =
+                            expandClipForRightTrim(currentClip, requestedOffset)
+                        val maxEnd = expandedClip.sourceEndMs
+                        val maxTimelineOffset = expandedClip.durationMs
+                        val newEndOffset = requestedOffset.coerceIn(
+                            EditorClip.MIN_DURATION_MS,
+                            maxTimelineOffset
+                        )
+                        val newEnd = SpeedEngine.sourcePositionAt(expandedClip, newEndOffset)
+                            .coerceIn(startMs + EditorClip.MIN_DURATION_MS, maxEnd)
+                        val newEndTimelineMs = currentClip.timelineStartMs + newEndOffset
 
                         val targets = mutableListOf<SnapTarget>()
                         latestAllClips.value.filter { it.id != currentClip.id }.forEach { other ->
@@ -2093,9 +2127,13 @@ private fun TrimHandleRight(
                         val captured = bestTarget
                         if (captured != null) {
                             activeTarget = captured
-                            val deltaMs = captured.timeMs - currentClip.timelineStartMs
+                            val targetOffset =
+                                (captured.timeMs - currentClip.timelineStartMs).coerceIn(
+                                    EditorClip.MIN_DURATION_MS,
+                                    maxTimelineOffset
+                                )
                             val finalSourceEnd =
-                                currentClip.sourceStartMs + (deltaMs * speed).toLong()
+                                SpeedEngine.sourcePositionAt(expandedClip, targetOffset)
                             latestOnTrimRight.value(
                                 finalSourceEnd.coerceIn(
                                     startMs + EditorClip.MIN_DURATION_MS,

@@ -108,4 +108,27 @@ class SpeedEngineTest {
             ) < 50L
         )
     }
+
+    @Test
+    fun sourceTrimPositionMapsBackToItsTimelineOffset() {
+        val keyframes = mapOf(
+            KeyframeLibrary.SPEED to listOf(
+                Keyframe(time = 0f, value = 0.5f),
+                Keyframe(time = 10f, value = 1.5f)
+            )
+        )
+        val clip = com.moody.moodyvideoeditor.data.EditorClip(
+            uri = android.net.Uri.EMPTY,
+            name = "speed ramp",
+            sourceStartMs = 0L,
+            sourceEndMs = 10_000L,
+            timelineStartMs = 0L,
+            keyframes = keyframes
+        )
+        val sourcePosition = SpeedEngine.sourcePositionAt(clip, 5_000L)
+
+        assertTrue(
+            abs(SpeedEngine.timelineOffsetForSourcePosition(clip, sourcePosition) - 5_000L) < 30L
+        )
+    }
 }

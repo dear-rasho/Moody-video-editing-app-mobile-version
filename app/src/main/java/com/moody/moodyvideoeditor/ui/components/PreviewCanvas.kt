@@ -1332,15 +1332,27 @@ fun PreviewCanvas(
                                         transitionState.durationMs.coerceAtLeast(1L))
                                     .coerceIn(0f, 1f)
                             val density = LocalDensity.current
-                            Box(Modifier.fillMaxSize().graphicsLayer { alpha = layerOpacityAlpha }) {
-                                TransitionRenderer.Render(
-                                    clip,
-                                    transitionBitmap,
-                                    transitionState.key,
-                                    progress,
-                                    with(density) { canvasW.dp.toPx() },
-                                    with(density) { canvasH.dp.toPx() }
-                                )
+                            MaskedClipContent(
+                                mask = MaskEngine.sampleAt(clip.mask, clipLocalTimeSec)
+                            ) {
+                                Box(
+                                    Modifier.fillMaxSize().graphicsLayer {
+                                        alpha = layerOpacityAlpha
+                                    }
+                                ) {
+                                    TransitionRenderer.Render(
+                                        clip,
+                                        transitionBitmap,
+                                        transitionState.key,
+                                        progress,
+                                        with(density) { canvasW.dp.toPx() },
+                                        with(density) { canvasH.dp.toPx() },
+                                        transform = TransformApplier.resolveLive(
+                                            clip,
+                                            clipLocalTimeSec
+                                        )
+                                    )
+                                }
                             }
                         }
                         return@forEach

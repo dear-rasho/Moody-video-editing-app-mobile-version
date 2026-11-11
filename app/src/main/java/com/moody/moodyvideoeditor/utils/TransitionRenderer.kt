@@ -92,7 +92,8 @@ object TransitionRenderer {
         transitionKey: String,
         progress: Float,
         w: Float, // Pixels
-        h: Float  // Pixels
+        h: Float,  // Pixels
+        transform: TransformValues = TransformApplier.baseOf(clip)
     ) {
         val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
         val p = progress.coerceIn(0f, 1f)
@@ -223,7 +224,7 @@ object TransitionRenderer {
         Box(Modifier.fillMaxSize()) {
             SimpleImage(
                 imageBitmap = imageBitmap,
-                clip = clip,
+                transform = transform,
                 w = w,
                 h = h,
                 translationX = outgoing.translationX,
@@ -338,7 +339,7 @@ object TransitionRenderer {
     @Composable
     private fun SimpleImage(
         imageBitmap: androidx.compose.ui.graphics.ImageBitmap,
-        clip: EditorClip,
+        transform: TransformValues,
         w: Float,
         h: Float,
         translationX: Float = 0f,
@@ -353,8 +354,6 @@ object TransitionRenderer {
         clipProgress: Float = 0f,
         blurRadius: Float = 0f
     ) {
-        val base = remember(clip) { TransformApplier.baseOf(clip) }
-
         Image(
             bitmap = imageBitmap,
             contentDescription = null,
@@ -362,22 +361,28 @@ object TransitionRenderer {
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    val cropSx = 1f / (1f - base.cropL - base.cropR).coerceAtLeast(0.05f)
-                    val cropSy = 1f / (1f - base.cropT - base.cropB).coerceAtLeast(0.05f)
-                    val cropTx = -(base.cropL - base.cropR) / 2f * w
-                    val cropTy = -(base.cropT - base.cropB) / 2f * h
-                    val posTx = (base.x - 50f) / 100f * w
-                    val posTy = (base.y - 50f) / 100f * h
+                    val cropSx =
+                        1f / (1f - transform.cropL - transform.cropR).coerceAtLeast(0.05f)
+                    val cropSy =
+                        1f / (1f - transform.cropT - transform.cropB).coerceAtLeast(0.05f)
+                    val cropTx = -(transform.cropL - transform.cropR) / 2f * w
+                    val cropTy = -(transform.cropT - transform.cropB) / 2f * h
+                    val posTx = (transform.x - 50f) / 100f * w
+                    val posTy = (transform.y - 50f) / 100f * h
 
                     this.translationX = posTx + cropTx + translationX
                     this.translationY = posTy + cropTy + translationY
-                    this.scaleX = (base.scaleX / 100f) * cropSx * scaleX
-                    this.scaleY = (base.scaleY / 100f) * cropSy * scaleY
-                    this.rotationZ = base.rotation + rotationZ
+                    this.scaleX = (transform.scaleX / 100f) * cropSx * scaleX
+                    this.scaleY = (transform.scaleY / 100f) * cropSy * scaleY
+                    this.rotationZ = transform.rotation + rotationZ
                     this.rotationX = rotationX
                     this.rotationY = rotationY
                     this.cameraDistance = maxOf(w, h) * 2f
                     this.alpha = alpha.coerceIn(0f, 1f)
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(
+                        pivotFractionX = transform.anchorX / 100f,
+                        pivotFractionY = transform.anchorY / 100f
+                    )
                 }
                 .then(if (blurRadius > 0f) Modifier.blur(blurRadius.dp) else Modifier)
                 .drawWithContent {

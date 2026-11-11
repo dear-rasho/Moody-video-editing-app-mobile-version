@@ -108,6 +108,21 @@ object SpeedEngine {
         )
     }
 
+    fun timelineOffsetForSourcePosition(clip: EditorClip, sourcePositionMs: Long): Long {
+        val target = sourcePositionMs.coerceIn(clip.sourceStartMs, clip.sourceEndMs)
+        if (target <= clip.sourceStartMs) return 0L
+        if (target >= clip.sourceEndMs) return clip.durationMs
+
+        var low = 0L
+        var high = clip.durationMs
+        while (low < high) {
+            val middle = low + (high - low) / 2L
+            if (sourcePositionAt(clip, middle) >= target) high = middle
+            else low = middle + 1L
+        }
+        return low
+    }
+
     fun sourcePositionAt(
         sourceStartMs: Long,
         sourceDurationMs: Long,

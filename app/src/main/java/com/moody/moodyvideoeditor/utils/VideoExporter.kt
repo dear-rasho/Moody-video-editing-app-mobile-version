@@ -665,10 +665,11 @@ class VideoExporter(
                 val clipEnd = clip.timelineEndMs
                 val leftCut = (rangeStart - clipStart).coerceAtLeast(0L)
                 val rightCut = (clipEnd - rangeEnd).coerceAtLeast(0L)
-                val speed = clip.speed.coerceAtLeast(0.01f)
-                val newSourceStart = clip.sourceStartMs + (leftCut * speed).toLong()
-                val newSourceEnd =
-                    (clip.sourceEndMs - (rightCut * speed).toLong()).coerceAtLeast(newSourceStart + 33L)
+                val newSourceStart = SpeedEngine.sourcePositionAt(clip, leftCut)
+                val newSourceEnd = SpeedEngine.sourcePositionAt(
+                    clip,
+                    (clip.durationMs - rightCut).coerceAtLeast(leftCut)
+                ).coerceAtLeast(newSourceStart + 33L)
                 val newTimelineStart = (clipStart - rangeStart).coerceAtLeast(0L)
                 val trimmedMask = MaskEngine.trimToTime(clip.mask, leftCut)
                 clip.copy(

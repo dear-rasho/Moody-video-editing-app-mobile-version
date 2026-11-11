@@ -332,13 +332,21 @@ fun EditorScreen(
             AudioSettingsRenderersFactory(context, videoAudioSettingsProcessor)
         ).build().apply { playWhenReady = false }
     }
-    var loadedVideoClipId by remember(exoPlayer) { mutableStateOf<String?>(null) }
+    var loadedVideoUri by remember(exoPlayer) { mutableStateOf<Uri?>(null) }
 
     val audioExoPlayer = remember(audioAudioSettingsProcessor) {
         ExoPlayer.Builder(
             context,
             AudioSettingsRenderersFactory(context, audioAudioSettingsProcessor)
         ).build().apply { playWhenReady = false }
+    }
+    var loadedAudioUri by remember(audioExoPlayer) { mutableStateOf<Uri?>(null) }
+    val pausePlaybackForTrim = {
+        if (isPlaybackActive) {
+            isPlaybackActive = false
+            exoPlayer.pause()
+            audioExoPlayer.pause()
+        }
     }
 
     DisposableEffect(Unit) {
@@ -609,6 +617,8 @@ fun EditorScreen(
     LaunchedEffect(
         activeVideoClip?.id,
         activeVideoClip?.uri,
+        activeVideoClip?.sourceStartMs,
+        activeVideoClip?.sourceEndMs,
         state.currentPosMs.takeIf { !isPlaybackActive },
         state.clips,
         isPlaybackActive
@@ -617,39 +627,29 @@ fun EditorScreen(
         val activeClip = activeVideoClip
 
         if (activeClip == null) {
-            loadedVideoClipId = null
             exoPlayer.pause()
             return@LaunchedEffect
         }
 
         val currentUri = exoPlayer.currentMediaItem?.localConfiguration?.uri
 
-        if (currentUri != activeClip.uri || loadedVideoClipId != activeClip.id) {
-            val mediaItem = MediaItem.Builder()
-                .setUri(activeClip.uri)
-                .setClippingConfiguration(
-                    MediaItem.ClippingConfiguration.Builder()
-                        .setStartPositionMs(activeClip.sourceStartMs)
-                        .setEndPositionMs(activeClip.sourceEndMs)
-                        .build()
-                )
-                .build()
-
+        if (currentUri != activeClip.uri || loadedVideoUri != activeClip.uri) {
+            val mediaItem = MediaItem.fromUri(activeClip.uri)
             exoPlayer.setMediaItem(mediaItem)
             exoPlayer.prepare()
-            loadedVideoClipId = activeClip.id
+            loadedVideoUri = activeClip.uri
         }
 
         val playheadOffset = (playheadMs - activeClip.timelineStartMs)
             .coerceIn(0L, activeClip.durationMs)
-        val clampedLocal = SpeedEngine.sourcePositionAt(activeClip, playheadOffset)
+        val sourcePosition = SpeedEngine.sourcePositionAt(activeClip, playheadOffset)
         val speed = SpeedEngine.playbackSpeedAt(activeClip, playheadOffset)
 
         val driftThreshold = (150f * speed).toLong().coerceAtLeast(80L)
-        val drift = abs(exoPlayer.currentPosition - clampedLocal)
+        val drift = abs(exoPlayer.currentPosition - sourcePosition)
         if (drift > driftThreshold) {
             try {
-                exoPlayer.seekTo(clampedLocal)
+                exoPlayer.seekTo(sourcePosition)
             } catch (_: Exception) {
             }
         }
@@ -679,6 +679,9 @@ fun EditorScreen(
 
     LaunchedEffect(
         activeAudioClip?.id,
+        activeAudioClip?.uri,
+        activeAudioClip?.sourceStartMs,
+        activeAudioClip?.sourceEndMs,
         state.currentPosMs.takeIf { !isPlaybackActive },
         state.clips,
         state.mutedAudioTracks,
@@ -693,30 +696,23 @@ fun EditorScreen(
         }
 
         val currentUri = audioExoPlayer.currentMediaItem?.localConfiguration?.uri
-        if (currentUri != activeAudio.uri) {
-            val mediaItem = MediaItem.Builder()
-                .setUri(activeAudio.uri)
-                .setClippingConfiguration(
-                    MediaItem.ClippingConfiguration.Builder()
-                        .setStartPositionMs(activeAudio.sourceStartMs)
-                        .setEndPositionMs(activeAudio.sourceEndMs)
-                        .build()
-                )
-                .build()
+        if (currentUri != activeAudio.uri || loadedAudioUri != activeAudio.uri) {
+            val mediaItem = MediaItem.fromUri(activeAudio.uri)
             audioExoPlayer.setMediaItem(mediaItem)
             audioExoPlayer.prepare()
+            loadedAudioUri = activeAudio.uri
         }
 
         val playheadOffset = (playheadMs - activeAudio.timelineStartMs)
             .coerceIn(0L, activeAudio.durationMs)
-        val clampedLocal = SpeedEngine.sourcePositionAt(activeAudio, playheadOffset)
+        val sourcePosition = SpeedEngine.sourcePositionAt(activeAudio, playheadOffset)
         val speed = SpeedEngine.playbackSpeedAt(activeAudio, playheadOffset)
 
         val driftThreshold = (150f * speed).toLong().coerceAtLeast(80L)
-        val drift = abs(audioExoPlayer.currentPosition - clampedLocal)
+        val drift = abs(audioExoPlayer.currentPosition - sourcePosition)
         if (drift > driftThreshold) {
             try {
-                audioExoPlayer.seekTo(clampedLocal)
+                audioExoPlayer.seekTo(sourcePosition)
             } catch (_: Exception) {
             }
         }
@@ -1231,8 +1227,14 @@ fun EditorScreen(
                             state.currentPosMs < it.timelineEndMs
                 } ?: false,
                 onClose = { activePanel = null },
-                onTrimLeft = { viewModel.trimLeft() },
-                onTrimRight = { viewModel.trimRight() },
+                onTrimLeft = {
+                    pausePlaybackForTrim()
+                    viewModel.trimLeft()
+                },
+                onTrimRight = {
+                    pausePlaybackForTrim()
+                    viewModel.trimRight()
+                },
                 onSplit = { viewModel.splitCurrentClip() }
             )
 
@@ -2898,22 +2900,20 @@ fun EditorScreen(
                         handleLayerTap(clip)
                     },
                     onTrackTapped = { ti, aud -> viewModel.selectTrack(ti, aud) },
-                    onTrimLeft = { ns -> viewModel.trimClipLeft(ns) },
-                    onTrimRight = { ne -> viewModel.trimClipRight(ne) },
+                    onTrimLeft = { ns ->
+                        pausePlaybackForTrim()
+                        viewModel.trimClipLeft(ns)
+                    },
+                    onTrimRight = { ne ->
+                        pausePlaybackForTrim()
+                        viewModel.trimClipRight(ne)
+                    },
                     onTrimCommit = { viewModel.commitTrim() },
                     onSeek = { t ->
                         isPlaybackActive = false
                         if (exoPlayer.isPlaying) exoPlayer.pause()
                         if (audioExoPlayer.isPlaying) audioExoPlayer.pause()
                         viewModel.setCurrentPos(t)
-                        val sel = state.selectedClip
-                        if (sel != null && sel.isVisualClip) {
-                            val localMs = (t - sel.timelineStartMs)
-                                .coerceIn(0L, sel.durationMs)
-                            exoPlayer.seekTo(localMs)
-                        } else {
-                            exoPlayer.seekTo(t)
-                        }
                     },
                     onMoveClip = { id, ti, aud, ms ->
                         viewModel.ensureLayerExists(ti, aud)
