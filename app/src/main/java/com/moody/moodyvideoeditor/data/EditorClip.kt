@@ -300,6 +300,9 @@ data class EditorState(
         return result.map { it.toList() }
     }
 
+    fun timelineClips(): List<EditorClip> =
+        timelineVisualList().flatten() + timelineAudioList().flatten()
+
     fun audioOrVisualTracks(isAudio: Boolean): List<List<EditorClip>> =
         if (isAudio) timelineAudioList() else timelineVisualList()
 

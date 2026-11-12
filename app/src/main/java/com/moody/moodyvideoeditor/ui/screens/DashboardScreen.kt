@@ -6,13 +6,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -45,7 +43,6 @@ import com.moody.moodyvideoeditor.data.EditorState
 import com.moody.moodyvideoeditor.data.ProjectMeta
 import com.moody.moodyvideoeditor.data.ProjectRepository
 import com.moody.moodyvideoeditor.data.SavedTemplateRepository
-import com.moody.moodyvideoeditor.ui.home.CodeBaseShelf
 import com.moody.moodyvideoeditor.ui.home.RecentProjects
 import com.moody.moodyvideoeditor.ui.home.SavedTemplatesShelf
 import java.util.UUID
@@ -57,8 +54,6 @@ import kotlinx.coroutines.withContext
 fun DashboardScreen(
     onNewProject: (String) -> Unit,
     onOpenProject: (String) -> Unit,
-    onCodeEditor: (String) -> Unit,
-    onOpenHelp: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onOpenFromSavedTemplate: (String) -> Unit
 ) {
@@ -104,12 +99,12 @@ fun DashboardScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    fun createNewProject(isCodeMode: Boolean) {
+    fun createNewProject() {
         val id = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
         val meta = ProjectMeta(
             id = id,
-            name = if (isCodeMode) "Code Project" else "New Project",
+            name = "New Project",
             createdAt = now,
             updatedAt = now,
             thumbnailPath = null,
@@ -121,7 +116,7 @@ fun DashboardScreen(
                 ProjectRepository.saveProject(context, meta, EditorState())
             }
             if (saved) {
-                if (isCodeMode) onCodeEditor(id) else onNewProject(id)
+                onNewProject(id)
             } else {
                 android.util.Log.e("DashboardScreen", "Failed to create project $id")
             }
@@ -173,21 +168,8 @@ fun DashboardScreen(
                     Text("⚙️", fontSize = 20.sp)
                 }
 
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF181818))
-                        .pointerInput(Unit) {
-                            detectTapGestures { onOpenHelp() }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("📖", fontSize = 20.sp)
-                }
-
                 IconButton(
-                    onClick = { createNewProject(false) },
+                    onClick = { createNewProject() },
                     modifier = Modifier
                         .size(48.dp)
                         .background(Color(0xFF7C3AED), RoundedCornerShape(12.dp))
@@ -273,17 +255,6 @@ fun DashboardScreen(
             }
         )
 
-
-
-        // CODE BASE EDITING
-        SectionTitle("Code Base Editing")
-        CodeBaseShelf(
-            onOpen = { createNewProject(true) }
-        )
-
-        // HELP CARD
-        SectionTitle("Help")
-        HelpCard(onOpenHelp)
     }
 
     // Project delete dialog
@@ -570,56 +541,4 @@ private fun DialogAction(label: String, color: Color, onClick: () -> Unit) {
     ) {
         Text(label, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
-}
-
-@Composable
-private fun HelpCard(onOpen: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF1A1F3A))
-            .pointerInput(Unit) {
-                detectTapGestures { onOpen() }
-            }
-            .padding(14.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF7C3AED).copy(alpha = 0.3f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("📖", fontSize = 22.sp)
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "Guide & AI Prompt Helper",
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    "Learn features, copy AI prompt, browse commands",
-                    color = Color(0xFFAAAAAA),
-                    fontSize = 10.sp
-                )
-            }
-            Text("→", color = Color(0xFF7C3AED), fontSize = 18.sp,
-                fontWeight = FontWeight.Bold)
-        }
-    }
-}
-
-@Composable
-fun SectionTitle(text: String) {
-    Text(
-        text = text,
-        color = Color.White,
-        fontSize = 16.sp,
-        fontWeight = FontWeight.Bold
-    )
 }

@@ -790,20 +790,25 @@ class EditorViewModel : ViewModel() {
 
     fun selectClip(clip: EditorClip) {
         _state.update {
-            val linkedIds = it.clips.asSequence()
-                .filter { candidate ->
-                    (clip.linkedId != null && candidate.linkedId == clip.linkedId) ||
-                            (clip.linkGroupId != null &&
-                                    candidate.linkGroupId == clip.linkGroupId)
+            val linkedIds = mutableSetOf(clip.id)
+            var clipIndex = -1
+            it.clips.forEachIndexed { index, candidate ->
+                if (candidate == clip && clipIndex < 0) {
+                    clipIndex = index
                 }
-                .map { candidate -> candidate.id }
-                .toSet() + clip.id
+                if ((clip.linkedId != null && candidate.linkedId == clip.linkedId) ||
+                    (clip.linkGroupId != null &&
+                            candidate.linkGroupId == clip.linkGroupId)
+                ) {
+                    linkedIds.add(candidate.id)
+                }
+            }
             it.copy(
                 selectedClipId = clip.id,
                 selectedTrackIndex = clip.trackIndex,
                 selectedIsAudio = clip.isAudio,
                 multiSelectedIds = linkedIds.takeIf { ids -> ids.size > 1 } ?: emptySet(),
-                currentIndex = it.clips.indexOf(clip).coerceAtLeast(0)
+                currentIndex = clipIndex.coerceAtLeast(0)
             )
         }
     }

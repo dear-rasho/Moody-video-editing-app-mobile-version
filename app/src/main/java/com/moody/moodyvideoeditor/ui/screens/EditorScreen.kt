@@ -4,9 +4,11 @@ package com.moody.moodyvideoeditor.ui.screens
 
 import com.moody.moodyvideoeditor.utils.CaptionGenerator
 import com.moody.moodyvideoeditor.utils.ManualCaptionParser
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import android.view.WindowManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
@@ -55,6 +58,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -115,7 +119,6 @@ import com.moody.moodyvideoeditor.ui.features.MaskPanel
 import com.moody.moodyvideoeditor.ui.features.OverlaysPanel
 import com.moody.moodyvideoeditor.ui.features.OpacityPanel
 import com.moody.moodyvideoeditor.ui.features.RecentMediaPickerPanel
-import com.moody.moodyvideoeditor.ui.features.PromptPanel
 import com.moody.moodyvideoeditor.ui.features.SpeedPanel
 import com.moody.moodyvideoeditor.ui.features.SoundFxPanel
 import com.moody.moodyvideoeditor.ui.features.SpotlightPanel
@@ -131,8 +134,6 @@ import com.moody.moodyvideoeditor.utils.AudioSettingsRenderersFactory
 import com.moody.moodyvideoeditor.utils.AudioExtractionEngine
 import com.moody.moodyvideoeditor.utils.CropEngine
 import com.moody.moodyvideoeditor.utils.KeyframeStore
-import com.moody.moodyvideoeditor.utils.PromptEngine
-import com.moody.moodyvideoeditor.utils.PromptExecutor
 import com.moody.moodyvideoeditor.utils.SettingsConsumer
 import com.moody.moodyvideoeditor.data.settings.SettingsRepository
 import com.moody.moodyvideoeditor.utils.SpeedEngine
@@ -165,12 +166,12 @@ private data class MediaInfo(
 fun EditorScreen(
     projectId: String = "",
     onBack: () -> Unit,
-    startInCodeMode: Boolean = false,
     initialSavedTemplateId: String? = null,
     viewModel: EditorViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
     val totalDurationMs = remember(state.clips) { state.totalDurationMs }
+    val clipsById = remember(state.clips) { state.clips.associateBy { it.id } }
     val latestTotalDurationMs by rememberUpdatedState(totalDurationMs)
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -189,7 +190,7 @@ fun EditorScreen(
             if (!loaded) {
                 viewModel.setProjectMeta(
                     projectId,
-                    if (startInCodeMode) "Code Project" else "New Project"
+                    "New Project"
                 )
             }
         }
@@ -233,9 +234,7 @@ fun EditorScreen(
     //  PANEL STATE
     // ═══════════════════════════════════════════════════════════
 
-    var activePanel by remember {
-        mutableStateOf<String?>(if (startInCodeMode) "code" else null)
-    }
+    var activePanel by remember { mutableStateOf<String?>(null) }
     var showRecentMediaPicker by remember { mutableStateOf(false) }
     var recentMedia by remember(projectId) {
         mutableStateOf(RecentMediaRepository.getRecent(context, projectId))
@@ -304,9 +303,6 @@ fun EditorScreen(
     var useCustomRange by remember { mutableStateOf(false) }
     var showCancelConfirm by remember { mutableStateOf(false) }
 
-    var promptFeedback by remember { mutableStateOf("") }
-    var promptFeedbackType by remember { mutableStateOf("none") }
-
     var isPlaybackActive by remember { mutableStateOf(false) }
 
     // 📝 Caption state
@@ -360,7 +356,7 @@ fun EditorScreen(
         val (maxWidth, maxHeight, maxFrameRate) = when (previewPlaybackQuality) {
             "Low" -> Triple(640, 640, 24)
             "Medium" -> Triple(1280, 1280, 30)
-            else -> Triple(Int.MAX_VALUE, Int.MAX_VALUE, Int.MAX_VALUE)
+            else -> Triple(1920, 1920, 30)
         }
         exoPlayer.trackSelectionParameters =
             exoPlayer.trackSelectionParameters
@@ -1137,34 +1133,6 @@ fun EditorScreen(
     //  PROMPT RUNNER
     // ═══════════════════════════════════════════════════════════
 
-    fun runPrompt(input: String) {
-        try {
-            val parsed = PromptEngine.parse(input)
-            val report = PromptExecutor.execute(parsed, viewModel)
-            promptFeedbackType = report.statusType
-            val sb = StringBuilder()
-            if (report.successCount > 0) {
-                sb.append("Applied ${report.successCount}:\n")
-                sb.append(report.applied.joinToString("\n") { "  - $it" })
-            }
-            if (report.unknownCount > 0) {
-                if (sb.isNotEmpty()) sb.append("\n\n")
-                sb.append("Unknown (${report.unknownCount}):\n")
-                sb.append(report.unknown.joinToString("\n") { "  - $it" })
-            }
-            if (report.errorCount > 0) {
-                if (sb.isNotEmpty()) sb.append("\n\n")
-                sb.append("Errors (${report.errorCount}):\n")
-                sb.append(report.errors.joinToString("\n") { "  - $it" })
-            }
-            if (sb.isEmpty()) sb.append("Nothing to apply")
-            promptFeedback = sb.toString()
-        } catch (e: Exception) {
-            promptFeedback = "Error: ${e.message}"
-            promptFeedbackType = "error"
-        }
-    }
-
     @Composable
     fun EditorPanelHost() {
         val selected = state.selectedClip
@@ -1201,17 +1169,6 @@ fun EditorScreen(
                     activePanel = key
                 },
                 scrollState = featureScrollState
-            )
-
-            "code" -> PromptPanel(
-                feedback = promptFeedback,
-                feedbackType = promptFeedbackType,
-                onApply = { input -> runPrompt(input) },
-                onClear = {
-                    promptFeedback = ""
-                    promptFeedbackType = "none"
-                },
-                onClose = { activePanel = null }
             )
 
             "trim" -> TrimPanel(
@@ -2551,8 +2508,28 @@ fun EditorScreen(
         }
     }
 
-    val isTextKeyboardOpen = activePanel == "text" &&
+    val isTextPanelActive = activePanel == "text"
+    val editorWindow = (LocalView.current.context as Activity).window
+    DisposableEffect(editorWindow, isTextPanelActive) {
+        val originalSoftInputMode = editorWindow.attributes.softInputMode
+        editorWindow.setSoftInputMode(
+            if (isTextPanelActive) {
+                (originalSoftInputMode and WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST) or
+                        WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+            } else {
+                originalSoftInputMode
+            }
+        )
+        onDispose {
+            editorWindow.setSoftInputMode(originalSoftInputMode)
+        }
+    }
+
+    val isTextKeyboardOpen = isTextPanelActive &&
             WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val imeHeight = with(LocalDensity.current) {
+        WindowInsets.ime.getBottom(this).toDp()
+    }
     val configuration = LocalConfiguration.current
     val screenHeightDp = configuration.screenHeightDp
     val timelineHeight = when {
@@ -2693,17 +2670,17 @@ fun EditorScreen(
                     onMaskStateChanged = { viewModel.updateMask(it) },
                     onClosePath = { viewModel.setMaskClosed(true) },
                     onClipSelected = { clipId ->
-                        state.clips.firstOrNull { it.id == clipId }?.let(::handleLayerTap)
+                        clipsById[clipId]?.let(::handleLayerTap)
                     },
                     onEditText = { clipId ->
-                        state.clips.firstOrNull { it.id == clipId }?.let { clip ->
+                        clipsById[clipId]?.let { clip ->
                             viewModel.selectClip(clip)
                             openTextEditor = true
                             activePanel = "text"
                         }
                     },
                     onDeleteLayer = { clipId ->
-                        state.clips.firstOrNull { it.id == clipId }?.let { clip ->
+                        clipsById[clipId]?.let { clip ->
                             viewModel.selectClip(clip)
                             viewModel.deleteCurrentClip()
                         }
@@ -2941,7 +2918,7 @@ fun EditorScreen(
                         viewModel.setTimelineZoom(zoom)
                     },
                     onReplaceRequested = { clipId ->
-                        val clip = state.clips.firstOrNull { it.id == clipId }
+                        val clip = clipsById[clipId]
                         if (clip != null) {
                             viewModel.selectClip(clip)
                             activePanel = "replace_media"
@@ -2970,6 +2947,7 @@ fun EditorScreen(
                         }
                     )
                     .heightIn(min = 90.dp)
+                    .offset(y = if (isTextKeyboardOpen) -imeHeight else 0.dp)
                     .background(Color(0xFF0A0A0A))
             ) {
                 EditorPanelHost()
@@ -2998,9 +2976,18 @@ fun EditorScreen(
             onChooseFolder = { folderPicker.launch(null) },
             onResetFolder = { viewModel.setExportFolderUri(null) },
             onStartExport = { config ->
-                val clipsForExport = state.clips.filter {
-                    it.isAudio || !state.hiddenVisualTracks.contains(it.trackIndex)
+                val timelineClips = state.timelineClips()
+                val clipsForExport = timelineClips.filter { clip ->
+                    clip.isAudio || clip.trackIndex !in state.hiddenVisualTracks
                 }
+                Log.i(
+                    "EXPORT_PLAN",
+                    "timelineLayers=${state.visualLayerCount}v/${state.audioLayerCount}a " +
+                            "timelineClips=${timelineClips.size} " +
+                            "excludedOrphanClips=${state.clips.size - timelineClips.size} " +
+                            "exportClips=${clipsForExport.size} " +
+                            "textClips=${clipsForExport.count { it.isTextClip }}"
+                )
                 val startMs = if (config.useCustomRange) config.startMs else 0L
                 val endMs = if (config.useCustomRange) config.endMs
                 else totalDurationMs

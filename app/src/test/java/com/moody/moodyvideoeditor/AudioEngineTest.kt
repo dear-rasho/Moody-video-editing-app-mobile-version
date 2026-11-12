@@ -67,8 +67,18 @@ class AudioEngineTest {
             AudioAdjustmentSettings(reverb = 100f, studioReverb = 100f)
         )
 
-        assertTrue(filters.any { it.contains("aecho=0.8000:0.55:37|71|113|173|251|347|461:") })
-        assertTrue(filters.any { it.contains("aecho=0.8000:0.5:19|37|58|83|111:") })
+        assertTrue(
+            filters.any {
+                it.contains("aecho=0.8000:1.0:37|71|113|173|251|347:") &&
+                        it.endsWith(":0.4200|0.3200|0.2400|0.1800|0.1200|0.0800")
+            }
+        )
+        assertTrue(
+            filters.any {
+                it.contains("aecho=0.8000:1.0:11|19|31|47|67|89:") &&
+                        it.endsWith(":0.4200|0.3200|0.2300|0.1600|0.1000|0.0600")
+            }
+        )
     }
 
     @Test
@@ -136,7 +146,11 @@ class AudioEngineTest {
         )
 
         assertEquals("adjustedAudio", output)
-        assertTrue(filters.any { it.contains("aecho=0.8000:0.55:37|71|113|173|251|347|461:") })
+        assertTrue(
+            filters.any {
+                it.contains("aecho=0.8000:1.0:37|71|113|173|251|347:")
+            }
+        )
         assertTrue(filters.any { it.contains("amix=inputs=2:duration=longest:normalize=0") })
     }
 

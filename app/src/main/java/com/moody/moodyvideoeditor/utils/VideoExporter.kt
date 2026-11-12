@@ -63,6 +63,7 @@ class VideoExporter(
         ffmpeg = null
         nativeVideoExporter = null
         sessionId = null
+        val exportStartedAtMs = SystemClock.elapsedRealtime()
 
         Log.e("EXPORT", "=== START ===")
         Log.e("EXPORT", "clips=${clips.size}, mode=$exportMode, format=$format")
@@ -178,6 +179,7 @@ class VideoExporter(
         }
 
         val exportDurationMs = rangeEnd - rangeStart
+        val exportClips = trimClipsToRange(clips, rangeStart, rangeEnd)
         val hasBaseVideo = trimmedVisualClips.isNotEmpty() || trimmedMatteClips.isNotEmpty()
         val hasSynthetic =
             trimmedTextClips.isNotEmpty() || overlayImageClips.isNotEmpty() ||
@@ -208,6 +210,11 @@ class VideoExporter(
                             val nativeOutput = createOutputFile(fileName, "mp4")
                             nativeVideoExporter = exporter
                             try {
+                                Log.i(
+                                    "EXPORT_PLAN",
+                                    "route=media3-transformer durationMs=${rangeEnd - rangeStart} " +
+                                            "resolution=${targetW}x$targetH fps=$fps audio=$includeAudio"
+                                )
                                 onProgress(0.02f)
                                 exporter.export(
                                     inputUri = nativeClip.uri,
@@ -227,6 +234,12 @@ class VideoExporter(
                                     return
                                 }
                                 onProgress(0.97f)
+                                Log.i(
+                                    "EXPORT_RESULT",
+                                    "route=media3-transformer elapsedMs=" +
+                                            "${SystemClock.elapsedRealtime() - exportStartedAtMs} " +
+                                            "outputBytes=${nativeOutput.length()}"
+                                )
                                 completeExport(nativeOutput, customFolderUri, emptyList())
                                 onProgress(1f)
                                 return
@@ -358,6 +371,11 @@ class VideoExporter(
                     (textSequences + visualizerSequences + spotlightSequences + edgeGlowSequences)
                         .sortedBy { it.trackIndex }
                 onProgress(0.40f)
+                Log.i(
+                    "EXPORT_PLAN",
+                    "route=ffmpeg durationMs=$exportDurationMs rangeMs=$rangeStart-$rangeEnd " +
+                            "clips=${exportClips.size} resolution=${targetW}x$targetH fps=$fps"
+                )
 
                 ffmpeg = FFmpegExecutor(
                     context = context,
@@ -366,6 +384,12 @@ class VideoExporter(
                         if (isCancelled) {
                             cleanupSequences(allSequences); return@FFmpegExecutor
                         }
+                        Log.i(
+                            "EXPORT_RESULT",
+                            "route=ffmpeg elapsedMs=" +
+                                    "${SystemClock.elapsedRealtime() - exportStartedAtMs} " +
+                                    "outputBytes=${file.length()}"
+                        )
                         completeExport(file, customFolderUri, allSequences)
                     },
                     onError = { msg ->
@@ -380,7 +404,7 @@ class VideoExporter(
                 try {
                     ffmpeg?.export(
                         clips = trimmedVisualClips,
-                        allClips = clips,
+                        allClips = exportClips,
                         outputFile = outputFile,
                         targetW = targetW,
                         targetH = targetH,

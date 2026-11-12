@@ -2,7 +2,6 @@ package com.moody.moodyvideoeditor.utils
 
 import androidx.compose.ui.graphics.Color
 
-// Mirrors js/codebase/fontLibrary.js FONT_CATEGORIES
 // + js/features/animations.js ANIMATIONS list.
 object TextEngine {
 

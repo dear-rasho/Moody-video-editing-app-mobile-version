@@ -32,6 +32,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -150,6 +151,7 @@ fun Timeline(
     val hScroll = rememberScrollState()
     val vScroll = rememberScrollState()
     val coroutineScope = rememberCoroutineScope()
+    val currentPosMsState = rememberUpdatedState(state.currentPosMs)
 
     val labelWidthPx = with(density) { TRACK_LABEL_WIDTH.toPx() }
 
@@ -481,7 +483,7 @@ fun Timeline(
                         multiSelectedIds = state.multiSelectedIds,
                         selectedTrackIndex = state.selectedTrackIndex,
                         selectedIsAudio = state.selectedIsAudio,
-                        currentPosMs = state.currentPosMs,
+                        currentPosMs = currentPosMsState,
                         onClipTapped = onClipTapped,
                         onTrackTapped = onTrackTapped,
                         onTrimLeft = onTrimLeft,
@@ -571,7 +573,7 @@ fun Timeline(
                         multiSelectedIds = state.multiSelectedIds,
                         selectedTrackIndex = state.selectedTrackIndex,
                         selectedIsAudio = state.selectedIsAudio,
-                        currentPosMs = state.currentPosMs,
+                        currentPosMs = currentPosMsState,
                         onClipTapped = onClipTapped,
                         onTrackTapped = onTrackTapped,
                         onTrimLeft = onTrimLeft,
@@ -697,7 +699,7 @@ private fun VisualTrackRow(
     multiSelectedIds: Set<String>,
     selectedTrackIndex: Int,
     selectedIsAudio: Boolean,
-    currentPosMs: Long,
+    currentPosMs: State<Long>,
     onClipTapped: (EditorClip) -> Unit,
     onTrackTapped: (Int, Boolean) -> Unit,
     onTrimLeft: (Long) -> Unit,
@@ -880,7 +882,7 @@ private fun AudioTrackRow(
     multiSelectedIds: Set<String>,
     selectedTrackIndex: Int,
     selectedIsAudio: Boolean,
-    currentPosMs: Long,
+    currentPosMs: State<Long>,
     onClipTapped: (EditorClip) -> Unit,
     onTrackTapped: (Int, Boolean) -> Unit,
     onTrimLeft: (Long) -> Unit,
@@ -1123,7 +1125,7 @@ private fun TrackContent(
     multiSelectedIds: Set<String>,
     isAudio: Boolean,
     trackIndex: Int,
-    currentPosMs: Long,
+    currentPosMs: State<Long>,
     onClipTapped: (EditorClip) -> Unit,
     onTrimLeft: (Long) -> Unit,
     onTrimRight: (Long) -> Unit,
@@ -1384,7 +1386,7 @@ private fun ClipCard(
     contentWidthPx: Float,
     pxPerMs: Float,
     stepPx: Float,
-    currentPosMs: Long,
+    currentPosMs: State<Long>,
     isSelected: Boolean,
     isMulti: Boolean,
     isDragging: Boolean,
@@ -1412,7 +1414,7 @@ private fun ClipCard(
     val density = LocalDensity.current
     val latestClipState = rememberUpdatedState(clip)
     val latestAllClipsState = rememberUpdatedState(allClips)
-    val latestCurrentPosMs = rememberUpdatedState(currentPosMs)
+    val latestCurrentPosMs = currentPosMs
 
 
     val barColor = clipColor(clip)
@@ -1783,7 +1785,7 @@ private fun TrimHandleLeft(
     clip: EditorClip,
     totalMs: Long,
     contentWidthPx: Float,
-    currentPosMs: Long,
+    currentPosMs: State<Long>,
     allClips: List<EditorClip>,
     pxPerMs: Float,
     enterMs: Long,
@@ -1797,7 +1799,7 @@ private fun TrimHandleLeft(
     val coroutineScope = rememberCoroutineScope()
     val latestClip = rememberUpdatedState(clip)
     val latestAllClips = rememberUpdatedState(allClips)
-    val latestCurrentPosMs = rememberUpdatedState(currentPosMs)
+    val latestCurrentPosMs = currentPosMs
     val latestPxPerMs = rememberUpdatedState(pxPerMs)
     val latestTotalMs = rememberUpdatedState(totalMs)
     val latestContentWidthPx = rememberUpdatedState(contentWidthPx)
@@ -1984,7 +1986,7 @@ private fun TrimHandleRight(
     clip: EditorClip,
     totalMs: Long,
     contentWidthPx: Float,
-    currentPosMs: Long,
+    currentPosMs: State<Long>,
     allClips: List<EditorClip>,
     pxPerMs: Float,
     enterMs: Long,
@@ -1998,7 +2000,7 @@ private fun TrimHandleRight(
     val coroutineScope = rememberCoroutineScope()
     val latestClip = rememberUpdatedState(clip)
     val latestAllClips = rememberUpdatedState(allClips)
-    val latestCurrentPosMs = rememberUpdatedState(currentPosMs)
+    val latestCurrentPosMs = currentPosMs
     val latestPxPerMs = rememberUpdatedState(pxPerMs)
     val latestTotalMs = rememberUpdatedState(totalMs)
     val latestContentWidthPx = rememberUpdatedState(contentWidthPx)

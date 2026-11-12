@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.key
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -29,7 +31,7 @@ import kotlin.math.abs
 fun KeyframeMarkerOverlay(
     clip: EditorClip,
     clipWidthPx: Float,
-    currentPosMs: Long = -1L,
+    currentPosMs: State<Long>,
     onSeekToKeyframe: (Float) -> Unit
 ) {
     if (clipWidthPx <= 0f) return
@@ -39,6 +41,7 @@ fun KeyframeMarkerOverlay(
     if (clipDurMs <= 0L) return
 
     val density = LocalDensity.current
+    val playheadPositionMs by currentPosMs
 
     // Collect unique keyframe times (any prop)
     val times = mutableSetOf<Float>()
@@ -74,7 +77,7 @@ fun KeyframeMarkerOverlay(
                 )
 
                 val absTimeMs = clip.timelineStartMs + tMs
-                val atPlayhead = abs(absTimeMs - currentPosMs) < 50L
+                val atPlayhead = abs(absTimeMs - playheadPositionMs) < 50L
 
                 val hasEasingGraph = KeyframeLibrary.ANIMATABLE_PROPS.any { property ->
                     clip.keyframes[property].orEmpty().any {

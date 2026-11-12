@@ -279,16 +279,17 @@ object AudioEngine {
             val amount = s.echo / 100f
             val dryGain = 1f - 0.2f * amount
             filters.add(
-                "aecho=${format(dryGain)}:${format(0.5f * amount)}:" +
-                        "350:${format(0.55f * amount)}"
+                "aecho=${format(dryGain)}:1.0:220|440|660:" +
+                        listOf(0.55f, 0.34f, 0.20f)
+                            .joinToString("|") { format(it * amount) }
             )
         }
         if (s.reverb > 0f) {
             val amount = s.reverb / 100f
             val dryGain = 1f - 0.2f * amount
             filters.add(
-                "aecho=${format(dryGain)}:0.55:37|71|113|173|251|347|461:" +
-                        listOf(0.48f, 0.36f, 0.27f, 0.20f, 0.14f, 0.09f, 0.05f)
+                "aecho=${format(dryGain)}:1.0:37|71|113|173|251|347:" +
+                        listOf(0.42f, 0.32f, 0.24f, 0.18f, 0.12f, 0.08f)
                             .joinToString("|") { format(it * amount) }
             )
         }
@@ -296,8 +297,8 @@ object AudioEngine {
             val amount = s.studioReverb / 100f
             val dryGain = 1f - 0.2f * amount
             filters.add(
-                "aecho=${format(dryGain)}:0.5:19|37|58|83|111:" +
-                        listOf(0.42f, 0.30f, 0.21f, 0.14f, 0.08f)
+                "aecho=${format(dryGain)}:1.0:11|19|31|47|67|89:" +
+                        listOf(0.42f, 0.32f, 0.23f, 0.16f, 0.10f, 0.06f)
                             .joinToString("|") { format(it * amount) }
             )
         }

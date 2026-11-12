@@ -579,10 +579,12 @@ fun PreviewCanvas(
     var showCenterHorizontalGuide by remember { mutableStateOf(false) }
     var canvasRotationReadout by remember { mutableStateOf<Float?>(null) }
 
-    val activeClips = clips.filter {
+    val activeTimelineClips = clips.filter {
+        currentPosMs >= it.timelineStartMs && currentPosMs < it.timelineEndMs
+    }
+    val activeClips = activeTimelineClips.filter {
         !it.isAudio && !it.isAdjustmentClip && !it.isEffectClip &&
                 !it.isFilterLayerClip && !it.isOverlayClip &&
-                currentPosMs >= it.timelineStartMs && currentPosMs < it.timelineEndMs &&
                 !hiddenVisualTracks.contains(it.trackIndex)
     }.sortedWith(compareBy({ it.trackIndex }, { it.timelineStartMs }))
 
@@ -629,7 +631,8 @@ fun PreviewCanvas(
     }
     var lastSelectedTextTapMs by remember { mutableLongStateOf(0L) }
 
-    val topVideoClip = activeClips.filter { it.isVisualClip && !it.type.startsWith("image/") }
+    val topVideoClip = activeClips
+        .filter { it.isVisualClip && !it.type.startsWith("image/") }
         .maxByOrNull { it.trackIndex }
     val activeVisual = activeClips.filter { it.isVisualClip }.maxByOrNull { it.trackIndex }
     val videoTrackIdx = activeVisual?.trackIndex ?: 0
@@ -739,23 +742,21 @@ fun PreviewCanvas(
         MaskEngine.sampleAt(selectedClip.mask, timeSec)
     } else null
 
-    val activeAdjustment = clips.filter {
-        it.isAdjustmentClip && currentPosMs >= it.timelineStartMs && currentPosMs < it.timelineEndMs &&
-                !hiddenVisualTracks.contains(it.trackIndex)
+    val activeAdjustment = activeTimelineClips.filter {
+        it.isAdjustmentClip && !hiddenVisualTracks.contains(it.trackIndex)
     }.maxByOrNull { it.trackIndex }?.adjustments
 
-    val activeColorWheels = clips.filter {
+    val activeColorWheels = activeTimelineClips.filter {
         it.isAdjustmentClip && it.colorWheel.hasAnyChange &&
-                currentPosMs >= it.timelineStartMs && currentPosMs < it.timelineEndMs &&
                 !hiddenVisualTracks.contains(it.trackIndex)
     }.sortedBy { it.trackIndex }
 
-    val activeEffects = EffectsEngine.getEffectsAbove(
-        clips,
-        currentPosMs,
-        videoTrackIdx,
-        hiddenVisualTracks
-    )
+    val activeEffects = activeTimelineClips
+        .filter {
+            it.isEffectClip && it.trackIndex > videoTrackIdx &&
+                    it.trackIndex !in hiddenVisualTracks
+        }
+        .sortedBy { it.trackIndex }
     val timeSec = currentPosMs / 1000f
 
     val motionFrames = activeEffects.mapNotNull { clip ->
@@ -838,16 +839,14 @@ fun PreviewCanvas(
 
     val allOverlays =
         EffectsEngine.collectActiveOverlays(
-            clips,
+            activeTimelineClips,
             currentPosMs,
             videoTrackIdx,
             hiddenVisualTracks
         )
 
-    val activeFilterLayer = clips.filter {
-        it.isFilterLayerClip && currentPosMs >= it.timelineStartMs && currentPosMs < it.timelineEndMs && !hiddenVisualTracks.contains(
-            it.trackIndex
-        )
+    val activeFilterLayer = activeTimelineClips.filter {
+        it.isFilterLayerClip && !hiddenVisualTracks.contains(it.trackIndex)
     }.maxByOrNull { it.trackIndex }
     val activeFilterOpacity = activeFilterLayer?.let { layer ->
         KeyframeStore.layerOpacityAt(
@@ -998,26 +997,13 @@ fun PreviewCanvas(
                                         latestGesturePositionMs.value >= it.timelineStartMs &&
                                         latestGesturePositionMs.value < it.timelineEndMs
                             }
-                            val textUnderPointer = activeGestureClips
-                                .asReversed()
-                                .filter { it.isTextClip }
-                                .filter { textClip ->
-                                    isClipVisibleAtCanvasPoint(
-                                        textClip,
-                                        down.position,
-                                        canvasWidth,
-                                        canvasHeight,
-                                        latestGesturePositionMs.value,
-                                        topVideoClip?.id
-                                    )
-                                }
-                                .firstOrNull { textClip ->
-                                    activeGestureClips
-                                        .filter {
-                                            it.isColorMatteClip &&
-                                                    it.trackIndex > textClip.trackIndex
-                                        }
-                                        .none { matte ->
+                            val activeColorMattes = activeGestureClips.filter {
+                                it.isColorMatteClip
+                            }
+                            val highestVisibleMatteTrack =
+                                if (activeGestureClips.any { it.isTextClip }) {
+                                    activeColorMattes.asSequence()
+                                        .filter { matte ->
                                             isClipVisibleAtCanvasPoint(
                                                 matte,
                                                 down.position,
@@ -1027,6 +1013,22 @@ fun PreviewCanvas(
                                                 topVideoClip?.id
                                             )
                                         }
+                                        .maxOfOrNull { it.trackIndex }
+                                } else null
+                            val textUnderPointer = activeGestureClips
+                                .asReversed()
+                                .firstOrNull { textClip ->
+                                    textClip.isTextClip &&
+                                            isClipVisibleAtCanvasPoint(
+                                                textClip,
+                                                down.position,
+                                                canvasWidth,
+                                                canvasHeight,
+                                                latestGesturePositionMs.value,
+                                                topVideoClip?.id
+                                            ) &&
+                                            (highestVisibleMatteTrack == null ||
+                                                    highestVisibleMatteTrack <= textClip.trackIndex)
                                 }
                             val currentSelectedClipId = latestSelectedClipId.value
                             val visibleTargetUnderPointer = if (textUnderPointer == null) {
@@ -2743,15 +2745,8 @@ fun PreviewCanvas(
             }
 
             val activeEdgeGlows =
-                clips.filter { c ->
-                    c.isEffectClip &&
-                            c.trackIndex > videoTrackIdx &&
-                            c.trackIndex !in hiddenVisualTracks &&
-                            currentPosMs >= c.timelineStartMs &&
-                            currentPosMs < c.timelineEndMs &&
-                            c.effectState?.edgeGlow != null
-                }
-                    .sortedBy { it.trackIndex }.mapNotNull { clip ->
+                activeEffects.filter { it.effectState?.edgeGlow != null }
+                    .mapNotNull { clip ->
                         clip.effectState?.edgeGlow?.let { glow ->
                             val localSec = KeyframeStore.clipLocalTimeSeconds(
                                 currentPosMs, clip.timelineStartMs, clip.durationMs
@@ -2779,8 +2774,8 @@ fun PreviewCanvas(
             }
 
             val activeLightLeaks =
-                clips.filter { c -> c.isEffectClip && c.trackIndex > videoTrackIdx && currentPosMs >= c.timelineStartMs && currentPosMs < c.timelineEndMs && c.effectState?.lightLeak != null }
-                    .sortedBy { it.trackIndex }.mapNotNull { clip ->
+                activeEffects.filter { it.effectState?.lightLeak != null }
+                    .mapNotNull { clip ->
                         clip.effectState?.lightLeak?.let { leak ->
                             val localSec = KeyframeStore.clipLocalTimeSeconds(
                                 currentPosMs, clip.timelineStartMs, clip.durationMs
@@ -2829,8 +2824,8 @@ fun PreviewCanvas(
                 }
             }
             val activeLightning =
-                clips.filter { c -> c.isEffectClip && c.trackIndex > videoTrackIdx && currentPosMs >= c.timelineStartMs && currentPosMs < c.timelineEndMs && c.effectState?.lightning != null }
-                    .sortedBy { it.trackIndex }.mapNotNull { c ->
+                activeEffects.filter { it.effectState?.lightning != null }
+                    .mapNotNull { c ->
                         val cfg = c.effectState?.lightning ?: return@mapNotNull null
                         val localSec = ((currentPosMs - c.timelineStartMs) / 1000f).coerceAtLeast(0f)
                         val flash =
@@ -2916,31 +2911,62 @@ fun PreviewCanvas(
                 }
             }
 
+            // Bound CPU-drawn effect complexity during playback; the source configs remain intact.
             val activeParticles =
-                clips.filter { c -> c.isEffectClip && c.trackIndex > videoTrackIdx && currentPosMs >= c.timelineStartMs && currentPosMs < c.timelineEndMs && c.effectState?.particle != null }
-                    .sortedBy { it.trackIndex }.mapNotNull { c ->
+                activeEffects.filter { it.effectState?.particle != null }
+                    .mapNotNull { c ->
                         val rawCfg = c.effectState?.particle ?: return@mapNotNull null
                         val localSec =
                             ((currentPosMs - c.timelineStartMs) / 1000f).coerceAtLeast(0f)
                         val opacity = KeyframeStore.layerOpacityAt(
                             c.keyframes, c.layerOpacity, localSec
                         ) / 100f
-                        rawCfg.copy(masterIntensity = rawCfg.masterIntensity * opacity) to localSec
+                        rawCfg.copy(
+                            masterIntensity = rawCfg.masterIntensity * opacity,
+                            count = if (isPlaying) rawCfg.count.coerceAtMost(300) else rawCfg.count
+                        ) to localSec
                     }
             val previewParticle =
-                previewEffectState?.particle?.let { cfg -> cfg to (currentPosMs / 1000f) }
+                previewEffectState?.particle?.let { cfg ->
+                    cfg.copy(
+                        count = if (isPlaying) cfg.count.coerceAtMost(300) else cfg.count
+                    ) to (currentPosMs / 1000f)
+                }
             val allParticles =
                 if (previewParticle != null) activeParticles + previewParticle else activeParticles
 
-            if (allParticles.isNotEmpty()) {
+            val preparedParticles = allParticles.mapNotNull { (cfg, localSec) ->
+                val cycleIdx = particlePreviewCycleIndex(cfg, localSec)
+                    ?: return@mapNotNull null
+                val particles = remember(
+                    cfg.count,
+                    cfg.spread,
+                    cfg.direction,
+                    cfg.speed,
+                    cfg.sizeMin,
+                    cfg.sizeMax,
+                    cfg.emojis,
+                    cfg.burstDurationMs,
+                    cycleIdx
+                ) {
+                    com.moody.moodyvideoeditor.utils.ParticleEngine.generateParticles(
+                        cfg,
+                        cycleIdx
+                    )
+                }
+                Triple(cfg, localSec, particles)
+            }
+
+            if (preparedParticles.isNotEmpty()) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    allParticles.forEach { (cfg, localSec) ->
+                    preparedParticles.forEach { (cfg, localSec, particles) ->
                         try {
                             drawParticlePreview(
                                 cfg = cfg,
                                 localSec = localSec,
                                 W = size.width,
-                                H = size.height
+                                H = size.height,
+                                particles = particles
                             )
                         } catch (_: Throwable) {
                         }
@@ -2949,17 +2975,30 @@ fun PreviewCanvas(
             }
 
             val activeFire =
-                clips.filter { c -> c.isEffectClip && c.trackIndex > videoTrackIdx && currentPosMs >= c.timelineStartMs && currentPosMs < c.timelineEndMs && c.effectState?.fire != null }
-                    .sortedBy { it.trackIndex }.mapNotNull { c ->
+                activeEffects.filter { it.effectState?.fire != null }
+                    .mapNotNull { c ->
                         val rawCfg = c.effectState?.fire ?: return@mapNotNull null
                         val localSec =
                             ((currentPosMs - c.timelineStartMs) / 1000f).coerceAtLeast(0f)
                         val opacity = KeyframeStore.layerOpacityAt(
                             c.keyframes, c.layerOpacity, localSec
                         ) / 100f
-                        rawCfg.copy(masterIntensity = rawCfg.masterIntensity * opacity) to localSec
+                        rawCfg.copy(
+                            masterIntensity = rawCfg.masterIntensity * opacity,
+                            density = if (isPlaying) rawCfg.density.coerceAtMost(18) else rawCfg.density,
+                            particleCount = if (isPlaying) {
+                                rawCfg.particleCount.coerceAtMost(80)
+                            } else rawCfg.particleCount
+                        ) to localSec
                     }
-            val previewFire = previewEffectState?.fire?.let { cfg -> cfg to (currentPosMs / 1000f) }
+            val previewFire = previewEffectState?.fire?.let { cfg ->
+                cfg.copy(
+                    density = if (isPlaying) cfg.density.coerceAtMost(18) else cfg.density,
+                    particleCount = if (isPlaying) {
+                        cfg.particleCount.coerceAtMost(80)
+                    } else cfg.particleCount
+                ) to (currentPosMs / 1000f)
+            }
             val allFire = if (previewFire != null) activeFire + previewFire else activeFire
 
             if (allFire.isNotEmpty()) {
@@ -2982,17 +3021,24 @@ fun PreviewCanvas(
             }
 
             val activeDust =
-                clips.filter { c -> c.isEffectClip && c.trackIndex > videoTrackIdx && currentPosMs >= c.timelineStartMs && currentPosMs < c.timelineEndMs && c.effectState?.dust != null }
-                    .sortedBy { it.trackIndex }.mapNotNull { c ->
+                activeEffects.filter { it.effectState?.dust != null }
+                    .mapNotNull { c ->
                         val rawCfg = c.effectState?.dust ?: return@mapNotNull null
                         val localSec =
                             ((currentPosMs - c.timelineStartMs) / 1000f).coerceAtLeast(0f)
                         val opacity = KeyframeStore.layerOpacityAt(
                             c.keyframes, c.layerOpacity, localSec
                         ) / 100f
-                        rawCfg.copy(opacity = rawCfg.opacity * opacity) to localSec
+                        rawCfg.copy(
+                            opacity = rawCfg.opacity * opacity,
+                            count = if (isPlaying) rawCfg.count.coerceAtMost(250) else rawCfg.count
+                        ) to localSec
                     }
-            val previewDust = previewEffectState?.dust?.let { cfg -> cfg to (currentPosMs / 1000f) }
+            val previewDust = previewEffectState?.dust?.let { cfg ->
+                cfg.copy(
+                    count = if (isPlaying) cfg.count.coerceAtMost(250) else cfg.count
+                ) to (currentPosMs / 1000f)
+            }
             val allDust = if (previewDust != null) activeDust + previewDust else activeDust
 
             if (allDust.isNotEmpty()) {
@@ -3164,18 +3210,32 @@ fun PreviewCanvas(
         )
     }
 }
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawParticlePreview(
-    cfg: com.moody.moodyvideoeditor.data.ParticleConfig, localSec: Float, W: Float, H: Float
-) {
-    if (localSec < 0f) return
+private fun particlePreviewCycleIndex(
+    cfg: com.moody.moodyvideoeditor.data.ParticleConfig,
+    localSec: Float
+): Int? {
+    if (localSec < 0f) return null
     val cycleSec = cfg.triggerEverySec
-    val cycleIdx: Int;
+    if (cycleSec <= 0.01f) {
+        return if (localSec * 1000f > cfg.burstDurationMs + cfg.lifetimeMs) null else 0
+    }
+    return kotlin.math.floor(localSec / cycleSec).toInt()
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawParticlePreview(
+    cfg: com.moody.moodyvideoeditor.data.ParticleConfig,
+    localSec: Float,
+    W: Float,
+    H: Float,
+    particles: List<com.moody.moodyvideoeditor.utils.ParticleEngine.Particle>
+) {
+    val cycleIdx = particlePreviewCycleIndex(cfg, localSec) ?: return
+    val cycleSec = cfg.triggerEverySec
     val localT: Float
     if (cycleSec <= 0.01f) {
-        if (localSec * 1000f > cfg.burstDurationMs + cfg.lifetimeMs) return
-        cycleIdx = 0; localT = localSec
+        localT = localSec
     } else {
-        cycleIdx = kotlin.math.floor(localSec / cycleSec).toInt(); localT =
+        localT =
             localSec - cycleIdx * cycleSec
     }
     val localMs = (localT * 1000f).toLong()
@@ -3209,7 +3269,6 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawParticlePreview
         }
     }
 
-    val particles = com.moody.moodyvideoeditor.utils.ParticleEngine.generateParticles(cfg, cycleIdx)
     val intensityMul = (cfg.masterIntensity / 100f).coerceIn(0f, 2f)
 
     particles.forEach { p ->
@@ -4473,19 +4532,7 @@ private fun InteractiveTextOverlay(
         }
     }
     val sampled = TransformApplier.resolveLive(clip, localTimeSec)
-    val gesturePreview = gesturePreviewState.transform
-    val renderedSampled = gesturePreview?.let { preview ->
-        val scaleRatioX = if (sampled.scale > 0.001f) sampled.scaleX / sampled.scale else 1f
-        val scaleRatioY = if (sampled.scale > 0.001f) sampled.scaleY / sampled.scale else 1f
-        sampled.copy(
-            x = preview.x,
-            y = preview.y,
-            scale = preview.scale,
-            scaleX = preview.scale * scaleRatioX,
-            scaleY = preview.scale * scaleRatioY,
-            rotation = preview.rotation
-        )
-    } ?: sampled
+    val renderedSampled = sampled
     val clampedX = renderedSampled.x.coerceIn(-100f, 200f);
     val clampedY = renderedSampled.y.coerceIn(-100f, 200f)
     val animDur = textState.animationDuration.coerceAtLeast(0.1f);
@@ -4703,8 +4750,19 @@ private fun InteractiveTextOverlay(
         Box(
             modifier = Modifier
                 .graphicsLayer {
-                    val posTx = (clampedX - 50f) / 100f * refPx;
-                    val posTy = (clampedY - 50f) / 100f * refPx
+                    val preview = gesturePreviewState.transform
+                    val displayX = (preview?.x ?: sampled.x).coerceIn(-100f, 200f)
+                    val displayY = (preview?.y ?: sampled.y).coerceIn(-100f, 200f)
+                    val displayScale = preview?.scale ?: sampled.scale
+                    val scaleRatioX =
+                        if (sampled.scale > 0.001f) sampled.scaleX / sampled.scale else 1f
+                    val scaleRatioY =
+                        if (sampled.scale > 0.001f) sampled.scaleY / sampled.scale else 1f
+                    val displayScaleX = displayScale * scaleRatioX
+                    val displayScaleY = displayScale * scaleRatioY
+                    val displayRotation = preview?.rotation ?: sampled.rotation
+                    val posTx = (displayX - 50f) / 100f * refPx
+                    val posTy = (displayY - 50f) / 100f * refPx
                     val alignmentOffsetX = when (textState.alignment) {
                         "left" -> -(canvasWpx - with(density) { outerWidthDp.dp.toPx() }) / 2f
                         "right" -> (canvasWpx - with(density) { outerWidthDp.dp.toPx() }) / 2f
@@ -4712,9 +4770,9 @@ private fun InteractiveTextOverlay(
                     }
                     translationX = posTx + alignmentOffsetX + frame.translateX
                     translationY = posTy + frame.translateY
-                    scaleX = (renderedSampled.scaleX / 100f) * frame.scaleX; scaleY =
-                    (renderedSampled.scaleY / 100f) * frame.scaleY
-                    rotationZ = renderedSampled.rotation + frame.rotationZ; rotationX =
+                    scaleX = (displayScaleX / 100f) * frame.scaleX; scaleY =
+                    (displayScaleY / 100f) * frame.scaleY
+                    rotationZ = displayRotation + frame.rotationZ; rotationX =
                     frame.rotationX; rotationY = frame.rotationY
                     cameraDistance = 16f * density.density; alpha =
                     (textState.opacity / 100f) * frame.alpha
@@ -5017,10 +5075,27 @@ private fun InteractiveTextOverlay(
         if (isSelected) {
             Box(modifier = Modifier
                 .graphicsLayer {
-                    val posTx = (clampedX - 50f) / 100f * refPx;
-                    val posTy = (clampedY - 50f) / 100f * refPx; translationX =
-                    posTx + frame.translateX; translationY = posTy + frame.translateY; rotationZ =
-                    renderedSampled.rotation + frame.rotationZ
+                    val preview = gesturePreviewState.transform
+                    val displayX = (preview?.x ?: sampled.x).coerceIn(-100f, 200f)
+                    val displayY = (preview?.y ?: sampled.y).coerceIn(-100f, 200f)
+                    val displayScale = preview?.scale ?: sampled.scale
+                    val scaleRatioX =
+                        if (sampled.scale > 0.001f) sampled.scaleX / sampled.scale else 1f
+                    val scaleRatioY =
+                        if (sampled.scale > 0.001f) sampled.scaleY / sampled.scale else 1f
+                    val displayScaleX = displayScale * scaleRatioX
+                    val displayScaleY = displayScale * scaleRatioY
+                    val posTx = (displayX - 50f) / 100f * refPx
+                    val posTy = (displayY - 50f) / 100f * refPx
+                    translationX = posTx + frame.translateX
+                    translationY = posTy + frame.translateY
+                    rotationZ = (preview?.rotation ?: sampled.rotation) + frame.rotationZ
+                    scaleX = if (renderedSampled.scaleX > 0.001f) {
+                        displayScaleX / renderedSampled.scaleX
+                    } else 1f
+                    scaleY = if (renderedSampled.scaleY > 0.001f) {
+                        displayScaleY / renderedSampled.scaleY
+                    } else 1f
                 }
                 .width(handleW.coerceAtLeast(8.dp))
                 .height(handleH.coerceAtLeast(8.dp))) {
@@ -5228,27 +5303,6 @@ private fun BoxScope.LayerTransformHandles(
             onGestureStart = startGesture,
             onGestureEnd = finishGesture,
             onTransformChanged = reportTransform,
-            minimumScale = minimumScale,
-            onDelete = onDelete
-        )
-        TransformHandle(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .offset(x = 7.dp, y = 7.dp),
-            clipId = clipId,
-            corner = TransformHandleCorner.Scale,
-            boundsWidthPx = boundsWidthPx,
-            boundsHeightPx = boundsHeightPx,
-            handleSizePx = handleSizePx,
-            scale = scale,
-            rotation = rotation,
-            positionX = positionX,
-            positionY = positionY,
-            onPositionChanged = onPositionChanged,
-            onGestureStart = startGesture,
-            onGestureEnd = finishGesture,
-            onTransformChanged = reportTransform,
-            minimumScale = minimumScale,
             onDelete = onDelete
         )
         TransformHandle(
@@ -5268,7 +5322,6 @@ private fun BoxScope.LayerTransformHandles(
             onGestureStart = startGesture,
             onGestureEnd = finishGesture,
             onTransformChanged = reportTransform,
-            minimumScale = minimumScale,
             onDelete = onDelete
         )
         rotationReadout?.let { degrees ->
@@ -5289,7 +5342,7 @@ private fun BoxScope.LayerTransformHandles(
 
 private val LAYER_CONTROL_HANDLE_SIZE = 14.dp
 
-private enum class TransformHandleCorner { Delete, Scale, Rotate }
+private enum class TransformHandleCorner { Delete, Rotate }
 
 @Composable
 private fun TransformHandle(
@@ -5307,7 +5360,6 @@ private fun TransformHandle(
     onGestureStart: () -> Unit,
     onGestureEnd: () -> Unit,
     onTransformChanged: (Float, Float) -> Unit,
-    minimumScale: Float,
     onDelete: () -> Unit
 ) {
     val currentScale = rememberUpdatedState(scale);
@@ -5327,54 +5379,13 @@ private fun TransformHandle(
             .background(
                 when (corner) {
                     TransformHandleCorner.Delete -> Color(0xFFE5484D)
-                    TransformHandleCorner.Scale,
                     TransformHandleCorner.Rotate -> Color(0xFF171A22)
                 }
             )
             .border(1.dp, Color(0xFF60EFFF), CircleShape)
-            .pointerInput(clipId, corner, minimumScale) {
+            .pointerInput(clipId, corner) {
                 when (corner) {
                     TransformHandleCorner.Delete -> detectTapGestures { currentOnDelete.value() }
-                    TransformHandleCorner.Scale -> awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        down.consume()
-                        val centerX = currentBoundsWidth
-                        val centerY = 0f
-                        val startX = centerX + down.position.x - handleSizePx / 2f -
-                                currentBoundsWidth / 2f
-                        val startY = centerY + down.position.y - handleSizePx / 2f -
-                                currentBoundsHeight / 2f
-                        val startDistance = kotlin.math.hypot(
-                            startX.toDouble(),
-                            startY.toDouble()
-                        ).toFloat().coerceAtLeast(1f)
-                        val startScale = currentScale.value
-                        val startRotation = currentRotation.value
-                        currentOnGestureStart.value()
-                        try {
-                            while (true) {
-                                val change = awaitPointerEvent().changes.firstOrNull()
-                                if (change == null || !change.pressed) break
-                                change.consume()
-                                val x = centerX + change.position.x - handleSizePx / 2f -
-                                        currentBoundsWidth / 2f
-                                val y = centerY + change.position.y - handleSizePx / 2f -
-                                        currentBoundsHeight / 2f
-                                val distance = kotlin.math.hypot(
-                                    x.toDouble(),
-                                    y.toDouble()
-                                ).toFloat()
-                                currentOnTransformChanged.value(
-                                    (startScale.coerceAtLeast(minimumScale) *
-                                            distance / startDistance)
-                                        .coerceIn(minimumScale, 500f),
-                                    startRotation
-                                )
-                            }
-                        } finally {
-                            currentOnGestureEnd.value()
-                        }
-                    }
                     TransformHandleCorner.Rotate -> awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         down.consume()
@@ -5448,7 +5459,6 @@ private fun TransformHandle(
         Text(
             text = when (corner) {
                 TransformHandleCorner.Delete -> "×"
-                TransformHandleCorner.Scale -> "↗"
                 TransformHandleCorner.Rotate -> "⟳"
             }, color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold
         )

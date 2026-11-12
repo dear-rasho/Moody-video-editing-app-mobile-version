@@ -365,7 +365,7 @@ fun BeatsPanel(
                 )
 
                 CopyRow(
-                    label = "Seconds (AI ready)",
+                    label = "Seconds",
                     value = state.beatTimesMs.joinToString(", ") {
                         "%.2f".format(it / 1000f)
                     },
@@ -399,18 +399,6 @@ fun BeatsPanel(
                     mode = "ts",
                     onCopy = { text, mode ->
                         copyToClipboard(context, "Beat Timestamps", text)
-                        copiedMode = mode
-                    }
-                )
-
-                CopyRow(
-                    label = "AI Prompt (Full)",
-                    value = buildAiPromptFormat(state.beatTimesMs),
-                    preview = "count: ${state.count}, bpm: ${avgBpm(state.beatTimesMs)}, beats: [...]",
-                    copiedMode = copiedMode,
-                    mode = "ai",
-                    onCopy = { text, mode ->
-                        copyToClipboard(context, "AI Beat Prompt", text)
                         copiedMode = mode
                     }
                 )
@@ -594,30 +582,4 @@ private fun avgBpm(times: List<Long>): Int {
     val gap = avgGap(times)
     if (gap <= 0L) return 0
     return (60000 / gap).toInt()
-}
-
-private fun buildAiPromptFormat(times: List<Long>): String {
-    if (times.isEmpty()) return ""
-
-    val count = times.size
-    val bpm = avgBpm(times)
-    val gapMs = avgGap(times)
-
-    val sb = StringBuilder()
-    sb.append("# Beat Detection Result\n")
-    sb.append("count: $count\n")
-    sb.append("bpm: $bpm\n")
-    sb.append("avg_gap_ms: $gapMs\n")
-    sb.append("beats_ms: [")
-    sb.append(times.joinToString(", "))
-    sb.append("]\n")
-    sb.append("beats_sec: [")
-    sb.append(times.joinToString(", ") { "%.3f".format(it / 1000f) })
-    sb.append("]\n")
-    sb.append("\n# Usage in Moody Code Mode:\n")
-    sb.append("# beat pulse 120\n")
-    sb.append("# beat bounce 130\n")
-    sb.append("# beat shake 150\n")
-
-    return sb.toString()
 }
