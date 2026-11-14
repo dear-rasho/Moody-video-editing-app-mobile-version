@@ -48,8 +48,6 @@ fun TimelineToolbar(
     canTrimLeft: Boolean = false,
     canTrimRight: Boolean = false,
     zoomSlider: Float,
-    totalSec: Float,
-    viewportContentWidthDp: Float,
     onZoomChange: (Float) -> Unit
 ) {
     Column(
@@ -102,7 +100,7 @@ fun TimelineToolbar(
             Spacer(Modifier.weight(1f))
 
             Text(
-                TimelineZoom.formatLabel(zoomSlider, totalSec, viewportContentWidthDp),
+                TimelineZoom.formatLabel(zoomSlider),
                 color = Color(0xFFCCCCCC),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold

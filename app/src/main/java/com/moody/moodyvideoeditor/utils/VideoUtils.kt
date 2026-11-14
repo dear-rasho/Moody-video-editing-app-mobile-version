@@ -1,8 +1,7 @@
 package com.moody.moodyvideoeditor.utils
 
 import android.content.Context
-import android.media.MediaExtractor
-import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
@@ -10,22 +9,37 @@ import android.util.Log
 object VideoUtils {
     private const val TAG = "VideoUtils"
 
-    fun hasAudioTrack(context: Context, uri: Uri): Boolean {
-        val extractor = MediaExtractor()
+    data class MediaMetadata(
+        val durationMs: Long,
+        val hasAudioTrack: Boolean
+    )
+
+    fun getMediaMetadata(context: Context, uri: Uri): MediaMetadata {
+        val retriever = MediaMetadataRetriever()
         return try {
-            extractor.setDataSource(context, uri, null)
-            (0 until extractor.trackCount).any { index ->
-                extractor.getTrackFormat(index)
-                    .getString(MediaFormat.KEY_MIME)
-                    ?.startsWith("audio/") == true
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not inspect audio tracks for $uri", e)
-            false
+            retriever.setDataSource(context, uri)
+            MediaMetadata(
+                durationMs = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_DURATION
+                )?.toLongOrNull() ?: 0L,
+                hasAudioTrack = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO
+                )?.equals("yes", ignoreCase = true) == true
+            )
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not read media metadata for $uri", error)
+            MediaMetadata(durationMs = 0L, hasAudioTrack = false)
         } finally {
-            extractor.release()
+            try {
+                retriever.release()
+            } catch (error: RuntimeException) {
+                Log.w(TAG, "Could not release media metadata retriever", error)
+            }
         }
     }
+
+    fun hasAudioTrack(context: Context, uri: Uri): Boolean =
+        getMediaMetadata(context, uri).hasAudioTrack
 
     fun getFileName(context: Context, uri: Uri): String {
         var name = "video.mp4"
@@ -43,59 +57,7 @@ object VideoUtils {
     }
 
     fun getVideoDuration(context: Context, uri: Uri): Long {
-        // Attempt 1 — MediaMetadataRetriever
-        try {
-            val retriever = android.media.MediaMetadataRetriever()
-            retriever.setDataSource(context, uri)
-            val duration = retriever.extractMetadata(
-                android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
-            )?.toLongOrNull() ?: 0L
-            retriever.release()
-            if (duration > 100L) return duration
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        // Attempt 2 — MediaExtractor fallback
-        try {
-            val extractor = android.media.MediaExtractor()
-            extractor.setDataSource(context, uri, null)
-            var duration = 0L
-            for (i in 0 until extractor.trackCount) {
-                val format = extractor.getTrackFormat(i)
-                if (format.containsKey(android.media.MediaFormat.KEY_DURATION)) {
-                    val d = format.getLong(android.media.MediaFormat.KEY_DURATION) / 1000L
-                    if (d > duration) duration = d
-                }
-            }
-            extractor.release()
-            if (duration > 100L) return duration
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        // Attempt 3 — ExoPlayer sync metadata
-        try {
-            val player = androidx.media3.exoplayer.ExoPlayer.Builder(context).build()
-            val mediaItem = androidx.media3.common.MediaItem.fromUri(uri)
-            player.setMediaItem(mediaItem)
-            player.prepare()
-            player.playWhenReady = false
-
-            val deadline = System.currentTimeMillis() + 2000L
-            while (player.playbackState != androidx.media3.common.Player.STATE_READY &&
-                System.currentTimeMillis() < deadline
-            ) {
-                Thread.sleep(50)
-            }
-            val duration = if (player.duration > 0) player.duration else 0L
-            player.release()
-            if (duration > 100L) return duration
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        return 0L
+        return getMediaMetadata(context, uri).durationMs
     }
 
 

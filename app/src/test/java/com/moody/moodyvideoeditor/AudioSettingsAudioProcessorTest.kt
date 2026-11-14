@@ -14,7 +14,7 @@ class AudioSettingsAudioProcessorTest {
     fun maximumReverbAddsDelayedAudioToPreviewOutput() {
         val processor = AudioSettingsAudioProcessor()
         val format = AudioProcessor.AudioFormat(44_100, 1, C.ENCODING_PCM_16BIT)
-        processor.setReverbAmount(1f)
+        processor.setEffects(echo = 0f, reverb = 1f, studioReverb = 0f)
         processor.configure(format)
         processor.flush()
 

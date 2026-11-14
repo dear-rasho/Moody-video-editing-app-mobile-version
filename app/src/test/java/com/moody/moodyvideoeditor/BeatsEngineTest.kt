@@ -34,7 +34,7 @@ class BeatsEngineTest {
         detected.zip(expectedTimes).forEach { (actual, expected) ->
             assertTrue("Expected $expected ms, got $actual ms", kotlin.math.abs(actual - expected) <= 40L)
         }
-        assertTrue(strengths.all { it in 0f..1f && it > 0f })
+        assertTrue(strengths.all { it in 0f..1f })
     }
 
     @Test

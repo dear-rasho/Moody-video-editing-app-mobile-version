@@ -6,18 +6,18 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -55,6 +55,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.collect
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -84,7 +85,6 @@ import kotlin.math.roundToInt
 //  CONSTANTS
 // ═══════════════════════════════════════════════════════════════
 
-private val TRACK_LABEL_WIDTH = 54.dp
 private val RULER_HEIGHT = 20.dp
 private val SCROLLBAR_HEIGHT = 8.dp
 private val VISUAL_TRACK_HEIGHT = 36.dp
@@ -96,9 +96,6 @@ private const val SNAP_RELEASE_PX = 28f
 private const val SNAP_MIN_GAP_MS = 50L
 
 private const val LONG_PRESS_MS = 1_300L
-
-private const val MIN_PX_PER_SEC = 4f
-private const val MAX_PX_PER_SEC = 220f
 
 private val GHOST_TRACK_HEIGHT = 48.dp
 
@@ -137,12 +134,8 @@ fun Timeline(
     onDragStart: () -> Unit = {},
     onDragEnd: () -> Unit = {},
     onDragCancel: () -> Unit = {},
-    onToggleVisualVisibility: (Int) -> Unit = {},
-    onToggleAudioMute: (Int) -> Unit = {},
-    onSwapTracks: (Int, Int, Boolean) -> Unit = { _, _, _ -> },
     onTransitionDelete: (String) -> Unit = {},
     onTransitionDurationChange: (String, Long) -> Unit = { _, _ -> },
-    onTimelineZoomChange: (Float) -> Unit = {},
     onReplaceRequested: (String) -> Unit = {},
     onEmptyAreaTapped: () -> Unit = {}   // 🆕 CHANGE #1: khali jagah tap
 ) {
@@ -150,29 +143,23 @@ fun Timeline(
     val haptic = LocalHapticFeedback.current
     val hScroll = rememberScrollState()
     val vScroll = rememberScrollState()
-    val coroutineScope = rememberCoroutineScope()
     val currentPosMsState = rememberUpdatedState(state.currentPosMs)
-
-    val labelWidthPx = with(density) { TRACK_LABEL_WIDTH.toPx() }
 
     var viewportWidthPx by remember { mutableFloatStateOf(0f) }
     var viewportHeightPx by remember { mutableFloatStateOf(0f) }
     var lastUserScrollMs by remember { mutableLongStateOf(0L) }
+    var pendingProgrammaticScroll by remember { mutableIntStateOf(-1) }
 
     var dragVisual by remember { mutableStateOf(DragVisual()) }
 
     var selectedTransitionClipId by remember { mutableStateOf<String?>(null) }
-
-    var draggedLabelFrom by remember { mutableIntStateOf(-1) }
-    var draggedLabelTarget by remember { mutableIntStateOf(-1) }
-    var draggedLabelIsAudio by remember { mutableStateOf(false) }
 
     val slider = state.timelineZoom.coerceIn(
         TimelineZoom.SLIDER_MIN, TimelineZoom.SLIDER_MAX
     )
     val viewportContentWidthDp = if (viewportWidthPx > 0f) {
         with(density) {
-            (viewportWidthPx - labelWidthPx).coerceAtLeast(100f).toDp().value
+            viewportWidthPx.coerceAtLeast(100f).toDp().value
         }
     } else {
         360f
@@ -184,9 +171,14 @@ fun Timeline(
     }
     val totalSec = totalMs / 1000f
 
-    val pps = TimelineZoom.ppsForSlider(slider, totalSec, viewportContentWidthDp)
-    val contentWidthDp: Dp = (totalSec * pps).dp
+    val pps = TimelineZoom.ppsForSlider(slider)
+    val contentWidthDp: Dp =
+        TimelineZoom.safeContentWidthDp(totalSec * pps, density.density).dp
     val contentWidthPx = with(density) { contentWidthDp.toPx() }
+    val playheadAnchorDp =
+        (viewportContentWidthDp * TimelinePlayheadController.PLAYHEAD_ANCHOR_FRACTION).dp
+    val timelineTrailingPaddingDp =
+        (viewportContentWidthDp - playheadAnchorDp.value).coerceAtLeast(0f).dp
     val visualTracks = remember(state.clips, state.visualLayerCount) {
         state.timelineVisualList()
     }
@@ -194,29 +186,48 @@ fun Timeline(
         state.timelineAudioList()
     }
 
-    LaunchedEffect(hScroll.isScrollInProgress) {
-        if (hScroll.isScrollInProgress) {
-            lastUserScrollMs = System.currentTimeMillis()
+    LaunchedEffect(hScroll.interactionSource) {
+        hScroll.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) {
+                pendingProgrammaticScroll = -1
+                lastUserScrollMs = System.currentTimeMillis()
+            }
         }
     }
 
-    LaunchedEffect(state.currentPosMs, state.isPlaying, viewportWidthPx) {
-        if (viewportWidthPx <= 0f) return@LaunchedEffect
+    LaunchedEffect(hScroll.value, lastUserScrollMs, state.currentPosMs, totalMs, contentWidthPx, dragVisual.active) {
+        if (dragVisual.active) return@LaunchedEffect
+        if (hScroll.value == pendingProgrammaticScroll) {
+            pendingProgrammaticScroll = -1
+            return@LaunchedEffect
+        }
         val userScrolledRecently =
-            (System.currentTimeMillis() - lastUserScrollMs) <
+            System.currentTimeMillis() - lastUserScrollMs <
                     TimelinePlayheadController.USER_SCROLL_GRACE_MS
-        val target = TimelinePlayheadController.autoScrollTarget(
-            playheadContentPx = TimelinePlayheadController.playheadContentPx(
-                state.currentPosMs, totalMs, contentWidthPx
-            ),
-            labelWidthPx = labelWidthPx,
-            viewportWidthPx = viewportWidthPx,
-            contentWidthPx = contentWidthPx,
-            currentScroll = hScroll.value,
-            isPlaying = state.isPlaying,
-            userScrolledRecently = userScrolledRecently
+        if (!userScrolledRecently) return@LaunchedEffect
+        val seekTimeMs = TimelinePlayheadController.timeForScroll(
+            hScroll.value, totalMs, contentWidthPx
         )
-        if (target != hScroll.value) hScroll.scrollTo(target)
+        if (abs(seekTimeMs - state.currentPosMs) > 1L) onSeek(seekTimeMs)
+    }
+
+    LaunchedEffect(
+        state.currentPosMs,
+        state.isPlaying,
+        viewportWidthPx,
+        totalMs,
+        contentWidthPx,
+        dragVisual.active
+    ) {
+        if (viewportWidthPx <= 0f) return@LaunchedEffect
+        if (dragVisual.active) return@LaunchedEffect
+        val target = TimelinePlayheadController.scrollForTime(
+            state.currentPosMs, totalMs, contentWidthPx
+        )
+        if (target != hScroll.value) {
+            pendingProgrammaticScroll = target
+            hScroll.scrollTo(target)
+        }
     }
 
     LaunchedEffect(
@@ -229,7 +240,7 @@ fun Timeline(
         viewportHeightPx
     ) {
         if (!dragVisual.active) return@LaunchedEffect
-        if (viewportHeightPx <= 0f || viewportWidthPx <= labelWidthPx) return@LaunchedEffect
+        if (viewportHeightPx <= 0f || viewportWidthPx <= 0f) return@LaunchedEffect
 
         val trackHeightPx = with(density) {
             (if (dragVisual.isAudio) AUDIO_TRACK_HEIGHT else VISUAL_TRACK_HEIGHT)
@@ -281,11 +292,12 @@ fun Timeline(
         }
 
         if (totalMs > 0L && contentWidthPx > 0f) {
-            val timelineViewportWidth = viewportWidthPx - labelWidthPx
+            val timelineViewportWidth = viewportWidthPx
             val targetContentX =
                 dragVisual.targetTimeMs.coerceAtLeast(0L).toFloat() /
                         totalMs.toFloat() * contentWidthPx
-            val targetViewportX = targetContentX - hScroll.value
+            val leadingPaddingPx = with(density) { playheadAnchorDp.toPx() }
+            val targetViewportX = leadingPaddingPx + targetContentX - hScroll.value
             val edgeMargin = with(density) { 48.dp.toPx() }
             val scrollDelta = when {
                 targetViewportX < edgeMargin && hScroll.value > 0 -> -24f
@@ -306,149 +318,73 @@ fun Timeline(
             .onSizeChanged { viewportWidthPx = it.width.toFloat() }
     ) {
         // ─── RULER ───
-        Row(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(RULER_HEIGHT),
-            verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .width(TRACK_LABEL_WIDTH)
-                    .fillMaxHeight()
-                    .background(Color(0xFF0A0A0A))
-            )
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
+                    .fillMaxSize()
                     .background(Color(0xFF0A0A0A))
                     .horizontalScroll(hScroll)
             ) {
-                Box(
-                    modifier = Modifier
-                        .width(contentWidthDp)
-                        .fillMaxHeight()
-                        .pointerInput(totalMs, contentWidthPx) {
-                            detectTapGestures { offset ->
-                                onSeek(
-                                    TimelinePlayheadController.seekTimeFromClick(
-                                        offset.x, contentWidthPx, totalMs
+                Row(Modifier.fillMaxHeight()) {
+                    Spacer(Modifier.width(playheadAnchorDp))
+                    Box(
+                        modifier = Modifier
+                            .width(contentWidthDp)
+                            .fillMaxHeight()
+                            .pointerInput(totalMs, contentWidthPx) {
+                                detectTapGestures { offset ->
+                                    onSeek(
+                                        TimelinePlayheadController.seekTimeFromClick(
+                                            offset.x, contentWidthPx, totalMs
+                                        )
                                     )
-                                )
+                                }
                             }
+                    ) {
+                        val stepSec = TimelineRuler.pickStepSec(
+                            zoom = (pps / DP_PER_SECOND).coerceAtLeast(0.01f)
+                        )
+                        val marks = remember(totalMs, stepSec) {
+                            TimelineRuler.marks(totalMs, stepSec)
                         }
-                ) {
-                    val stepSec = TimelineRuler.pickStepSec(
-                        zoom = (pps / DP_PER_SECOND).coerceAtLeast(0.01f)
-                    )
-                    val marks = remember(totalMs, stepSec) {
-                        TimelineRuler.marks(totalMs, stepSec)
+
+                        marks.forEach { timeMs ->
+                            val frac = timeMs.toFloat() / totalMs.toFloat()
+                            val xDp = contentWidthDp * frac
+
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = xDp)
+                                    .width(1.dp)
+                                    .height(6.dp)
+                                    .background(Color(0xFF444444))
+                                    .align(Alignment.BottomStart)
+                            )
+
+                            Text(
+                                text = TimelineRuler.formatLabel(timeMs, stepSec),
+                                color = Color(0xFF888888),
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.offset(x = xDp + 3.dp, y = 2.dp)
+                            )
+                        }
                     }
-
-                    marks.forEach { timeMs ->
-                        val frac = timeMs.toFloat() / totalMs.toFloat()
-                        val xDp = contentWidthDp * frac
-
-                        Box(
-                            modifier = Modifier
-                                .offset(x = xDp)
-                                .width(1.dp)
-                                .height(6.dp)
-                                .background(Color(0xFF444444))
-                                .align(Alignment.BottomStart)
-                        )
-
-                        Text(
-                            text = TimelineRuler.formatLabel(timeMs, stepSec),
-                            color = Color(0xFF888888),
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.offset(x = xDp + 3.dp, y = 2.dp)
-                        )
-                    }
+                    Spacer(Modifier.width(timelineTrailingPaddingDp))
                 }
             }
         }
 
         // ─── TRACKS ───
-        val hasAnySelection = state.selectedClipId != null ||
-                state.multiSelectedIds.isNotEmpty()
-
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
                 .onSizeChanged { viewportHeightPx = it.height.toFloat() }
-                .pointerInput(hasAnySelection, pps) {
-                    awaitEachGesture {
-                        val firstDown = awaitFirstDown(requireUnconsumed = false)
-
-                        var twoFingerActive = false
-                        var initialDistance = 0f
-                        var accumulatedHScroll = hScroll.value
-                        var accumulatedVScroll = vScroll.value
-                        var initialPps = pps
-
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val pressed = event.changes.filter { it.pressed }
-                            if (pressed.isEmpty()) {
-                                break
-                            }
-
-                            if (pressed.size >= 2) {
-                                twoFingerActive = true
-
-                                val c1 = pressed[0].position
-                                val c2 = pressed[1].position
-                                val dx = c1.x - c2.x
-                                val dy = c1.y - c2.y
-                                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-
-                                if (initialDistance == 0f) {
-                                    initialDistance = distance
-                                    initialPps = pps
-                                } else {
-                                    val ratio = distance / initialDistance
-                                    val newPps = (initialPps * ratio)
-                                        .coerceIn(MIN_PX_PER_SEC, MAX_PX_PER_SEC)
-
-                                    val newSlider = ppsToSlider(
-                                        newPps, totalSec, viewportContentWidthDp
-                                    )
-
-                                    onTimelineZoomChange(newSlider)
-                                }
-
-                                var sumX = 0f
-                                var sumY = 0f
-                                pressed.forEach { change ->
-                                    val pan = change.position - change.previousPosition
-                                    sumX += pan.x
-                                    sumY += pan.y
-                                    change.consume()
-                                }
-                                val avgX = sumX / pressed.size
-                                val avgY = sumY / pressed.size
-
-                                accumulatedHScroll = (accumulatedHScroll - avgX.toInt())
-                                    .coerceIn(0, hScroll.maxValue)
-                                accumulatedVScroll = (accumulatedVScroll - avgY.toInt())
-                                    .coerceIn(0, vScroll.maxValue)
-
-                                coroutineScope.launch {
-                                    hScroll.scrollTo(accumulatedHScroll)
-                                    vScroll.scrollTo(accumulatedVScroll)
-                                }
-                            } else if (twoFingerActive) {
-                                pressed.forEach { it.consume() }
-                            } else {
-                                firstDown.consume()
-                            }
-                        }
-                    }
-                }
         ) {
             Column(
                 modifier = Modifier
@@ -464,9 +400,9 @@ fun Timeline(
                         i == topVisualIndex
                     ) {
                         GhostTrackDrop(
-                            trackIndex = topVisualIndex + 1,
-                            isAudio = false,
                             contentWidthDp = contentWidthDp,
+                            leadingPaddingDp = playheadAnchorDp,
+                            trailingPaddingDp = timelineTrailingPaddingDp,
                             hScroll = hScroll
                         )
                     }
@@ -478,11 +414,11 @@ fun Timeline(
                         totalMs = totalMs,
                         contentWidthDp = contentWidthDp,
                         contentWidthPx = contentWidthPx,
+                        leadingPaddingDp = playheadAnchorDp,
+                        trailingPaddingDp = timelineTrailingPaddingDp,
                         hScroll = hScroll,
                         selectedClipId = state.selectedClipId,
                         multiSelectedIds = state.multiSelectedIds,
-                        selectedTrackIndex = state.selectedTrackIndex,
-                        selectedIsAudio = state.selectedIsAudio,
                         currentPosMs = currentPosMsState,
                         onClipTapped = onClipTapped,
                         onTrackTapped = onTrackTapped,
@@ -491,7 +427,10 @@ fun Timeline(
                         onTrimCommit = onTrimCommit,
                         onSeek = onSeek,
                         onMoveClip = onMoveClip,
-                        onDragStart = onDragStart,
+                        onDragStart = {
+                            lastUserScrollMs = 0L
+                            onDragStart()
+                        },
                         onDragEnd = {
                             dragVisual = DragVisual()
                             onDragEnd()
@@ -504,36 +443,6 @@ fun Timeline(
                         dragVisual = dragVisual,
                         visualLayerCount = state.visualLayerCount,
                         audioLayerCount = state.audioLayerCount,
-                        isHidden = state.hiddenVisualTracks.contains(i),
-                        onToggleVisibility = onToggleVisualVisibility,
-                        isLabelDragging = draggedLabelFrom == i && !draggedLabelIsAudio,
-                        isLabelTarget = draggedLabelTarget == i &&
-                                !draggedLabelIsAudio &&
-                                draggedLabelFrom != i,
-                        onLabelDragStart = { from ->
-                            draggedLabelFrom = from
-                            draggedLabelTarget = from
-                            draggedLabelIsAudio = false
-                        },
-                        onLabelDragUpdate = { target -> draggedLabelTarget = target },
-                        onLabelDragEnd = {
-                            if (draggedLabelFrom >= 0 &&
-                                draggedLabelTarget >= 0 &&
-                                draggedLabelFrom != draggedLabelTarget
-                            ) {
-                                onSwapTracks(
-                                    draggedLabelFrom,
-                                    draggedLabelTarget,
-                                    false
-                                )
-                            }
-                            draggedLabelFrom = -1
-                            draggedLabelTarget = -1
-                        },
-                        onLabelDragCancel = {
-                            draggedLabelFrom = -1
-                            draggedLabelTarget = -1
-                        },
                         onTransitionDelete = onTransitionDelete,
                         onTransitionDurationChange = onTransitionDurationChange,
                         selectedTransitionClipId = selectedTransitionClipId,
@@ -554,9 +463,9 @@ fun Timeline(
                         i == state.audioLayerCount - 1
                     ) {
                         GhostTrackDrop(
-                            trackIndex = state.audioLayerCount,
-                            isAudio = true,
                             contentWidthDp = contentWidthDp,
+                            leadingPaddingDp = playheadAnchorDp,
+                            trailingPaddingDp = timelineTrailingPaddingDp,
                             hScroll = hScroll
                         )
                     }
@@ -568,11 +477,11 @@ fun Timeline(
                         totalMs = totalMs,
                         contentWidthDp = contentWidthDp,
                         contentWidthPx = contentWidthPx,
+                        leadingPaddingDp = playheadAnchorDp,
+                        trailingPaddingDp = timelineTrailingPaddingDp,
                         hScroll = hScroll,
                         selectedClipId = state.selectedClipId,
                         multiSelectedIds = state.multiSelectedIds,
-                        selectedTrackIndex = state.selectedTrackIndex,
-                        selectedIsAudio = state.selectedIsAudio,
                         currentPosMs = currentPosMsState,
                         onClipTapped = onClipTapped,
                         onTrackTapped = onTrackTapped,
@@ -581,7 +490,10 @@ fun Timeline(
                         onTrimCommit = onTrimCommit,
                         onSeek = onSeek,
                         onMoveClip = onMoveClip,
-                        onDragStart = onDragStart,
+                        onDragStart = {
+                            lastUserScrollMs = 0L
+                            onDragStart()
+                        },
                         onDragEnd = {
                             dragVisual = DragVisual()
                             onDragEnd()
@@ -594,36 +506,6 @@ fun Timeline(
                         dragVisual = dragVisual,
                         visualLayerCount = state.visualLayerCount,
                         audioLayerCount = state.audioLayerCount,
-                        isMuted = state.mutedAudioTracks.contains(i),
-                        onToggleMute = onToggleAudioMute,
-                        isLabelDragging = draggedLabelFrom == i && draggedLabelIsAudio,
-                        isLabelTarget = draggedLabelTarget == i &&
-                                draggedLabelIsAudio &&
-                                draggedLabelFrom != i,
-                        onLabelDragStart = { from ->
-                            draggedLabelFrom = from
-                            draggedLabelTarget = from
-                            draggedLabelIsAudio = true
-                        },
-                        onLabelDragUpdate = { target -> draggedLabelTarget = target },
-                        onLabelDragEnd = {
-                            if (draggedLabelFrom >= 0 &&
-                                draggedLabelTarget >= 0 &&
-                                draggedLabelFrom != draggedLabelTarget
-                            ) {
-                                onSwapTracks(
-                                    draggedLabelFrom,
-                                    draggedLabelTarget,
-                                    true
-                                )
-                            }
-                            draggedLabelFrom = -1
-                            draggedLabelTarget = -1
-                        },
-                        onLabelDragCancel = {
-                            draggedLabelFrom = -1
-                            draggedLabelTarget = -1
-                        },
                         onTransitionDelete = onTransitionDelete,
                         onTransitionDurationChange = onTransitionDurationChange,
                         selectedTransitionClipId = selectedTransitionClipId,
@@ -640,45 +522,19 @@ fun Timeline(
                 Box(Modifier.height(40.dp))
             }
 
-            TimelinePlayhead(
-                currentPosMs = state.currentPosMs,
-                totalMs = totalMs,
-                contentWidthPx = contentWidthPx,
-                labelWidthPx = labelWidthPx,
-                hScrollValue = hScroll.value,
-                viewportWidthPx = viewportWidthPx
-            )
+            TimelinePlayhead(viewportWidthPx = viewportWidthPx)
         }
 
         TimelineScrollbar(
             hScroll = hScroll,
             contentWidthPx = contentWidthPx,
             viewportWidthPx = viewportWidthPx,
-            labelWidthPx = labelWidthPx
+            onUserScroll = {
+                pendingProgrammaticScroll = -1
+                lastUserScrollMs = System.currentTimeMillis()
+            }
         )
     }
-}
-
-
-// ═══════════════════════════════════════════════════════════════
-//  PINCH-ZOOM MATH
-// ═══════════════════════════════════════════════════════════════
-
-private fun ppsToSlider(
-    pps: Float,
-    totalSec: Float,
-    viewportContentWidthDp: Float
-): Float {
-    if (totalSec <= 0f || viewportContentWidthDp <= 0f) return 0f
-    val fitPps = viewportContentWidthDp / totalSec
-    val maxPps = 100f
-    if (maxPps <= fitPps) return 0f
-
-    val minLog = kotlin.math.ln(fitPps.toDouble())
-    val maxLog = kotlin.math.ln(maxPps.toDouble())
-    val targetLog = kotlin.math.ln(pps.coerceAtLeast(fitPps).toDouble())
-    val fraction = (targetLog - minLog) / (maxLog - minLog)
-    return (fraction * 100f).toFloat().coerceIn(0f, 100f)
 }
 
 
@@ -694,11 +550,11 @@ private fun VisualTrackRow(
     totalMs: Long,
     contentWidthDp: Dp,
     contentWidthPx: Float,
+    leadingPaddingDp: Dp,
+    trailingPaddingDp: Dp,
     hScroll: ScrollState,
     selectedClipId: String?,
     multiSelectedIds: Set<String>,
-    selectedTrackIndex: Int,
-    selectedIsAudio: Boolean,
     currentPosMs: State<Long>,
     onClipTapped: (EditorClip) -> Unit,
     onTrackTapped: (Int, Boolean) -> Unit,
@@ -714,14 +570,6 @@ private fun VisualTrackRow(
     dragVisual: DragVisual,
     visualLayerCount: Int,
     audioLayerCount: Int,
-    isHidden: Boolean,
-    onToggleVisibility: (Int) -> Unit,
-    isLabelDragging: Boolean,
-    isLabelTarget: Boolean,
-    onLabelDragStart: (Int) -> Unit,
-    onLabelDragUpdate: (Int) -> Unit,
-    onLabelDragEnd: () -> Unit,
-    onLabelDragCancel: () -> Unit,
     onTransitionDelete: (String) -> Unit,
     onTransitionDurationChange: (String, Long) -> Unit,
     selectedTransitionClipId: String?,
@@ -730,15 +578,15 @@ private fun VisualTrackRow(
     onEmptyAreaTapped: () -> Unit,
     haptic: HapticFeedback
 ) {
-    val density = LocalDensity.current
-    val isSelectedLayer = selectedTrackIndex == trackIndex && !selectedIsAudio
     val isDragTarget = dragVisual.active && !dragVisual.isAudio &&
             dragVisual.targetTrack == trackIndex
 
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(VISUAL_TRACK_HEIGHT)
+            .background(Color(0xFF141414))
+            .horizontalScroll(hScroll)
             .then(
                 if (isDragTarget && !dragVisual.needsNewLayer) {
                     Modifier.border(
@@ -746,86 +594,10 @@ private fun VisualTrackRow(
                         color = Color(0xFF22C55E).copy(alpha = 0.8f)
                     )
                 } else Modifier
-            ),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(
-            modifier = Modifier
-                .width(TRACK_LABEL_WIDTH)
-                .fillMaxHeight()
-                .padding(horizontal = 2.dp)
-                .background(
-                    when {
-                        isLabelDragging -> Color(0xFF4F9DFF).copy(alpha = 0.3f)
-                        isLabelTarget -> Color(0xFF22C55E).copy(alpha = 0.3f)
-                        else -> Color.Transparent
-                    }
-                )
-                .pointerInput(trackIndex, visualLayerCount, isSelectedLayer) {
-                    if (!isSelectedLayer) return@pointerInput
-
-                    var accumulatedY = 0f
-                    val stepPxLocal = with(density) { VISUAL_TRACK_HEIGHT.toPx() }
-                    detectVerticalDragGestures(
-                        onDragStart = {
-                            accumulatedY = 0f
-                            onLabelDragStart(trackIndex)
-                        },
-                        onVerticalDrag = { change, dragAmount ->
-                            change.consume()
-                            accumulatedY += dragAmount
-                            val steps = (accumulatedY / stepPxLocal).roundToInt()
-                            val target = (trackIndex - steps)
-                                .coerceIn(0, visualLayerCount - 1)
-                            onLabelDragUpdate(target)
-                        },
-                        onDragEnd = { onLabelDragEnd() },
-                        onDragCancel = { onLabelDragCancel() }
-                    )
-                },
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Text(
-                "V${trackIndex + 1}",
-                color = when {
-                    isLabelDragging -> Color.White
-                    isLabelTarget -> Color.White
-                    isHidden -> Color(0xFF555555)
-                    isSelectedLayer -> Color(0xFF7C3AED)
-                    else -> Color(0xFF888888)
-                },
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .padding(end = 2.dp)
-                    .pointerInput(trackIndex) {
-                        detectTapGestures { onTrackTapped(trackIndex, false) }
-                    }
             )
-            Box(
-                modifier = Modifier
-                    .size(18.dp)
-                    .pointerInput(trackIndex) {
-                        detectTapGestures { onToggleVisibility(trackIndex) }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    if (isHidden) "🚫" else "👁",
-                    fontSize = 10.sp,
-                    color = if (isHidden) Color(0xFF555555) else Color(0xFFAAAAAA)
-                )
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .background(Color(0xFF141414))
-                .horizontalScroll(hScroll)
-        ) {
+    ) {
+        Row(Modifier.fillMaxHeight()) {
+            Spacer(Modifier.width(leadingPaddingDp))
             TrackContent(
                 clips = clips,
                 allClips = allClips,
@@ -855,11 +627,12 @@ private fun VisualTrackRow(
                 onTransitionTapped = onTransitionTapped,
                 visualLayerCount = visualLayerCount,
                 audioLayerCount = audioLayerCount,
-                trackHidden = isHidden,
                 haptic = haptic,
                 onReplaceRequested = onReplaceRequested,
-                onEmptyAreaTapped = onEmptyAreaTapped
+                onEmptyAreaTapped = onEmptyAreaTapped,
+                onTrackTapped = onTrackTapped
             )
+            Spacer(Modifier.width(trailingPaddingDp))
         }
     }
 }
@@ -877,11 +650,11 @@ private fun AudioTrackRow(
     totalMs: Long,
     contentWidthDp: Dp,
     contentWidthPx: Float,
+    leadingPaddingDp: Dp,
+    trailingPaddingDp: Dp,
     hScroll: ScrollState,
     selectedClipId: String?,
     multiSelectedIds: Set<String>,
-    selectedTrackIndex: Int,
-    selectedIsAudio: Boolean,
     currentPosMs: State<Long>,
     onClipTapped: (EditorClip) -> Unit,
     onTrackTapped: (Int, Boolean) -> Unit,
@@ -897,14 +670,6 @@ private fun AudioTrackRow(
     dragVisual: DragVisual,
     visualLayerCount: Int,
     audioLayerCount: Int,
-    isMuted: Boolean,
-    onToggleMute: (Int) -> Unit,
-    isLabelDragging: Boolean,
-    isLabelTarget: Boolean,
-    onLabelDragStart: (Int) -> Unit,
-    onLabelDragUpdate: (Int) -> Unit,
-    onLabelDragEnd: () -> Unit,
-    onLabelDragCancel: () -> Unit,
     onTransitionDelete: (String) -> Unit,
     onTransitionDurationChange: (String, Long) -> Unit,
     selectedTransitionClipId: String?,
@@ -913,15 +678,15 @@ private fun AudioTrackRow(
     onEmptyAreaTapped: () -> Unit,
     haptic: HapticFeedback
 ) {
-    val density = LocalDensity.current
-    val isSelectedLayer = selectedTrackIndex == trackIndex && selectedIsAudio
     val isDragTarget = dragVisual.active && dragVisual.isAudio &&
             dragVisual.targetTrack == trackIndex
 
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(AUDIO_TRACK_HEIGHT)
+            .background(Color(0xFF141414))
+            .horizontalScroll(hScroll)
             .then(
                 if (isDragTarget && !dragVisual.needsNewLayer) {
                     Modifier.border(
@@ -929,86 +694,10 @@ private fun AudioTrackRow(
                         color = Color(0xFF22C55E).copy(alpha = 0.8f)
                     )
                 } else Modifier
-            ),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(
-            modifier = Modifier
-                .width(TRACK_LABEL_WIDTH)
-                .fillMaxHeight()
-                .padding(horizontal = 2.dp)
-                .background(
-                    when {
-                        isLabelDragging -> Color(0xFF4F9DFF).copy(alpha = 0.3f)
-                        isLabelTarget -> Color(0xFF22C55E).copy(alpha = 0.3f)
-                        else -> Color.Transparent
-                    }
-                )
-                .pointerInput(trackIndex, audioLayerCount, isSelectedLayer) {
-                    if (!isSelectedLayer) return@pointerInput
-
-                    var accumulatedY = 0f
-                    val stepPxLocal = with(density) { AUDIO_TRACK_HEIGHT.toPx() }
-                    detectVerticalDragGestures(
-                        onDragStart = {
-                            accumulatedY = 0f
-                            onLabelDragStart(trackIndex)
-                        },
-                        onVerticalDrag = { change, dragAmount ->
-                            change.consume()
-                            accumulatedY += dragAmount
-                            val steps = (accumulatedY / stepPxLocal).roundToInt()
-                            val target = (trackIndex + steps)
-                                .coerceIn(0, audioLayerCount - 1)
-                            onLabelDragUpdate(target)
-                        },
-                        onDragEnd = { onLabelDragEnd() },
-                        onDragCancel = { onLabelDragCancel() }
-                    )
-                },
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Text(
-                "A${trackIndex + 1}",
-                color = when {
-                    isLabelDragging -> Color.White
-                    isLabelTarget -> Color.White
-                    isMuted -> Color(0xFF555555)
-                    isSelectedLayer -> Color(0xFF10B981)
-                    else -> Color(0xFF888888)
-                },
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .padding(end = 2.dp)
-                    .pointerInput(trackIndex) {
-                        detectTapGestures { onTrackTapped(trackIndex, true) }
-                    }
             )
-            Box(
-                modifier = Modifier
-                    .size(18.dp)
-                    .pointerInput(trackIndex) {
-                        detectTapGestures { onToggleMute(trackIndex) }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    if (isMuted) "🔇" else "🔊",
-                    fontSize = 10.sp,
-                    color = if (isMuted) Color(0xFF555555) else Color(0xFFAAAAAA)
-                )
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .background(Color(0xFF141414))
-                .horizontalScroll(hScroll)
-        ) {
+    ) {
+        Row(Modifier.fillMaxHeight()) {
+            Spacer(Modifier.width(leadingPaddingDp))
             TrackContent(
                 clips = clips,
                 allClips = allClips,
@@ -1038,11 +727,12 @@ private fun AudioTrackRow(
                 onTransitionTapped = onTransitionTapped,
                 visualLayerCount = visualLayerCount,
                 audioLayerCount = audioLayerCount,
-                trackHidden = isMuted,
                 haptic = haptic,
                 onReplaceRequested = onReplaceRequested,
-                onEmptyAreaTapped = onEmptyAreaTapped
+                onEmptyAreaTapped = onEmptyAreaTapped,
+                onTrackTapped = onTrackTapped
             )
+            Spacer(Modifier.width(trailingPaddingDp))
         }
     }
 }
@@ -1054,12 +744,12 @@ private fun AudioTrackRow(
 
 @Composable
 private fun GhostTrackDrop(
-    trackIndex: Int,
-    isAudio: Boolean,
     contentWidthDp: Dp,
+    leadingPaddingDp: Dp,
+    trailingPaddingDp: Dp,
     hScroll: ScrollState
 ) {
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(GHOST_TRACK_HEIGHT)
@@ -1067,43 +757,30 @@ private fun GhostTrackDrop(
             .border(
                 width = 1.dp,
                 color = Color(0xFF22C55E).copy(alpha = 0.5f)
-            ),
-        verticalAlignment = Alignment.CenterVertically
+            )
     ) {
         Box(
             modifier = Modifier
-                .width(TRACK_LABEL_WIDTH)
-                .fillMaxHeight()
-                .background(Color(0xFF0F1A0F)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                if (isAudio) "A${trackIndex + 1} +" else "V${trackIndex + 1} +",
-                color = Color(0xFF22C55E),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
+                .fillMaxSize()
                 .background(Color(0xFF0F1A0F))
                 .horizontalScroll(hScroll)
         ) {
-            Box(
-                modifier = Modifier
-                    .width(contentWidthDp)
-                    .fillMaxHeight(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "⬇ Drop here to create new layer",
-                    color = Color(0xFF22C55E).copy(alpha = 0.7f),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
-                )
+            Row(Modifier.fillMaxHeight()) {
+                Spacer(Modifier.width(leadingPaddingDp))
+                Box(
+                    modifier = Modifier
+                        .width(contentWidthDp)
+                        .fillMaxHeight(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "Drop here to create new layer",
+                        color = Color(0xFF22C55E).copy(alpha = 0.7f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(Modifier.width(trailingPaddingDp))
             }
         }
     }
@@ -1144,17 +821,15 @@ private fun TrackContent(
     onTransitionTapped: (String) -> Unit,
     visualLayerCount: Int,
     audioLayerCount: Int,
-    trackHidden: Boolean,
     haptic: HapticFeedback,
     onReplaceRequested: (String) -> Unit = {},
-    onEmptyAreaTapped: () -> Unit = {}
+    onEmptyAreaTapped: () -> Unit = {},
+    onTrackTapped: (Int, Boolean) -> Unit
 ) {
     val density = LocalDensity.current
 
     var snapGuideX by remember { mutableFloatStateOf(-1f) }
     var snapLabel by remember { mutableStateOf<String?>(null) }
-
-    val trackAlpha = if (trackHidden) 0.3f else 1f
 
     Box(
         modifier = Modifier
@@ -1169,8 +844,8 @@ private fun TrackContent(
                         offset.x in startPx..endPx
                     }
                     if (tappedClip == null) {
-                        // 🆕 CHANGE #1: Khali jagah tap → unselect all
                         onEmptyAreaTapped()
+                        onTrackTapped(trackIndex, isAudio)
                         onSeek(
                             TimelinePlayheadController.seekTimeFromClick(
                                 offset.x, contentWidthPx, totalMs
@@ -1215,7 +890,6 @@ private fun TrackContent(
                                 clip.linkGroupId == selectedClip.linkGroupId),
                 isDragging = dragVisual.active && dragVisual.clipId == clip.id,
                 isAudio = isAudio,
-                trackAlpha = trackAlpha,
                 visualLayerCount = visualLayerCount,
                 audioLayerCount = audioLayerCount,
                 enterMs = enterMs,
@@ -1391,7 +1065,6 @@ private fun ClipCard(
     isMulti: Boolean,
     isDragging: Boolean,
     isAudio: Boolean,
-    trackAlpha: Float,
     visualLayerCount: Int,
     audioLayerCount: Int,
     enterMs: Long,
@@ -1471,7 +1144,7 @@ private fun ClipCard(
                     )
                 } else Modifier
             )
-            .graphicsLayer { alpha = if (isDragging || clipLifted) 0.85f else trackAlpha }
+            .graphicsLayer { alpha = if (isDragging || clipLifted) 0.85f else 1f }
             .pointerInput(clip.id, contentWidthPx, totalMs, pxPerMs, stepPx) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -1518,6 +1191,15 @@ private fun ClipCard(
                     if (!longPressSuccess) {
                         if (totalMove < 12f) {
                             onClipTapped(dragClip)
+                            onSeek(
+                                TimelinePlayheadController.timeForClipTap(
+                                    clipStartMs = dragClip.timelineStartMs,
+                                    clipDurationMs = dragClip.durationMs,
+                                    localX = down.position.x,
+                                    pixelsPerMs = pxPerMs,
+                                    totalMs = totalMs
+                                )
+                            )
                         }
                         return@awaitEachGesture
                     }
@@ -2191,13 +1873,13 @@ private fun TimelineScrollbar(
     hScroll: ScrollState,
     contentWidthPx: Float,
     viewportWidthPx: Float,
-    labelWidthPx: Float
+    onUserScroll: () -> Unit
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
 
-    val contentVisibleWidthPx = (viewportWidthPx - labelWidthPx).coerceAtLeast(1f)
-    val maxScroll = (contentWidthPx - contentVisibleWidthPx).coerceAtLeast(0f)
+    val contentVisibleWidthPx = viewportWidthPx.coerceAtLeast(1f)
+    val maxScroll = contentWidthPx.coerceAtLeast(0f)
 
     // 🆕 AGAR SCROLL KARNE KI ZAROORAT NAHI HAI (maxScroll == 0)
     if (maxScroll <= 1f) {
@@ -2207,10 +1889,9 @@ private fun TimelineScrollbar(
                 .height(SCROLLBAR_HEIGHT)
                 .background(Color(0xFF0A0A0A))
         ) {
-            Box(modifier = Modifier.width(TRACK_LABEL_WIDTH).fillMaxHeight())
             Box(
                 modifier = Modifier
-                    .weight(1f)
+                    .fillMaxWidth()
                     .fillMaxHeight()
                     .padding(vertical = 2.dp)
                     .clip(RoundedCornerShape(3.dp))
@@ -2230,7 +1911,7 @@ private fun TimelineScrollbar(
 
     // 🆕 NORMAL SCROLLBAR (jab scroll ki zaroorat ho)
     val trackWidthDp = with(density) { contentVisibleWidthPx.toDp() }
-    val thumbFraction = (contentVisibleWidthPx / contentWidthPx)
+    val thumbFraction = (contentVisibleWidthPx / (contentWidthPx + contentVisibleWidthPx))
         .coerceIn(0.05f, 1f)
     val thumbWidthDp = trackWidthDp * thumbFraction
 
@@ -2246,13 +1927,7 @@ private fun TimelineScrollbar(
     ) {
         Box(
             modifier = Modifier
-                .width(TRACK_LABEL_WIDTH)
-                .fillMaxHeight()
-                .background(Color(0xFF0A0A0A))
-        )
-        Box(
-            modifier = Modifier
-                .weight(1f)
+                .fillMaxWidth()
                 .fillMaxHeight()
                 .padding(vertical = 2.dp)
                 .clip(RoundedCornerShape(3.dp))
@@ -2261,6 +1936,7 @@ private fun TimelineScrollbar(
                     detectTapGestures { offset ->
                         val tapFraction = (offset.x / size.width).coerceIn(0f, 1f)
                         val targetScroll = (tapFraction * maxScroll).toInt()
+                        onUserScroll()
                         scope.launch {
                             hScroll.scrollTo(targetScroll)
                         }
@@ -2273,6 +1949,7 @@ private fun TimelineScrollbar(
                         onDragStart = { _ ->
                             accumulatedDrag = 0f
                             startingScroll = hScroll.value
+                            onUserScroll()
                         },
                         onDrag = { change, drag ->
                             change.consume()
@@ -2288,6 +1965,7 @@ private fun TimelineScrollbar(
                                 (accumulatedDrag / maxThumbOffsetPxLocal) * maxScroll
                             val newScroll = (startingScroll + scrollDelta)
                                 .coerceIn(0f, maxScroll)
+                            onUserScroll()
                             scope.launch {
                                 hScroll.scrollTo(newScroll.toInt())
                             }

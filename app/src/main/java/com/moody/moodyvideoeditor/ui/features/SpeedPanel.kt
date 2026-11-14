@@ -48,6 +48,7 @@ import com.moody.moodyvideoeditor.data.KeyframeEaseScope
 import com.moody.moodyvideoeditor.ui.components.FeaturePanel
 import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.utils.SpeedEngine
+import com.moody.moodyvideoeditor.utils.TimelineZoom
 import kotlin.math.abs
 
 // Mirrors js/features/speed.js
@@ -273,7 +274,10 @@ private fun SpeedRampGraph(
             .clip(RoundedCornerShape(10.dp))
             .background(Color(0xFF10131A))
     ) {
-        val graphWidth = maxOf(maxWidth.value, duration * 70f * graphZoom)
+        val graphWidth = TimelineZoom.safeContentWidthDp(
+            maxOf(maxWidth.value, duration * 70f * graphZoom),
+            LocalDensity.current.density
+        )
         Box(
             modifier = Modifier
                 .fillMaxSize()

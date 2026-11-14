@@ -5,6 +5,9 @@ import java.util.Locale
 
 object FFmpegFilters {
 
+    internal fun withTimelineEnable(filter: String, enable: String?): String =
+        if (enable.isNullOrBlank()) filter else "$filter:enable='$enable'"
+
     // Per-pixel adjustments use the native-generated LUT; this handles spatial effects.
     fun build(adj: AdjustmentData): String {
         try {
@@ -27,7 +30,9 @@ object FFmpegFilters {
             if (adj.vignette != 0f) {
                 val angle = (adj.vignette / 100f * Math.PI / 4).toFloat()
                     .coerceIn(0f, 1.5f)
-                filters.add("vignette=angle=${f(angle)}")
+                if (angle >= 0.00005f) {
+                    filters.add("vignette=angle=${f(angle)}")
+                }
             }
 
             return filters.joinToString(",")

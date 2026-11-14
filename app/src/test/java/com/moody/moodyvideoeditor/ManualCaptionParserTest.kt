@@ -23,7 +23,7 @@ class ManualCaptionParserTest {
     fun parsesSingleTimestampDashLinesAndAddsThreeSecondsToFinalCaption() {
         assertEquals(
             listOf(
-                ManualCaptionParser.ParsedCaption(60_000L, 65_000L, "First"),
+                ManualCaptionParser.ParsedCaption(1_000L, 65_000L, "First"),
                 ManualCaptionParser.ParsedCaption(65_000L, 68_000L, "Second")
             ),
             ManualCaptionParser.parse("00:01 - First\n1:05 - Second")

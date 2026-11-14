@@ -5,45 +5,40 @@ import kotlin.math.ln
 
 object TimelineZoom {
 
-    const val SLIDER_MIN = 0f
-    const val SLIDER_MAX = 100f
+    const val SLIDER_MIN = -50f
+    const val SLIDER_MAX = 50f
     const val SLIDER_DEFAULT = 0f
 
     const val MIN_TIMELINE_MS = 40L * 60L * 1000L
 
-    private const val MAX_DP_PER_SEC = 100f
+    const val MAX_COMPOSE_CONTENT_WIDTH_PX = 240_000f
 
-    fun ppsForSlider(
-        slider: Float,
-        totalSec: Float,
-        viewportContentWidthDp: Float
-    ): Float {
-        if (totalSec <= 0f || viewportContentWidthDp <= 0f) return 20f
-        val s = slider.coerceIn(SLIDER_MIN, SLIDER_MAX) / 100f
+    const val DEFAULT_DP_PER_SEC = 60f
+    private const val MIN_DP_PER_SEC = 4f
+    private const val MAX_DP_PER_SEC = 220f
 
-        val fitPps = viewportContentWidthDp / totalSec
-        val maxPps = MAX_DP_PER_SEC
-
-        if (maxPps <= fitPps) return fitPps
-
-        val minLog = ln(fitPps.toDouble())
-        val maxLog = ln(maxPps.toDouble())
-        return exp(minLog + s * (maxLog - minLog)).toFloat()
+    fun ppsForSlider(slider: Float): Float {
+        val value = slider.coerceIn(SLIDER_MIN, SLIDER_MAX)
+        val fraction = if (value < SLIDER_DEFAULT) {
+            (value - SLIDER_MIN) / (SLIDER_DEFAULT - SLIDER_MIN)
+        } else {
+            (value - SLIDER_DEFAULT) / (SLIDER_MAX - SLIDER_DEFAULT)
+        }
+        val start = if (value < SLIDER_DEFAULT) MIN_DP_PER_SEC else DEFAULT_DP_PER_SEC
+        val end = if (value < SLIDER_DEFAULT) DEFAULT_DP_PER_SEC else MAX_DP_PER_SEC
+        return exp(ln(start.toDouble()) + fraction * (ln(end.toDouble()) - ln(start.toDouble())))
+            .toFloat()
     }
 
-    fun formatLabel(
-        slider: Float,
-        totalSec: Float,
-        viewportContentWidthDp: Float
-    ): String {
-        if (totalSec <= 0f || viewportContentWidthDp <= 0f) return "Fit"
-        val pps = ppsForSlider(slider, totalSec, viewportContentWidthDp)
-        val fitPps = viewportContentWidthDp / totalSec
+    fun formatLabel(slider: Float): String {
+        val pps = ppsForSlider(slider)
+        return if (slider == SLIDER_DEFAULT) "1s" else "%.0f dp/s".format(pps)
+    }
 
-        return when {
-            slider <= 1f -> "Fit"
-            pps >= 80f -> "1s"
-            else -> "%.0fx".format(pps / fitPps)
-        }
+    fun safeContentWidthDp(widthDp: Float, density: Float): Float {
+        require(density.isFinite() && density > 0f)
+        val maxWidthDp = MAX_COMPOSE_CONTENT_WIDTH_PX / density
+        val nonNegativeWidthDp = if (widthDp.isNaN()) 0f else widthDp.coerceAtLeast(0f)
+        return nonNegativeWidthDp.coerceAtMost(maxWidthDp)
     }
 }

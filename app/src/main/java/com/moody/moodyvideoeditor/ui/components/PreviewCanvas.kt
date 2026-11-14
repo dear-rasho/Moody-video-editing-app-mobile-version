@@ -543,7 +543,6 @@ fun PreviewCanvas(
     clips: List<EditorClip>,
     currentPosMs: Long,
     isPlaying: Boolean = false,
-    hiddenVisualTracks: Set<Int> = emptySet(),
     aspectRatioKey: String = "16:9",
     selectedClipId: String? = null,
     multiSelectedIds: Set<String> = emptySet(),
@@ -584,14 +583,12 @@ fun PreviewCanvas(
     }
     val activeClips = activeTimelineClips.filter {
         !it.isAudio && !it.isAdjustmentClip && !it.isEffectClip &&
-                !it.isFilterLayerClip && !it.isOverlayClip &&
-                !hiddenVisualTracks.contains(it.trackIndex)
+                !it.isFilterLayerClip && !it.isOverlayClip
     }.sortedWith(compareBy({ it.trackIndex }, { it.timelineStartMs }))
 
-    val activeTransitionClip = remember(currentPosMs, clips, hiddenVisualTracks) {
+    val activeTransitionClip = remember(currentPosMs, clips) {
         clips.filter { c ->
-            c.isVisualClip && !hiddenVisualTracks.contains(c.trackIndex) &&
-                    c.transition != null && c.transition.isActive &&
+            c.isVisualClip && c.transition != null && c.transition.isActive &&
                     currentPosMs >= c.timelineStartMs &&
                     currentPosMs < c.timelineStartMs + c.transition.durationMs
         }.maxByOrNull { it.trackIndex }
@@ -742,19 +739,16 @@ fun PreviewCanvas(
         MaskEngine.sampleAt(selectedClip.mask, timeSec)
     } else null
 
-    val activeAdjustment = activeTimelineClips.filter {
-        it.isAdjustmentClip && !hiddenVisualTracks.contains(it.trackIndex)
-    }.maxByOrNull { it.trackIndex }?.adjustments
+    val activeAdjustment = activeTimelineClips.filter { it.isAdjustmentClip }
+        .maxByOrNull { it.trackIndex }?.adjustments
 
     val activeColorWheels = activeTimelineClips.filter {
-        it.isAdjustmentClip && it.colorWheel.hasAnyChange &&
-                !hiddenVisualTracks.contains(it.trackIndex)
+        it.isAdjustmentClip && it.colorWheel.hasAnyChange
     }.sortedBy { it.trackIndex }
 
     val activeEffects = activeTimelineClips
         .filter {
-            it.isEffectClip && it.trackIndex > videoTrackIdx &&
-                    it.trackIndex !in hiddenVisualTracks
+            it.isEffectClip && it.trackIndex > videoTrackIdx
         }
         .sortedBy { it.trackIndex }
     val timeSec = currentPosMs / 1000f
@@ -841,13 +835,11 @@ fun PreviewCanvas(
         EffectsEngine.collectActiveOverlays(
             activeTimelineClips,
             currentPosMs,
-            videoTrackIdx,
-            hiddenVisualTracks
+            videoTrackIdx
         )
 
-    val activeFilterLayer = activeTimelineClips.filter {
-        it.isFilterLayerClip && !hiddenVisualTracks.contains(it.trackIndex)
-    }.maxByOrNull { it.trackIndex }
+    val activeFilterLayer = activeTimelineClips.filter { it.isFilterLayerClip }
+        .maxByOrNull { it.trackIndex }
     val activeFilterOpacity = activeFilterLayer?.let { layer ->
         KeyframeStore.layerOpacityAt(
             layer.keyframes,

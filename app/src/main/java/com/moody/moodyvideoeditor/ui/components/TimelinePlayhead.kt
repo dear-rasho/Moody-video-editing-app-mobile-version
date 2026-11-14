@@ -6,7 +6,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -14,11 +14,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import kotlin.math.roundToInt
 
 object TimelinePlayheadController {
 
     const val USER_SCROLL_GRACE_MS = 1800L
-    private const val PLAYHEAD_TARGET_FRACTION = 0.30f
+    const val PLAYHEAD_ANCHOR_FRACTION = 0.5f
 
     fun playheadContentPx(
         currentPosMs: Long, totalMs: Long, contentWidthPx: Float
@@ -46,12 +47,22 @@ object TimelinePlayheadController {
         return keyframeX - clipStartX
     }
 
-    fun playheadScreenX(
-        currentPosMs: Long, totalMs: Long,
-        contentWidthPx: Float, labelWidthPx: Float, hScrollValue: Int
-    ): Float =
-        labelWidthPx + playheadContentPx(currentPosMs, totalMs, contentWidthPx) -
-                hScrollValue.toFloat()
+    fun fixedPlayheadScreenX(viewportWidthPx: Float): Float =
+        viewportWidthPx * PLAYHEAD_ANCHOR_FRACTION
+
+    fun scrollForTime(
+        currentPosMs: Long,
+        totalMs: Long,
+        contentWidthPx: Float
+    ): Int = playheadContentPx(currentPosMs, totalMs, contentWidthPx)
+        .roundToInt()
+        .coerceIn(0, contentWidthPx.roundToInt().coerceAtLeast(0))
+
+    fun timeForScroll(
+        scrollValue: Int,
+        totalMs: Long,
+        contentWidthPx: Float
+    ): Long = seekTimeFromClick(scrollValue.toFloat(), contentWidthPx, totalMs)
 
     fun seekTimeFromClick(clickX: Float, contentWidthPx: Float, totalMs: Long): Long {
         if (totalMs <= 0L || contentWidthPx <= 0f) return 0L
@@ -60,43 +71,17 @@ object TimelinePlayheadController {
         return (frac * totalMs).toLong().coerceIn(0L, totalMs)
     }
 
-    fun seekTimeFromScreenX(
-        screenX: Float,
-        contentWidthPx: Float,
-        totalMs: Long,
-        labelWidthPx: Float,
-        hScrollValue: Int
+    fun timeForClipTap(
+        clipStartMs: Long,
+        clipDurationMs: Long,
+        localX: Float,
+        pixelsPerMs: Float,
+        totalMs: Long
     ): Long {
-        val contentX = screenX - labelWidthPx + hScrollValue.toFloat()
-        return seekTimeFromClick(contentX, contentWidthPx, totalMs)
-    }
-
-    fun autoScrollTarget(
-        playheadContentPx: Float,
-        labelWidthPx: Float,
-        viewportWidthPx: Float,
-        contentWidthPx: Float,
-        currentScroll: Int,
-        isPlaying: Boolean,
-        userScrolledRecently: Boolean
-    ): Int {
-        if (viewportWidthPx <= labelWidthPx) return currentScroll
-        if (!isPlaying && userScrolledRecently) return currentScroll
-
-        val contentVisible = viewportWidthPx - labelWidthPx
-        if (contentVisible <= 0f) return currentScroll
-
-        val playheadScreen = labelWidthPx + playheadContentPx - currentScroll
-        val safeMin = labelWidthPx + 16f
-        val safeMax = viewportWidthPx - 16f
-        val isVisible = playheadScreen in safeMin..safeMax
-
-        if (!isPlaying && isVisible) return currentScroll
-
-        val targetScroll =
-            (playheadContentPx - contentVisible * PLAYHEAD_TARGET_FRACTION).toInt()
-        val maxScroll = maxOf(0, (contentWidthPx - contentVisible).toInt())
-        return targetScroll.coerceIn(0, maxScroll)
+        if (totalMs <= 0L || pixelsPerMs <= 0f) return 0L
+        val localTimeMs = (localX.coerceAtLeast(0f) / pixelsPerMs).toLong()
+            .coerceIn(0L, clipDurationMs.coerceAtLeast(0L))
+        return (clipStartMs + localTimeMs).coerceIn(0L, totalMs)
     }
 
     fun formatTimeDisplay(seconds: Float): String {
@@ -107,28 +92,15 @@ object TimelinePlayheadController {
     }
 }
 
-// Timeline playhead — THIN red line + small triangle head at top.
+// Timeline playhead — thin red line with a centered circular head.
 @Composable
 fun TimelinePlayhead(
-    currentPosMs: Long,
-    totalMs: Long,
-    contentWidthPx: Float,
-    labelWidthPx: Float,
-    hScrollValue: Int,
     viewportWidthPx: Float
 ) {
     val density = LocalDensity.current
-
-    val screenX = TimelinePlayheadController.playheadScreenX(
-        currentPosMs = currentPosMs,
-        totalMs = totalMs,
-        contentWidthPx = contentWidthPx,
-        labelWidthPx = labelWidthPx,
-        hScrollValue = hScrollValue
-    )
-
-    if (screenX < labelWidthPx - 4f) return
-    if (viewportWidthPx > 0f && screenX > viewportWidthPx + 4f) return
+    if (viewportWidthPx <= 0f) return
+    val screenX = TimelinePlayheadController.fixedPlayheadScreenX(viewportWidthPx)
+    val headHalfWidthPx = with(density) { 6.dp.toPx() }
 
     // Thin RED vertical line (1dp)
     Box(
@@ -140,15 +112,15 @@ fun TimelinePlayhead(
             .zIndex(100f)
     )
 
-    // RED triangle head at very top
+    // Keep the circular head centered on the playhead line.
     Box(
         modifier = Modifier
             .offset(
-                x = with(density) { (screenX - 6f).toDp() },
+                x = with(density) { (screenX - headHalfWidthPx).toDp() },
                 y = 0.dp
             )
             .size(12.dp)
-            .clip(RoundedCornerShape(2.dp))
+            .clip(CircleShape)
             .background(Color(0xFFFF3B3B))
             .zIndex(101f)
     )

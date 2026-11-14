@@ -12,12 +12,14 @@ import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.moody.moodyvideoeditor.MainActivity
 import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.utils.ExportSegmentCache
 import com.moody.moodyvideoeditor.utils.VideoExporter
 import com.moody.moodyvideoeditor.viewmodel.ExportClipsHolder
 import kotlinx.coroutines.CoroutineScope
@@ -154,6 +156,7 @@ class ExportService : Service() {
 
         if (clips.isEmpty()) {
             Log.e(TAG, "No clips in ExportClipsHolder")
+            ExportSegmentCache.clear(applicationContext)
             ExportStateHolder.fail("No clips to export")
             stopSelfSafe()
             return
@@ -182,6 +185,7 @@ class ExportService : Service() {
                 )
             } catch (t: Throwable) {
                 Log.e(TAG, "Export crashed", t)
+                ExportSegmentCache.clear(applicationContext)
                 ExportStateHolder.fail("Export failed: ${t.message}")
                 stopSelfSafe()
             }
@@ -207,6 +211,17 @@ class ExportService : Service() {
         startMs: Long,
         endMs: Long
     ) {
+        val benchmarkStartedAtMs = SystemClock.elapsedRealtime()
+        fun logBenchmark(outcome: String) {
+            Log.i(
+                "EXPORT_BENCHMARK",
+                "outcome=$outcome " +
+                        "wallMs=${SystemClock.elapsedRealtime() - benchmarkStartedAtMs} " +
+                        "mode=$mode resolution=${outputWidth}x$outputHeight fps=$fps " +
+                        "bitrateKbps=$bitrateKbps format=$videoFormat " +
+                        "rangeMs=${(endMs - startMs).coerceAtLeast(0L)} clips=${clips.size}"
+            )
+        }
         Log.i(
             TAG,
             "Starting export: mode=$mode, ratio=$aspectRatio, " +
@@ -234,18 +249,24 @@ class ExportService : Service() {
                 }
             },
             onSuccess = { uri ->
+                logBenchmark("success")
+                ExportSegmentCache.clear(applicationContext)
                 ExportStateHolder.complete(uri.toString())
                 showCompletionNotification(uri)
                 ExportClipsHolder.clear()
                 stopSelfSafe()
             },
             onError = { err ->
+                logBenchmark("failure")
                 Log.e(TAG, "Export failed: $err")
+                ExportSegmentCache.clear(applicationContext)
                 ExportStateHolder.fail(err)
                 ExportClipsHolder.clear()
                 stopSelfSafe()
             },
             onCancelled = {
+                logBenchmark("cancelled")
+                ExportSegmentCache.clear(applicationContext)
                 ExportStateHolder.cancel()
                 ExportClipsHolder.clear()
                 stopSelfSafe()
@@ -284,6 +305,7 @@ class ExportService : Service() {
             Log.e(TAG, "Cancel failed", t)
         }
         exportJob?.cancel()
+        ExportSegmentCache.clear(applicationContext)
         ExportStateHolder.cancel()
         stopSelfSafe()
     }
@@ -519,6 +541,7 @@ class ExportService : Service() {
             activeExporter?.cancel()
         } catch (_: Throwable) {
         }
+        ExportSegmentCache.clear(applicationContext)
         serviceScope.cancel()
         super.onDestroy()
     }

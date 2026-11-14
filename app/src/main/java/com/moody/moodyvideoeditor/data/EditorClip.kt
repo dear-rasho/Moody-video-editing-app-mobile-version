@@ -218,9 +218,7 @@ data class EditorState(
     val beatStrengths: List<Float> = emptyList(),
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
-    val timelineZoom: Float = 0f,
-    val hiddenVisualTracks: Set<Int> = emptySet(),
-    val mutedAudioTracks: Set<Int> = emptySet(),
+    val timelineZoom: Float = TimelineZoom.SLIDER_DEFAULT,
 
     val exportResolution: String = "720p",
     val exportFps: Int = 30,

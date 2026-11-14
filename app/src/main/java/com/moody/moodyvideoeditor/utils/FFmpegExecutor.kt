@@ -131,7 +131,7 @@ class FFmpegExecutor(
         }
 
         val file =
-            File(context.cacheDir, "matte_${style.mode.name}_${System.currentTimeMillis()}.png")
+            File(context.cacheDir, "matte_${style.mode.name}_${System.nanoTime()}.png")
         FileOutputStream(file).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
         bmp.recycle()
         return file
@@ -144,15 +144,20 @@ class FFmpegExecutor(
         fps: Int,
         encoderThreads: Int = 0
     ): List<String> {
-        val codecArguments = VideoEncoderPolicy.codecArguments(targetW, targetH, fps)
+        val codecArguments = VideoEncoderPolicy.codecArguments(
+            targetW, targetH, fps, bitrateKbps
+        )
         return buildList {
             addAll(codecArguments)
             addAll(
                 listOf(
                     "-b:v", "${bitrateKbps}k",
+                    "-maxrate", "${(bitrateKbps * 1.2).toInt()}k",
+                    "-bufsize", "${(bitrateKbps * 2).toInt()}k",
                     "-s:v", "${targetW}x${targetH}",
                     "-aspect", "$targetW:$targetH",
                     "-pix_fmt", "yuv420p",
+                    "-r", fps.toString(),
                     "-color_range", "tv",
                     "-colorspace", "bt709",
                     "-color_primaries", "bt709",
@@ -1108,11 +1113,14 @@ class FFmpegExecutor(
 
                 mime.startsWith("image/webp") -> "webp"; else -> "mp4"
             }
-            val file = File(context.cacheDir, "${fileName.substringBeforeLast('.')}.$ext")
+            val baseName = fileName.substringBeforeLast('.')
+            val uriHash = uri.toString().hashCode().toUInt().toString(16)
+            val realFileName = "${baseName}_${uriHash}.$ext"
+            val file = File(context.cacheDir, realFileName)
             if (file.exists() && file.length() > 0) return file
 
             val tempFile =
-                File(context.cacheDir, "${file.name}.${java.util.UUID.randomUUID()}.part")
+                File(context.cacheDir, "$realFileName.${java.util.UUID.randomUUID()}.part")
             try {
                 val input = context.contentResolver.openInputStream(uri)
                     ?: throw java.io.IOException("Could not open URI")
@@ -1297,9 +1305,6 @@ class FFmpegExecutor(
             clip.layerOpacity >= 100f &&
             !clip.layerShadow.enabled
 
-    /**
-     * Keep animated transforms on a fixed-size canvas so FFmpeg filters can process every frame.
-     */
     private fun buildVisualTransformFilters(
         clip: EditorClip,
         targetW: Int,
@@ -1400,10 +1405,6 @@ class FFmpegExecutor(
         val insetX = (overscanSize.first - targetW) / 2
         val insetY = (overscanSize.second - targetH) / 2
 
-        // ═══════════════════════════════════════════════════════════
-        //  STEP 1: Fit source into canvas (letterbox) — WITHOUT user scale
-        //  Because user scale must apply to ORIGINAL clip, not letterboxed
-        // ═══════════════════════════════════════════════════════════
         if (canUseSimpleTransformFilter) {
             val scaleExpr = KeyframeStore.ffmpegExpression(
                 clip.keyframes, "scale", clip.scale * 100f, "n/$frameRate"
@@ -1749,12 +1750,7 @@ class FFmpegExecutor(
         } else if (kotlin.math.abs(userScaleX - 1.0f) > 0.01f ||
             kotlin.math.abs(userScaleY - 1.0f) > 0.01f
         ) {
-            // Static user scale
             if (maxOf(userScaleX, userScaleY) > 1.0f) {
-                // ═══════════════════════════════════════════════════
-                //  ZOOM-IN: Fit FIRST to canvas, then scale up, then crop shifted
-                //  This ensures black bars stay outside the crop window
-                // ═══════════════════════════════════════════════════
                 filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
                 filters.add("pad=$targetW:$targetH:(ow-iw)/2:(oh-ih)/2:color=$fillColor")
                 val scaleFmtX = String.format(Locale.US, "%.4f", userScaleX.coerceAtLeast(0.01f))
@@ -1766,15 +1762,11 @@ class FFmpegExecutor(
                                 "x='(ow-iw)/2':y='(oh-ih)/2':color=$fillColor"
                     )
                 } else {
-                    // Shift crop window with the clip's static position.
                     val cropX = "max(0\\,min(iw-$targetW\\,(iw-$targetW)/2-$offsetXpx))"
                     val cropY = "max(0\\,min(ih-$targetH\\,(ih-$targetH)/2-$offsetYpx))"
                     filters.add("crop=$targetW:$targetH:$cropX:$cropY")
                 }
             } else {
-                // ═══════════════════════════════════════════════════
-                //  ZOOM-OUT: Fit, scale down, pad to canvas (no crop)
-                // ═══════════════════════════════════════════════════
                 filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
                 val scaleFmtX = String.format(Locale.US, "%.4f", userScaleX.coerceAtLeast(0.01f))
                 val scaleFmtY = String.format(Locale.US, "%.4f", userScaleY.coerceAtLeast(0.01f))
@@ -1793,21 +1785,13 @@ class FFmpegExecutor(
                 }
             }
         } else {
-            // ═══════════════════════════════════════════════════════════
-            //  NO SCALE: Fit + pad
-            //  If offset exists, we need to SHIFT the clip inside the canvas
-            //  so user sees the shift (like preview)
-            // ═══════════════════════════════════════════════════════════
             filters.add("scale=$targetW:$targetH:force_original_aspect_ratio=decrease:eval=frame")
             if (hasOffset) {
-                // Pad with extra space to allow shifting without cutting
-                // Extra = |offsetX| + |offsetY| max
                 val extraX = kotlin.math.abs(offsetXpx).coerceAtLeast(0)
                 val extraY = kotlin.math.abs(offsetYpx).coerceAtLeast(0)
                 val padW = targetW + extraX * 2
                 val padH = targetH + extraY * 2
                 filters.add("pad=$padW:$padH:(ow-iw)/2:(oh-ih)/2:color=$fillColor")
-                // Crop opposite the desired movement to shift the visible image.
                 val cropX = "(iw-$targetW)/2-$offsetXpx"
                 val cropY = "(ih-$targetH)/2-$offsetYpx"
                 filters.add("crop=$targetW:$targetH:$cropX:$cropY")
@@ -1820,9 +1804,6 @@ class FFmpegExecutor(
             filters.add("colorchannelmixer=aa=0")
         }
 
-        // ═══════════════════════════════════════════════════════════
-        //  ROTATION (unchanged)
-        // ═══════════════════════════════════════════════════════════
         val hasRotationTrack = rotationTrack.isNotEmpty() && !useKeyframedTransform
         if (hasRotationTrack) {
             val rotationExpr = KeyframeStore.ffmpegExpression(clip.keyframes, "rotation", clip.rotation)
@@ -2303,15 +2284,9 @@ class FFmpegExecutor(
                     "color=c=black:s=${targetW}x${targetH}:r=$exportFps"
                 )
             )
-            // ═══════════════════════════════════════════════════════════
-            //  FIX: Input index tracking — ab sequence + order correct hai
-            //  Order: video files → audio files → black bg → mattes → silence
-            //         → sequences → cropAlpha → masks
-            // ═══════════════════════════════════════════════════════════
             val matteInputIndices = mutableMapOf<String, Int>()
             var nextInputIdx = backgroundInputIdx + 1
 
-            // 1. Matte inputs
             colorMettes.forEach { matte ->
                 val pngFile = renderMatteToPng(matte.matteStyle, targetW, targetH)
                 args.addAll(
@@ -2325,7 +2300,6 @@ class FFmpegExecutor(
                 matteInputIndices[matte.id] = nextInputIdx++
             }
 
-            // 2. Silence input
             val silenceInputIdx = nextInputIdx++
             args.addAll(
                 listOf(
@@ -2335,7 +2309,6 @@ class FFmpegExecutor(
                 )
             )
 
-            // 3. Sequence inputs (text overlays)
             val sequenceStartIdx = nextInputIdx
             combinedSequences.forEach { seq ->
                 if (seq.startSec > 0.0001) {
@@ -2363,7 +2336,6 @@ class FFmpegExecutor(
                 nextInputIdx++
             }
 
-            // 4. Crop alpha inputs
             val cropAlphaInputIndices = mutableMapOf<String, Int>()
             cropAlphaSequences.forEach { seq ->
                 if (seq.isStatic && seq.staticFile != null) {
@@ -2387,7 +2359,6 @@ class FFmpegExecutor(
                 cropAlphaInputIndices[seq.clipId] = nextInputIdx++
             }
 
-            // 5. Mask inputs — YAHI BUG THA
             val maskInputIndices = mutableMapOf<String, Int>()
             maskSequences.forEach { seq ->
                 if (seq.staticFile != null) {
@@ -2697,7 +2668,10 @@ class FFmpegExecutor(
                                 filterParts.add("[$canvasLabel]split=2[canvas_${uid}_base][canvas_${uid}_src]")
 
                                 var currentChain = "canvas_${uid}_src"
-                                val adjFilter = buildFullAdjustmentFilter(adj.adjustments)
+                                val adjFilter = buildFullAdjustmentFilter(
+                                    adj.adjustments,
+                                    enable
+                                )
                                 if (adjFilter.isNotBlank()) {
                                     filterParts.add("[$currentChain]$adjFilter[canvas_${uid}_adjstep]")
                                     currentChain = "canvas_${uid}_adjstep"
@@ -2782,7 +2756,7 @@ class FFmpegExecutor(
             args.addAll(
                 listOf(
                     "-filter_complex_threads",
-                    (if (renderStaticImageOnce) 1 else recommendedFfmpegThreads()).toString(),
+                    (if (renderStaticImageOnce) 1 else recommendedFfmpegThreads() / 2).coerceIn(1, 4).toString(),
                     "-filter_complex",
                     filterParts.joinToString(";"),
                     "-map",
@@ -3529,7 +3503,7 @@ class FFmpegExecutor(
             args.addAll(
                 listOf(
                     "-filter_complex_threads",
-                    recommendedFfmpegThreads().toString(),
+                    (recommendedFfmpegThreads() / 2).coerceIn(1, 4).toString(),
                     "-filter_complex",
                     filterParts.joinToString(";"),
                     "-map",
@@ -3706,8 +3680,7 @@ class FFmpegExecutor(
             onError("Concat export: ${e.message}")
         }
     }
-
-    private fun isStaticImageComposition(
+        private fun isStaticImageComposition(
         orderedClips: List<Pair<EditorClip, File>>,
         allClips: List<EditorClip>,
         sequences: List<TextOverlaySequence>,
@@ -4104,6 +4077,11 @@ class FFmpegExecutor(
         "hue" -> "hue"; "saturation" -> "saturation"; "color" -> "color"; "luminosity" -> "luminosity"; else -> "overlay"
     }
 
+    /**
+     * Complex filter graphs use software frames and may contain audio and image
+     * inputs, so MediaCodec decoding must not be forced on every input. The
+     * simple Media3 path handles supported single-clip exports separately.
+     */
     private fun execute(args: List<String>, outputFile: File, expectedDurationMs: Long) {
         try {
             val argsArray = args.toTypedArray()
@@ -4112,7 +4090,6 @@ class FFmpegExecutor(
             Log.e("FFMPEG_ARGS", argsArray.joinToString(" "))
             Log.e("FFMPEG_ARGS", "========================================")
 
-            // 🛡️ SAFETY: FFmpeg if() crash workaround — pre-check
             argsArray.forEachIndexed { idx, arg ->
                 if (idx > 0 && argsArray[idx - 1] == "-filter_complex") {
                     if (arg.contains("if(")) {
@@ -4125,31 +4102,50 @@ class FFmpegExecutor(
                 }
             }
 
+            val filterThreads = (Runtime.getRuntime().availableProcessors() / 2)
+                .coerceIn(1, 4)
             val executionArgs = if (args.contains("-filter_complex_threads")) {
                 argsArray
             } else {
                 arrayOf(
                     "-filter_complex_threads",
-                    Runtime.getRuntime().availableProcessors().coerceAtLeast(1).toString(),
+                    filterThreads.toString(),
                     *argsArray
                 )
             }
+            val fallbackCodecArguments = fallbackCodecArguments(args)
             submitVideoSession(
                 executionArgs,
                 outputFile,
                 expectedDurationMs,
-                allowSoftwareFallback = true
+                fallbackCodecArguments
             )
         } catch (e: Throwable) {
             cleanupMaskSequences(); onError("Execute error: ${e.message}")
         }
     }
 
+    private fun fallbackCodecArguments(arguments: List<String>): List<List<String>> {
+        val sizeIndex = arguments.indexOf("-s:v")
+        val size = arguments.getOrNull(sizeIndex + 1)?.split("x") ?: return emptyList()
+        val width = size.getOrNull(0)?.toIntOrNull() ?: return emptyList()
+        val height = size.getOrNull(1)?.toIntOrNull() ?: return emptyList()
+        val fpsIndex = arguments.indexOf("-r")
+        val fps = arguments.getOrNull(fpsIndex + 1)?.toIntOrNull() ?: return emptyList()
+        val bitrateIndex = arguments.indexOf("-b:v")
+        val bitrateKbps = arguments.getOrNull(bitrateIndex + 1)
+            ?.removeSuffix("k")
+            ?.toIntOrNull() ?: return emptyList()
+        return VideoEncoderPolicy.fallbackCodecArguments(
+            arguments, width, height, fps, bitrateKbps
+        )
+    }
+
     private fun submitVideoSession(
         argsArray: Array<String>,
         outputFile: File,
         expectedDurationMs: Long,
-        allowSoftwareFallback: Boolean
+        fallbackCodecArguments: List<List<String>>
     ) {
         val startedAtMs = SystemClock.elapsedRealtime()
         val processedMediaMs = AtomicLong(0L)
@@ -4169,27 +4165,41 @@ class FFmpegExecutor(
                         Log.e("FFMPEG_RESULT", "Return code: ${s.returnCode}")
                         val output = s.allLogsAsString ?: ""
                         if (!isCancelled &&
-                            allowSoftwareFallback &&
+                            fallbackCodecArguments.isNotEmpty() &&
                             !ReturnCode.isSuccess(s.returnCode) &&
                             !ReturnCode.isCancel(s.returnCode) &&
-                            VideoEncoderPolicy.shouldFallbackToSoftware(output)
+                            VideoEncoderPolicy.isCodecInitializationFailure(output)
                         ) {
-                            val fallbackArgs = VideoEncoderPolicy.softwareFallbackArguments(
-                                argsArray.toList()
+                            val fallbackArgs = VideoEncoderPolicy.replaceCodecArguments(
+                                argsArray.toList(),
+                                fallbackCodecArguments.first()
                             )
                             if (fallbackArgs != null) {
-                                Log.w("FFMPEG", "Hardware video encoder failed; retrying with libx264")
+                                val failedEncoderIndex = argsArray.indexOf("-c:v")
+                                val failedEncoder = argsArray.getOrNull(failedEncoderIndex + 1)
+                                Log.w(
+                                    "EXPORT_ENCODER",
+                                    "FFmpeg encoder $failedEncoder failed; retrying with " +
+                                            "${fallbackCodecArguments.first().getOrNull(1)}. " +
+                                            "Reason: ${output.takeLast(1200)}"
+                                )
                                 submitVideoSession(
                                     fallbackArgs.toTypedArray(),
                                     outputFile,
                                     expectedDurationMs,
-                                    allowSoftwareFallback = false
+                                    fallbackCodecArguments.drop(1)
                                 )
                                 return@executeWithArgumentsAsync
                             }
                         }
                         if (ReturnCode.isSuccess(s.returnCode)) {
                             if (outputFile.exists()) {
+                                val codecIndex = argsArray.indexOf("-c:v")
+                                Log.i(
+                                    "EXPORT_ENCODER",
+                                    "FFmpeg session completed with encoder=" +
+                                            argsArray.getOrNull(codecIndex + 1)
+                                )
                                 cleanupMaskSequences(); onSuccess(outputFile)
                             } else {
                                 cleanupMaskSequences(); onError("Output not created")
@@ -4344,13 +4354,21 @@ class FFmpegExecutor(
         }:gh=${f(hG)}:bh=${f(hB)}:pl=1$enable"
     }
 
-    private fun buildFullAdjustmentFilter(adj: AdjustmentData): String {
+    private fun buildFullAdjustmentFilter(
+        adj: AdjustmentData,
+        enable: String? = null
+    ): String {
         val parts = mutableListOf<String>()
         if (ColorMatrixBuilder.hasRealTimeAdjustments(adj)) {
             val lutPath =
                 ensureAdjustmentLut(adj).absolutePath.replace("\\", "\\\\").replace("'", "\\'")
             parts.add("format=rgb24")
-            parts.add("lut3d=file='$lutPath':interp=tetrahedral")
+            parts.add(
+                FFmpegFilters.withTimelineEnable(
+                    "lut3d=file='$lutPath':interp=tetrahedral",
+                    enable
+                )
+            )
             parts.add("format=yuv420p")
         }
         val spatial = FFmpegFilters.build(adj)

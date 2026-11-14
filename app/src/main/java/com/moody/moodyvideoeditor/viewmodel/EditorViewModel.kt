@@ -55,11 +55,14 @@ import com.moody.moodyvideoeditor.utils.TimelineTools
 import com.moody.moodyvideoeditor.utils.TimelineZoom
 import com.moody.moodyvideoeditor.utils.TransformApplier
 import com.moody.moodyvideoeditor.utils.TypographyTemplates
+import com.moody.moodyvideoeditor.utils.VideoExporter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -88,6 +91,8 @@ class EditorViewModel : ViewModel() {
     private val projectSaveMutex = Mutex()
     private var clipboardClips: List<EditorClip> = emptyList()
     private var clipboardIsCut = false
+    private var exportCacheJob: Job? = null
+    private var exportCacheExporter: VideoExporter? = null
 
     val exportState: StateFlow<ExportUiState> = ExportStateHolder.state
 
@@ -100,6 +105,7 @@ class EditorViewModel : ViewModel() {
             android.util.Log.w("EditorViewModel", "Export already running; ignoring duplicate request")
             return
         }
+        cancelExportCachePreparation()
         try {
             ExportStateHolder.reset()
 
@@ -137,6 +143,57 @@ class EditorViewModel : ViewModel() {
             android.util.Log.e("EditorViewModel", "startExport failed", t)
             ExportStateHolder.fail("Could not start export: ${t.message}")
         }
+    }
+
+    fun prepareExportCache(
+        context: Context,
+        clips: List<EditorClip>,
+        targetW: Int,
+        targetH: Int,
+        fps: Int,
+        bitrateKbps: Int,
+        format: String
+    ) {
+        cancelExportCachePreparation()
+        if (clips.isEmpty() || ExportStateHolder.state.value.isExporting) return
+
+        val exporter = VideoExporter(
+            context = context.applicationContext,
+            onProgress = {},
+            onSuccess = {},
+            onError = { message ->
+                Log.w("EXPORT_CACHE", "Background segment preparation failed: $message")
+            }
+        )
+        exportCacheExporter = exporter
+        exportCacheJob = viewModelScope.launch(Dispatchers.Default) {
+            try {
+                exporter.prepareExportCache(
+                    clips = clips,
+                    targetW = targetW,
+                    targetH = targetH,
+                    fps = fps,
+                    bitrateKbps = bitrateKbps,
+                    format = format
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("EXPORT_CACHE", "Could not prepare export segments", e)
+            } finally {
+                if (exportCacheExporter === exporter) {
+                    exportCacheExporter = null
+                    exportCacheJob = null
+                }
+            }
+        }
+    }
+
+    fun cancelExportCachePreparation() {
+        exportCacheJob?.cancel()
+        exportCacheJob = null
+        exportCacheExporter?.cancel()
+        exportCacheExporter = null
     }
 
     fun cancelExport(context: Context) {
@@ -582,22 +639,6 @@ class EditorViewModel : ViewModel() {
         _state.update { it.copy(exportBitrateKbps = kbps.coerceIn(1000, 50000)) }
     fun setExportFormat(fmt: String) = _state.update { it.copy(exportFormat = fmt) }
     fun setExportFolderUri(uri: String?) = _state.update { it.copy(exportFolderUri = uri) }
-
-    fun toggleVisualTrackVisibility(trackIndex: Int) {
-        _state.update { s ->
-            val new = s.hiddenVisualTracks.toMutableSet()
-            if (trackIndex in new) new.remove(trackIndex) else new.add(trackIndex)
-            s.copy(hiddenVisualTracks = new)
-        }
-    }
-
-    fun toggleAudioTrackMute(trackIndex: Int) {
-        _state.update { s ->
-            val new = s.mutedAudioTracks.toMutableSet()
-            if (trackIndex in new) new.remove(trackIndex) else new.add(trackIndex)
-            s.copy(mutedAudioTracks = new)
-        }
-    }
 
     fun addClipWithSource(uri: Uri, name: String, duration: Long, sourceTotalMs: Long) {
         pushHistory()
@@ -1146,26 +1187,6 @@ class EditorViewModel : ViewModel() {
                 audioLayerCount = maxOf(it.audioLayerCount, maxAudio + 1)
             )
         }
-        updateHistoryFlags()
-    }
-
-    fun swapTracks(fromTrack: Int, toTrack: Int, isAudio: Boolean) {
-        if (fromTrack == toTrack) return
-        val clips = _state.value.clips
-        if (clips.none { it.isAudio == isAudio && it.trackIndex == fromTrack } ||
-            clips.none { it.isAudio == isAudio && it.trackIndex == toTrack }
-        ) return
-
-        pushHistory()
-        val swappedClips = clips.map { clip ->
-            if (clip.isAudio != isAudio) return@map clip
-            when (clip.trackIndex) {
-                fromTrack -> clip.copy(trackIndex = toTrack)
-                toTrack -> clip.copy(trackIndex = fromTrack)
-                else -> clip
-            }
-        }
-        _state.update { it.copy(clips = swappedClips) }
         updateHistoryFlags()
     }
 
@@ -5027,6 +5048,11 @@ class EditorViewModel : ViewModel() {
         forEachSelectedClip { clip ->
             if (clip.isAdjustmentClip) clip.copy(adjustments = AdjustmentData()) else clip
         }
+    }
+
+    override fun onCleared() {
+        cancelExportCachePreparation()
+        super.onCleared()
     }
 
 }

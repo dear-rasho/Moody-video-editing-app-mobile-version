@@ -7,6 +7,7 @@ import org.json.JSONObject
 import java.io.File
 import com.moody.moodyvideoeditor.data.Keyframe
 import com.moody.moodyvideoeditor.data.ChromaKeyState
+import com.moody.moodyvideoeditor.utils.TimelineZoom
 
 // Saves/loads project state to local storage as JSON.
 // No external dependencies — uses org.json (built into Android).
@@ -210,7 +211,10 @@ object ProjectRepository {
             timelineLockedMs = o.optLong("timelineLockedMs", 0L),
             exportFolderUri = if (o.isNull("exportFolderUri")) null
             else o.optString("exportFolderUri", null),
-            timelineZoom = o.optDouble("timelineZoom", 0.0).toFloat()
+            timelineZoom = o.optDouble(
+                "timelineZoom",
+                TimelineZoom.SLIDER_DEFAULT.toDouble()
+            ).toFloat()
 
         )
     }

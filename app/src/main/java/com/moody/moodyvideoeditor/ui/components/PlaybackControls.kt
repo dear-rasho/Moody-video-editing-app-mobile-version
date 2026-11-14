@@ -34,8 +34,6 @@ fun PlaybackControls(
     onSelectBackward: () -> Unit = {},
     onSelectForward: () -> Unit = {},
     onSelectAll: () -> Unit = {},
-    onSelectAllTrack: () -> Unit = {},
-    onDeselectAll: () -> Unit = {},
     onLink: () -> Unit = {},
     onUnlink: () -> Unit = {},
     isLinked: Boolean = false,
@@ -52,12 +50,8 @@ fun PlaybackControls(
     onPaste: () -> Unit = {},
     canCopy: Boolean = false,
     canPaste: Boolean = false,
-    onAddVisualLayer: () -> Unit = {},
-    onAddAudioLayer: () -> Unit = {},
     // Zoom
     zoomSlider: Float = 0f,
-    totalSec: Float = 0f,
-    viewportContentWidthDp: Float = 320f,
     onZoomChange: (Float) -> Unit = {}
 ) {
     Row(
@@ -88,8 +82,6 @@ fun PlaybackControls(
             SmallBtn("⏪ Back") { onSelectBackward() }
             SmallBtn("⏩ Fwd") { onSelectForward() }
             SmallBtn("☑ All") { onSelectAll() }
-            SmallBtn("▤ Track") { onSelectAllTrack() }
-            SmallBtn("☐ None") { onDeselectAll() }
             if (isLinked) {
                 SmallBtn("Unlink", highlight = true) { onUnlink() }
             } else if (canLink) {
@@ -108,13 +100,11 @@ fun PlaybackControls(
                 )
             )
             Text(
-                TimelineZoom.formatLabel(zoomSlider, totalSec, viewportContentWidthDp),
+                TimelineZoom.formatLabel(zoomSlider),
                 color = Color(0xFFCCCCCC),
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold
             )
-            SmallBtn("＋V") { onAddVisualLayer() }
-            SmallBtn("＋A") { onAddAudioLayer() }
         }
     }
 }

@@ -9,38 +9,32 @@ import org.junit.Test
 class TimelineKeyframeMappingTest {
 
     @Test
-    fun screenXMapsToTimelineTimeIncludingLabelAndScroll() {
-        val timeMs = TimelinePlayheadController.seekTimeFromScreenX(
-            screenX = 300f,
+    fun timelineScrollMapsToTimeUnderFixedPlayhead() {
+        val timeMs = TimelinePlayheadController.timeForScroll(
+            scrollValue = 300,
             contentWidthPx = 1000f,
-            totalMs = 10_000L,
-            labelWidthPx = 100f,
-            hScrollValue = 300
+            totalMs = 10_000L
         )
 
-        assertEquals(5_000L, timeMs)
+        assertEquals(3_000L, timeMs)
     }
 
     @Test
-    fun screenXMappingClampsToTimelineEnds() {
+    fun scrollMappingClampsToTimelineEnds() {
         assertEquals(
             0L,
-            TimelinePlayheadController.seekTimeFromScreenX(
-                screenX = 20f,
+            TimelinePlayheadController.timeForScroll(
+                scrollValue = -100,
                 contentWidthPx = 1000f,
-                totalMs = 10_000L,
-                labelWidthPx = 100f,
-                hScrollValue = 0
+                totalMs = 10_000L
             )
         )
         assertEquals(
             10_000L,
-            TimelinePlayheadController.seekTimeFromScreenX(
-                screenX = 1200f,
+            TimelinePlayheadController.timeForScroll(
+                scrollValue = 1200,
                 contentWidthPx = 1000f,
-                totalMs = 10_000L,
-                labelWidthPx = 100f,
-                hScrollValue = 0
+                totalMs = 10_000L
             )
         )
     }

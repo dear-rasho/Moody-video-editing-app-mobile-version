@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -46,7 +47,30 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moody.moodyvideoeditor.data.RecentMediaItem
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
+
+private const val MAX_VIDEO_THUMBNAIL_DIMENSION = 320
+private const val MAX_LEGACY_VIDEO_FRAME_DIMENSION = 1920
+private val videoThumbnailSemaphore = Semaphore(2)
+
+internal fun videoThumbnailDimensions(
+    width: Int,
+    height: Int,
+    maxDimension: Int = MAX_VIDEO_THUMBNAIL_DIMENSION
+): Pair<Int, Int> {
+    val safeWidth = width.coerceAtLeast(1)
+    val safeHeight = height.coerceAtLeast(1)
+    val scale = minOf(
+        maxDimension.toFloat() / safeWidth,
+        maxDimension.toFloat() / safeHeight,
+        1f
+    )
+    return (safeWidth * scale).roundToInt().coerceAtLeast(1) to
+            (safeHeight * scale).roundToInt().coerceAtLeast(1)
+}
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -170,7 +194,9 @@ private fun RecentMediaCard(
     var bitmap by remember(item.uri) { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(item.uri) {
         bitmap = withContext(Dispatchers.IO) {
-            loadThumbnail(context, item.uri)
+            videoThumbnailSemaphore.withPermit {
+                loadThumbnail(context, item.uri)
+            }
         }
     }
     Column(
@@ -242,25 +268,72 @@ private fun loadThumbnail(context: Context, uri: Uri): Bitmap? {
                 BitmapFactory.decodeStream(it, null, options)
             }
         } else {
-            val retriever = MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(context, uri)
-                retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                    ?.let { frame ->
-                        val scale = minOf(320f / frame.width, 320f / frame.height, 1f)
-                        if (scale >= 1f) frame else Bitmap.createScaledBitmap(
-                            frame,
-                            (frame.width * scale).toInt().coerceAtLeast(1),
-                            (frame.height * scale).toInt().coerceAtLeast(1),
-                            true
-                        ).also { if (it !== frame) frame.recycle() }
-                    }
-            } finally {
-                retriever.release()
-            }
+            loadVideoThumbnail(context, uri)
         }
+    } catch (error: OutOfMemoryError) {
+        Log.e("RECENT_MEDIA", "Not enough memory to load thumbnail for $uri")
+        null
     } catch (error: Exception) {
         Log.w("RECENT_MEDIA", "Could not load thumbnail for $uri", error)
         null
+    }
+}
+
+private fun loadVideoThumbnail(context: Context, uri: Uri): Bitmap? {
+    val retriever = MediaMetadataRetriever()
+    try {
+        retriever.setDataSource(context, uri)
+        val sourceWidth = retriever.extractMetadata(
+            MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
+        )?.toIntOrNull() ?: MAX_VIDEO_THUMBNAIL_DIMENSION
+        val sourceHeight = retriever.extractMetadata(
+            MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
+        )?.toIntOrNull() ?: MAX_VIDEO_THUMBNAIL_DIMENSION
+        val rotation = retriever.extractMetadata(
+            MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION
+        )?.toIntOrNull() ?: 0
+        val (width, height) = if (rotation == 90 || rotation == 270) {
+            videoThumbnailDimensions(sourceHeight, sourceWidth)
+        } else {
+            videoThumbnailDimensions(sourceWidth, sourceHeight)
+        }
+
+        val frame = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            retriever.getScaledFrameAtTime(
+                0L,
+                MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                width,
+                height
+            )
+        } else {
+            if (maxOf(sourceWidth, sourceHeight) > MAX_LEGACY_VIDEO_FRAME_DIMENSION) {
+                return null
+            }
+            retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+        } ?: return null
+
+        if (frame.width <= MAX_VIDEO_THUMBNAIL_DIMENSION &&
+            frame.height <= MAX_VIDEO_THUMBNAIL_DIMENSION
+        ) {
+            return frame
+        }
+
+        return try {
+            Bitmap.createScaledBitmap(frame, width, height, true)
+        } finally {
+            frame.recycle()
+        }
+    } catch (error: OutOfMemoryError) {
+        Log.e("RECENT_MEDIA", "Not enough memory to decode video thumbnail for $uri")
+        return null
+    } catch (error: Exception) {
+        Log.w("RECENT_MEDIA", "Could not decode video thumbnail for $uri", error)
+        return null
+    } finally {
+        try {
+            retriever.release()
+        } catch (error: RuntimeException) {
+            Log.w("RECENT_MEDIA", "Could not release video thumbnail retriever", error)
+        }
     }
 }

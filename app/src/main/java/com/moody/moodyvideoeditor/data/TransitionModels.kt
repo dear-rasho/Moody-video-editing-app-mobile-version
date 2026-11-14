@@ -245,7 +245,7 @@ object TransitionLibrary {
             "violet" in presetKey || "prism" in presetKey -> "B36BFF"
             "orange" in presetKey || "amber" in presetKey ||
                     "golden" in presetKey || "sun" in presetKey ||
-                    "burn" in presetKey -> "FFA23A"
+                    "burn" in presetKey || "flare" in presetKey -> "FFA23A"
             else -> "FFE76A"
         }
         return TransitionLightLeakStyle(

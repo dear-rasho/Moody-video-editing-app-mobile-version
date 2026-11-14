@@ -1,9 +1,11 @@
 package com.moody.moodyvideoeditor.utils
 
+import android.app.ActivityManager
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.provider.MediaStore
@@ -14,10 +16,31 @@ import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.EditorClip
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+
+private const val MIN_PARALLEL_EXPORT_TOTAL_MEMORY_BYTES = 8L * 1024L * 1024L * 1024L
+private const val MIN_PARALLEL_EXPORT_AVAILABLE_MEMORY_BYTES = 2L * 1024L * 1024L * 1024L
+
+internal fun isParallelExportMemorySafe(
+    totalMemoryBytes: Long,
+    availableMemoryBytes: Long,
+    lowMemory: Boolean
+): Boolean =
+    !lowMemory &&
+            totalMemoryBytes >= MIN_PARALLEL_EXPORT_TOTAL_MEMORY_BYTES &&
+            availableMemoryBytes >= MIN_PARALLEL_EXPORT_AVAILABLE_MEMORY_BYTES
+
+internal fun isParallelExportThermallySafe(thermalStatus: Int?): Boolean =
+    thermalStatus != null && thermalStatus < PowerManager.THERMAL_STATUS_MODERATE
 
 enum class ExportMode {
     VIDEO,
@@ -38,6 +61,7 @@ class VideoExporter(
 
     @Volatile
     private var isCancelled = false
+    private val activeSegmentExporters = ConcurrentHashMap.newKeySet<FFmpegExecutor>()
 
     suspend fun export(
         clips: List<EditorClip>,
@@ -188,6 +212,52 @@ class VideoExporter(
 
         when {
             hasBaseVideo -> {
+                // ═══════════════════════════════════════════════════════════════
+                //  🚀 PARALLEL SEGMENT EXPORT (CapCut-style)
+                //  Simple sequential videos → 2-3 parallel segments → concat
+                //  Complex videos (transitions, heavy layers) → single-pass fallback
+                // ═══════════════════════════════════════════════════════════════
+                val parallelEligible = isParallelEligible(
+                    exportDurationMs = exportDurationMs,
+                    trimmedVisualClips = trimmedVisualClips,
+                    visualizerClips = visualizerClips,
+                    spotlightClips = spotlightClips,
+                    edgeGlowClips = edgeGlowClips,
+                    allClips = clips
+                )
+
+                if (parallelEligible) {
+                    try {
+                        onProgress(0.01f)
+                        val success = runParallelSegmentExport(
+                            allClips = clips,
+                            fileName = fileName,
+                            targetW = targetW,
+                            targetH = targetH,
+                            fps = fps,
+                            bitrateKbps = bitrateKbps,
+                            format = format,
+                            customFolderUri = customFolderUri,
+                            rangeStart = rangeStart,
+                            rangeEnd = rangeEnd,
+                            onProgressUpdate = { progress ->
+                                if (!isCancelled) onProgress(0.01f + progress * 0.94f)
+                            }
+                        )
+                        if (success) {
+                            onProgress(1f)
+                            return
+                        }
+                        Log.w("EXPORT", "Parallel export skipped; using single-pass")
+                    } catch (e: CancellationException) {
+                        onCancelled()
+                        return
+                    } catch (e: Exception) {
+                        Log.w("EXPORT", "Parallel export failed; using single-pass", e)
+                    }
+                }
+
+                // ─── Native (Media3) fast path for simple single-clip exports ───
                 if (format.equals("mp4", ignoreCase = true) &&
                     trimmedMatteClips.isEmpty() &&
                     trimmedVisualClips.size == 1
@@ -290,7 +360,6 @@ class VideoExporter(
                     Log.e("EXPORT", "Text overlay rendering failed", e)
                     onError("Text render failed: ${e.message}"); return
                 }
-
 
                 val visualizerSequences = if (visualizerClips.isNotEmpty()) {
                     try {
@@ -450,6 +519,441 @@ class VideoExporter(
             }
 
             else -> onError("Nothing to export in selected range")
+        }
+    }
+
+    suspend fun prepareExportCache(
+        clips: List<EditorClip>,
+        targetW: Int,
+        targetH: Int,
+        fps: Int,
+        bitrateKbps: Int,
+        format: String
+    ) {
+        isCancelled = false
+        val durationMs = clips.maxOfOrNull { it.timelineEndMs } ?: return
+        if (durationMs <= 0L) return
+
+        val visualClips = trimClipsToRange(
+            clips.filter {
+                it.isVisualClip && it.uri.toString().isNotBlank() && it.uri != Uri.EMPTY
+            },
+            0L,
+            durationMs
+        )
+        val visualizerClips = clips.filter {
+            it.isVisualizerClip && it.timelineEndMs > 0L && it.timelineStartMs < durationMs
+        }
+        val spotlightClips = clips.filter {
+            it.isSpotlightClip && it.timelineEndMs > 0L && it.timelineStartMs < durationMs
+        }
+        val edgeGlowClips = clips.filter {
+            it.isEffectClip && it.effectState?.edgeGlow != null &&
+                    it.timelineEndMs > 0L && it.timelineStartMs < durationMs
+        }
+        if (!isParallelEligible(
+                durationMs,
+                visualClips,
+                visualizerClips,
+                spotlightClips,
+                edgeGlowClips,
+                clips
+            )
+        ) {
+            return
+        }
+
+        runParallelSegmentExport(
+            allClips = clips,
+            fileName = "prepared",
+            targetW = targetW,
+            targetH = targetH,
+            fps = fps,
+            bitrateKbps = bitrateKbps,
+            format = format,
+            customFolderUri = null,
+            rangeStart = 0L,
+            rangeEnd = durationMs,
+            preRenderOnly = true
+        )
+    }
+
+    /**
+     * ⚡ NEW: Decides whether a project is safe for parallel segment export.
+     *
+     * Conditions (ALL must be true):
+     *  - Duration >= 45s (below that, overhead > benefit)
+     *  - At least 2 visual clips, or 1 visual clip with composited layers
+     *  - No visualizer / spotlight / edge-glow clips (these render frame ranges)
+     *  - No active transitions (cross-segment xfade doesn't concat)
+     *  - No layer shadows (per-frame compositing)
+     *  - No animated transforms (per-frame keyframe eval)
+     */
+    private fun isParallelEligible(
+        exportDurationMs: Long,
+        trimmedVisualClips: List<EditorClip>,
+        visualizerClips: List<EditorClip>,
+        spotlightClips: List<EditorClip>,
+        edgeGlowClips: List<EditorClip>,
+        allClips: List<EditorClip>
+    ): Boolean {
+        if (exportDurationMs < 45_000L) return false
+        if (trimmedVisualClips.isEmpty()) return false
+        if (trimmedVisualClips.size == 1 && allClips.none {
+                it.isAdjustmentClip || it.isColorMatteClip || it.isTextClip ||
+                        it.isOverlayClip || it.isEffectClip || it.isFilterLayerClip
+            }
+        ) return false
+        if (visualizerClips.isNotEmpty()) return false
+        if (spotlightClips.isNotEmpty()) return false
+        if (edgeGlowClips.isNotEmpty()) return false
+        if (allClips.any { it.transition?.isActive == true }) return false
+        if (allClips.any { it.layerShadow.enabled }) return false
+        if (allClips.any { TransformApplier.hasAnimatedTransform(it) }) return false
+        val activityManager =
+            context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        if (activityManager == null) {
+            Log.w("EXPORT_PARALLEL", "Skipping parallel export: ActivityManager unavailable")
+            return false
+        }
+        val memoryInfo = ActivityManager.MemoryInfo()
+        activityManager.getMemoryInfo(memoryInfo)
+        if (!isParallelExportMemorySafe(
+                memoryInfo.totalMem,
+                memoryInfo.availMem,
+                memoryInfo.lowMemory
+            )
+        ) {
+            Log.i(
+                "EXPORT_PARALLEL",
+                "Skipping parallel export: insufficient memory headroom " +
+                        "totalBytes=${memoryInfo.totalMem} availableBytes=${memoryInfo.availMem} " +
+                        "lowMemory=${memoryInfo.lowMemory}"
+            )
+            return false
+        }
+        val thermalStatus = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            (context.getSystemService(Context.POWER_SERVICE) as? PowerManager)
+                ?.currentThermalStatus
+        } else {
+            null
+        }
+        if (!isParallelExportThermallySafe(thermalStatus)) {
+            Log.i(
+                "EXPORT_PARALLEL",
+                "Skipping parallel export: thermal status is elevated or unavailable " +
+                        "status=$thermalStatus"
+            )
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Splits the timeline into 2-3 segments, renders them in parallel, then
+     * concatenates with stream copy. Export falls back to single-pass on failure.
+     */
+    private suspend fun runParallelSegmentExport(
+        allClips: List<EditorClip>,
+        fileName: String,
+        targetW: Int,
+        targetH: Int,
+        fps: Int,
+        bitrateKbps: Int,
+        format: String,
+        customFolderUri: String?,
+        rangeStart: Long,
+        rangeEnd: Long,
+        preRenderOnly: Boolean = false,
+        onProgressUpdate: (Float) -> Unit = {}
+    ): Boolean = withContext(Dispatchers.IO) {
+        val totalDurMs = rangeEnd - rangeStart
+        if (totalDurMs <= 0L) return@withContext false
+        val operationStartedAtMs = SystemClock.elapsedRealtime()
+
+        val segmentCount = if (totalDurMs < 120_000L) 2 else 3
+        val segDurMs = totalDurMs / segmentCount
+        Log.i(
+            "EXPORT_PARALLEL",
+            "Starting parallel export: totalMs=$totalDurMs segs=$segmentCount segMs=$segDurMs"
+        )
+
+        val segFiles = mutableListOf<File>()
+        val segErrors = Collections.synchronizedList(mutableListOf<String>())
+        val cacheHits = AtomicLong(0L)
+        val segmentProgress = FloatArray(segmentCount)
+        val progressLock = Any()
+
+        fun reportSegmentProgress(index: Int, progress: Float) {
+            val averageProgress = synchronized(progressLock) {
+                segmentProgress[index] =
+                    maxOf(segmentProgress[index], progress.coerceIn(0f, 1f))
+                segmentProgress.average().toFloat()
+            }
+            if (!preRenderOnly) onProgressUpdate(averageProgress)
+        }
+
+        try {
+            coroutineScope {
+                val jobs = (0 until segmentCount).map { i ->
+                    async(Dispatchers.Default) {
+                        val segStart = rangeStart + i * segDurMs
+                        val segEnd = if (i == segmentCount - 1) rangeEnd
+                        else rangeStart + (i + 1) * segDurMs
+                        var segFile: File? = null
+                        var cacheKey: String? = null
+                        var cacheReserved = false
+                        var segTextSeq: List<TextOverlaySequence> = emptyList()
+
+                        try {
+                            val segVisual = trimClipsToRange(
+                                allClips.filter {
+                                    it.isVisualClip &&
+                                            it.uri.toString().isNotBlank() &&
+                                            it.uri != Uri.EMPTY
+                                },
+                                segStart, segEnd
+                            )
+                            val segAudio = trimClipsToRange(
+                                allClips.filter {
+                                    it.isAudio && !it.isAudioEffectClip &&
+                                            it.uri.toString().isNotBlank() &&
+                                            it.uri != Uri.EMPTY
+                                },
+                                segStart, segEnd
+                            )
+                            val segText = trimClipsToRange(
+                                allClips.filter { it.isTextClip }, segStart, segEnd
+                            )
+                            val segOverlay = trimClipsToRange(
+                                allClips.filter {
+                                    it.isOverlayClip ||
+                                            (it.isEffectClip && it.effectState?.overlay != null)
+                                },
+                                segStart, segEnd
+                            )
+                            val segAll = trimClipsToRange(allClips, segStart, segEnd)
+                            val segMattes = segAll.filter { it.isColorMatteClip }
+                            val segDur = segEnd - segStart
+                            val key = ExportSegmentCache.keyFor(
+                                segmentIndex = i,
+                                startMs = segStart,
+                                endMs = segEnd,
+                                clips = segAll,
+                                width = targetW,
+                                height = targetH,
+                                fps = fps,
+                                bitrateKbps = bitrateKbps,
+                                format = format
+                            )
+                            cacheKey = key
+                            ExportSegmentCache.find(context, key, format)?.let {
+                                cacheHits.incrementAndGet()
+                                reportSegmentProgress(i, 1f)
+                                return@async it
+                            }
+                            if (preRenderOnly) {
+                                val estimatedBytes =
+                                    (segDur.toDouble() * (bitrateKbps + 128) / 8.0 * 1.15)
+                                        .toLong()
+                                        .coerceAtLeast(1L)
+                                if (!ExportSegmentCache.reserve(context, key, estimatedBytes)) {
+                                    Log.i(
+                                        "EXPORT_CACHE",
+                                        "Skipping segment $i: cache storage budget reached"
+                                    )
+                                    return@async null
+                                }
+                                cacheReserved = true
+                                segFile = ExportSegmentCache.temporaryFile(context, key, format)
+                            } else {
+                                segFile = createOutputFile("${fileName}_seg$i", format)
+                            }
+                            val outputFile = checkNotNull(segFile)
+
+                            segTextSeq = if (segText.isNotEmpty() || segOverlay.isNotEmpty()) {
+                                TextBitmapRenderer.renderOverlaysByTrack(
+                                    context = context,
+                                    textClips = segText,
+                                    imageClips = emptyList(),
+                                    overlayClips = segOverlay,
+                                    W = targetW,
+                                    H = targetH,
+                                    fps = fps,
+                                    totalDurationMs = segDur,
+                                    onProgress = { progress ->
+                                        reportSegmentProgress(i, progress * 0.25f)
+                                    },
+                                    shouldCancel = { isCancelled },
+                                    imageFormat = "jpeg",
+                                    jpegQuality = 90
+                                )
+                            } else emptyList()
+
+                            var succeeded = false
+                            var innerExporter: FFmpegExecutor? = null
+                            suspendCancellableCoroutine<Unit> { cont ->
+                                val exporter = FFmpegExecutor(
+                                    context = context,
+                                    onProgress = { progress ->
+                                        reportSegmentProgress(i, 0.25f + progress * 0.75f)
+                                    },
+                                    onSuccess = {
+                                        succeeded = true
+                                        if (cont.isActive) cont.resumeWith(Result.success(Unit))
+                                    },
+                                    onError = { msg ->
+                                        segErrors.add("seg$i: $msg")
+                                        if (cont.isActive) cont.resumeWith(Result.success(Unit))
+                                    }
+                                )
+                                innerExporter = exporter
+                                activeSegmentExporters.add(exporter)
+                                cont.invokeOnCancellation {
+                                    exporter.cancel()
+                                    activeSegmentExporters.remove(exporter)
+                                }
+                                launch(Dispatchers.Default) {
+                                    try {
+                                        exporter.export(
+                                            clips = segVisual,
+                                            allClips = segAll,
+                                            outputFile = outputFile,
+                                            targetW = targetW,
+                                            targetH = targetH,
+                                            fps = fps,
+                                            bitrateKbps = bitrateKbps,
+                                            textSequences = segTextSeq,
+                                            audioOnlyClips = segAudio,
+                                            matteClips = segMattes,
+                                            explicitDurationMs = segDur
+                                        )
+                                    } catch (e: CancellationException) {
+                                        if (cont.isActive) cont.cancel(e)
+                                    } catch (e: Exception) {
+                                        segErrors.add("seg$i: ${e.message}")
+                                        if (cont.isActive) {
+                                            cont.resumeWith(Result.success(Unit))
+                                        }
+                                    }
+                                }
+                            }
+                            innerExporter?.let(activeSegmentExporters::remove)
+                            cleanupSequences(segTextSeq)
+
+                            if (!succeeded || !outputFile.exists() || outputFile.length() <= 0L) {
+                                outputFile.delete()
+                                if (cacheReserved) ExportSegmentCache.release(key)
+                                null
+                            } else if (preRenderOnly) {
+                                reportSegmentProgress(i, 1f)
+                                val cachedFile =
+                                    ExportSegmentCache.commit(context, key, format, outputFile)
+                                cacheReserved = false
+                                cachedFile
+                            } else {
+                                reportSegmentProgress(i, 1f)
+                                outputFile
+                            }
+                        } catch (e: CancellationException) {
+                            segFile?.delete()
+                            if (cacheReserved) cacheKey?.let(ExportSegmentCache::release)
+                            cleanupSequences(segTextSeq)
+                            throw e
+                        } catch (e: Exception) {
+                            Log.e("EXPORT_PARALLEL", "Segment $i failed", e)
+                            segErrors.add("seg$i: ${e.message}")
+                            segFile?.delete()
+                            if (cacheReserved) cacheKey?.let(ExportSegmentCache::release)
+                            cleanupSequences(segTextSeq)
+                            null
+                        }
+                    }
+                }
+                segFiles.addAll(jobs.awaitAll().filterNotNull())
+            }
+
+            if (preRenderOnly) {
+                val availableCacheFiles =
+                    segFiles.filter { it.isFile && it.length() > 0L }
+                Log.i(
+                    "EXPORT_CACHE",
+                    "Prepared ${availableCacheFiles.size}/$segmentCount matching export segments " +
+                            "cacheHits=${cacheHits.get()} " +
+                            "bytes=${availableCacheFiles.sumOf { it.length() }} " +
+                            "wallMs=${SystemClock.elapsedRealtime() - operationStartedAtMs}"
+                )
+                return@withContext availableCacheFiles.isNotEmpty()
+            }
+
+            if (segFiles.size != segmentCount) {
+                Log.e(
+                    "EXPORT_PARALLEL",
+                    "Only ${segFiles.size}/$segmentCount segments succeeded: $segErrors"
+                )
+                segFiles.forEach { it.delete() }
+                return@withContext false
+            }
+
+            val finalFile = createOutputFile(fileName, format)
+            val concatList = File(context.cacheDir, "concat_${System.nanoTime()}.txt")
+            try {
+                concatList.writeText(
+                    segFiles.joinToString("\n") { "file '${it.absolutePath}'" }
+                )
+                val concatArgs = listOf(
+                    "-y",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", concatList.absolutePath,
+                    "-c", "copy",
+                    "-movflags", "+faststart",
+                    finalFile.absolutePath
+                )
+
+                var concatOk = false
+                suspendCancellableCoroutine<Unit> { cont ->
+                    FFmpegKit.executeWithArgumentsAsync(
+                        concatArgs.toTypedArray(),
+                        { session ->
+                            concatOk = ReturnCode.isSuccess(session.returnCode)
+                            if (!concatOk) {
+                                Log.e(
+                                    "EXPORT_PARALLEL",
+                                    "Concat failed: ${session.allLogsAsString?.takeLast(1000)}"
+                                )
+                            }
+                            if (cont.isActive) cont.resumeWith(Result.success(Unit))
+                        },
+                        { },
+                        { }
+                    )
+                }
+
+                if (!concatOk || !finalFile.exists() || finalFile.length() <= 0) {
+                    segFiles.forEach { it.delete() }
+                    return@withContext false
+                }
+
+                Log.i(
+                    "EXPORT_PARALLEL",
+                    "Parallel export complete: bytes=${finalFile.length()} segs=$segmentCount " +
+                            "cacheHits=${cacheHits.get()}"
+                )
+
+                completeExport(finalFile, customFolderUri, emptyList())
+                return@withContext true
+            } finally {
+                concatList.delete()
+                segFiles.forEach { it.delete() }
+            }
+        } catch (e: CancellationException) {
+            if (!preRenderOnly) segFiles.forEach { it.delete() }
+            throw e
+        } catch (e: Exception) {
+            Log.e("EXPORT_PARALLEL", "Parallel export crashed", e)
+            if (!preRenderOnly) segFiles.forEach { it.delete() }
+            return@withContext false
         }
     }
 
@@ -649,6 +1153,9 @@ class VideoExporter(
     fun cancel() {
         isCancelled = true
         nativeVideoExporter?.cancel()
+        activeSegmentExporters.toList().forEach { exporter ->
+            exporter.cancel()
+        }
         try {
             ffmpeg?.cancel()
         } catch (_: Throwable) {
@@ -729,7 +1236,6 @@ class VideoExporter(
     ) {
         val durationMs = (rangeEnd - rangeStart).coerceAtLeast(500L)
         onProgress(0.01f)
-
 
         val textSequences =
             if (textClips.isNotEmpty() || overlayImageClips.isNotEmpty() ||
@@ -871,7 +1377,7 @@ class VideoExporter(
         args.addAll(
             listOf(
                 "-filter_complex_threads",
-                Runtime.getRuntime().availableProcessors().coerceAtLeast(1).toString()
+                (Runtime.getRuntime().availableProcessors() / 2).coerceIn(1, 4).toString()
             )
         )
         args.add("-y")
@@ -982,19 +1488,21 @@ class VideoExporter(
             "finala"
         )
 
-        // 🚀 FIX: FFmpeg ko force karo ki wo saare inputs ko sahi se handle kare
         args.add("-filter_complex")
         args.add(filterParts.joinToString(";"))
         args.add("-map"); args.add("[$finalOutv]")
-
-        // Audio map karte waqt ? ka use karo taaki agar audio na ho to error na aaye
         args.add("-map"); args.add("[$finalAudioLabel]?")
 
-        val codecArguments = VideoEncoderPolicy.codecArguments(targetW, targetH, fps)
+        val codecCandidates = VideoEncoderPolicy.codecArgumentCandidates(
+            targetW, targetH, fps, bitrateKbps
+        )
+        val codecArguments = codecCandidates.first()
         args.addAll(codecArguments)
         args.addAll(
             listOf(
                 "-b:v", "${bitrateKbps}k",
+                "-maxrate", "${(bitrateKbps * 1.2).toInt()}k",
+                "-bufsize", "${(bitrateKbps * 2).toInt()}k",
                 "-pix_fmt", "yuv420p",
                 "-r", fps.toString(),
                 "-c:a", "aac",
@@ -1013,7 +1521,7 @@ class VideoExporter(
                 durationMs = durationMs,
                 customFolderUri = customFolderUri,
                 sequences = allSequences,
-                allowSoftwareFallback = true
+                fallbackCodecArguments = codecCandidates.drop(1)
             )
         } catch (e: Exception) {
             cleanupSequences(allSequences)
@@ -1028,7 +1536,7 @@ class VideoExporter(
         durationMs: Long,
         customFolderUri: String?,
         sequences: List<TextOverlaySequence>,
-        allowSoftwareFallback: Boolean
+        fallbackCodecArguments: List<List<String>>
     ) {
         val startedAtMs = SystemClock.elapsedRealtime()
         val processedMediaMs = AtomicLong(0L)
@@ -1047,23 +1555,38 @@ class VideoExporter(
                     if (isCancelled) {
                         cleanupSequences(sequences); onCancelled()
                     } else if (ReturnCode.isSuccess(s.returnCode)) {
+                        val codecIndex = args.indexOf("-c:v")
+                        Log.i(
+                            "EXPORT_ENCODER",
+                            "FFmpeg session completed with encoder=" +
+                                    args.getOrNull(codecIndex + 1)
+                        )
                         completeExport(outputFile, customFolderUri, sequences)
                     } else {
                         val logs = s.allLogsAsString ?: "Unknown error"
-                        if (allowSoftwareFallback &&
-                            VideoEncoderPolicy.shouldFallbackToSoftware(logs)
+                        if (fallbackCodecArguments.isNotEmpty() &&
+                            VideoEncoderPolicy.isCodecInitializationFailure(logs)
                         ) {
-                            val fallbackArgs =
-                                VideoEncoderPolicy.softwareFallbackArguments(args)
+                            val fallbackArgs = VideoEncoderPolicy.replaceCodecArguments(
+                                args,
+                                fallbackCodecArguments.first()
+                            )
                             if (fallbackArgs != null) {
-                                Log.w("EXPORT", "Hardware video encoder failed; retrying with libx264")
+                                val codecIndex = args.indexOf("-c:v")
+                                val failedEncoder = args.getOrNull(codecIndex + 1)
+                                Log.w(
+                                    "EXPORT_ENCODER",
+                                    "FFmpeg encoder $failedEncoder failed; retrying with " +
+                                            "${fallbackCodecArguments.first().getOrNull(1)}. " +
+                                            "Reason: ${logs.takeLast(1200)}"
+                                )
                                 submitVideoSession(
                                     args = fallbackArgs,
                                     outputFile = outputFile,
                                     durationMs = durationMs,
                                     customFolderUri = customFolderUri,
                                     sequences = sequences,
-                                    allowSoftwareFallback = false
+                                    fallbackCodecArguments = fallbackCodecArguments.drop(1)
                                 )
                                 return@executeWithArgumentsAsync
                             }
@@ -1284,7 +1807,9 @@ class VideoExporter(
                 else -> "mp4"
             }
             val baseName = fileName.substringBeforeLast('.')
-            val realFileName = "$baseName.$ext"
+            // ⚡ URI-hash cache — same source never re-copies
+            val uriHash = uri.toString().hashCode().toUInt().toString(16)
+            val realFileName = "${baseName}_${uriHash}.$ext"
             val file = File(context.cacheDir, realFileName)
 
             if (file.exists() && file.length() > 0) return file

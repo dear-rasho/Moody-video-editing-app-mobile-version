@@ -215,53 +215,44 @@ object TextBitmapRenderer {
                 val done = completedCounter.addAndGet(frameCount)
                 onProgress(done.toFloat() / totalFrames.toFloat())
             }
+
+            // ═══════════════════════════════════════════════════════════
+            //  ⚡ FAST PATH: Static text — render ONE frame per clip only
+            //  This is the biggest win: instead of rendering the whole
+            //  timeline, we render one frame per static text clip and let
+            //  FFmpeg overlay it with enable='between(t,start,end)'.
+            // ═══════════════════════════════════════════════════════════
             if (canRenderAsStaticTimeline(
                     textClips = sortedTextClips,
                     imageClips = sortedImageClips,
                     overlayClips = sortedOverlayClips
                 )
             ) {
-                val boundaries = buildList {
-                    add(0)
-                    add(totalFrames)
-                    (sortedTextClips + sortedImageClips).forEach { clip ->
-                        add(frameAtOrAfter(clip.timelineStartMs, fps, totalFrames))
-                        add(frameAtOrAfter(clip.timelineEndMs, fps, totalFrames))
-                    }
-                }.distinct().sorted()
                 val sequences = mutableListOf<TextOverlaySequence>()
+                val staticClips = (sortedTextClips + sortedImageClips)
+                    .filter { it.timelineEndMs > it.timelineStartMs }
+                    .sortedBy { it.timelineStartMs }
 
-                boundaries.zipWithNext().forEachIndexed { index, (startFrame, endFrame) ->
+                staticClips.forEachIndexed { index, clip ->
                     currentCoroutineContext().ensureActive()
                     if (shouldCancel()) throw CancellationException("Text rendering cancelled")
-                    val frameCount = endFrame - startFrame
-                    if (frameCount <= 0) return@forEachIndexed
 
-                    val timelineMs = (startFrame.toLong() * 1000L) / fps
-                    val hasVisibleClip = analyzeFrame(
-                        timelineMs,
-                        sortedTextClips,
-                        sortedImageClips,
-                        emptyList()
-                    ).needsRender
-                    if (!hasVisibleClip) {
-                        onFramesDone(frameCount)
-                        return@forEachIndexed
-                    }
+                    val clipStartFrame = frameAtOrAfter(clip.timelineStartMs, fps, totalFrames)
+                    val clipEndFrame = frameAtOrAfter(clip.timelineEndMs, fps, totalFrames)
+                    val clipFrames = (clipEndFrame - clipStartFrame).coerceAtLeast(1)
 
-                    sequences += renderChunk(
+                    val seq = renderChunk(
                         workingDirectory = workingDirectory,
                         chunkIdx = index,
-                        startFrame = startFrame,
-                        chunkSize = frameCount,
+                        startFrame = clipStartFrame,
+                        chunkSize = 1,                    // ⚡ ONLY one frame
                         singleStaticSequence = true,
                         totalFrames = totalFrames,
                         fps = fps,
-                        W = W,
-                        H = H,
+                        W = W, H = H,
                         context = context,
-                        layerClips = sortedTextClips,
-                        imageClips = sortedImageClips,
+                        layerClips = listOf(clip),
+                        imageClips = if (clip in sortedImageClips) listOf(clip) else emptyList(),
                         overlayClips = emptyList(),
                         imageBitmaps = imageBitmaps,
                         textTextureBitmaps = textTextureBitmaps,
@@ -270,10 +261,23 @@ object TextBitmapRenderer {
                         shouldCancel = shouldCancel,
                         imageFormat = imageFormat,
                         jpegQuality = jpegQuality,
-                        onFramesDone = onFramesDone
+                        onFramesDone = { onFramesDone(clipFrames) }
+                    )
+                    // Set sequence timing so FFmpeg knows the real time window
+                    sequences += seq.copy(
+                        startSec = clip.timelineStartMs / 1000.0,
+                        endSec = clip.timelineEndMs / 1000.0,
+                        isStaticImage = true
                     )
                 }
+
                 val orderedSequences = sequences.sortedBy { it.startSec }
+                Log.i(
+                    TAG,
+                    "⚡ STATIC FAST PATH: ${staticClips.size} clips, " +
+                            "${sequences.sumOf { it.frameCount }} frames rendered " +
+                            "(instead of $totalFrames full-timeline frames)"
+                )
                 logRenderPerformance(
                     startedAtMs = renderStartedAtMs,
                     sequences = orderedSequences,
@@ -284,6 +288,10 @@ object TextBitmapRenderer {
                 return@withContext orderedSequences
             }
 
+            // ═══════════════════════════════════════════════════════════
+            //  ANIMATED TEXT — must render every frame
+            // ═══════════════════════════════════════════════════════════
+            Log.i(TAG, "ANIMATED PATH: full-timeline render ($totalFrames frames)")
             val totalChunks = (totalFrames + CHUNK_SIZE - 1) / CHUNK_SIZE
             val nextChunk = AtomicInteger(0)
             val pixelCount = W.toLong() * H
@@ -804,7 +812,6 @@ object TextBitmapRenderer {
                 )
             ) return
 
-            // Image-relative crop → convert to canvas coords
             val bmpAspect = bitmap.width.toFloat() / bitmap.height
             val canvasAR = W.toFloat() / H
             val fitW: Float; val fitH: Float
@@ -948,7 +955,6 @@ object TextBitmapRenderer {
             if (w > measuredW) measuredW = w
         }
 
-        // ✅ FIX: EXACT MATCH TO COMPOSE ENGINE
         val initialSize = state.fontSize.toFloat() * scale
         val lineHeightPx = initialSize * state.lineHeight.coerceIn(0.1f, 200f)
         val lineCount = lines.size.coerceAtLeast(1)
@@ -1071,7 +1077,6 @@ object TextBitmapRenderer {
                 color = st.color.toInt()
             }
 
-            // ✅ CLAMP WIDENED HERE TOO
             val clampedX = sampled.x.coerceIn(-100f, 200f)
             val clampedY = sampled.y.coerceIn(-100f, 200f)
 

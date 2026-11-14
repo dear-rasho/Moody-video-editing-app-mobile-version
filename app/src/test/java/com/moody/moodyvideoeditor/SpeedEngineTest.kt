@@ -3,6 +3,7 @@ package com.moody.moodyvideoeditor
 import com.moody.moodyvideoeditor.data.Keyframe
 import com.moody.moodyvideoeditor.data.KeyframeLibrary
 import com.moody.moodyvideoeditor.utils.SpeedEngine
+import android.net.TestUri
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -118,7 +119,7 @@ class SpeedEngineTest {
             )
         )
         val clip = com.moody.moodyvideoeditor.data.EditorClip(
-            uri = android.net.Uri.EMPTY,
+            uri = TestUri(),
             name = "speed ramp",
             sourceStartMs = 0L,
             sourceEndMs = 10_000L,

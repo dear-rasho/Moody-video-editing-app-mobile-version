@@ -1,6 +1,6 @@
 package com.moody.moodyvideoeditor
 
-import android.net.Uri
+import android.net.TestUri
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.utils.TimelineTools
 import org.junit.Assert.assertEquals
@@ -39,7 +39,7 @@ class TimelineToolsTest {
 
     private fun audioClip(id: String, track: Int) = EditorClip(
         id = id,
-        uri = Uri.EMPTY,
+        uri = TestUri(),
         name = "Audio",
         type = "audio/mpeg",
         sourceStartMs = 0L,
@@ -51,7 +51,7 @@ class TimelineToolsTest {
 
     private fun audioSettingsClip(id: String, track: Int) = EditorClip(
         id = id,
-        uri = Uri.EMPTY,
+        uri = TestUri(),
         name = "Audio Settings",
         type = "audiofx/plain",
         sourceStartMs = 0L,

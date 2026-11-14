@@ -98,14 +98,12 @@ object EffectsEngine {
     fun getEffectsAbove(
         clips: List<EditorClip>,
         timeMs: Long,
-        videoTrackIdx: Int,
-        hiddenVisualTracks: Set<Int> = emptySet()
+        videoTrackIdx: Int
     ): List<EditorClip> {
         return clips
             .filter {
                 it.isEffectClip &&
                         it.trackIndex > videoTrackIdx &&
-                        it.trackIndex !in hiddenVisualTracks &&
                         timeMs >= it.timelineStartMs &&
                         timeMs < it.timelineEndMs
             }
@@ -297,8 +295,7 @@ object EffectsEngine {
     fun collectActiveOverlays(
         clips: List<EditorClip>,
         timeMs: Long,
-        videoTrackIdx: Int,
-        hiddenVisualTracks: Set<Int> = emptySet()
+        videoTrackIdx: Int
     ): List<ActiveOverlay> {
         val result = mutableListOf<ActiveOverlay>()
 
@@ -306,8 +303,7 @@ object EffectsEngine {
         clips.filter {
             it.isEffectClip &&
                     it.trackIndex > videoTrackIdx &&
-                    timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs &&
-                    it.trackIndex !in hiddenVisualTracks
+                    timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs
         }.sortedBy { it.trackIndex }
             .forEach { clip ->
                 clip.effectState?.overlay?.let { cfg: OverlayConfig ->
@@ -342,8 +338,7 @@ object EffectsEngine {
         clips.filter {
             it.isOverlayClip &&
                     it.trackIndex > videoTrackIdx &&
-                    timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs &&
-                    it.trackIndex !in hiddenVisualTracks
+                    timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs
         }.sortedBy { it.trackIndex }
             .forEach { clip ->
                 clip.overlay?.let {

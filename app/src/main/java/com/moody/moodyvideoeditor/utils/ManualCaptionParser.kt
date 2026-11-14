@@ -99,19 +99,25 @@ object ManualCaptionParser {
     private fun hasExtendedTimestampSyntax(input: String): Boolean {
         if (input.contains("-->")) return true
 
+        val secondsRangeRegex =
+            Regex("""^\s*\d+(?:\.\d+)?\s*[-–—]\s*\d+(?:\.\d+)?\s+.+$""")
         return input.lineSequence().any { line ->
             val trimmed = line.trim()
             STANDALONE_TIMESTAMP_REGEX.matches(trimmed) ||
-                    Regex(
-                        """^\s*[\[(]?\s*\d{1,3}(?:\s*[.:,-]\s*\d{1,3}){1,3}"""
-                    ).containsMatchIn(line) ||
-                    Regex("""^\s*\[\s*\d+\s*:\s*\d""").containsMatchIn(line) ||
-                    Regex("""^\s*\(\s*\d+\s*:\s+\d""").containsMatchIn(line) ||
-                    Regex("""^\s*[\[(]\s*\d+\s*:\s*\d+\s*:\s*\d+""")
-                        .containsMatchIn(line) ||
-                    Regex("""[\[(]\s*\d+\s*[-.]\s*\d+""").containsMatchIn(line) ||
-                    Regex("""^\d{1,3}(?::\d{1,2}){1,2}\s*[-–—]\s*\D.+$""")
-                        .matches(trimmed)
+                    (!secondsRangeRegex.matches(trimmed) &&
+                            (Regex(
+                                """^\s*[\[(]?\s*\d{1,3}(?:\s*[.:,-]\s*\d{1,3}){1,3}"""
+                            ).containsMatchIn(line) ||
+                                    Regex("""^\s*\[\s*\d+\s*:\s*\d""")
+                                        .containsMatchIn(line) ||
+                                    Regex("""^\s*\(\s*\d+\s*:\s+\d""")
+                                        .containsMatchIn(line) ||
+                                    Regex("""^\s*[\[(]\s*\d+\s*:\s*\d+\s*:\s*\d+""")
+                                        .containsMatchIn(line) ||
+                                    Regex("""[\[(]\s*\d+\s*[-.]\s*\d+""")
+                                        .containsMatchIn(line) ||
+                                    Regex("""^\d{1,3}(?::\d{1,2}){1,2}\s*[-–—]\s*\D.+$""")
+                                        .matches(trimmed)))
         }
     }
 

@@ -29,4 +29,24 @@ class FFmpegFiltersTest {
 
         assertFalse(filter.contains("vignette="))
     }
+
+    @Test
+    fun timelineEnableIsAddedToExpensiveAdjustmentFilter() {
+        val filter = FFmpegFilters.withTimelineEnable(
+            "lut3d=file='adjustment.cube':interp=tetrahedral",
+            "between(t,2.0,4.0)"
+        )
+
+        assertEquals(
+            "lut3d=file='adjustment.cube':interp=tetrahedral:enable='between(t,2.0,4.0)'",
+            filter
+        )
+    }
+
+    @Test
+    fun adjustmentFilterIsUnchangedWithoutTimelineEnable() {
+        val filter = "lut3d=file='adjustment.cube':interp=tetrahedral"
+
+        assertEquals(filter, FFmpegFilters.withTimelineEnable(filter, null))
+    }
 }

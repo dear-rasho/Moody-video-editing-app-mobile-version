@@ -57,6 +57,7 @@ import com.moody.moodyvideoeditor.data.Keyframe
 import com.moody.moodyvideoeditor.data.KeyframeLibrary
 import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.utils.SpeedEngine
+import com.moody.moodyvideoeditor.utils.TimelineZoom
 import kotlin.math.abs
 
 private fun createSmoothGraphPath(points: List<Offset>): Path {
@@ -381,7 +382,10 @@ fun KeyframeGraphDialog(
                         modifier = Modifier.fillMaxSize()
                     ) {
                         val canvasWidthDp =
-                            maxOf(maxWidth.value, graphDurationSec * 80f * zoom)
+                            TimelineZoom.safeContentWidthDp(
+                                maxOf(maxWidth.value, graphDurationSec * 80f * zoom),
+                                LocalDensity.current.density
+                            )
                         Box(
                         modifier = Modifier
                             .fillMaxSize()

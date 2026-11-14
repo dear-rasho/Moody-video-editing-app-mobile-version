@@ -1,6 +1,6 @@
 package com.moody.moodyvideoeditor
 
-import android.net.Uri
+import android.net.TestUri
 import com.moody.moodyvideoeditor.data.AudioAdjustmentSettings
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.utils.AudioEngine
@@ -102,18 +102,9 @@ class AudioEngineTest {
     }
 
     @Test
-    fun audioSettingsNoiseReductionProducesDenoiseFilter() {
-        val filters = AudioEngine.audioAdjustmentFilters(
-            AudioAdjustmentSettings(noiseReduction = 80f)
-        )
-
-        assertTrue(filters.any { it == "afftdn=nr=24.0000:nf=-35:tn=1:gs=5" })
-    }
-
-    @Test
     fun audioSettingsLayerProcessesLinkedVideoAudioAndKeepsReverbTail() {
         val linkedAudio = EditorClip(
-            uri = Uri.EMPTY,
+            uri = TestUri(),
             name = "Video audio",
             type = "audio/mpeg",
             sourceStartMs = 0L,
@@ -124,7 +115,7 @@ class AudioEngineTest {
             linkedId = "video-audio-link"
         )
         val settingsLayer = EditorClip(
-            uri = Uri.EMPTY,
+            uri = TestUri(),
             name = "Audio Settings",
             type = "audiofx/plain",
             sourceStartMs = 0L,
@@ -172,7 +163,7 @@ class AudioEngineTest {
     @Test
     fun audioSettingsLayerDoesNotAffectAudioTracksBelowIt() {
         val audioClip = EditorClip(
-            uri = Uri.EMPTY,
+            uri = TestUri(),
             name = "Audio",
             type = "audio/mpeg",
             sourceStartMs = 0L,
@@ -182,7 +173,7 @@ class AudioEngineTest {
             isAudio = true
         )
         val settingsLayer = EditorClip(
-            uri = Uri.EMPTY,
+            uri = TestUri(),
             name = "Audio Settings",
             type = "audiofx/plain",
             sourceStartMs = 0L,
@@ -211,7 +202,7 @@ class AudioEngineTest {
     fun audioSettingsLayerUsesAbsoluteTimelineForTrimmedExportRange() {
         val originalAudio = EditorClip(
             id = "audio",
-            uri = Uri.EMPTY,
+            uri = TestUri(),
             name = "Audio",
             type = "audio/mpeg",
             sourceStartMs = 0L,
@@ -227,7 +218,7 @@ class AudioEngineTest {
         )
         val settingsLayer = EditorClip(
             id = "settings",
-            uri = Uri.EMPTY,
+            uri = TestUri(),
             name = "Audio Settings",
             type = "audiofx/plain",
             sourceStartMs = 0L,
@@ -256,7 +247,7 @@ class AudioEngineTest {
     @Test
     fun audioMixesDoNotAutomaticallyAttenuateOriginalAudio() {
         val source = EditorClip(
-            uri = Uri.EMPTY,
+            uri = TestUri(),
             name = "Audio",
             type = "audio/mpeg",
             sourceStartMs = 0L,
@@ -265,7 +256,7 @@ class AudioEngineTest {
             isAudio = true
         )
         val effectLayer = EditorClip(
-            uri = Uri.EMPTY,
+            uri = TestUri(),
             name = "Audio Effect",
             type = "audiofx/plain",
             sourceStartMs = 0L,

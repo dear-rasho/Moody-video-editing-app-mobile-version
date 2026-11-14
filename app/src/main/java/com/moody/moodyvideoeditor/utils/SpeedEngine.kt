@@ -3,6 +3,7 @@ package com.moody.moodyvideoeditor.utils
 import com.moody.moodyvideoeditor.data.EditorClip
 import com.moody.moodyvideoeditor.data.KeyframeLibrary
 import com.moody.moodyvideoeditor.data.KeyframeMap
+import kotlin.math.roundToLong
 
 // Mirrors js/features/speed.js
 // Speed application + linked clip sync.
@@ -142,7 +143,7 @@ object SpeedEngine {
         val targetSec = offsetMs / 1000f
         val elapsedSourceSec = integrateSpeed(keyframes, baseSpeed, targetSec)
         return (sourceStartMs + elapsedSourceSec * 1000f)
-            .toLong().coerceIn(sourceStartMs, sourceEndMs)
+            .roundToLong().coerceIn(sourceStartMs, sourceEndMs)
     }
 
     fun durationMsFor(

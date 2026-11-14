@@ -56,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -65,6 +66,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -133,6 +135,7 @@ import com.moody.moodyvideoeditor.utils.AudioSettingsAudioProcessor
 import com.moody.moodyvideoeditor.utils.AudioSettingsRenderersFactory
 import com.moody.moodyvideoeditor.utils.AudioExtractionEngine
 import com.moody.moodyvideoeditor.utils.CropEngine
+import com.moody.moodyvideoeditor.utils.ExportSettings
 import com.moody.moodyvideoeditor.utils.KeyframeStore
 import com.moody.moodyvideoeditor.utils.SettingsConsumer
 import com.moody.moodyvideoeditor.data.settings.SettingsRepository
@@ -148,6 +151,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -160,6 +166,12 @@ private data class MediaInfo(
     val finalUri: Uri,
     val hasAudioTrack: Boolean,
     val originalUri: Uri
+)
+
+private data class ExportCacheSnapshot(
+    val clips: List<EditorClip>,
+    val isPlaying: Boolean,
+    val aspectRatio: String
 )
 
 @Composable
@@ -206,11 +218,46 @@ fun EditorScreen(
     }
     DisposableEffect(Unit) {
         onDispose {
+            viewModel.cancelExportCachePreparation()
             viewModel.saveCurrentProjectInBackground(context)
         }
     }
 
     val settings by SettingsConsumer.current.collectAsState()
+    LaunchedEffect(projectId, settings.defaultExportResolution, settings.defaultFps) {
+        viewModel.state
+            .map { editorState ->
+                ExportCacheSnapshot(
+                    clips = editorState.timelineClips(),
+                    isPlaying = editorState.isPlaying,
+                    aspectRatio = editorState.aspectRatio
+                )
+            }
+            .distinctUntilChanged()
+            .collectLatest { snapshot ->
+                viewModel.cancelExportCachePreparation()
+                if (snapshot.isPlaying || snapshot.clips.isEmpty()) {
+                    return@collectLatest
+                }
+                delay(2_000L)
+                val resolution = settings.defaultExportResolution
+                val fps = settings.defaultFps
+                val (width, height) = ExportSettings.targetDimensions(
+                    resolution,
+                    snapshot.aspectRatio
+                )
+                viewModel.prepareExportCache(
+                    context = context.applicationContext,
+                    clips = snapshot.clips,
+                    targetW = width,
+                    targetH = height,
+                    fps = fps,
+                    bitrateKbps = ExportSettings.autoBitrate(resolution, fps),
+                    format = "mp4"
+                )
+            }
+    }
+
     var previewPlaybackQuality by remember(settings.previewPlaybackQuality) {
         mutableStateOf(settings.previewPlaybackQuality)
     }
@@ -334,7 +381,12 @@ fun EditorScreen(
         ExoPlayer.Builder(
             context,
             AudioSettingsRenderersFactory(context, audioAudioSettingsProcessor)
-        ).build().apply { playWhenReady = false }
+        ).build().apply {
+            trackSelectionParameters = trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
+                .build()
+            playWhenReady = false
+        }
     }
     var loadedAudioUri by remember(audioExoPlayer) { mutableStateOf<Uri?>(null) }
     val pausePlaybackForTrim = {
@@ -374,58 +426,13 @@ fun EditorScreen(
             viewModel.clearPreviewEffect()
         }
     }
-    // ═══════════════════════════════════════════════════════════
-    //  PREVIEW CLEAR ON TRACK HIDE
-    // ═══════════════════════════════════════════════════════════
-
-    LaunchedEffect(state.hiddenVisualTracks, filterEditLayerId, effectEditLayerId) {
-        val editFilter = filterEditLayerId?.let { id ->
-            state.clips.firstOrNull { it.id == id }
-        }
-        if (editFilter != null &&
-            state.hiddenVisualTracks.contains(editFilter.trackIndex)
-        ) {
-            viewModel.clearPreviewFilters()
-        }
-
-        val editEffect = effectEditLayerId?.let { id ->
-            state.clips.firstOrNull { it.id == id }
-        }
-        if (editEffect != null &&
-            state.hiddenVisualTracks.contains(editEffect.trackIndex)
-        ) {
-            viewModel.clearPreviewEffect()
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  MUTE STATE HELPERS
-    // ═══════════════════════════════════════════════════════════
-
-    val activeClipTrackMuted = remember(state.selectedClip, state.mutedAudioTracks) {
-        val sel = state.selectedClip
-        sel != null && sel.isAudio && state.mutedAudioTracks.contains(sel.trackIndex)
-    }
-
-    val anyActiveAudioMuted = remember(
-        state.clips, state.currentPosMs, state.mutedAudioTracks
-    ) {
-        state.clips.any { c ->
-            c.isAudio &&
-                    state.currentPosMs >= c.timelineStartMs &&
-                    state.currentPosMs < c.timelineEndMs &&
-                    state.mutedAudioTracks.contains(c.trackIndex)
-        }
-    }
-
-    val activeVideoClip = remember(state.clips, state.currentPosMs, state.hiddenVisualTracks) {
+    val activeVideoClip = remember(state.clips, state.currentPosMs) {
         state.clips
             .filter {
                 it.isVisualClip &&
                         !it.type.startsWith("image/") &&
                         state.currentPosMs >= it.timelineStartMs &&
-                        state.currentPosMs < it.timelineEndMs &&
-                        !state.hiddenVisualTracks.contains(it.trackIndex)
+                        state.currentPosMs < it.timelineEndMs
             }
             .maxByOrNull { it.trackIndex }
     }
@@ -443,7 +450,7 @@ fun EditorScreen(
                     state.currentPosMs < clip.timelineEndMs
         }
     }
-    val activeAudioClip = remember(state.clips, state.currentPosMs, state.mutedAudioTracks) {
+    val activeAudioClip = remember(state.clips, state.currentPosMs) {
         state.clips
             .filter {
                 it.isAudio &&
@@ -451,8 +458,7 @@ fun EditorScreen(
                         it.uri.toString().isNotBlank() &&
                         it.uri != Uri.EMPTY &&
                         state.currentPosMs >= it.timelineStartMs &&
-                        state.currentPosMs < it.timelineEndMs &&
-                        !state.mutedAudioTracks.contains(it.trackIndex)
+                        state.currentPosMs < it.timelineEndMs
             }
             .maxByOrNull { it.trackIndex }
     }
@@ -525,8 +531,6 @@ fun EditorScreen(
 
     val videoPlaybackVolume = when {
         state.isMuted -> 0f
-        activeClipTrackMuted -> 0f
-        anyActiveAudioMuted -> 0f
         activeVideoHasSeparateAudio -> 0f
         else -> activeVideoClip?.volume ?: state.volume
     } * videoAudioSettingsVolumeMultiplier
@@ -539,8 +543,6 @@ fun EditorScreen(
     LaunchedEffect(
         state.volume,
         state.isMuted,
-        activeClipTrackMuted,
-        anyActiveAudioMuted,
         activeVideoClip?.id,
         activeVideoClip?.volume,
         activeVideoHasSeparateAudio,
@@ -615,6 +617,7 @@ fun EditorScreen(
         activeVideoClip?.uri,
         activeVideoClip?.sourceStartMs,
         activeVideoClip?.sourceEndMs,
+        activeVideoHasSeparateAudio,
         state.currentPosMs.takeIf { !isPlaybackActive },
         state.clips,
         isPlaybackActive
@@ -626,6 +629,11 @@ fun EditorScreen(
             exoPlayer.pause()
             return@LaunchedEffect
         }
+
+        exoPlayer.trackSelectionParameters =
+            exoPlayer.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, activeVideoHasSeparateAudio)
+                .build()
 
         val currentUri = exoPlayer.currentMediaItem?.localConfiguration?.uri
 
@@ -680,7 +688,6 @@ fun EditorScreen(
         activeAudioClip?.sourceEndMs,
         state.currentPosMs.takeIf { !isPlaybackActive },
         state.clips,
-        state.mutedAudioTracks,
         isPlaybackActive
     ) {
         val playheadMs = state.currentPosMs
@@ -782,7 +789,6 @@ fun EditorScreen(
                     if (next < clip.timelineStartMs || next >= clip.timelineEndMs) return@forEach
                     if (clip.isVisualClip &&
                         !clip.type.startsWith("image/") &&
-                        !s.hiddenVisualTracks.contains(clip.trackIndex) &&
                         clip.trackIndex > (activeVideo?.trackIndex ?: Int.MIN_VALUE)
                     ) {
                         activeVideo = clip
@@ -791,7 +797,6 @@ fun EditorScreen(
                         !clip.isAudioEffectClip &&
                         clip.uri.toString().isNotBlank() &&
                         clip.uri != Uri.EMPTY &&
-                        !s.mutedAudioTracks.contains(clip.trackIndex) &&
                         clip.trackIndex > (activeAudio?.trackIndex ?: Int.MIN_VALUE)
                     ) {
                         activeAudio = clip
@@ -1012,9 +1017,6 @@ fun EditorScreen(
                             }
                         } else uri
 
-                        val dur = if (isImage) 5000L
-                        else VideoUtils.getVideoDuration(context, uri)
-
                         try {
                             context.contentResolver.takePersistableUriPermission(
                                 uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
@@ -1022,10 +1024,14 @@ fun EditorScreen(
                         } catch (_: Exception) {
                         }
 
+                        val mediaMetadata = if (isImage) null
+                        else VideoUtils.getMediaMetadata(context, uri)
+                        val dur = mediaMetadata?.durationMs ?: 5000L
+
                         val hasAudioTrack = when {
                             isImage -> false
                             mime.startsWith("audio/") -> true
-                            else -> VideoUtils.hasAudioTrack(context, finalUri)
+                            else -> mediaMetadata?.hasAudioTrack == true
                         }
                         MediaInfo(name, dur, mime, finalUri, hasAudioTrack, uri)
                     } catch (e: Exception) {
@@ -2532,6 +2538,16 @@ fun EditorScreen(
     }
     val configuration = LocalConfiguration.current
     val screenHeightDp = configuration.screenHeightDp
+    val density = LocalDensity.current
+    var stablePreviewHeightDp by remember(
+        configuration.screenWidthDp,
+        configuration.screenHeightDp
+    ) { mutableFloatStateOf(0f) }
+    val previewHeightDp = if (stablePreviewHeightDp > 0f) {
+        stablePreviewHeightDp.dp
+    } else {
+        (screenHeightDp * 0.35f).coerceAtLeast(120f).dp
+    }
     val timelineHeight = when {
         screenHeightDp < 640 -> 170.dp
         screenHeightDp < 800 -> 200.dp
@@ -2635,9 +2651,19 @@ fun EditorScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
+                    .then(
+                        if (activePanel == null) Modifier.weight(1f)
+                        else Modifier.height(previewHeightDp)
+                    )
                     .heightIn(min = 120.dp)
                     .background(Color(0xFF0A0A0A))
+                    .onSizeChanged { size ->
+                        if (activePanel == null && size.height > 0) {
+                            stablePreviewHeightDp = with(density) {
+                                size.height.toDp().value
+                            }
+                        }
+                    }
             ) {
                 PreviewCanvas(
                     exoPlayer = exoPlayer,
@@ -2647,7 +2673,6 @@ fun EditorScreen(
                     clips = state.clips,
                     currentPosMs = state.currentPosMs,
                     isPlaying = isPlaybackActive,
-                    hiddenVisualTracks = state.hiddenVisualTracks,
                     aspectRatioKey = state.aspectRatio,
                     selectedClipId = state.selectedClipId,
                     multiSelectedIds = state.multiSelectedIds,
@@ -2757,8 +2782,7 @@ fun EditorScreen(
                             val activeVisual = state.clips.firstOrNull {
                                 it.isVisualClip &&
                                         state.currentPosMs >= it.timelineStartMs &&
-                                        state.currentPosMs < it.timelineEndMs &&
-                                        !state.hiddenVisualTracks.contains(it.trackIndex)
+                                        state.currentPosMs < it.timelineEndMs
                             }
                             if (activeVisual != null) exoPlayer.play()
 
@@ -2767,8 +2791,7 @@ fun EditorScreen(
                                         !it.isAudioEffectClip &&
                                         it.uri != Uri.EMPTY &&
                                         state.currentPosMs >= it.timelineStartMs &&
-                                        state.currentPosMs < it.timelineEndMs &&
-                                        !state.mutedAudioTracks.contains(it.trackIndex)
+                                        state.currentPosMs < it.timelineEndMs
                             }
                             if (activeAudio != null) audioExoPlayer.play()
                         }
@@ -2823,13 +2846,9 @@ fun EditorScreen(
                 canCopy = state.selectedClipId != null ||
                         state.multiSelectedIds.isNotEmpty(),
                 canPaste = state.clipboardAction == "paste",
-                onAddVisualLayer = { viewModel.addVisualLayer() },
-                onAddAudioLayer = { viewModel.addAudioLayer() },
                 onSelectBackward = { viewModel.selectBackward() },
                 onSelectForward = { viewModel.selectForward() },
                 onSelectAll = { viewModel.selectAllClips() },
-                onSelectAllTrack = { viewModel.selectAllOnCurrentTrack() },
-                onDeselectAll = { viewModel.deselectAll() },
                 onLink = { viewModel.linkSelectedClips() },
                 onUnlink = {
                     state.selectedClip?.let {
@@ -2857,8 +2876,6 @@ fun EditorScreen(
                     state.currentPosMs < (sel.timelineEndMs - EditorClip.MIN_DURATION_MS)
                 } ?: false,
                 zoomSlider = state.timelineZoom,
-                totalSec = totalDurationMs / 1000f,
-                viewportContentWidthDp = 320f,
                 onZoomChange = { viewModel.setTimelineZoom(it) }
             )
 
@@ -2899,23 +2916,11 @@ fun EditorScreen(
                     onDragStart = { viewModel.beginDrag() },
                     onDragEnd = { viewModel.commitDrag() },
                     onDragCancel = { viewModel.cancelDrag() },
-                    onToggleVisualVisibility = { idx ->
-                        viewModel.toggleVisualTrackVisibility(idx)
-                    },
-                    onToggleAudioMute = { idx ->
-                        viewModel.toggleAudioTrackMute(idx)
-                    },
-                    onSwapTracks = { from, to, isAudio ->
-                        viewModel.swapTracks(from, to, isAudio)
-                    },
                     onTransitionDelete = { clipId ->
                         viewModel.removeTransitionFor(clipId)
                     },
                     onTransitionDurationChange = { clipId, ms ->
                         viewModel.setTransitionDuration(clipId, ms)
-                    },
-                    onTimelineZoomChange = { zoom ->
-                        viewModel.setTimelineZoom(zoom)
                     },
                     onReplaceRequested = { clipId ->
                         val clip = clipsById[clipId]
@@ -2977,9 +2982,7 @@ fun EditorScreen(
             onResetFolder = { viewModel.setExportFolderUri(null) },
             onStartExport = { config ->
                 val timelineClips = state.timelineClips()
-                val clipsForExport = timelineClips.filter { clip ->
-                    clip.isAudio || clip.trackIndex !in state.hiddenVisualTracks
-                }
+                val clipsForExport = timelineClips
                 Log.i(
                     "EXPORT_PLAN",
                     "timelineLayers=${state.visualLayerCount}v/${state.audioLayerCount}a " +
