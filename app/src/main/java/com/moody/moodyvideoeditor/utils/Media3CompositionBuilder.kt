@@ -23,11 +23,15 @@ class Media3CompositionBuilder(private val context: Context) {
      * Builds a composition only for contiguous, single-track visual clips with no unsupported
      * editing features. A null result means the caller should use the existing FFmpeg path.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun buildComposition(
         clips: List<EditorClip>,
+        textSequences: List<TextOverlaySequence>,
+        maskSequences: List<MaskSequenceData>,
         outputWidth: Int,
         outputHeight: Int,
-        fps: Int
+        fps: Int,
+        timestampOffsetSec: Double = 0.0
     ): Composition? {
         if (clips.isEmpty() || outputWidth <= 0 || outputHeight <= 0 || fps <= 0) {
             return null
@@ -35,6 +39,21 @@ class Media3CompositionBuilder(private val context: Context) {
 
         val orderedClips = clips.sortedBy(EditorClip::timelineStartMs)
         if (orderedClips.any { !isSupportedClip(it) } || !hasContiguousTimeline(orderedClips)) {
+            return null
+        }
+        if (maskSequences.any { sequence ->
+                sequence.frameCount <= 0 ||
+                        (sequence.staticFilePath == null && sequence.fps <= 0) ||
+                        sequence.clipEndSec <= sequence.clipStartSec ||
+                        orderedClips.none { it.id == sequence.clipId && it.mask.isActive }
+            }
+        ) {
+            return null
+        }
+        if (orderedClips.any { clip ->
+                clip.mask.isActive && maskSequences.none { it.clipId == clip.id }
+            }
+        ) {
             return null
         }
         val editedItems = orderedClips.map { clip ->
@@ -64,6 +83,21 @@ class Media3CompositionBuilder(private val context: Context) {
             videoEffects.add(AdjustmentSpatialGlEffect(clip.adjustments))
             videoEffects.add(FilterLayerGlEffect(clip.filters))
             videoEffects.add(ColorWheelGlEffect(clip.colorWheel))
+            maskSequences
+                .filter { it.clipId == clip.id }
+                .forEach { mask ->
+                    videoEffects.add(
+                        MaskOverlayGlEffect(
+                            pattern = mask.pattern,
+                            staticFilePath = mask.staticFilePath,
+                            fps = mask.fps,
+                            frameCount = mask.frameCount,
+                            clipStartSec = mask.clipStartSec,
+                            clipEndSec = mask.clipEndSec,
+                            timestampOffsetSec = timestampOffsetSec
+                        )
+                    )
+                }
 
             val audioProcessors = mutableListOf<AudioProcessor>()
             if (clip.speed != 1f) {
@@ -94,7 +128,7 @@ class Media3CompositionBuilder(private val context: Context) {
 
         if (!clip.type.startsWith("video/") && !clip.type.startsWith("image/")) return false
         if (clip.effectState != null || clip.textState != null ||
-            clip.transition?.isActive == true || clip.mask.isActive ||
+            clip.transition?.isActive == true ||
             clip.layerShadow.enabled || clip.overlay.type != "none" ||
             clip.chromaKey.isActive || clip.spotlight != null ||
             clip.visualizer != null || clip.freeze != null ||
