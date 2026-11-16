@@ -1,6 +1,9 @@
 package com.moody.moodyvideoeditor.utils
 
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
 import android.media.MediaCodecList
+import android.media.MediaFormat
 import android.os.Build
 import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
@@ -12,6 +15,12 @@ internal object VideoEncoderPolicy {
     private const val H264_HW = "h264_mediacodec"
     private const val HEVC_HW = "hevc_mediacodec"
     private const val SOFTWARE = "libx264"
+
+    // Set to true only when debugging encoder selection. When false, the
+    // heavy MediaCodec inventory dump is skipped entirely (it used to run
+    // 2-3 times per export and add ~170ms of log spam).
+    private const val DEBUG_DIAGNOSTICS = false
+
     private val ffmpegVideoEncoders: Set<String> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         queryFfmpegVideoEncoders()
     }
@@ -29,6 +38,8 @@ internal object VideoEncoderPolicy {
         fps: Int,
         bitrateKbps: Int
     ): List<List<String>> {
+        logMediaCodecDiagnostics(width, height, fps, bitrateKbps)
+
         val is4K = maxOf(width, height) >= 3840
         val requestedOrder = if (is4K) {
             listOf(HEVC_HW, H264_HW)
@@ -69,6 +80,110 @@ internal object VideoEncoderPolicy {
                     candidates.mapNotNull { it.getOrNull(1) }.joinToString(" -> ")
         )
         return candidates
+    }
+
+    private fun logMediaCodecDiagnostics(
+        width: Int,
+        height: Int,
+        fps: Int,
+        bitrateKbps: Int
+    ) {
+        if (!DEBUG_DIAGNOSTICS) return
+
+        val requestedBitrate = (bitrateKbps.toLong() * 1000L)
+            .coerceIn(0L, Int.MAX_VALUE.toLong())
+            .toInt()
+
+        try {
+            val codecs = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+            for (codec in codecs) {
+                val supportedTypes = codec.supportedTypes
+                val hardwareFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    "isHardwareAccelerated=${codec.isHardwareAccelerated}, " +
+                            "isSoftwareOnly=${codec.isSoftwareOnly}"
+                } else {
+                    "isHardwareAccelerated=unavailable, isSoftwareOnly=unavailable"
+                }
+                Log.i(
+                    TAG,
+                    "MediaCodec inventory: name=${codec.name}, isEncoder=${codec.isEncoder}, " +
+                            "supportedTypes=${supportedTypes.joinToString()}, $hardwareFlags"
+                )
+
+                for (mime in listOf("video/avc", "video/hevc")) {
+                    val supportsMime = supportedTypes.any { it.equals(mime, ignoreCase = true) }
+                    if (!codec.isEncoder && !supportsMime) continue
+
+                    val hardwareCheckPassed = isHardwareCodec(codec)
+                    val rejectionReasons = mutableListOf<String>()
+                    if (!codec.isEncoder) rejectionReasons += "codec is not an encoder"
+                    if (!supportsMime) rejectionReasons += "requested MIME type is unsupported"
+                    if (!hardwareCheckPassed) {
+                        rejectionReasons += "codec fails the current hardware classification check"
+                    }
+
+                    var supportedWidths = "unavailable"
+                    var supportedHeights = "unavailable"
+                    var sizeAndRateSupported = "not checked"
+                    var bitrateRange = "unavailable"
+                    var bitrateSupported = "not checked"
+
+                    if (supportsMime) {
+                        try {
+                            val videoCapabilities =
+                                codec.getCapabilitiesForType(mime).videoCapabilities
+                            if (videoCapabilities == null) {
+                                rejectionReasons +=
+                                    "codec did not expose video capabilities for the MIME type"
+                            } else {
+                                supportedWidths = videoCapabilities.supportedWidths.toString()
+                                supportedHeights = videoCapabilities.supportedHeights.toString()
+                                bitrateRange = videoCapabilities.bitrateRange.toString()
+                                val supportsRequestedSizeAndRate =
+                                    videoCapabilities.areSizeAndRateSupported(
+                                        width,
+                                        height,
+                                        fps.toDouble()
+                                    )
+                                val supportsRequestedBitrate =
+                                    requestedBitrate in videoCapabilities.bitrateRange
+                                sizeAndRateSupported = supportsRequestedSizeAndRate.toString()
+                                bitrateSupported = supportsRequestedBitrate.toString()
+
+                                if (!supportsRequestedSizeAndRate) {
+                                    rejectionReasons +=
+                                        "requested size/rate ${width}x$height@$fps is unsupported"
+                                }
+                                if (!supportsRequestedBitrate) {
+                                    rejectionReasons +=
+                                        "requested bitrate ${bitrateKbps}kbps is outside the codec range"
+                                }
+                            }
+                        } catch (e: Exception) {
+                            rejectionReasons +=
+                                "could not read video capabilities: ${e.message ?: e.javaClass.simpleName}"
+                        }
+                    } else {
+                        rejectionReasons += "video capabilities were not queried without MIME support"
+                    }
+
+                    Log.i(
+                        TAG,
+                        "MediaCodec capability: name=${codec.name}, mime=$mime, " +
+                                "isEncoder=${codec.isEncoder}, supportsMime=$supportsMime, " +
+                                "hardwareCheckPassed=$hardwareCheckPassed, " +
+                                "supportedWidths=$supportedWidths, supportedHeights=$supportedHeights, " +
+                                "requestedSizeRateSupported=$sizeAndRateSupported, " +
+                                "bitrateRange=$bitrateRange, " +
+                                "requestedBitrate=${bitrateKbps}kbps/$requestedBitrate, " +
+                                "requestedBitrateSupported=$bitrateSupported, " +
+                                "rejectionReason=${rejectionReasons.ifEmpty { listOf("none") }.joinToString("; ")}"
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "MediaCodec diagnostics failed", e)
+        }
     }
 
     fun fallbackCodecArguments(
@@ -151,12 +266,13 @@ internal object VideoEncoderPolicy {
     }
 
     private fun hardwareArguments(encoder: String, fps: Int): List<String> {
+        // FFmpeg's h264_mediacodec / hevc_mediacodec do NOT accept
+        // -bitrate_mode, -operating_rate or -ndk_async. Passing them causes
+        // "unrecognized option" and forces a fallback to libx264 even when
+        // the hardware encoder was correctly selected.
         val args = mutableListOf(
             "-c:v", encoder,
-            "-bitrate_mode", "vbr",
-            "-operating_rate", fps.toString(),
-            "-g", (fps * 2).toString(),
-            "-ndk_async", "1"
+            "-g", (fps * 2).toString()
         )
         if (encoder == HEVC_HW) args.addAll(listOf("-tag:v", "hvc1"))
         return args
@@ -204,11 +320,35 @@ internal object VideoEncoderPolicy {
                     null
                 } ?: return@firstNotNullOfOrNull null
 
-                if (videoCapabilities.areSizeAndRateSupported(width, height, fps.toDouble()) &&
-                    bitrate in videoCapabilities.bitrateRange
-                ) {
+                if (bitrate !in videoCapabilities.bitrateRange) {
+                    return@firstNotNullOfOrNull null
+                }
+
+                // Fast path: Android agrees the size/rate is supported.
+                if (videoCapabilities.areSizeAndRateSupported(width, height, fps.toDouble())) {
+                    return@firstNotNullOfOrNull codec.name
+                }
+
+                // Fallback: MediaTek encoders expose wide raw ranges but their
+                // areSizeAndRateSupported() table is conservative and returns false
+                // for configurations the encoder accepts at runtime. Verify via a
+                // real configure() probe before rejecting.
+                val widthOk = width in videoCapabilities.supportedWidths
+                val heightOk = height in videoCapabilities.supportedHeights
+                if (!widthOk || !heightOk) {
+                    return@firstNotNullOfOrNull null
+                }
+
+                Log.w(
+                    TAG,
+                    "${codec.name}: areSizeAndRateSupported(${width}x$height@$fps)=false " +
+                            "but raw ranges accept it — running configure() probe"
+                )
+                if (probeEncoder(codec.name, mime, width, height, fps, bitrate)) {
+                    Log.i(TAG, "${codec.name}: configure() probe succeeded")
                     codec.name
                 } else {
+                    Log.w(TAG, "${codec.name}: configure() probe failed")
                     null
                 }
             }
@@ -218,7 +358,46 @@ internal object VideoEncoderPolicy {
         }
     }
 
-    private fun isHardwareCodec(codec: android.media.MediaCodecInfo): Boolean {
+    /**
+     * Actually creates and configures the encoder with the target format.
+     * Returns true only if configure() succeeds. This is the ground truth —
+     * the MediaCodec capability APIs on MediaTek are known to return false
+     * negatives for configurations the encoder accepts at runtime.
+     */
+    private fun probeEncoder(
+        codecName: String,
+        mime: String,
+        width: Int,
+        height: Int,
+        fps: Int,
+        bitrate: Int
+    ): Boolean {
+        var codec: MediaCodec? = null
+        return try {
+            val format = MediaFormat.createVideoFormat(mime, width, height).apply {
+                setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+                setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                setInteger(
+                    MediaFormat.KEY_COLOR_FORMAT,
+                    MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
+                )
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
+            }
+            codec = MediaCodec.createByCodecName(codecName)
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "probeEncoder($codecName) failed: ${e.message}")
+            false
+        } finally {
+            try {
+                codec?.release()
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    private fun isHardwareCodec(codec: MediaCodecInfo): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             return codec.isHardwareAccelerated && !codec.isSoftwareOnly
         }

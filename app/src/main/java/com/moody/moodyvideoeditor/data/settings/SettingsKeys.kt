@@ -34,6 +34,7 @@ object SettingsKeys {
     val PROXY_MODE_ENABLED = booleanPreferencesKey("proxy_mode_enabled")
     val PREVIEW_PLAYBACK_QUALITY = stringPreferencesKey("preview_playback_quality")
     val EXPORT_SOUND_ENABLED = booleanPreferencesKey("export_sound_enabled")
+    val DEBUG_MEDIA3_EXPORT = booleanPreferencesKey("debug_media3_export")
 
     // ─── Tab 4: Language & Appearance ───
     val APP_LANGUAGE = stringPreferencesKey("app_language")
@@ -67,6 +68,7 @@ object SettingsDefaults {
     const val PROXY_MODE_ENABLED = false
     const val PREVIEW_PLAYBACK_QUALITY = "High"
     const val EXPORT_SOUND_ENABLED = true
+    const val DEBUG_MEDIA3_EXPORT = true
 
     const val APP_LANGUAGE = "en"
     const val APP_THEME = "system"    // system | light | dark

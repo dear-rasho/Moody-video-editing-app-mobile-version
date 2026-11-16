@@ -96,6 +96,18 @@ class SettingsRepository(private val context: Context) {
             )
         }
 
+    val debugMedia3ExportFlow: Flow<Boolean> = context.settingsDataStore.data
+        .catch { throwable ->
+            if (throwable is IOException) {
+                emit(emptyPreferences())
+            } else {
+                throw throwable
+            }
+        }
+        .map { prefs ->
+            prefs[SettingsKeys.DEBUG_MEDIA3_EXPORT] ?: SettingsDefaults.DEBUG_MEDIA3_EXPORT
+        }
+
     // ─────────────────────────────────────────────────────────
     //  WRITE — bulk save (used by Save button)
     //  All writes atomic; DataStore serializes concurrent edits.
@@ -156,6 +168,12 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setLanguage(language: String) {
         context.settingsDataStore.edit { it[SettingsKeys.APP_LANGUAGE] = language }
+    }
+
+    suspend fun setDebugMedia3Export(enabled: Boolean) {
+        context.settingsDataStore.edit {
+            it[SettingsKeys.DEBUG_MEDIA3_EXPORT] = enabled
+        }
     }
 
     suspend fun setPreviewPlaybackQuality(quality: String) {

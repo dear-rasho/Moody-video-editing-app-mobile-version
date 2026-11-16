@@ -3,6 +3,10 @@ package com.moody.moodyvideoeditor.utils
 import android.app.ActivityManager
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
@@ -14,16 +18,23 @@ import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.ReturnCode
 import com.moody.moodyvideoeditor.data.AdjustmentData
 import com.moody.moodyvideoeditor.data.EditorClip
+import com.moody.moodyvideoeditor.data.MaskType
+import com.moody.moodyvideoeditor.data.settings.SettingsRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 import java.util.Collections
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -62,6 +73,11 @@ class VideoExporter(
     @Volatile
     private var isCancelled = false
     private val activeSegmentExporters = ConcurrentHashMap.newKeySet<FFmpegExecutor>()
+
+    private data class RenderedMedia3Masks(
+        val sequences: List<MaskSequenceData>,
+        val directories: List<File>
+    )
 
     suspend fun export(
         clips: List<EditorClip>,
@@ -209,9 +225,108 @@ class VideoExporter(
             trimmedTextClips.isNotEmpty() || overlayImageClips.isNotEmpty() ||
                     spotlightClips.isNotEmpty() || visualizerClips.isNotEmpty() ||
                     edgeGlowClips.isNotEmpty()
+        val debugMedia3ExportEnabled = if (format.equals("mp4", ignoreCase = true)) {
+            try {
+                SettingsRepository(context).debugMedia3ExportFlow.first()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("EXPORT_PLAN", "Could not read the Media3 debug route setting", e)
+                false
+            }
+        } else {
+            false
+        }
 
         when {
             hasBaseVideo -> {
+                if (debugMedia3ExportEnabled) {
+                    var media3Output: File? = null
+                    val maskDirectories = mutableListOf<File>()
+                    try {
+                        val renderedMasks = renderMedia3MaskSequences(
+                            clips = exportClips,
+                            width = targetW,
+                            height = targetH,
+                            fps = fps
+                        )
+                        maskDirectories += renderedMasks.directories
+                        media3Output = createOutputFile(fileName, "mp4")
+                        val exporter = NativeVideoExporter(context) { progress ->
+                            if (!isCancelled) onProgress(0.05f + progress * 0.90f)
+                        }
+                        nativeVideoExporter = exporter
+                        Log.i(
+                            "EXPORT_PLAN",
+                            "route=media3-composition-debug durationMs=$exportDurationMs " +
+                                    "resolution=${targetW}x$targetH fps=$fps " +
+                                    "visualClips=${trimmedVisualClips.size} " +
+                                    "audioClips=${audioOnlyClips.size} " +
+                                    "maskSequences=${renderedMasks.sequences.size}"
+                        )
+                        onProgress(0.02f)
+                        val completed = exporter.exportWithComposition(
+                            clips = exportClips,
+                            textSequences = emptyList(),
+                            maskSequences = renderedMasks.sequences,
+                            outputFile = media3Output,
+                            width = targetW,
+                            height = targetH,
+                            fps = fps,
+                            bitrateKbps = bitrateKbps
+                        )
+                        nativeVideoExporter = null
+                        if (completed) {
+                            if (isCancelled) {
+                                media3Output.delete()
+                                onCancelled()
+                                return
+                            }
+                            onProgress(0.97f)
+                            Log.i(
+                                "EXPORT_RESULT",
+                                "route=media3-composition-debug elapsedMs=" +
+                                        "${SystemClock.elapsedRealtime() - exportStartedAtMs} " +
+                                        "outputBytes=${media3Output.length()}"
+                            )
+                            logOutputMetadata("media3-composition-debug", media3Output)
+                            completeExport(media3Output, customFolderUri, emptyList())
+                            onProgress(1f)
+                            return
+                        }
+                        media3Output.delete()
+                        media3Output = null
+                        Log.i(
+                            "EXPORT_PLAN",
+                            "Media3 composition not supported for this project; using FFmpeg"
+                        )
+                    } catch (e: CancellationException) {
+                        nativeVideoExporter = null
+                        media3Output?.delete()
+                        if (isCancelled) {
+                            onCancelled()
+                            return
+                        }
+                        throw e
+                    } catch (e: Exception) {
+                        nativeVideoExporter = null
+                        media3Output?.delete()
+                        media3Output = null
+                        if (isCancelled) {
+                            onCancelled()
+                            return
+                        }
+                        onProgress(0.01f)
+                        Log.w(
+                            "NATIVE_EXPORT",
+                            "Media3 composition failed; falling back to FFmpeg",
+                            e
+                        )
+                    } finally {
+                        cleanupMaskDirectories(maskDirectories)
+                    }
+                }
+
                 // ═══════════════════════════════════════════════════════════════
                 //  🚀 PARALLEL SEGMENT EXPORT (CapCut-style)
                 //  Simple sequential videos → 2-3 parallel segments → concat
@@ -254,84 +369,6 @@ class VideoExporter(
                         return
                     } catch (e: Exception) {
                         Log.w("EXPORT", "Parallel export failed; using single-pass", e)
-                    }
-                }
-
-                // ─── Native (Media3) fast path for simple single-clip exports ───
-                if (format.equals("mp4", ignoreCase = true) &&
-                    trimmedMatteClips.isEmpty() &&
-                    trimmedVisualClips.size == 1
-                ) {
-                    val nativeClip = trimmedVisualClips.single()
-                    val expectedAudio = nativeAudioTrackForSimpleClip(
-                        clip = nativeClip,
-                        audioClips = audioOnlyClips,
-                        allClips = clips,
-                        rangeStartMs = rangeStart,
-                        rangeEndMs = rangeEnd
-                    )
-                    if (expectedAudio != null) {
-                        val exporter = NativeVideoExporter(context) { progress ->
-                            if (!isCancelled) onProgress(0.05f + progress * 0.90f)
-                        }
-                        val includeAudio =
-                            expectedAudio.takeIf { exporter.hasAudioTrack(nativeClip.uri) == it }
-                        if (includeAudio != null) {
-                            val nativeOutput = createOutputFile(fileName, "mp4")
-                            nativeVideoExporter = exporter
-                            try {
-                                Log.i(
-                                    "EXPORT_PLAN",
-                                    "route=media3-transformer durationMs=${rangeEnd - rangeStart} " +
-                                            "resolution=${targetW}x$targetH fps=$fps audio=$includeAudio"
-                                )
-                                onProgress(0.02f)
-                                exporter.export(
-                                    inputUri = nativeClip.uri,
-                                    outputFile = nativeOutput,
-                                    sourceStartMs = nativeClip.sourceStartMs,
-                                    sourceEndMs = nativeClip.sourceEndMs,
-                                    width = targetW,
-                                    height = targetH,
-                                    fps = fps,
-                                    bitrateKbps = bitrateKbps,
-                                    includeAudio = includeAudio
-                                )
-                                nativeVideoExporter = null
-                                if (isCancelled) {
-                                    nativeOutput.delete()
-                                    onCancelled()
-                                    return
-                                }
-                                onProgress(0.97f)
-                                Log.i(
-                                    "EXPORT_RESULT",
-                                    "route=media3-transformer elapsedMs=" +
-                                            "${SystemClock.elapsedRealtime() - exportStartedAtMs} " +
-                                            "outputBytes=${nativeOutput.length()}"
-                                )
-                                completeExport(nativeOutput, customFolderUri, emptyList())
-                                onProgress(1f)
-                                return
-                            } catch (e: CancellationException) {
-                                nativeVideoExporter = null
-                                nativeOutput.delete()
-                                if (isCancelled) {
-                                    onCancelled()
-                                    return
-                                }
-                                throw e
-                            } catch (e: Exception) {
-                                nativeVideoExporter = null
-                                nativeOutput.delete()
-                                onProgress(0.01f)
-                                Log.w(
-                                    "NATIVE_EXPORT",
-                                    "Native Media3 export failed; falling back to FFmpeg",
-                                    e
-                                )
-                            }
-                        }
                     }
                 }
 
@@ -459,6 +496,7 @@ class VideoExporter(
                                     "${SystemClock.elapsedRealtime() - exportStartedAtMs} " +
                                     "outputBytes=${file.length()}"
                         )
+                        logOutputMetadata("ffmpeg", file)
                         completeExport(file, customFolderUri, allSequences)
                     },
                     onError = { msg ->
@@ -1080,76 +1118,6 @@ class VideoExporter(
         }
     }
 
-    private fun nativeAudioTrackForSimpleClip(
-        clip: EditorClip,
-        audioClips: List<EditorClip>,
-        allClips: List<EditorClip>,
-        rangeStartMs: Long,
-        rangeEndMs: Long
-    ): Boolean? {
-        if (!clip.type.startsWith("video/") ||
-            clip.timelineStartMs > 1L ||
-            clip.timelineEndMs < rangeEndMs - rangeStartMs ||
-            clip.speed != 1f ||
-            clip.volume != 1f ||
-            clip.audioFx != "none" ||
-            clip.audioAdjustments != com.moody.moodyvideoeditor.data.AudioAdjustmentSettings() ||
-            clip.adjustments != AdjustmentData() ||
-            !clip.filters.isDefault ||
-            !clip.colorWheel.isDefault ||
-            clip.overlay.isActive ||
-            clip.keyframes.values.any { it.isNotEmpty() } ||
-            clip.transition?.isActive == true ||
-            clip.mask.isActive ||
-            CropHelper.isCropped(clip) ||
-            clip.layerShadow.enabled ||
-            clip.scale != 1f ||
-            clip.scaleX != 1f ||
-            clip.scaleY != 1f ||
-            clip.rotation != 0f ||
-            clip.offsetX != 0f ||
-            clip.offsetY != 0f ||
-            clip.layerOpacity != 100f ||
-            clip.blendMode != "normal" ||
-            clip.blendOpacity != 100f ||
-            clip.ratio != null ||
-            clip.freeze != null ||
-            clip.lightLeak != null ||
-            clip.spotlight != null ||
-            clip.visualizer != null ||
-            clip.chromaKey.isActive ||
-            clip.effectState != null ||
-            clip.textState != null ||
-            clip.soundFx != "none"
-        ) return null
-
-        val sourceAudio = audioClips.singleOrNull()
-        if (audioClips.size > 1) return null
-        if (sourceAudio != null &&
-            (clip.linkedId == null ||
-                    sourceAudio.linkedId != clip.linkedId ||
-                    sourceAudio.uri != clip.uri ||
-                    sourceAudio.timelineStartMs != clip.timelineStartMs ||
-                    sourceAudio.timelineEndMs != clip.timelineEndMs ||
-                    sourceAudio.sourceStartMs != clip.sourceStartMs ||
-                    sourceAudio.sourceEndMs != clip.sourceEndMs ||
-                    sourceAudio.speed != 1f ||
-                    sourceAudio.volume != 1f ||
-                    sourceAudio.isMuted ||
-                    sourceAudio.audioFx != "none" ||
-                    sourceAudio.audioAdjustments !=
-                    com.moody.moodyvideoeditor.data.AudioAdjustmentSettings() ||
-                    sourceAudio.soundFx != "none" ||
-                    sourceAudio.keyframes.values.any { it.isNotEmpty() })
-        ) return null
-
-        val activeIds = allClips.filter {
-            it.timelineEndMs > rangeStartMs && it.timelineStartMs < rangeEndMs
-        }.map { it.id }.toSet()
-        if (activeIds.any { it != clip.id && it != sourceAudio?.id }) return null
-        return sourceAudio != null
-    }
-
     fun cancel() {
         isCancelled = true
         nativeVideoExporter?.cancel()
@@ -1181,6 +1149,132 @@ class VideoExporter(
         sequences.mapNotNull { it.workingDirectory }.distinct().forEach { directory ->
             if (directory.exists() && !directory.deleteRecursively()) {
                 Log.w("EXPORT", "Could not remove: ${directory.name}")
+            }
+        }
+    }
+
+    private suspend fun renderMedia3MaskSequences(
+        clips: List<EditorClip>,
+        width: Int,
+        height: Int,
+        fps: Int
+    ): RenderedMedia3Masks = withContext(Dispatchers.IO) {
+        val directories = mutableListOf<File>()
+        val coroutineContext = currentCoroutineContext()
+        try {
+            val sequences = clips
+                .filter { clip ->
+                    clip.mask.isActive &&
+                            (clip.mask.type != MaskType.CUSTOM ||
+                                    (clip.mask.customPoints.size >= 3 && clip.mask.customClosed))
+                }
+                .map { clip ->
+                    coroutineContext.ensureActive()
+                    if (isCancelled) throw CancellationException("Media3 mask rendering cancelled")
+
+                    val directory = File(
+                        context.cacheDir,
+                        "mask_media3_${clip.id}_${System.nanoTime()}"
+                    )
+                    if (!directory.mkdirs()) {
+                        throw java.io.IOException("Could not create mask render directory")
+                    }
+                    directories += directory
+
+                    val isAnimated = clip.mask.hasKeyframes
+                    val frameCount = if (isAnimated) {
+                        ((clip.durationMs.toDouble() * fps) / 1000.0).toLong()
+                            .coerceAtMost(Int.MAX_VALUE.toLong())
+                            .toInt()
+                            .coerceAtLeast(1)
+                    } else {
+                        1
+                    }
+                    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                    try {
+                        val canvas = Canvas(bitmap)
+                        repeat(frameCount) { frameIndex ->
+                            coroutineContext.ensureActive()
+                            if (isCancelled) {
+                                throw CancellationException("Media3 mask rendering cancelled")
+                            }
+                            canvas.drawColor(Color.WHITE, android.graphics.PorterDuff.Mode.SRC)
+                            val timeSec = if (isAnimated) frameIndex.toFloat() / fps else 0f
+                            MaskEngine.drawMask(
+                                canvas = canvas,
+                                state = MaskEngine.sampleAt(clip.mask, timeSec),
+                                viewWidth = width.toFloat(),
+                                viewHeight = height.toFloat()
+                            )
+                            val frameFile = File(
+                                directory,
+                                "mask_%05d.png".format(Locale.US, frameIndex + 1)
+                            )
+                            FileOutputStream(frameFile).use { stream ->
+                                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                                    throw java.io.IOException("Could not encode mask frame")
+                                }
+                            }
+                        }
+                    } finally {
+                        bitmap.recycle()
+                    }
+
+                    MaskSequenceData(
+                        clipId = clip.id,
+                        pattern = File(directory, "mask_%05d.png").absolutePath,
+                        staticFilePath = if (isAnimated) {
+                            null
+                        } else {
+                            File(directory, "mask_00001.png").absolutePath
+                        },
+                        fps = fps,
+                        frameCount = frameCount,
+                        clipStartSec = clip.timelineStartMs / 1000.0,
+                        clipEndSec = clip.timelineEndMs / 1000.0
+                    )
+                }
+            RenderedMedia3Masks(sequences, directories)
+        } catch (error: Throwable) {
+            cleanupMaskDirectories(directories)
+            throw error
+        }
+    }
+
+    private fun cleanupMaskDirectories(directories: List<File>) {
+        directories.distinct().forEach { directory ->
+            if (directory.exists() && !directory.deleteRecursively()) {
+                Log.w("NATIVE_EXPORT", "Could not remove mask directory: ${directory.name}")
+            }
+        }
+    }
+
+    private fun logOutputMetadata(route: String, file: File) {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(file.absolutePath)
+            val durationMs = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_DURATION
+            )
+            val width = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
+            )
+            val height = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
+            )
+            Log.i(
+                "EXPORT_RESULT",
+                "route=$route outputDurationMs=${durationMs ?: "unknown"} " +
+                        "outputResolution=${width ?: "unknown"}x${height ?: "unknown"} " +
+                        "outputBytes=${file.length()}"
+            )
+        } catch (error: Exception) {
+            Log.w("EXPORT_RESULT", "Could not read output metadata for route=$route", error)
+        } finally {
+            try {
+                retriever.release()
+            } catch (error: Exception) {
+                Log.w("EXPORT_RESULT", "Could not release output metadata reader", error)
             }
         }
     }
