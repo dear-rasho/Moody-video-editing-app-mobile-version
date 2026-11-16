@@ -147,6 +147,8 @@ fun Timeline(
 
     var viewportWidthPx by remember { mutableFloatStateOf(0f) }
     var viewportHeightPx by remember { mutableFloatStateOf(0f) }
+    var playheadScreenX by remember { mutableFloatStateOf(0f) }
+    var initialPlayheadPositioned by remember { mutableStateOf(false) }
     var lastUserScrollMs by remember { mutableLongStateOf(0L) }
     var pendingProgrammaticScroll by remember { mutableIntStateOf(-1) }
 
@@ -175,10 +177,8 @@ fun Timeline(
     val contentWidthDp: Dp =
         TimelineZoom.safeContentWidthDp(totalSec * pps, density.density).dp
     val contentWidthPx = with(density) { contentWidthDp.toPx() }
-    val playheadAnchorDp =
-        (viewportContentWidthDp * TimelinePlayheadController.PLAYHEAD_ANCHOR_FRACTION).dp
-    val timelineTrailingPaddingDp =
-        (viewportContentWidthDp - playheadAnchorDp.value).coerceAtLeast(0f).dp
+    val playheadAnchorDp = 0.dp
+    val timelineTrailingPaddingDp = viewportContentWidthDp.dp
     val visualTracks = remember(state.clips, state.visualLayerCount) {
         state.timelineVisualList()
     }
@@ -205,28 +205,52 @@ fun Timeline(
             System.currentTimeMillis() - lastUserScrollMs <
                     TimelinePlayheadController.USER_SCROLL_GRACE_MS
         if (!userScrolledRecently) return@LaunchedEffect
-        val seekTimeMs = TimelinePlayheadController.timeForScroll(
-            hScroll.value, totalMs, contentWidthPx
+        val seekTimeMs = TimelinePlayheadController.timeForScreenX(
+            screenX = playheadScreenX,
+            scrollValue = hScroll.value,
+            totalMs = totalMs,
+            contentWidthPx = contentWidthPx
         )
         if (abs(seekTimeMs - state.currentPosMs) > 1L) onSeek(seekTimeMs)
     }
 
     LaunchedEffect(
         state.currentPosMs,
-        state.isPlaying,
         viewportWidthPx,
         totalMs,
         contentWidthPx,
-        dragVisual.active
+        dragVisual.active,
+        hScroll.value,
+        lastUserScrollMs
     ) {
         if (viewportWidthPx <= 0f) return@LaunchedEffect
         if (dragVisual.active) return@LaunchedEffect
-        val target = TimelinePlayheadController.scrollForTime(
-            state.currentPosMs, totalMs, contentWidthPx
-        )
-        if (target != hScroll.value) {
-            pendingProgrammaticScroll = target
-            hScroll.scrollTo(target)
+        val userScrolledRecently =
+            System.currentTimeMillis() - lastUserScrollMs <
+                    TimelinePlayheadController.USER_SCROLL_GRACE_MS
+        if (!userScrolledRecently) {
+            playheadScreenX = TimelinePlayheadController.screenXForTime(
+                timeMs = state.currentPosMs,
+                totalMs = totalMs,
+                contentWidthPx = contentWidthPx,
+                scrollValue = hScroll.value
+            ).coerceIn(0f, viewportWidthPx)
+        }
+
+        if (!initialPlayheadPositioned) {
+            val initialAnchorX =
+                TimelinePlayheadController.fixedPlayheadScreenX(viewportWidthPx)
+            val target = TimelinePlayheadController.scrollForTimeAtScreenX(
+                timeMs = state.currentPosMs,
+                totalMs = totalMs,
+                contentWidthPx = contentWidthPx,
+                screenX = initialAnchorX
+            ).coerceIn(0, hScroll.maxValue)
+            if (target != hScroll.value) {
+                pendingProgrammaticScroll = target
+                hScroll.scrollTo(target)
+            }
+            initialPlayheadPositioned = true
         }
     }
 
@@ -522,7 +546,10 @@ fun Timeline(
                 Box(Modifier.height(40.dp))
             }
 
-            TimelinePlayhead(viewportWidthPx = viewportWidthPx)
+            TimelinePlayhead(
+                viewportWidthPx = viewportWidthPx,
+                playheadScreenX = playheadScreenX
+            )
         }
 
         TimelineScrollbar(

@@ -8,6 +8,17 @@ object FFmpegFilters {
     internal fun withTimelineEnable(filter: String, enable: String?): String =
         if (enable.isNullOrBlank()) filter else "$filter:enable='$enable'"
 
+    internal fun lut3dFilter(filePath: String, enable: String? = null): String {
+        val lutPath = filePath.replace("\\", "/")
+            .replace(":", "\\:")
+            .replace("'", "\\'")
+            .replace(" ", "\\ ")
+        return withTimelineEnable(
+            "lut3d=file=$lutPath:interp=tetrahedral",
+            enable
+        )
+    }
+
     // Per-pixel adjustments use the native-generated LUT; this handles spatial effects.
     fun build(adj: AdjustmentData): String {
         try {

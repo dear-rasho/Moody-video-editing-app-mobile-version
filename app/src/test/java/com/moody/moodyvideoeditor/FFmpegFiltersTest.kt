@@ -49,4 +49,18 @@ class FFmpegFiltersTest {
 
         assertEquals(filter, FFmpegFilters.withTimelineEnable(filter, null))
     }
+
+    @Test
+    fun lut3dFilterWrapsFilterLayerTimelineExpression() {
+        val filter = FFmpegFilters.lut3dFilter(
+            "cache/color-filter.cube",
+            "gte(t,0.0000)*lt(t,62.5780)"
+        )
+
+        assertEquals(
+            "lut3d=file=cache/color-filter.cube:interp=tetrahedral:" +
+                    "enable='gte(t,0.0000)*lt(t,62.5780)'",
+            filter
+        )
+    }
 }

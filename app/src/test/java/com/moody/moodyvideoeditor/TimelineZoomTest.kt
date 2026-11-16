@@ -86,6 +86,25 @@ class TimelineZoomTest {
     }
 
     @Test
+    fun playheadTracksTimelineTimeWithoutMovingTimelineContent() {
+        val screenX = TimelinePlayheadController.screenXForTime(
+            timeMs = 5_000L,
+            totalMs = 10_000L,
+            contentWidthPx = 1_000f,
+            scrollValue = 200
+        )
+        val timeAtScreenX = TimelinePlayheadController.timeForScreenX(
+            screenX = screenX,
+            scrollValue = 200,
+            totalMs = 10_000L,
+            contentWidthPx = 1_000f
+        )
+
+        assertEquals(300f, screenX, 0.001f)
+        assertEquals(5_000L, timeAtScreenX)
+    }
+
+    @Test
     fun addingTimelineDurationDoesNotStretchExistingTimes() {
         val pixelsPerSecond = TimelineZoom.ppsForSlider(TimelineZoom.SLIDER_DEFAULT)
         val positionOnShortTimeline = TimelinePlayheadController.playheadContentPx(

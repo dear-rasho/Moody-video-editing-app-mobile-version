@@ -3680,7 +3680,8 @@ class FFmpegExecutor(
             onError("Concat export: ${e.message}")
         }
     }
-        private fun isStaticImageComposition(
+
+    private fun isStaticImageComposition(
         orderedClips: List<Pair<EditorClip, File>>,
         allClips: List<EditorClip>,
         sequences: List<TextOverlaySequence>,
@@ -3977,13 +3978,12 @@ class FFmpegExecutor(
 
     private fun colorFilterValuesToFfmpeg(cf: ColorFilterValues, enable: String? = null): String {
         if (!EffectsEngine.hasColorEffect(cf)) return ""
-        val lutFile = ensureColorFilterLut(cf)
-        val safePath = lutFile.absolutePath.replace("\\", "/")
-            .replace(":", "\\:")
-            .replace("'", "\\'")
-            .replace(" ", "\\ ")
-        val enableOption = enable?.let { ":enable='$it'" }.orEmpty()
-        return "lut3d=file=$safePath:interp=tetrahedral$enableOption"
+
+        return lut3dFilter(ensureColorFilterLut(cf), enable)
+    }
+
+    private fun lut3dFilter(lutFile: File, enable: String? = null): String {
+        return FFmpegFilters.lut3dFilter(lutFile.absolutePath, enable)
     }
 
     @Synchronized
@@ -3995,7 +3995,7 @@ class FFmpegExecutor(
         val file = File(context.cacheDir, "color-filter-preview-parity-v1-$key.cube")
         if (file.exists() && file.length() > 0L) return file
 
-        val lutSize = 65
+        val lutSize = 33
         val maxIndex = lutSize - 1
         val matrix = EffectsEngine.buildColorMatrix(filter)
         val contents = buildString {
@@ -4303,11 +4303,8 @@ class FFmpegExecutor(
                 )
             }
         }
-        try {
-            file.writeText(contents); Log.e("CW_LUT", "✅ Generated LUT: ${file.absolutePath}")
-        } catch (t: Throwable) {
-            Log.e("CW_LUT", "❌ Failed LUT", t)
-        }
+        file.writeText(contents)
+        Log.i("CW_LUT", "Generated LUT: ${file.absolutePath}")
         return file
     }
 
@@ -4316,44 +4313,12 @@ class FFmpegExecutor(
         startSec: Double? = null,
         endSec: Double? = null
     ): String {
-        try {
-            val lutFile = ensureColorWheelLut(state)
-            if (lutFile.exists() && lutFile.length() > 10000L) {
-                val safePath =
-                    lutFile.absolutePath.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-                        .replace(" ", "\\ ")
-                Log.e("CW_EXPORT", "✅ Using LUT: ${lutFile.absolutePath}")
-                val enable = if (startSec != null && endSec != null) ":enable='between(t,${
-                    "%.4f".format(
-                        Locale.US,
-                        startSec
-                    )
-                },${"%.4f".format(Locale.US, endSec)})'" else ""
-                return "lut3d=file=$safePath:interp=tetrahedral$enable"
-            }
-        } catch (e: Throwable) {
-            Log.e("CW_EXPORT", "❌ LUT generation failed", e)
-        }
+        val enable = if (startSec != null && endSec != null) {
+            ":enable='between(t,${"%.4f".format(Locale.US, startSec)},${"%.4f".format(Locale.US, endSec)})'"
+        } else ""
 
-        Log.e("CW_EXPORT", "🔄 Falling back to colorbalance filter")
-        val (sR, sG, sB) = ColorWheelEngine.getRGBShift(state.shadows)
-        val (mR, mG, mB) = ColorWheelEngine.getRGBShift(state.midtones)
-        val (hR, hG, hB) = ColorWheelEngine.getRGBShift(state.highlights)
-        val loc = Locale.US
-        fun f(v: Float): String = String.format(loc, "%.4f", v)
-        val enable = if (startSec != null && endSec != null) ":enable='between(t,${
-            "%.4f".format(
-                Locale.US,
-                startSec
-            )
-        },${"%.4f".format(Locale.US, endSec)})'" else ""
-        return "colorbalance=rs=${f(sR)}:gs=${f(sG)}:bs=${f(sB)}:rm=${f(mR)}:gm=${f(mG)}:bm=${f(mB)}:rh=${
-            f(
-                hR
-            )
-        }:gh=${f(hG)}:bh=${f(hB)}:pl=1$enable"
+        return lut3dFilter(ensureColorWheelLut(state), enable)
     }
-
     private fun buildFullAdjustmentFilter(
         adj: AdjustmentData,
         enable: String? = null
@@ -4365,7 +4330,7 @@ class FFmpegExecutor(
             parts.add("format=rgb24")
             parts.add(
                 FFmpegFilters.withTimelineEnable(
-                    "lut3d=file='$lutPath':interp=tetrahedral",
+                    "lut3d=file='$lutPath':interp=bilinear",
                     enable
                 )
             )
@@ -4406,7 +4371,7 @@ class FFmpegExecutor(
         val file = File(context.cacheDir, "adjustment-preview-parity-v5-$key.cube")
         if (file.exists() && file.length() > 0L) return file
 
-        val lutSize = 65
+        val lutSize = 33
         val lut = AdjustmentNative.buildCubeLut(adj, lutSize)
         val contents = buildString {
             appendLine("TITLE \"Moody Adjustment Preview Parity\"")
@@ -4424,6 +4389,7 @@ class FFmpegExecutor(
                         lut[index++] / 255f
                     )
                 )
+
             }
         }
         file.writeText(contents)

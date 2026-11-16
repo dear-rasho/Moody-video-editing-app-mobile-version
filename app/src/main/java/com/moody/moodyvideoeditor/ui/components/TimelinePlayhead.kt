@@ -50,6 +50,22 @@ object TimelinePlayheadController {
     fun fixedPlayheadScreenX(viewportWidthPx: Float): Float =
         viewportWidthPx * PLAYHEAD_ANCHOR_FRACTION
 
+    fun screenXForTime(
+        timeMs: Long,
+        totalMs: Long,
+        contentWidthPx: Float,
+        scrollValue: Int
+    ): Float = playheadContentPx(timeMs, totalMs, contentWidthPx) - scrollValue
+
+    fun scrollForTimeAtScreenX(
+        timeMs: Long,
+        totalMs: Long,
+        contentWidthPx: Float,
+        screenX: Float
+    ): Int = (playheadContentPx(timeMs, totalMs, contentWidthPx) - screenX)
+        .roundToInt()
+        .coerceAtLeast(0)
+
     fun scrollForTime(
         currentPosMs: Long,
         totalMs: Long,
@@ -63,6 +79,17 @@ object TimelinePlayheadController {
         totalMs: Long,
         contentWidthPx: Float
     ): Long = seekTimeFromClick(scrollValue.toFloat(), contentWidthPx, totalMs)
+
+    fun timeForScreenX(
+        screenX: Float,
+        scrollValue: Int,
+        totalMs: Long,
+        contentWidthPx: Float
+    ): Long = seekTimeFromClick(
+        screenX + scrollValue,
+        contentWidthPx,
+        totalMs
+    )
 
     fun seekTimeFromClick(clickX: Float, contentWidthPx: Float, totalMs: Long): Long {
         if (totalMs <= 0L || contentWidthPx <= 0f) return 0L
@@ -95,11 +122,12 @@ object TimelinePlayheadController {
 // Timeline playhead — thin red line with a centered circular head.
 @Composable
 fun TimelinePlayhead(
-    viewportWidthPx: Float
+    viewportWidthPx: Float,
+    playheadScreenX: Float
 ) {
     val density = LocalDensity.current
     if (viewportWidthPx <= 0f) return
-    val screenX = TimelinePlayheadController.fixedPlayheadScreenX(viewportWidthPx)
+    val screenX = playheadScreenX.coerceIn(0f, viewportWidthPx)
     val headHalfWidthPx = with(density) { 6.dp.toPx() }
 
     // Thin RED vertical line (1dp)

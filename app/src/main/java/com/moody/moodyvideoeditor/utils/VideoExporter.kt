@@ -3,6 +3,7 @@ package com.moody.moodyvideoeditor.utils
 import android.app.ActivityManager
 import android.content.ContentValues
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -225,7 +226,7 @@ class VideoExporter(
             trimmedTextClips.isNotEmpty() || overlayImageClips.isNotEmpty() ||
                     spotlightClips.isNotEmpty() || visualizerClips.isNotEmpty() ||
                     edgeGlowClips.isNotEmpty()
-        val debugMedia3ExportEnabled = if (format.equals("mp4", ignoreCase = true)) {
+        val storedMedia3ExportEnabled = if (format.equals("mp4", ignoreCase = true)) {
             try {
                 SettingsRepository(context).debugMedia3ExportFlow.first()
             } catch (e: CancellationException) {
@@ -237,10 +238,33 @@ class VideoExporter(
         } else {
             false
         }
+        val forceFilterLayerMedia3Test =
+            (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0 &&
+                    format.equals("mp4", ignoreCase = true) &&
+                    exportClips.any(EditorClip::isFilterLayerClip)
+        val debugMedia3ExportEnabled =
+            storedMedia3ExportEnabled || forceFilterLayerMedia3Test
+        val media3GateReason = when {
+            !format.equals("mp4", ignoreCase = true) -> "output_format_not_mp4"
+            forceFilterLayerMedia3Test -> "filter_layer_media3_test_override"
+            !debugMedia3ExportEnabled -> "debug_media3_export_disabled"
+            !hasBaseVideo -> "no_base_video_or_matte"
+            else -> "composition_check_pending"
+        }
+        Log.i(
+            "EXPORT_ROUTE",
+            "Media3 eligibility: isEnabled=$debugMedia3ExportEnabled " +
+                    "storedSetting=$storedMedia3ExportEnabled " +
+                    "forceFilterLayerTest=$forceFilterLayerMedia3Test " +
+                    "composition=not_checked clips=${exportClips.size} " +
+                    "reason=$media3GateReason"
+        )
 
         when {
             hasBaseVideo -> {
+                var media3FallbackReason = media3GateReason
                 if (debugMedia3ExportEnabled) {
+                    media3FallbackReason = "composition_rejected"
                     var media3Output: File? = null
                     val maskDirectories = mutableListOf<File>()
                     try {
@@ -312,6 +336,7 @@ class VideoExporter(
                         nativeVideoExporter = null
                         media3Output?.delete()
                         media3Output = null
+                        media3FallbackReason = "media3_exception:${e.javaClass.simpleName}"
                         if (isCancelled) {
                             onCancelled()
                             return
@@ -481,6 +506,13 @@ class VideoExporter(
                     "EXPORT_PLAN",
                     "route=ffmpeg durationMs=$exportDurationMs rangeMs=$rangeStart-$rangeEnd " +
                             "clips=${exportClips.size} resolution=${targetW}x$targetH fps=$fps"
+                )
+                Log.i(
+                    "EXPORT_ROUTE",
+                    "route=ffmpeg reason=$media3FallbackReason " +
+                            "isEnabled=$debugMedia3ExportEnabled " +
+                            "composition=${if (debugMedia3ExportEnabled) "rejected_or_failed" else "not_attempted"} " +
+                            "clips=${exportClips.size}"
                 )
 
                 ffmpeg = FFmpegExecutor(
