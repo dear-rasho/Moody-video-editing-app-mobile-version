@@ -31,13 +31,16 @@ class Media3CompositionBuilder(private val context: Context) {
         outputWidth: Int,
         outputHeight: Int,
         fps: Int,
-        timestampOffsetSec: Double = 0.0
+        timestampOffsetSec: Double = 0.0,
+        visualizerSequences: List<TextOverlaySequence> = emptyList()
     ): Composition? {
         Log.i(
             LOG_TAG,
             "buildComposition called: clips=${clips.size} " +
                     "clipTypes=${clips.joinToString { "${it.type}@${it.trackIndex}" }} " +
+                    "visualizerClips=${clips.count(EditorClip::isVisualizerClip)} " +
                     "textSequences=${textSequences.size} maskSequences=${maskSequences.size} " +
+                    "visualizerSequences=${visualizerSequences.size} " +
                     "${outputWidth}x${outputHeight}@$fps"
         )
         if (clips.isEmpty()) {
@@ -47,11 +50,17 @@ class Media3CompositionBuilder(private val context: Context) {
 
         val adjustmentLayerClips = clips.filter(EditorClip::isAdjustmentClip)
         val filterLayerClips = clips.filter(EditorClip::isFilterLayerClip)
+        val visualizerClips = clips.filter(EditorClip::isVisualizerClip)
         val compositionClips = clips.filterNot {
-            it.isTextClip || it.isFilterLayerClip || it.isAdjustmentClip
+            it.isTextClip || it.isFilterLayerClip || it.isAdjustmentClip ||
+                    it.isVisualizerClip
         }
         if (clips.any(EditorClip::isTextClip) && textSequences.isEmpty()) {
             Log.w(LOG_TAG, "REJECT: text clips exist but no textSequences")
+            return null
+        }
+        if (visualizerClips.isNotEmpty() && visualizerSequences.isEmpty()) {
+            Log.w(LOG_TAG, "REJECT: visualizer clips exist but no visualizerSequences")
             return null
         }
         if (compositionClips.isEmpty()) {
@@ -410,6 +419,7 @@ class Media3CompositionBuilder(private val context: Context) {
                                 adjustmentLayers = segment.adjustmentLayers,
                                 filterLayers = segment.filterLayers,
                                 textSequences = textSequences,
+                                visualizerSequences = visualizerSequences,
                                 maskSequences = maskSequences,
                                 fps = fps,
                                 timestampOffsetSec = timestampOffsetSec,
@@ -457,6 +467,7 @@ class Media3CompositionBuilder(private val context: Context) {
         adjustmentLayers: List<EditorClip>,
         filterLayers: List<EditorClip>,
         textSequences: List<TextOverlaySequence>,
+        visualizerSequences: List<TextOverlaySequence>,
         maskSequences: List<MaskSequenceData>,
         fps: Int,
         timestampOffsetSec: Double,
@@ -554,6 +565,30 @@ class Media3CompositionBuilder(private val context: Context) {
                     )
                 )
             }
+        val overlappingVisualizerSequences = visualizerSequences.filter { sequence ->
+            sequence.startSec < timelineEndMs / 1000.0 &&
+                    sequence.endSec > clip.timelineStartMs / 1000.0
+        }
+        if (overlappingVisualizerSequences.isNotEmpty()) {
+            Log.i(
+                LOG_TAG,
+                "  clip ${clip.id} visualizer overlays=" +
+                        overlappingVisualizerSequences.joinToString {
+                            "[${it.startSec}-${it.endSec}s]"
+                        }
+            )
+        }
+        overlappingVisualizerSequences.forEach { sequence ->
+            val clipStartSec = clip.timelineStartMs / 1000.0
+            videoEffects.add(
+                TextOverlayGlEffect(
+                    sequence.copy(
+                        startSec = sequence.startSec - clipStartSec,
+                        endSec = sequence.endSec - clipStartSec
+                    )
+                )
+            )
+        }
 
         val audioProcessors = mutableListOf<AudioProcessor>()
         if (clip.speed != 1f) {
@@ -578,7 +613,9 @@ class Media3CompositionBuilder(private val context: Context) {
                     .build()
             )
             .build()
-        return EditedMediaItem.Builder(mediaItem).build()
+        return EditedMediaItem.Builder(mediaItem)
+            .setRemoveVideo(true)
+            .build()
     }
 
     private fun unsupportedVisualClipReason(clip: EditorClip): String? {
@@ -587,8 +624,8 @@ class Media3CompositionBuilder(private val context: Context) {
         }
         if (clip.isTextClip || clip.isEffectClip ||
             clip.isOverlayClip || clip.isColorMatteClip || clip.isSpotlightClip ||
-            clip.isVisualizerClip || clip.isAudioEffectClip
-        ) return "clip is a text/effect/adjustment/overlay/matte/spotlight/visualizer/audio-effect layer"
+            clip.isAudioEffectClip
+        ) return "clip is a text/effect/adjustment/overlay/matte/spotlight/audio-effect layer"
 
         if (!clip.type.startsWith("video/") && !clip.type.startsWith("image/")) {
             return "unsupported media type ${clip.type}"
@@ -597,9 +634,8 @@ class Media3CompositionBuilder(private val context: Context) {
             clip.transition?.isActive == true ||
             clip.layerShadow.enabled || clip.overlay.type != "none" ||
             clip.chromaKey.isActive || clip.spotlight != null ||
-            clip.visualizer != null || clip.freeze != null ||
-            clip.lightLeak != null
-        ) return "unsupported effect, text, transition, shadow, overlay, key, spotlight, visualizer, freeze, or light leak state"
+            clip.freeze != null || clip.lightLeak != null
+        ) return "unsupported effect, text, transition, shadow, overlay, key, spotlight, freeze, or light leak state"
 
         if (clip.rotation != 0f) return "rotation is non-zero"
         if (clip.keyframes.values.any { it.isNotEmpty() }) return "keyframes are present"

@@ -242,7 +242,8 @@ class VideoExporter(
             (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0 &&
                     format.equals("mp4", ignoreCase = true) &&
                     exportClips.any {
-                        it.isFilterLayerClip || it.isAdjustmentClip || it.isTextClip
+                        it.isFilterLayerClip || it.isAdjustmentClip || it.isTextClip ||
+                                it.isVisualizerClip
                     }
         val debugMedia3ExportEnabled =
             storedMedia3ExportEnabled || forceLayerMedia3Test
@@ -262,6 +263,38 @@ class VideoExporter(
                     "reason=$media3GateReason"
         )
 
+        val media3SyntheticVisualizerEligible =
+            !hasBaseVideo &&
+                    visualizerClips.isNotEmpty() &&
+                    trimmedOverlayClips.isEmpty() &&
+                    spotlightClips.isEmpty() &&
+                    edgeGlowClips.isEmpty() &&
+                    debugMedia3ExportEnabled
+        if (media3SyntheticVisualizerEligible) {
+            Log.i(
+                "EXPORT_ROUTE",
+                "Synthetic visualizer-only export eligible for Media3 composition"
+            )
+            val completed = exportSyntheticVisualizerWithMedia3(
+                allClips = clips,
+                exportClips = exportClips,
+                textClips = trimmedTextClips,
+                visualizerClips = visualizerClips,
+                rangeStart = rangeStart,
+                rangeEnd = rangeEnd,
+                fileName = fileName,
+                targetW = targetW,
+                targetH = targetH,
+                fps = fps,
+                bitrateKbps = bitrateKbps,
+                customFolderUri = customFolderUri,
+                imageFormat = imageFormat,
+                jpegQuality = jpegQuality,
+                exportStartedAtMs = exportStartedAtMs
+            )
+            if (completed) return
+        }
+
         when {
             hasBaseVideo -> {
                 var media3FallbackReason = media3GateReason
@@ -270,7 +303,9 @@ class VideoExporter(
                     var media3Output: File? = null
                     val maskDirectories = mutableListOf<File>()
                     var media3TextSequences: List<TextOverlaySequence> = emptyList()
-                    var media3TextSequencesHandled = false
+                    var renderedMedia3VisualizerSequences: List<TextOverlaySequence> = emptyList()
+                    var media3VisualizerSequences: List<TextOverlaySequence> = emptyList()
+                    var media3SequencesHandled = false
                     try {
                         if (trimmedTextClips.isNotEmpty() || trimmedOverlayClips.isNotEmpty()) {
                             media3TextSequences = TextBitmapRenderer.renderOverlaysByTrack(
@@ -286,6 +321,23 @@ class VideoExporter(
                                 imageFormat = imageFormat,
                                 jpegQuality = jpegQuality
                             )
+                        }
+                        if (visualizerClips.isNotEmpty()) {
+                            renderedMedia3VisualizerSequences = VisualizerBitmapRenderer.render(
+                                context = context,
+                                visualizerClips = visualizerClips,
+                                allClips = clips,
+                                rangeStartMs = rangeStart,
+                                rangeEndMs = rangeEnd,
+                                width = targetW,
+                                height = targetH,
+                                fps = fps,
+                                shouldCancel = { isCancelled }
+                            )
+                            media3VisualizerSequences =
+                                coalesceMedia3VisualizerSequences(
+                                    renderedMedia3VisualizerSequences
+                                )
                         }
                         val renderedMasks = renderMedia3MaskSequences(
                             clips = exportClips,
@@ -305,7 +357,10 @@ class VideoExporter(
                                     "resolution=${targetW}x$targetH fps=$fps " +
                                     "visualClips=${trimmedVisualClips.size} " +
                                     "audioClips=${audioOnlyClips.size} " +
-                                    "maskSequences=${renderedMasks.sequences.size}"
+                                    "maskSequences=${renderedMasks.sequences.size} " +
+                                    "visualizerSequences=${media3VisualizerSequences.size} " +
+                                    "visualizerSourceChunks=" +
+                                    "${renderedMedia3VisualizerSequences.size}"
                         )
                         onProgress(0.02f)
                         val completed = exporter.exportWithComposition(
@@ -316,7 +371,8 @@ class VideoExporter(
                             width = targetW,
                             height = targetH,
                             fps = fps,
-                            bitrateKbps = bitrateKbps
+                            bitrateKbps = bitrateKbps,
+                            visualizerSequences = media3VisualizerSequences
                         )
                         nativeVideoExporter = null
                         if (completed) {
@@ -333,8 +389,14 @@ class VideoExporter(
                                         "outputBytes=${media3Output.length()}"
                             )
                             logOutputMetadata("media3-composition-debug", media3Output)
-                            completeExport(media3Output, customFolderUri, media3TextSequences)
-                            media3TextSequencesHandled = true
+                            completeExport(
+                                media3Output,
+                                customFolderUri,
+                                media3TextSequences +
+                                        renderedMedia3VisualizerSequences +
+                                        media3VisualizerSequences
+                            )
+                            media3SequencesHandled = true
                             onProgress(1f)
                             return
                         }
@@ -369,8 +431,12 @@ class VideoExporter(
                         )
                     } finally {
                         cleanupMaskDirectories(maskDirectories)
-                        if (!media3TextSequencesHandled) {
-                            cleanupSequences(media3TextSequences)
+                        if (!media3SequencesHandled) {
+                            cleanupSequences(
+                                media3TextSequences +
+                                        renderedMedia3VisualizerSequences +
+                                        media3VisualizerSequences
+                            )
                         }
                     }
                 }
@@ -1360,6 +1426,277 @@ class VideoExporter(
                     keyframes = KeyframeStore.rebaseToTime(clip.keyframes, leftCut)
                 )
             }
+    }
+
+    private suspend fun exportSyntheticVisualizerWithMedia3(
+        allClips: List<EditorClip>,
+        exportClips: List<EditorClip>,
+        textClips: List<EditorClip>,
+        visualizerClips: List<EditorClip>,
+        rangeStart: Long,
+        rangeEnd: Long,
+        fileName: String,
+        targetW: Int,
+        targetH: Int,
+        fps: Int,
+        bitrateKbps: Int,
+        customFolderUri: String?,
+        imageFormat: String,
+        jpegQuality: Int,
+        exportStartedAtMs: Long
+    ): Boolean {
+        var textSequences: List<TextOverlaySequence> = emptyList()
+        var renderedVisualizerSequences: List<TextOverlaySequence> = emptyList()
+        var media3VisualizerSequences: List<TextOverlaySequence> = emptyList()
+        var backgroundFile: File? = null
+        var outputFile: File? = null
+        var outputCompleted = false
+        var sequencesHandled = false
+
+        try {
+            onProgress(0.01f)
+            if (textClips.isNotEmpty()) {
+                textSequences = TextBitmapRenderer.renderOverlaysByTrack(
+                    context = context,
+                    textClips = textClips,
+                    imageClips = emptyList(),
+                    overlayClips = emptyList(),
+                    W = targetW,
+                    H = targetH,
+                    fps = fps,
+                    totalDurationMs = rangeEnd - rangeStart,
+                    onProgress = { progress -> onProgress(0.02f + progress * 0.08f) },
+                    shouldCancel = { isCancelled },
+                    imageFormat = imageFormat,
+                    jpegQuality = jpegQuality
+                )
+            }
+            renderedVisualizerSequences = VisualizerBitmapRenderer.render(
+                context = context,
+                visualizerClips = visualizerClips,
+                allClips = allClips,
+                rangeStartMs = rangeStart,
+                rangeEndMs = rangeEnd,
+                width = targetW,
+                height = targetH,
+                fps = fps,
+                onProgress = { progress -> onProgress(0.10f + progress * 0.15f) },
+                shouldCancel = { isCancelled }
+            )
+            media3VisualizerSequences =
+                coalesceMedia3VisualizerSequences(renderedVisualizerSequences)
+            if (isCancelled) {
+                onCancelled()
+                return true
+            }
+
+            val durationMs = (rangeEnd - rangeStart).coerceAtLeast(1L)
+            backgroundFile = createMedia3VisualizerBackgroundFile()
+            val backgroundClip = EditorClip(
+                uri = Uri.fromFile(backgroundFile),
+                name = "Visualizer background",
+                type = "image/png",
+                sourceStartMs = 0L,
+                sourceEndMs = durationMs,
+                timelineStartMs = 0L,
+                trackIndex = 0
+            )
+            val media3Clips = exportClips + backgroundClip
+            val output = createOutputFile(fileName, "mp4")
+            outputFile = output
+            val exporter = NativeVideoExporter(context) { progress ->
+                if (!isCancelled) onProgress(0.25f + progress * 0.72f)
+            }
+            nativeVideoExporter = exporter
+
+            Log.i(
+                "EXPORT_PLAN",
+                "route=media3-composition-debug durationMs=$durationMs " +
+                        "resolution=${targetW}x$targetH fps=$fps " +
+                        "visualizerSequences=${media3VisualizerSequences.size} " +
+                        "visualizerSourceChunks=${renderedVisualizerSequences.size} " +
+                        "syntheticVisualizerBackground=true"
+            )
+            val completed = exporter.exportWithComposition(
+                clips = media3Clips,
+                textSequences = textSequences,
+                maskSequences = emptyList(),
+                outputFile = output,
+                width = targetW,
+                height = targetH,
+                fps = fps,
+                bitrateKbps = bitrateKbps,
+                visualizerSequences = media3VisualizerSequences
+            )
+            if (!completed) {
+                Log.i(
+                    "EXPORT_ROUTE",
+                    "Synthetic visualizer Media3 composition rejected; using FFmpeg fallback"
+                )
+                return false
+            }
+            if (isCancelled) {
+                onCancelled()
+                return true
+            }
+
+            onProgress(0.97f)
+            Log.i(
+                "EXPORT_RESULT",
+                "route=media3-composition-debug elapsedMs=" +
+                        "${SystemClock.elapsedRealtime() - exportStartedAtMs} " +
+                        "outputBytes=${output.length()}"
+            )
+            logOutputMetadata("media3-composition-debug", output)
+            outputCompleted = true
+            completeExport(
+                output,
+                customFolderUri,
+                textSequences + renderedVisualizerSequences + media3VisualizerSequences
+            )
+            sequencesHandled = true
+            onProgress(1f)
+            return true
+        } catch (error: CancellationException) {
+            if (isCancelled) {
+                onCancelled()
+                return true
+            }
+            throw error
+        } catch (error: Exception) {
+            if (isCancelled) {
+                onCancelled()
+                return true
+            }
+            Log.w(
+                "NATIVE_EXPORT",
+                "Synthetic visualizer Media3 export failed; using FFmpeg fallback",
+                error
+            )
+            return false
+        } finally {
+            nativeVideoExporter = null
+            backgroundFile?.let { file ->
+                if (file.exists() && !file.delete()) {
+                    Log.w("EXPORT", "Could not remove ${file.name}")
+                }
+            }
+            if (!outputCompleted) outputFile?.delete()
+            if (!sequencesHandled) {
+                cleanupSequences(
+                    textSequences + renderedVisualizerSequences + media3VisualizerSequences
+                )
+            }
+        }
+    }
+
+    private fun coalesceMedia3VisualizerSequences(
+        sequences: List<TextOverlaySequence>
+    ): List<TextOverlaySequence> {
+        if (sequences.size <= 1) return sequences
+
+        val sorted = sequences.sortedBy(TextOverlaySequence::startSec)
+        val first = sorted.first()
+        val directory = first.workingDirectory
+            ?: throw java.io.IOException("Visualizer sequence has no working directory")
+        val extension = if (first.imageFormat == "jpeg") "jpg" else "png"
+        val combinedPattern = File(
+            directory,
+            "media3_visualizer_frame_%05d.$extension"
+        ).absolutePath
+        val totalFrameCount = sorted.sumOf { it.frameCount.toLong() }
+        check(totalFrameCount in 1..Int.MAX_VALUE.toLong()) {
+            "Combined visualizer frame count is out of range: $totalFrameCount"
+        }
+
+        sorted.forEachIndexed { index, sequence ->
+            check(
+                sequence.workingDirectory == directory &&
+                        sequence.fps == first.fps &&
+                        sequence.trackIndex == first.trackIndex &&
+                        sequence.imageFormat == first.imageFormat &&
+                        sequence.blendMode == first.blendMode &&
+                        sequence.layerOpacity == first.layerOpacity &&
+                        sequence.layerOpacityKeyframes == first.layerOpacityKeyframes &&
+                        !sequence.isStaticImage &&
+                        sequence.frameCount > 0
+            ) {
+                "Visualizer chunks cannot be combined due to mismatched sequence metadata"
+            }
+            if (index > 0) {
+                check(kotlin.math.abs(sorted[index - 1].endSec - sequence.startSec) < 0.000001) {
+                    "Visualizer chunks are not contiguous in time"
+                }
+            }
+        }
+
+        var combinedFrameIndex = 1
+        sorted.forEach { sequence ->
+            repeat(sequence.frameCount) { frameIndex ->
+                if (isCancelled) {
+                    throw CancellationException("Visualizer sequence coalescing cancelled")
+                }
+                val sourcePath = String.format(
+                    Locale.US,
+                    sequence.pattern,
+                    sequence.startNumber + frameIndex
+                )
+                val source = File(sourcePath)
+                val destination = File(
+                    String.format(Locale.US, combinedPattern, combinedFrameIndex)
+                )
+                check(source.isFile) {
+                    "Visualizer frame is missing: ${source.name}"
+                }
+                if (!source.renameTo(destination)) {
+                    throw java.io.IOException(
+                        "Could not coalesce visualizer frame ${source.name}"
+                    )
+                }
+                combinedFrameIndex++
+            }
+        }
+
+        Log.i(
+            "EXPORT_PLAN",
+            "Coalesced ${sorted.size} visualizer chunks into one Media3 GL overlay"
+        )
+        return listOf(
+            first.copy(
+                pattern = combinedPattern,
+                frameCount = totalFrameCount.toInt(),
+                startNumber = 1,
+                startSec = first.startSec,
+                endSec = sorted.last().endSec,
+                workingDirectory = directory
+            )
+        )
+    }
+
+    private fun createMedia3VisualizerBackgroundFile(): File {
+        val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        val file = try {
+            File.createTempFile("media3_visualizer_background_", ".png", context.cacheDir)
+        } catch (error: Exception) {
+            bitmap.recycle()
+            throw error
+        }
+        try {
+            bitmap.eraseColor(Color.BLACK)
+            FileOutputStream(file).use { output ->
+                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                    throw java.io.IOException("Could not encode Media3 visualizer background")
+                }
+            }
+            return file
+        } catch (error: Exception) {
+            if (file.exists() && !file.delete()) {
+                Log.w("EXPORT", "Could not remove incomplete ${file.name}")
+            }
+            throw error
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     private suspend fun exportSyntheticFull(

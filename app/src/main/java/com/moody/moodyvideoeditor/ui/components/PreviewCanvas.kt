@@ -1622,12 +1622,12 @@ fun PreviewCanvas(
                                     }
                                     .pointerInput(clip.id) {
                                         awaitEachGesture {
+                                            val down = awaitFirstDown(requireUnconsumed = true)
                                             if (clip.id != latestSelectedClipId.value &&
                                                 clip.id !in latestMultiSelectedIds.value
                                             ) {
                                                 return@awaitEachGesture
                                             }
-                                            val down = awaitFirstDown(requireUnconsumed = true)
                                             val longPress = awaitLongPressOrCancellation(down.id)
                                                 ?: return@awaitEachGesture
                                             longPress.consume()
@@ -2099,12 +2099,12 @@ fun PreviewCanvas(
                                     )
                                     .pointerInput(clip.id) {
                                         awaitEachGesture {
+                                            val down = awaitFirstDown(requireUnconsumed = true)
                                             if (clip.id != latestSelectedClipId.value &&
                                                 clip.id !in latestMultiSelectedIds.value
                                             ) {
                                                 return@awaitEachGesture
                                             }
-                                            val down = awaitFirstDown(requireUnconsumed = true)
                                             val longPress = awaitLongPressOrCancellation(down.id)
                                                 ?: return@awaitEachGesture
                                             longPress.consume()
@@ -3878,10 +3878,10 @@ private fun MaskPenOverlay(
             .onSizeChanged { viewSizePx = it }
             .pointerInput(pts.size, maskState.type, isClosed, isHandMode) {
                 awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
                     val viewW = viewSizePx.width.toFloat();
                     val viewH = viewSizePx.height.toFloat()
                     if (viewW <= 0f || viewH <= 0f) return@awaitEachGesture
-                    val down = awaitFirstDown(requireUnconsumed = false)
 
                     if (isHandMode) {
                         val gestureMask = latestMaskState; down.consume(); onGestureStart()

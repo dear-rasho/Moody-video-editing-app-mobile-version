@@ -109,7 +109,8 @@ internal class NativeVideoExporter(
         width: Int,
         height: Int,
         fps: Int,
-        bitrateKbps: Int
+        bitrateKbps: Int,
+        visualizerSequences: List<TextOverlaySequence> = emptyList()
     ): Boolean {
         val composition = Media3CompositionBuilder(appContext).buildComposition(
             clips = clips,
@@ -117,7 +118,8 @@ internal class NativeVideoExporter(
             maskSequences = maskSequences,
             outputWidth = width,
             outputHeight = height,
-            fps = fps
+            fps = fps,
+            visualizerSequences = visualizerSequences
         ) ?: run {
             Log.i("NATIVE_EXPORT", "Composition rejected; caller should use FFmpeg")
             return false
