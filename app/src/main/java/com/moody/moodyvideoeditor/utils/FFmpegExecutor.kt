@@ -4330,7 +4330,7 @@ class FFmpegExecutor(
             parts.add("format=rgb24")
             parts.add(
                 FFmpegFilters.withTimelineEnable(
-                    "lut3d=file='$lutPath':interp=bilinear",
+                    "lut3d=file='$lutPath':interp=tetrahedral",
                     enable
                 )
             )

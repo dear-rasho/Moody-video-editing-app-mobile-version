@@ -238,15 +238,17 @@ class VideoExporter(
         } else {
             false
         }
-        val forceFilterLayerMedia3Test =
+        val forceLayerMedia3Test =
             (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0 &&
                     format.equals("mp4", ignoreCase = true) &&
-                    exportClips.any(EditorClip::isFilterLayerClip)
+                    exportClips.any {
+                        it.isFilterLayerClip || it.isAdjustmentClip || it.isTextClip
+                    }
         val debugMedia3ExportEnabled =
-            storedMedia3ExportEnabled || forceFilterLayerMedia3Test
+            storedMedia3ExportEnabled || forceLayerMedia3Test
         val media3GateReason = when {
             !format.equals("mp4", ignoreCase = true) -> "output_format_not_mp4"
-            forceFilterLayerMedia3Test -> "filter_layer_media3_test_override"
+            forceLayerMedia3Test -> "layer_media3_test_override"
             !debugMedia3ExportEnabled -> "debug_media3_export_disabled"
             !hasBaseVideo -> "no_base_video_or_matte"
             else -> "composition_check_pending"
@@ -255,7 +257,7 @@ class VideoExporter(
             "EXPORT_ROUTE",
             "Media3 eligibility: isEnabled=$debugMedia3ExportEnabled " +
                     "storedSetting=$storedMedia3ExportEnabled " +
-                    "forceFilterLayerTest=$forceFilterLayerMedia3Test " +
+                    "forceLayerTest=$forceLayerMedia3Test " +
                     "composition=not_checked clips=${exportClips.size} " +
                     "reason=$media3GateReason"
         )
@@ -267,7 +269,24 @@ class VideoExporter(
                     media3FallbackReason = "composition_rejected"
                     var media3Output: File? = null
                     val maskDirectories = mutableListOf<File>()
+                    var media3TextSequences: List<TextOverlaySequence> = emptyList()
+                    var media3TextSequencesHandled = false
                     try {
+                        if (trimmedTextClips.isNotEmpty() || trimmedOverlayClips.isNotEmpty()) {
+                            media3TextSequences = TextBitmapRenderer.renderOverlaysByTrack(
+                                context = context,
+                                textClips = trimmedTextClips,
+                                imageClips = overlayImageClips,
+                                overlayClips = trimmedOverlayClips,
+                                W = targetW,
+                                H = targetH,
+                                fps = fps,
+                                totalDurationMs = exportDurationMs,
+                                shouldCancel = { isCancelled },
+                                imageFormat = imageFormat,
+                                jpegQuality = jpegQuality
+                            )
+                        }
                         val renderedMasks = renderMedia3MaskSequences(
                             clips = exportClips,
                             width = targetW,
@@ -291,7 +310,7 @@ class VideoExporter(
                         onProgress(0.02f)
                         val completed = exporter.exportWithComposition(
                             clips = exportClips,
-                            textSequences = emptyList(),
+                            textSequences = media3TextSequences,
                             maskSequences = renderedMasks.sequences,
                             outputFile = media3Output,
                             width = targetW,
@@ -314,7 +333,8 @@ class VideoExporter(
                                         "outputBytes=${media3Output.length()}"
                             )
                             logOutputMetadata("media3-composition-debug", media3Output)
-                            completeExport(media3Output, customFolderUri, emptyList())
+                            completeExport(media3Output, customFolderUri, media3TextSequences)
+                            media3TextSequencesHandled = true
                             onProgress(1f)
                             return
                         }
@@ -349,6 +369,9 @@ class VideoExporter(
                         )
                     } finally {
                         cleanupMaskDirectories(maskDirectories)
+                        if (!media3TextSequencesHandled) {
+                            cleanupSequences(media3TextSequences)
+                        }
                     }
                 }
 

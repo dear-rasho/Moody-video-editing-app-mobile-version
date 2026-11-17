@@ -21,7 +21,7 @@ import com.moody.moodyvideoeditor.data.EditorClip
 class Media3CompositionBuilder(private val context: Context) {
 
     /**
-     * Builds a composition only for contiguous tracks with no unsupported editing features.
+     * Builds a composition for non-overlapping tracks with no unsupported editing features.
      * A null result means the caller should use the existing FFmpeg path.
      */
     fun buildComposition(
@@ -45,22 +45,13 @@ class Media3CompositionBuilder(private val context: Context) {
             return null
         }
 
-        // Text composition parity is unresolved, so keep text-bearing projects on FFmpeg.
+        val adjustmentLayerClips = clips.filter(EditorClip::isAdjustmentClip)
         val filterLayerClips = clips.filter(EditorClip::isFilterLayerClip)
         val compositionClips = clips.filterNot {
-            it.isTextClip || it.isFilterLayerClip
+            it.isTextClip || it.isFilterLayerClip || it.isAdjustmentClip
         }
-        if (clips.any(EditorClip::isTextClip)) {
-            val reason = if (textSequences.isEmpty()) {
-                "text clips exist but no textSequences"
-            } else {
-                "text clips are not supported"
-            }
-            Log.w(LOG_TAG, "REJECT: $reason")
-            return null
-        }
-        if (textSequences.isNotEmpty()) {
-            Log.w(LOG_TAG, "REJECT: textSequences are not supported")
+        if (clips.any(EditorClip::isTextClip) && textSequences.isEmpty()) {
+            Log.w(LOG_TAG, "REJECT: text clips exist but no textSequences")
             return null
         }
         if (compositionClips.isEmpty()) {
@@ -121,14 +112,19 @@ class Media3CompositionBuilder(private val context: Context) {
                 }
             }
             val sortedClips = trackClips.sortedBy(EditorClip::timelineStartMs)
-            if (!hasContiguousTimeline(sortedClips)) {
-                Log.w(
+            Log.i(LOG_TAG, "Visual track $trackIndex clips:")
+            sortedClips.forEach { clip ->
+                Log.i(
                     LOG_TAG,
-                    "REJECT: visual track $trackIndex has gaps; " +
-                            "segments=${sortedClips.joinToString { "${it.id}:" +
-                            "${it.timelineStartMs}-${it.timelineEndMs}" }}"
+                    "  clip ${clip.id}: timelineStart=${clip.timelineStartMs}ms, " +
+                            "timelineEnd=${clip.timelineEndMs}ms"
                 )
+            }
+            val gaps = computeGaps(sortedClips)
+            if (gaps == null) {
                 trackRejected = true
+            } else {
+                Log.i(LOG_TAG, "Gaps computed: ${formatGaps(gaps)}")
             }
             hasVisualTrackRejection = hasVisualTrackRejection || trackRejected
         }
@@ -157,14 +153,14 @@ class Media3CompositionBuilder(private val context: Context) {
                 }
             }
             val sortedClips = trackClips.sortedBy(EditorClip::timelineStartMs)
-            if (!hasContiguousTimeline(sortedClips)) {
-                Log.w(
-                    LOG_TAG,
-                    "REJECT: audio track $trackIndex has gaps; " +
-                            "segments=${sortedClips.joinToString { "${it.id}:" +
-                            "${it.timelineStartMs}-${it.timelineEndMs}" }}"
-                )
+            val gaps = computeGaps(sortedClips)
+            if (gaps == null) {
                 trackRejected = true
+            } else if (gaps.isNotEmpty()) {
+                Log.i(
+                    LOG_TAG,
+                    "Audio track $trackIndex gaps computed: ${formatGaps(gaps)}"
+                )
             }
             hasAudioTrackRejection = hasAudioTrackRejection || trackRejected
         }
@@ -174,6 +170,45 @@ class Media3CompositionBuilder(private val context: Context) {
         }
 
         val visualClips = visualClipsByTrack.values.flatten()
+        val invalidAdjustmentLayer = adjustmentLayerClips.firstOrNull { layer ->
+            val hasAdjustment = !layer.adjustments.isDefault
+            val hasColorWheel = layer.colorWheel.hasAnyChange
+            if (!hasAdjustment && !hasColorWheel) {
+                false
+            } else {
+                val targetBaseClips = visualClips.filter {
+                    it.trackIndex < layer.trackIndex &&
+                            it.timelineEndMs > layer.timelineStartMs &&
+                            it.timelineStartMs < layer.timelineEndMs
+                }
+                layer.trackIndex < 0 ||
+                        layer.layerOpacity != 100f ||
+                        layer.keyframes.values.any { it.isNotEmpty() } ||
+                        targetBaseClips.isEmpty()
+            }
+        }
+        if (invalidAdjustmentLayer != null) {
+            val targetBaseClips = visualClips.filter {
+                it.trackIndex < invalidAdjustmentLayer.trackIndex &&
+                        it.timelineEndMs > invalidAdjustmentLayer.timelineStartMs &&
+                        it.timelineStartMs < invalidAdjustmentLayer.timelineEndMs
+            }
+            val reason = when {
+                invalidAdjustmentLayer.trackIndex < 0 -> "invalid trackIndex"
+                invalidAdjustmentLayer.layerOpacity != 100f -> "layer opacity is not default"
+                invalidAdjustmentLayer.keyframes.values.any { it.isNotEmpty() } ->
+                    "adjustment layer keyframes are not supported"
+                targetBaseClips.isEmpty() -> "no overlapping visual clips on a lower track"
+                else -> "unsupported adjustment layer configuration"
+            }
+            Log.w(
+                LOG_TAG,
+                "REJECT: adjustment layer ${invalidAdjustmentLayer.id} is unsupported, " +
+                        "reason: $reason"
+            )
+            return null
+        }
+
         val invalidFilterLayer = filterLayerClips.firstOrNull { layer ->
             if (layer.filters.isDefault) {
                 false
@@ -186,11 +221,7 @@ class Media3CompositionBuilder(private val context: Context) {
                 layer.trackIndex < 0 ||
                         layer.layerOpacity != 100f ||
                         layer.keyframes.values.any { it.isNotEmpty() } ||
-                        targetBaseClips.isEmpty() ||
-                        targetBaseClips.any {
-                                    (layer.timelineStartMs > it.timelineStartMs ||
-                                            layer.timelineEndMs < it.timelineEndMs)
-                        }
+                        targetBaseClips.isEmpty()
             }
         }
         if (invalidFilterLayer != null) {
@@ -205,7 +236,7 @@ class Media3CompositionBuilder(private val context: Context) {
                 invalidFilterLayer.keyframes.values.any { it.isNotEmpty() } ->
                     "filter layer keyframes are not supported"
                 targetBaseClips.isEmpty() -> "no overlapping visual clips on a lower track"
-                else -> "layer does not fully cover overlapping visual clips"
+                else -> "unsupported filter layer configuration"
             }
             Log.w(
                 LOG_TAG,
@@ -213,23 +244,39 @@ class Media3CompositionBuilder(private val context: Context) {
             )
             return null
         }
-        filterLayerClips
-            .filterNot { it.filters.isDefault }
-            .sortedBy(EditorClip::trackIndex)
-            .forEach { layer ->
-                visualClips
-                    .filter {
-                        it.trackIndex < layer.trackIndex &&
-                                layer.timelineStartMs <= it.timelineStartMs &&
-                                layer.timelineEndMs >= it.timelineEndMs
+        val unsupportedPartialLayer = (adjustmentLayerClips.filter {
+            !it.adjustments.isDefault || it.colorWheel.hasAnyChange
+        } + filterLayerClips.filterNot { it.filters.isDefault })
+            .asSequence()
+            .flatMap { layer ->
+                visualClips.asSequence()
+                    .filter { baseClip ->
+                        baseClip.trackIndex < layer.trackIndex &&
+                                layer.timelineEndMs > baseClip.timelineStartMs &&
+                                layer.timelineStartMs < baseClip.timelineEndMs
                     }
-                    .forEach { baseClip ->
-                        Log.i(
-                            LOG_TAG,
-                            "Filter layer ${layer.id} covers full window of base ${baseClip.id}"
-                        )
+                    .filter { baseClip ->
+                        (layer.timelineStartMs > baseClip.timelineStartMs ||
+                                layer.timelineEndMs < baseClip.timelineEndMs) &&
+                                (baseClip.speed != 1f ||
+                                        baseClip.durationMs != baseClip.sourceDurationMs)
                     }
+                    .map { baseClip -> Triple(layer, baseClip, layer.isAdjustmentClip) }
             }
+            .firstOrNull()
+        if (unsupportedPartialLayer != null) {
+            val (layer, baseClip, isAdjustmentLayer) = unsupportedPartialLayer
+            Log.w(
+                LOG_TAG,
+                "REJECT: partial ${if (isAdjustmentLayer) "adjustment" else "filter"} layer " +
+                        "${layer.id} over base clip ${baseClip.id} " +
+                        "cannot be split with 1:1 source timing; speed=${baseClip.speed}, " +
+                        "timelineDuration=${baseClip.durationMs}ms, " +
+                        "sourceDuration=${baseClip.sourceDurationMs}ms"
+            )
+            return null
+        }
+
         val invalidMaskSequences = maskSequences.filter { sequence ->
             sequence.frameCount <= 0 ||
                     (sequence.staticFilePath == null && sequence.fps <= 0) ||
@@ -291,39 +338,114 @@ class Media3CompositionBuilder(private val context: Context) {
         visualClipsByTrack.entries
             .sortedByDescending { it.key }
             .forEach { (_, trackClips) ->
-                val items = trackClips
-                    .sortedBy(EditorClip::timelineStartMs)
-                    .map { clip ->
-                        buildVisualItem(
-                            clip = clip,
-                            filterLayers = filterLayerClips.filter { layer ->
-                                layer.trackIndex > clip.trackIndex &&
-                                        !layer.filters.isDefault &&
-                                        layer.timelineStartMs <= clip.timelineStartMs &&
-                                        layer.timelineEndMs >= clip.timelineEndMs
-                            }.sortedBy(EditorClip::trackIndex),
-                            textSequences = textSequences,
-                            maskSequences = maskSequences,
-                            fps = fps,
-                            timestampOffsetSec = timestampOffsetSec,
-                            outputWidth = outputWidth,
-                            outputHeight = outputHeight
+                val sortedClips = trackClips.sortedBy(EditorClip::timelineStartMs)
+                val gaps = checkNotNull(computeGaps(sortedClips))
+                val sequenceBuilder = EditedMediaItemSequence.Builder()
+                if (gaps.isNotEmpty()) {
+                    sequenceBuilder
+                        .experimentalSetForceVideoTrack(true)
+                        .experimentalSetForceAudioTrack(true)
+                }
+
+                var cursorMs = 0L
+                var gapIndex = 0
+                sortedClips.forEach { baseClip ->
+                    if (gapIndex < gaps.size && gaps[gapIndex].first == cursorMs) {
+                        val gap = gaps[gapIndex++]
+                        val gapDurationMs = gap.last - gap.first + 1L
+                        sequenceBuilder.addGap(gapDurationMs * 1_000L)
+                        cursorMs += gapDurationMs
+                    }
+
+                    val overlappingAdjustments = adjustmentLayerClips
+                        .filter { layer ->
+                            (!layer.adjustments.isDefault || layer.colorWheel.hasAnyChange) &&
+                                    layer.trackIndex > baseClip.trackIndex &&
+                                    layer.timelineEndMs > baseClip.timelineStartMs &&
+                                    layer.timelineStartMs < baseClip.timelineEndMs
+                        }
+                        .sortedBy(EditorClip::trackIndex)
+                    val overlappingFilters = filterLayerClips
+                        .filter { layer ->
+                            !layer.filters.isDefault &&
+                                    layer.trackIndex > baseClip.trackIndex &&
+                                    layer.timelineEndMs > baseClip.timelineStartMs &&
+                                    layer.timelineStartMs < baseClip.timelineEndMs
+                        }
+                        .sortedBy(EditorClip::trackIndex)
+                    Log.i(
+                        LOG_TAG,
+                        "Base clip ${baseClip.id} " +
+                                "[${baseClip.timelineStartMs}-${baseClip.timelineEndMs}ms] " +
+                                "overlapping adjustments: ${overlappingAdjustments.joinToString {
+                                    "${it.id}[${it.timelineStartMs}-${it.timelineEndMs}]"
+                                }} filters: ${overlappingFilters.joinToString {
+                                    "${it.id}[${it.timelineStartMs}-${it.timelineEndMs}]"
+                                }}"
+                    )
+
+                    val segments = splitClipAtLayerBoundaries(
+                        baseClip = baseClip,
+                        adjustmentLayers = overlappingAdjustments,
+                        filterLayers = overlappingFilters
+                    )
+                    Log.i(
+                        LOG_TAG,
+                        "Base clip ${baseClip.id} split into ${segments.size} segments"
+                    )
+                    segments.forEach { segment ->
+                        Log.i(
+                            LOG_TAG,
+                            "  [${segment.clip.timelineStartMs}-${segment.timelineEndMs}ms] " +
+                                    "source=[${segment.clip.sourceStartMs}-" +
+                                    "${segment.clip.sourceEndMs}ms] filters=" +
+                                    segment.filterLayers.joinToString { it.id } +
+                                    " adjustments=" +
+                                    segment.adjustmentLayers.joinToString { it.id }
+                        )
+                        sequenceBuilder.addItem(
+                            buildVisualItem(
+                                clip = segment.clip,
+                                timelineEndMs = segment.timelineEndMs,
+                                adjustmentLayers = segment.adjustmentLayers,
+                                filterLayers = segment.filterLayers,
+                                textSequences = textSequences,
+                                maskSequences = maskSequences,
+                                fps = fps,
+                                timestampOffsetSec = timestampOffsetSec,
+                                outputWidth = outputWidth,
+                                outputHeight = outputHeight
+                            )
                         )
                     }
-                sequences += EditedMediaItemSequence.Builder()
-                    .addItems(items)
-                    .build()
+                    cursorMs = baseClip.timelineEndMs
+                }
+                sequences += sequenceBuilder.build()
             }
 
         audioClipsByTrack.entries
             .sortedBy { it.key }
             .forEach { (_, trackClips) ->
-                val items = trackClips
-                    .sortedBy(EditorClip::timelineStartMs)
-                    .map(::buildAudioItem)
-                sequences += EditedMediaItemSequence.Builder()
-                    .addItems(items)
-                    .build()
+                val sortedClips = trackClips.sortedBy(EditorClip::timelineStartMs)
+                val gaps = checkNotNull(computeGaps(sortedClips))
+                val sequenceBuilder = EditedMediaItemSequence.Builder()
+                if (gaps.isNotEmpty()) {
+                    sequenceBuilder.experimentalSetForceAudioTrack(true)
+                }
+
+                var cursorMs = 0L
+                var gapIndex = 0
+                sortedClips.forEach { clip ->
+                    if (gapIndex < gaps.size && gaps[gapIndex].first == cursorMs) {
+                        val gap = gaps[gapIndex++]
+                        val gapDurationMs = gap.last - gap.first + 1L
+                        sequenceBuilder.addGap(gapDurationMs * 1_000L)
+                        cursorMs += gapDurationMs
+                    }
+                    sequenceBuilder.addItem(buildAudioItem(clip))
+                    cursorMs = clip.timelineEndMs
+                }
+                sequences += sequenceBuilder.build()
             }
 
         return Composition.Builder(sequences).build()
@@ -331,6 +453,8 @@ class Media3CompositionBuilder(private val context: Context) {
 
     private fun buildVisualItem(
         clip: EditorClip,
+        timelineEndMs: Long,
+        adjustmentLayers: List<EditorClip>,
         filterLayers: List<EditorClip>,
         textSequences: List<TextOverlaySequence>,
         maskSequences: List<MaskSequenceData>,
@@ -363,11 +487,20 @@ class Media3CompositionBuilder(private val context: Context) {
 
         videoEffects.add(AdjustmentGlEffect(clip.adjustments))
         videoEffects.add(AdjustmentSpatialGlEffect(clip.adjustments))
+        adjustmentLayers.forEach { layer ->
+            videoEffects.add(AdjustmentGlEffect(layer.adjustments))
+            videoEffects.add(AdjustmentSpatialGlEffect(layer.adjustments))
+        }
         videoEffects.add(FilterLayerGlEffect(clip.filters))
-        videoEffects.add(ColorWheelGlEffect(clip.colorWheel))
         filterLayers.forEach { layer ->
             videoEffects.add(FilterLayerGlEffect(layer.filters))
         }
+        videoEffects.add(ColorWheelGlEffect(clip.colorWheel))
+        adjustmentLayers
+            .filter { it.colorWheel.hasAnyChange }
+            .forEach { layer ->
+                videoEffects.add(ColorWheelGlEffect(layer.colorWheel))
+            }
         videoEffects.add(
             TransformGlEffect(
                 targetWidth = outputWidth,
@@ -407,11 +540,19 @@ class Media3CompositionBuilder(private val context: Context) {
             }
         textSequences
             .filter { sequence ->
-                sequence.startSec < clip.timelineEndMs / 1000.0 &&
+                sequence.startSec < timelineEndMs / 1000.0 &&
                         sequence.endSec > clip.timelineStartMs / 1000.0
             }
             .forEach { sequence ->
-                videoEffects.add(TextOverlayGlEffect(sequence))
+                val clipStartSec = clip.timelineStartMs / 1000.0
+                videoEffects.add(
+                    TextOverlayGlEffect(
+                        sequence.copy(
+                            startSec = sequence.startSec - clipStartSec,
+                            endSec = sequence.endSec - clipStartSec
+                        )
+                    )
+                )
             }
 
         val audioProcessors = mutableListOf<AudioProcessor>()
@@ -444,7 +585,7 @@ class Media3CompositionBuilder(private val context: Context) {
         if (!clip.isVisualClip || clip.isAudio || clip.trackIndex < 0) {
             return "not a visual clip or invalid trackIndex"
         }
-        if (clip.isTextClip || clip.isEffectClip || clip.isAdjustmentClip ||
+        if (clip.isTextClip || clip.isEffectClip ||
             clip.isOverlayClip || clip.isColorMatteClip || clip.isSpotlightClip ||
             clip.isVisualizerClip || clip.isAudioEffectClip
         ) return "clip is a text/effect/adjustment/overlay/matte/spotlight/visualizer/audio-effect layer"
@@ -569,14 +710,122 @@ class Media3CompositionBuilder(private val context: Context) {
         return null
     }
 
-    private fun hasContiguousTimeline(clips: List<EditorClip>): Boolean {
+    private data class VisualClipSegment(
+        val clip: EditorClip,
+        val timelineEndMs: Long,
+        val adjustmentLayers: List<EditorClip>,
+        val filterLayers: List<EditorClip>
+    )
+
+    private fun splitClipAtLayerBoundaries(
+        baseClip: EditorClip,
+        adjustmentLayers: List<EditorClip>,
+        filterLayers: List<EditorClip>
+    ): List<VisualClipSegment> {
+        if (adjustmentLayers.isEmpty() && filterLayers.isEmpty()) {
+            return listOf(
+                VisualClipSegment(
+                    clip = baseClip,
+                    timelineEndMs = baseClip.timelineEndMs,
+                    adjustmentLayers = emptyList(),
+                    filterLayers = emptyList()
+                )
+            )
+        }
+
+        val allLayers = adjustmentLayers + filterLayers
+        if (allLayers.all { layer ->
+                layer.timelineStartMs <= baseClip.timelineStartMs &&
+                        layer.timelineEndMs >= baseClip.timelineEndMs
+            }
+        ) {
+            return listOf(
+                VisualClipSegment(
+                    clip = baseClip,
+                    timelineEndMs = baseClip.timelineEndMs,
+                    adjustmentLayers = adjustmentLayers.sortedBy(EditorClip::trackIndex),
+                    filterLayers = filterLayers.sortedBy(EditorClip::trackIndex)
+                )
+            )
+        }
+
+        check(baseClip.speed == 1f && baseClip.durationMs == baseClip.sourceDurationMs)
+
+        val boundaries = sortedSetOf(baseClip.timelineStartMs, baseClip.timelineEndMs)
+        allLayers.forEach { layer ->
+            if (layer.timelineStartMs > baseClip.timelineStartMs &&
+                layer.timelineStartMs < baseClip.timelineEndMs
+            ) {
+                boundaries.add(layer.timelineStartMs)
+            }
+            if (layer.timelineEndMs > baseClip.timelineStartMs &&
+                layer.timelineEndMs < baseClip.timelineEndMs
+            ) {
+                boundaries.add(layer.timelineEndMs)
+            }
+        }
+
+        val sortedBoundaries = boundaries.toList()
+        return (0 until sortedBoundaries.lastIndex).map { index ->
+            val segmentStartMs = sortedBoundaries[index]
+            val segmentEndMs = sortedBoundaries[index + 1]
+            val sourceOffsetAtStartMs = segmentStartMs - baseClip.timelineStartMs
+            val sourceOffsetAtEndMs = segmentEndMs - baseClip.timelineStartMs
+            val segmentClip = baseClip.copy(
+                sourceStartMs = baseClip.sourceStartMs + sourceOffsetAtStartMs,
+                sourceEndMs = baseClip.sourceStartMs + sourceOffsetAtEndMs,
+                timelineStartMs = segmentStartMs
+            )
+            fun coversSegment(layer: EditorClip): Boolean =
+                layer.timelineStartMs <= segmentStartMs &&
+                        layer.timelineEndMs >= segmentEndMs
+
+            VisualClipSegment(
+                clip = segmentClip,
+                timelineEndMs = segmentEndMs,
+                adjustmentLayers = adjustmentLayers
+                    .filter(::coversSegment)
+                    .sortedBy(EditorClip::trackIndex),
+                filterLayers = filterLayers
+                    .filter(::coversSegment)
+                    .sortedBy(EditorClip::trackIndex)
+            )
+        }
+    }
+
+    private fun computeGaps(clips: List<EditorClip>): List<LongRange>? {
+        val gaps = mutableListOf<LongRange>()
         var expectedStartMs = 0L
         for (clip in clips) {
-            if (clip.timelineStartMs != expectedStartMs) return false
+            if (clip.timelineStartMs < 0L || clip.timelineEndMs <= clip.timelineStartMs) {
+                Log.w(
+                    LOG_TAG,
+                    "REJECT: clip ${clip.id} has invalid timeline window " +
+                            "${clip.timelineStartMs}-${clip.timelineEndMs}ms"
+                )
+                return null
+            }
+            if (clip.timelineStartMs < expectedStartMs) {
+                Log.w(
+                    LOG_TAG,
+                    "REJECT: overlapping clips; clip ${clip.id} starts at " +
+                            "${clip.timelineStartMs}ms before previous clip ends at " +
+                            "${expectedStartMs}ms"
+                )
+                return null
+            }
+            if (clip.timelineStartMs > expectedStartMs) {
+                gaps.add(expectedStartMs until clip.timelineStartMs)
+            }
             expectedStartMs = clip.timelineEndMs
         }
-        return true
+        return gaps
     }
+
+    private fun formatGaps(gaps: List<LongRange>): String =
+        gaps.joinToString(prefix = "[", postfix = "]") {
+            "${it.first}..${it.last + 1L}ms"
+        }
 
     private fun isPositionHandledByOverlay(clip: EditorClip): Boolean {
         val blendKey = clip.blendMode.lowercase()
